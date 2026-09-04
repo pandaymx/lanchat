@@ -1,0 +1,21 @@
+name: lanchat
+
+services:
+  hub:
+    build:
+      context: .
+      args:
+        VERSION: dev
+        COMMIT: local
+        DATE: unknown
+    image: lanchat-hub:dev
+    container_name: lanchat-hub
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "/app/hub", "--health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

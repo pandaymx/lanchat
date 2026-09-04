@@ -1,0 +1,47 @@
+# ---------- VCS ----------
+.git
+.gitignore
+.gitattributes
+
+# ---------- CI ----------
+.github
+
+# ---------- 开发环境 ----------
+.idea
+.vscode
+*.swp
+*.swo
+
+# ---------- 构建产物 ----------
+bin/
+*.test
+*.out
+coverage.*
+
+# ---------- 依赖缓存 ----------
+node_modules/
+
+# ---------- 文档（AI 提示） ----------
+README.md
+AGENTS.md
+CLAUDE.md
+
+# ---------- 容器自身 ----------
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+
+# ---------- 运行期 ----------
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+.env
+.env.local
+.env.*.local
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini

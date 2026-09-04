@@ -1,3 +1,4 @@
+// Command hub 是 LAN Chat 的服务端入口：管理客户端连接、路由消息、维护在线状态与多设备投递。
 package main
 
 import (

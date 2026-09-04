@@ -1,0 +1,37 @@
+# ---------- Go ----------
+bin/
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# templ 生成物，不入库（构建时用 make templ 重新生成）
+*_templ.go
+
+# ---------- 数据库 ----------
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+
+# ---------- Node / bun ----------
+node_modules/
+
+# ---------- 发布 ----------
+dist/
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- IDE ----------
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ---------- 环境变量 ----------
+.env
+.env.local
+.env.*.local

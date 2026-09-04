@@ -1,0 +1,41 @@
+# golangci-lint 配置（v2 schema）
+# 若本地是 v1，配置不兼容，请先升级：go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+version: '2'
+
+linters:
+  default: standard
+  enable:
+    - errcheck # 未处理的 error
+    - bodyclose # HTTP body 未关闭
+    - contextcheck # context 传递是否正确
+    - misspell # 拼写错误（注释和字符串里的 typo 很常见）
+    - nilerr # 错误为 nil 时仍返回 error
+    - revive # golint 的现代替代品
+    - unconvert # 多余的类型转换
+    - prealloc # 循环中可预分配的 slice
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - prealloc
+
+formatters:
+  # v2 起 formatter 从 linters 里独立出来了
+  enable:
+    - gofumpt
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/pandaymx/lanchat)
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 5m

@@ -1,0 +1,21 @@
+# 统一换行符为 LF：项目在 WSL(Arch) 开发，但可能在 Windows 侧被编辑器打开
+# 与 .editorconfig 双保险，避免整文件 diff
+* text=auto eol=lf
+
+*.go     text eol=lf
+*.templ  text eol=lf
+*.md     text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.js     text eol=lf
+Makefile text eol=lf
+
+# 二进制，禁止任何转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

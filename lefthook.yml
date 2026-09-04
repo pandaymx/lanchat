@@ -1,0 +1,42 @@
+# lefthook —— Git 钩子编排
+# 装钩子：lefthook install
+# 参考：https://lefthook.dev
+
+# 提交前：格式化（自动修复并重新暂存） + 编译 + 静态检查 + 单测
+# 速度优先：这里只跑能秒级完成的检查，全量 lint 留给 pre-push
+pre-commit:
+  parallel: false # 格式化命令会改同一批文件，串行避免竞态
+  commands:
+    go-fmt:
+      glob: '*.go'
+      # gofumpt 管代码格式，gci 管 import 分组，两者职责不重叠，顺序固定
+      run: gofumpt -l -w {staged_files} && gci write {staged_files}
+      stage_fixed: true
+    templ-fmt:
+      glob: '*.templ'
+      run: templ fmt {staged_files}
+      stage_fixed: true
+    go-build:
+      glob: '*.go'
+      run: go build ./...
+    go-vet:
+      glob: '*.go'
+      run: go vet ./...
+    go-test:
+      glob: '*.go'
+      run: go test ./pkg/... ./internal/...
+
+# 提交信息：Conventional Commits + scope 白名单
+commit-msg:
+  commands:
+    commitlint:
+      run: bunx commitlint --edit {1}
+
+# 推送前：全量 lint + 全量测试（慢，但只在 push 时付这个代价）
+pre-push:
+  parallel: true
+  commands:
+    lint:
+      run: golangci-lint run
+    test:
+      run: go test -race ./...

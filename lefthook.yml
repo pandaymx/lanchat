@@ -1,6 +1,12 @@
 # lefthook —— Git 钩子编排
-# 装钩子：lefthook install
+# 装钩子：./node_modules/.bin/lefthook install
 # 参考：https://lefthook.dev
+#
+# ⚠️ 所有命令都必须显式 export PATH。
+# 原因：SSH push / gh 创建仓库触发的钩子子进程不会继承
+#      交互式 shell 的 PATH，因此 `golangci-lint` / `gofumpt` 等会找不到。
+#      同样的原因：不要写 `golangci-lint`，要写
+#      `export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && golangci-lint`。
 
 # 提交前：格式化（自动修复并重新暂存） + 编译 + 静态检查 + 单测
 # 速度优先：这里只跑能秒级完成的检查，全量 lint 留给 pre-push
@@ -10,35 +16,35 @@ pre-commit:
     go-fmt:
       glob: '*.go'
       # gofumpt 管代码格式，gci 管 import 分组，两者职责不重叠，顺序固定
-      run: gofumpt -l -w {staged_files} && gci write {staged_files}
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && gofumpt -l -w {staged_files} && gci write {staged_files}
       stage_fixed: true
     templ-fmt:
       glob: '*.templ'
-      run: templ fmt {staged_files}
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && templ fmt {staged_files}
       stage_fixed: true
     go-build:
       glob: '*.go'
       # 必须指定 -o bin/：裸 go build ./... 在只有一个 main 包时会把二进制写进项目根目录
-      run: go build -o bin/ ./...
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && go build -o bin/ ./...
     go-vet:
       glob: '*.go'
-      run: go vet ./...
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && go vet ./...
     go-test:
       glob: '*.go'
       # 用 ./... 而非 ./pkg/... ./internal/...，避免目录尚未创建时 matched no packages 导致误失败
-      run: go test ./...
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && go test ./...
 
 # 提交信息：Conventional Commits + scope 白名单
 commit-msg:
   commands:
     commitlint:
-      run: bunx commitlint --edit {1}
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && bunx commitlint --edit {1}
 
 # 推送前：全量 lint + 全量测试（慢，但只在 push 时付这个代价）
 pre-push:
   parallel: true
   commands:
     lint:
-      run: golangci-lint run
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && golangci-lint run
     test:
-      run: go test -race ./...
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && go test -race ./...

@@ -5,6 +5,11 @@ bin/
 coverage.txt
 coverage.html
 
+# go build 在仅有一个 main 包时会把二进制写到当前目录，按 cmd 名显式忽略
+/hub
+/tui
+/web
+
 # templ 生成物，不入库（构建时用 make templ 重新生成）
 *_templ.go
 

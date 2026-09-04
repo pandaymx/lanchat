@@ -1,5 +1,6 @@
 {
   "branches": ["main"],
+  "repositoryUrl": "https://github.com/pandaymx/lanchat.git",
   "plugins": [
     [
       "@semantic-release/commit-analyzer",

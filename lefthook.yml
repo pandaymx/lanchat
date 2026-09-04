@@ -18,7 +18,8 @@ pre-commit:
       stage_fixed: true
     go-build:
       glob: '*.go'
-      run: go build ./...
+      # 必须指定 -o bin/：裸 go build ./... 在只有一个 main 包时会把二进制写进项目根目录
+      run: go build -o bin/ ./...
     go-vet:
       glob: '*.go'
       run: go vet ./...

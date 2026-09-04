@@ -138,6 +138,12 @@ bun run release:dry     # 先 dry-run 确认算出的版本号与 notes
 bun run release         # 正式发版
 ```
 
+**两个已踩过的坑（不要重复踩）**：
+
+1. **`conventional-changelog-conventionalcommits` 必须锁 `^8`**。v10 依赖 `conventional-changelog-writer@9`，而 semantic-release 25 内置的是旧版 writer，generateNotes 阶段会报 `Missing helper` 直接失败。
+2. **初始版本号**。没有历史 release 时，semantic-release 会把首次发布算成 **`1.0.0`**，而不是版本路线里的 `0.1.0`。已用 `git tag v0.0.0` 标记项目起点，此后 `feat` 才会算出 `0.1.0`。
+   **建好远端仓库后必须 `git push origin v0.0.0`**，否则远端找不到 previous release，又会跳回 1.0.0。
+
 ---
 
 ## 7. 多设备模型（ADR-008）
@@ -161,6 +167,17 @@ bun run release         # 正式发版
 - Go 1.27.0；bun 在 `~/.bun/bin`（**不在默认 PATH**，命令跑不通先检查这个）
 - `.wslconfig` 已是 `networkingMode=Mirrored` → 局域网设备可直连 WSL 里的服务，mDNS 可用
 - 项目在 `~/code/lanchat`（ext4），**不要放到 `/mnt/c`**（9P 文件系统，构建慢且 inotify 失效）
+
+**已踩过的坑（不要重复踩）**：
+
+| 坑 | 现象 | 正解 |
+|---|---|---|
+| Go 模块代理不通 | `proxy.golang.org` dial tcp 不可达 | 已设 `GOPROXY=https://goproxy.cn,direct`、`GOSUMDB=sum.golang.google.cn` |
+| `go install lefthook` 失败 | `undefined: json.SkipFunc`（依赖与 Go 1.27 不兼容） | **lefthook 用 bun 装**：`bun add -d @evilmartians/lefthook`（预编译二进制） |
+| golangci-lint 装成 v1 | `@latest` 只给到 v1.64.8，与 v2 配置不兼容 | v2 模块路径带 `/v2`：`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest` |
+| `go build ./...` 污染根目录 | 仅一个 main 包时，二进制被写到项目根目录并被 git 提交 | 必须写成 `go build -o bin/ ./...`（见 lefthook.yml 注释） |
+| semantic-release 报 ENOREPOURL | 没有 git remote，无法确定仓库地址 | 需先添加远端仓库；`.releaserc.json` 里的 `repositoryUrl` 目前是占位值 |
+| revive `package-comments` | 包缺少包注释导致 lint 失败 | 每个包（含 `main`）顶部加 `// Command xxx ...` 或 `// Package xxx ...` |
 
 ---
 

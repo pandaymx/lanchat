@@ -24,7 +24,8 @@ pre-commit:
       run: go vet ./...
     go-test:
       glob: '*.go'
-      run: go test ./pkg/... ./internal/...
+      # 用 ./... 而非 ./pkg/... ./internal/...，避免目录尚未创建时 matched no packages 导致误失败
+      run: go test ./...
 
 # 提交信息：Conventional Commits + scope 白名单
 commit-msg:

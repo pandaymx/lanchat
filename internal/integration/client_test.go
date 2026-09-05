@@ -103,8 +103,10 @@ func (c *wsClient) writeFrame(ctx context.Context, kind protocol.FrameKind, payl
 	return c.ws.Write(ctx, websocket.MessageBinary, buf.Bytes())
 }
 
-// waitFor 在 d 时间内等 kind 帧，否则 t.Fatal。
-func (c *wsClient) waitFor(kind protocol.FrameKind, d time.Duration) []byte {
+// tryWait 在 d 时间内等 kind 帧，否则返回 (nil, false)。
+// 与 waitFor 的区别：不 t.Fatal，给 eventually 重试复用。
+// 读到非匹配帧继续等，过期返回 (nil, false)。
+func (c *wsClient) tryWait(kind protocol.FrameKind, d time.Duration) ([]byte, bool) {
 	c.t.Helper()
 	deadline := time.NewTimer(d)
 	defer deadline.Stop()
@@ -112,14 +114,36 @@ func (c *wsClient) waitFor(kind protocol.FrameKind, d time.Duration) []byte {
 		select {
 		case rf := <-c.readCh:
 			if rf.err != nil {
-				c.t.Fatalf("read err while waiting for %s: %v", kind, rf.err)
+				return nil, false
 			}
 			if rf.kind == kind {
-				return rf.body
+				return rf.body, true
 			}
-			c.t.Logf("skip frame kind=%s while waiting for %s", rf.kind, kind)
+			// skip non-matching frame
 		case <-deadline.C:
-			c.t.Fatalf("timeout waiting for %s after %s", kind, d)
+			return nil, false
+		}
+	}
+}
+
+// eventually 在 total 时间内每 probe 重试 tryWait，直到收到 kind 帧。
+// 用于 race + cover 同时跑时偶发 5s 内来不及的 flaky 场景：
+// 单次 waitFor 在 race 高负载下可能因调度延迟 5s 内不来，
+// eventually 给一个总预算上界并按 probe 间隔轮询，避免一次失败即 Fatal。
+//
+// 用法：c.eventually(protocol.FKDeliver, 10*time.Second, 200*time.Millisecond)
+//
+//	= 累计最多 10s，每 200ms 探测一次，过期 Fatal。
+func (c *wsClient) eventually(kind protocol.FrameKind, total, probe time.Duration) []byte {
+	c.t.Helper()
+	deadline := time.Now().Add(total)
+	for {
+		body, ok := c.tryWait(kind, probe)
+		if ok {
+			return body
+		}
+		if time.Now().After(deadline) {
+			c.t.Fatalf("eventually: never got %s after %s", kind, total)
 		}
 	}
 }

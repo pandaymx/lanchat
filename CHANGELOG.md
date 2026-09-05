@@ -1,3 +1,19 @@
+## [0.2.0](https://github.com/pandaymx/lanchat/compare/v0.1.0...v0.2.0) (2026-09-05)
+
+### Features
+
+* **core:** 定义 hubstate.Peer 抽象与 ServerSeq 分配器 ([5772bd8](https://github.com/pandaymx/lanchat/commit/5772bd8a8a44750275dd78e5c24416542073b746))
+* **core:** 实现 hubstate.History 有界补发缓冲 ([1c64709](https://github.com/pandaymx/lanchat/commit/1c6470919b65bdedc08e3d3a382a53b6427a9540))
+* **core:** 实现 hubstate.Registry 支持多设备一对多投递 ([5b21f7b](https://github.com/pandaymx/lanchat/commit/5b21f7b94f3e2296affcd8d4ab07c272c4908e21))
+* **core:** 实现 hubstate.Router 帧路由与连接生命周期 ([0c19b14](https://github.com/pandaymx/lanchat/commit/0c19b14bb0c5878bb7e1bf138b87d670c084c769))
+* **deps:** 引入 coder/websocket 与 oklog/ulid 依赖 ([5e94078](https://github.com/pandaymx/lanchat/commit/5e94078bbac866985ad86085e613d1c00cb74f5a))
+* **hub:** cmd/hub 接入 Router + WS Transport + 内存 Store 并支持信号关停 ([8224b79](https://github.com/pandaymx/lanchat/commit/8224b7997487246b57cc9dffce80e15933552d76))
+* **proto:** 实现 WebSocket Transport 满足 core.Conn 与 hubstate.Peer ([7dc5f2d](https://github.com/pandaymx/lanchat/commit/7dc5f2d9daa691b6309543e6d7e4e38ea6b8db8b))
+
+### Bug Fixes
+
+* **repo:** lefthook gci 命令补 --no-lex-order 与 sections，保留本项目 import 空行 ([b1fdcfd](https://github.com/pandaymx/lanchat/commit/b1fdcfde443460db34c5d2339b8fe8180439f740))
+
 ## [0.1.0](https://github.com/pandaymx/lanchat/compare/v0.0.0...v0.1.0) (2026-09-05)
 
 ### Features

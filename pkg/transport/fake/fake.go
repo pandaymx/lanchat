@@ -1,39 +1,29 @@
 // Package fake 提供 core.Transport 的同进程内存实现。
 //
 // 主要用途：
-//  1. M1 单元测试：FakeTransport 与 MemoryStore 一起跑出"发→收→存→补发"场景，无需任何端口
+//  1. 单元测试：FakeTransport 与 MemoryStore 一起跑出"发→收→存→补发"场景，无需任何端口
 //  2. 调试：在 IDE 里直接 step 单进程代码，不依赖网络栈
 //
 // 关键设计：
 //   - 两个 conn 之间通过 *Hub 路由（Hub 是 fake 包内的"零号 hub"），不直接 1-1 wire
-//   - Hub 持有一个 store，给 FKMessage 分配 ServerSeq、持久化、然后 FKDeliver 广播给所有 conn
-//   - 客户端断开后，Hub 仍保存消息；下次带正确 Hello.ResumeFrom 重连时，Hub 主动 FKHistoryResp 补发
+//   - Hub 的**全部协议语义委托给 hubstate.Router**，与真 WebSocket Hub 共用同一份逻辑
+//   - fake 与真 transport 的唯一结构差异是 revConn（见 rev.go）：
+//     真 transport accept 出的连接天然是 Hub 视角，fake 的管道两头共用需要反转
 //
-// 这就是 M2 真 Hub 的全部语义 + 网络层的简化版。M2 实装时把 conn 实现换成 WebSocket，
-// Hub 本体可基本不动（仅 Listen/Dial 路径变化）。
+// 这样做的收益是 M5 的抽象压力测试有据可依：
+// 换 transport 时 pkg/core 与 hubstate 都零修改，只换 Dial/Listen 的构造。
 package fake
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/hubstate"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
-
-// mustJSON 序列化失败时返回 nil。Hub 路由路径不靠序列化结果做正确性判定。
-func mustJSON(v any) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return nil
-	}
-	return b
-}
 
 // addrPrefix 是 FakeTransport 的地址 scheme，区分于真网络的 ws://、tcp:// 等。
 const addrPrefix = "memory://"
@@ -68,9 +58,9 @@ func (t *Transport) NewHub(addr string) *Hub {
 // ErrNoHub 在 Dial 时找不到对应地址时返回。
 var ErrNoHub = errors.New("fake: no hub at that address")
 
-// Dial 模拟客户端拨号到 target 地址。M1 仅按完整地址精确匹配。
+// Dial 模拟客户端拨号到 target 地址。仅按完整地址精确匹配。
 //
-// ctx 用于取消连接建立过程；ctx 取消后 Hub.dial 返回的 conn 立即被关闭，
+// ctx 用于取消连接建立过程；ctx 取消后 Hub 侧的读循环退出并注销连接，
 // 这是给 Transport 用户的标准约定。
 func (t *Transport) Dial(ctx context.Context, target string, hello protocol.Hello) (core.Conn, error) {
 	t.mu.Lock()
@@ -100,66 +90,91 @@ func (t *Transport) Close() {
 	}
 }
 
-// Hub 模拟服务端：accept Dial 过来的 Conn，对 FKMessage 分配 ServerSeq、写 Store、按订阅广播。
+// Hub 模拟服务端：accept Dial 过来的 Conn，交给 hubstate.Router 处理全部帧。
 //
-// Hub 不感知业务规则（发言权限、是否群成员等）—— 这些放到 M2 真 Hub。
-// M1 只验证"接口契约跑得通"。
+// Hub 本身不再实现任何协议逻辑——那些都在 hubstate.Router 里，
+// 与真 WebSocket Hub 是同一份代码。这里只负责：
+//   - 把客户端视角的 conn 反转成 Hub 视角的 Peer（revConn）
+//   - 把连接交给 Router 接管
+//
+// Hub 不感知业务规则（发言权限、是否群成员等）—— 那些放到真 Hub 的业务层，
+// 且即便真 Hub 加了权限校验，Router 这一层也保持不变。
 type Hub struct {
 	addr string
 
-	mu       sync.Mutex
-	conns    map[*conn]*peer // 在线设备
-	closed   bool
+	mu     sync.Mutex
+	store  core.Store
+	router *hubstate.Router // 懒构造：见 AttachStore 的说明
+	closed bool
+
+	// nextConn 用于给 conn 生成不重复的临时标识。
+	// 它不是 ServerSeq（那个由 Router 的 Sequencer 分配），
+	// 只是为了让同设备的多条连接可区分，便于调试。
 	nextConn int64
-
-	// 已分配且未投递的历史消息冗余备份（断线重连补发用）。
-	// key = convID, value = sorted by ServerSeq asc.
-	history map[string][]protocol.StoredMessage
-
-	seq   atomic.Uint64 // Hub 端单调序号生成器
-	store core.Store    // 落库目标（M1 用 memory.New()）
-}
-
-type peer struct {
-	hello protocol.Hello
-	conn  *conn
 }
 
 func newHub(addr string) *Hub {
-	return &Hub{
-		addr:    addr,
-		conns:   make(map[*conn]*peer),
-		history: make(map[string][]protocol.StoredMessage),
+	return &Hub{addr: addr}
+}
+
+// AttachStore 绑定落库后端。必须在第一次 Dial/Accept 之前调用。
+//
+// 之所以能后绑定：Router 是懒构造的，第一次有连接进来时才按当时的 store 建。
+// 这个约定让测试能先建 Hub 再注 store，而不必改 Dial 的签名。
+func (h *Hub) AttachStore(s core.Store) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.store = s
+	// 若 Router 已建但还没有连接，重建以应用新 store；
+	// 已经接过连接就不再动，避免半途换库导致行为不一致。
+	if h.router != nil && h.router.Registry().Count() == 0 {
+		h.router = hubstate.NewRouter(&hubstate.RouterConfig{Store: s})
 	}
 }
 
-// AttachStore 绑定落库后端。必须在 AcceptConn 之前调用。
-func (h *Hub) AttachStore(s core.Store) { h.store = s }
+// routerLocked 取（必要时构造）Router。调用方须持有 h.mu。
+func (h *Hub) routerLocked() *hubstate.Router {
+	if h.router == nil {
+		h.router = hubstate.NewRouter(&hubstate.RouterConfig{Store: h.store})
+	}
+	return h.router
+}
 
-// Accept 由测试代码调用：手动把一个 Conn 注入 Hub，等价于服务端接受了一个连接。
-// 之后 Hub 起 goroutine 读该 Conn 上的帧，直到 Conn 关闭。
+// Accept 把一个外部构造的 Conn 注入 Hub，等价于服务端接受了一个连接。
 //
-// ctx 用于取消 serveConn：ctx 取消时 Hub 中止该 Conn 的读循环。
+// 传入的 c 必须是 NewConn() 造出来的（客户端视角），
+// Hub 会用 revConn 反转成 Hub 视角后交给 Router。
 func (h *Hub) Accept(ctx context.Context, c core.Conn, hello protocol.Hello) error {
 	fc, ok := c.(*conn)
 	if !ok {
 		return errors.New("fake: Hub.Accept 只能接受 fake.NewConn() 构造的 Conn")
 	}
+
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()
 		return core.ErrClosed
 	}
-	h.conns[fc] = &peer{hello: hello, conn: fc}
+	r := h.routerLocked()
 	h.mu.Unlock()
 
-	go h.serveConn(ctx, fc)
+	// 预先握手：Accept 的调用方已经把 hello 给全了，
+	// 不需要再等客户端发 FKHello（真 transport 路径下那一步是必须的）。
+	rev := newRevConn(fc)
+	peerID := r.Registry().Add(rev, hello.DeviceID, hello.UserID)
+	r.Registry().MarkHello(peerID, hello.DeviceID, hello.UserID)
+
+	r.Attach(ctx, rev)
 	return nil
 }
 
-// dial 是 Transport.Dial 的内部辅助：从客户端视角 new 一个 conn，并立刻交 Hub serveConn。
+// NewConn 导出构造函数，供测试手工构造 Conn 后 Accept 进 Hub。
+func NewConn(deviceID string) core.Conn { return newConn(deviceID) }
+
+// dial 是 Transport.Dial 的内部辅助：从客户端视角 new 一个 conn，
+// 反转后交给 Router 接管，把客户端视角的 conn 返回给调用方。
 //
-// ctx 用于取消 serveConn：ctx 取消时 Hub 中止该 Conn 的读循环。
+// ctx 用于取消 Router 的读循环：ctx 取消时该连接被注销。
 func (h *Hub) dial(ctx context.Context, hello protocol.Hello) core.Conn {
 	h.mu.Lock()
 	if h.closed {
@@ -168,9 +183,11 @@ func (h *Hub) dial(ctx context.Context, hello protocol.Hello) core.Conn {
 	}
 	h.nextConn++
 	c := newConn(hello.DeviceID + "-" + itoa(h.nextConn))
-	h.conns[c] = &peer{hello: hello, conn: c}
+	r := h.routerLocked()
 	h.mu.Unlock()
-	go h.serveConn(ctx, c)
+
+	// Attach 同步登记，返回后 ConnCount 立即可见（避免调用方断言时的竞态）
+	r.Attach(ctx, newRevConn(c))
 	return c
 }
 
@@ -203,187 +220,12 @@ func itoa(n int64) string {
 	return string(b[i:])
 }
 
-// serveConn 读取该 conn 上的所有帧并按 kind 分发。
-//
-// 路由表（M1）：
-//
-//	FKHello       —— 仅做版本兼容检查，错误则发 FKError 关连接（M1 stub）
-//	FKMessage     —— 分配 ServerSeq，写 store，append history，给所有 peer 发 FKDeliver
-//	FKHistoryReq  —— 读 history[convID]，按 After 分页返回 FKHistoryResp
-//	FKAck         —— 写 store 的 cursor（多设备已读同步）
-//	FKRead        —— 同 FKRead → cursor
-//	FKPing        —— 回 FKPong
-//	其它          —— log-and-drop（M1 不实现 Presence/Typing/Error）
-func (h *Hub) serveConn(ctx context.Context, c *conn) {
-	for {
-		// Hub 读客户端送来的帧 → 走 outbound 通道
-		f, err := c.readOutbound(ctx)
-		if err != nil {
-			h.removeConn(c)
-			return
-		}
-		if err := h.handleFrame(ctx, c, f); err != nil {
-			h.removeConn(c)
-			return
-		}
-	}
-}
-
-func (h *Hub) handleFrame(ctx context.Context, c *conn, f protocol.Frame) error {
-	switch f.Kind {
-	case protocol.FKHello:
-		// 校验协议版本（M1 仅 accept v1，不发 error 即视为通过）
-		if len(f.Payload) > 0 {
-			var hello protocol.Hello
-			if err := json.Unmarshal(f.Payload, &hello); err == nil {
-				if hello.ProtocolVersion != protocol.ProtocolVersion {
-					h.sendError(ctx, c, protocol.ErrProtocolMismatch, "unsupported protocol version")
-					return nil
-				}
-			}
-		}
-		return nil
-
-	case protocol.FKMessage:
-		var msg protocol.StoredMessage
-		if err := json.Unmarshal(f.Payload, &msg); err != nil {
-			h.sendError(ctx, c, protocol.ErrInvalidFrame, "bad message payload")
-			//nolint:nilerr // sendError 已通知对端，此处保持连接；下一次帧按正常路径处理
-			return nil
-		}
-		seq := h.seq.Add(1)
-		msg.ServerSeq = seq
-		if h.store != nil {
-			_ = h.store.AppendMessage(ctx, msg)
-		}
-		h.mu.Lock()
-		h.history[msg.ConversationID] = append(h.history[msg.ConversationID], msg)
-		h.mu.Unlock()
-		// 包含发送者：客户端会按 ID 去重，发送者因此能拿到"自己刚发的"event
-		h.broadcast(ctx, protocol.Frame{
-			Kind:    protocol.FKDeliver,
-			Payload: mustJSON(msg),
-		})
-		return nil
-
-	case protocol.FKHistoryReq:
-		var req protocol.HistoryRequest
-		if len(f.Payload) > 0 {
-			_ = json.Unmarshal(f.Payload, &req)
-		}
-		resp := h.handleHistoryReq(req)
-		_ = c.pushInbound(ctx, protocol.Frame{
-			Kind:    protocol.FKHistoryResp,
-			Payload: mustJSON(resp),
-		})
-		return nil
-
-	case protocol.FKAck:
-		if h.store == nil {
-			return nil
-		}
-		// Ack 是设备级：f.Ack 是该设备目前已收到的最大 ServerSeq。
-		deviceID := deviceIDOf(c)
-		if deviceID != "" {
-			_ = h.store.SetCursor(ctx, deviceID, "*", f.Ack)
-		}
-		return nil
-
-	case protocol.FKRead:
-		var rd protocol.Read
-		if len(f.Payload) > 0 {
-			_ = json.Unmarshal(f.Payload, &rd)
-		}
-		if h.store != nil {
-			_ = h.store.SetCursor(ctx, deviceIDOf(c), rd.ConversationID, rd.ServerSeq)
-		}
-		return nil
-
-	case protocol.FKPing:
-		_ = c.pushInbound(ctx, protocol.Frame{Kind: protocol.FKPong})
-		return nil
-
-	default:
-		// 未实现的 frame kind：静默丢弃（M1 路径足够跑通测试）
-		return nil
-	}
-}
-
-func (h *Hub) handleHistoryReq(req protocol.HistoryRequest) protocol.HistoryResponse {
-	if len(req.ConversationIDs) == 1 {
-		conv := req.ConversationIDs[0]
-		h.mu.Lock()
-		list := append([]protocol.StoredMessage(nil), h.history[conv]...)
-		h.mu.Unlock()
-		return pickAfterLimit(list, req.After, req.Limit)
-	}
-	// 跨所有会话
-	h.mu.Lock()
-	var all []protocol.StoredMessage
-	for _, list := range h.history {
-		all = append(all, list...)
-	}
-	h.mu.Unlock()
-	sort.SliceStable(all, func(i, j int) bool { return all[i].ServerSeq < all[j].ServerSeq })
-	return pickAfterLimit(all, req.After, req.Limit)
-}
-
-func pickAfterLimit(list []protocol.StoredMessage, after uint64, limit int) protocol.HistoryResponse {
-	lo := sort.Search(len(list), func(i int) bool { return list[i].ServerSeq > after })
-	end := len(list)
-	if limit > 0 && lo+limit < end {
-		end = lo + limit
-	}
-	if lo >= end {
-		return protocol.HistoryResponse{Messages: nil, HasMore: false}
-	}
-	out := make([]protocol.StoredMessage, end-lo)
-	copy(out, list[lo:end])
-	return protocol.HistoryResponse{
-		Messages: out,
-		HasMore:  end < len(list),
-	}
-}
-
-func (h *Hub) broadcast(ctx context.Context, f protocol.Frame) {
-	h.mu.Lock()
-	conns := make([]*conn, 0, len(h.conns))
-	for c := range h.conns {
-		conns = append(conns, c)
-	}
-	h.mu.Unlock()
-	for _, c := range conns {
-		_ = c.pushInbound(ctx, f)
-	}
-}
-
-func (h *Hub) sendError(ctx context.Context, c *conn, code protocol.ErrorCode, msg string) {
-	payload := mustJSON(protocol.ErrorPayload{Code: code, Message: msg})
-	_ = c.pushInbound(ctx, protocol.Frame{
-		Kind:    protocol.FKError,
-		Payload: payload,
-	})
-}
-
-func (h *Hub) removeConn(c *conn) {
-	h.mu.Lock()
-	delete(h.conns, c)
-	h.mu.Unlock()
-	_ = c.Close()
-}
-
-func deviceIDOf(c *conn) string {
-	if c == nil {
-		return ""
-	}
-	return c.deviceID
-}
-
 // ConnCount 返回当前在线 conn 数量，用于测试断言。
 func (h *Hub) ConnCount() int {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.conns)
+	r := h.routerLocked()
+	h.mu.Unlock()
+	return r.Registry().Count()
 }
 
 // Close 断开所有 Conn 并标记 Hub 已关闭。
@@ -394,13 +236,11 @@ func (h *Hub) Close() {
 		return
 	}
 	h.closed = true
-	conns := make([]*conn, 0, len(h.conns))
-	for c := range h.conns {
-		conns = append(conns, c)
-	}
-	h.conns = nil
+	r := h.router
+	h.router = nil
 	h.mu.Unlock()
-	for _, c := range conns {
-		_ = c.Close()
+
+	if r != nil {
+		r.Close()
 	}
 }

@@ -82,7 +82,23 @@ func (r *Router) Sequencer() *Sequencer { return r.seq }
 
 // ---- 连接生命周期 ----
 
-// ServePeer 接管一条连接，跑到它断开为止。
+// Attach 登记一条连接并在后台接管它的读循环，**同步返回**。
+//
+// 与 ServePeer 的区别只是阻塞与否：
+//   - Attach 同步返回，适合 accept 循环（accept 完立刻接受下一条）
+//   - ServePeer 阻塞到连接断开，适合调用方想自己管理 goroutine 的场景
+//
+// 返回 Hub 分配的 peerID，调用方可用于后续追踪（无需时忽略即可）。
+//
+// 之所以要「同步登记」：调用方常需要在返回后立刻观测连接数（如断言、
+// 限流判断）。若登记发生在 goroutine 里，这里就会有一场数据竞争。
+func (r *Router) Attach(ctx context.Context, p Peer) uint64 {
+	peerID := r.reg.Add(p, p.DeviceID(), "")
+	go r.serveLoop(ctx, peerID, p)
+	return peerID
+}
+
+// ServePeer 接管一条连接，阻塞到它断开为止。
 //
 // 这是每条连接的读循环，通常由 Transport 在 accept 后 `go ServePeer(...)` 启动。
 // 返回时连接已注销——调用方不需要再清理注册表。
@@ -92,6 +108,11 @@ func (r *Router) Sequencer() *Sequencer { return r.seq }
 //   - HandleFrame 返回 error（协议违规，需要关连接）
 func (r *Router) ServePeer(ctx context.Context, p Peer) {
 	peerID := r.reg.Add(p, p.DeviceID(), "")
+	r.serveLoop(ctx, peerID, p)
+}
+
+// serveLoop 是 Attach 与 ServePeer 共用的读循环主体。
+func (r *Router) serveLoop(ctx context.Context, peerID uint64, p Peer) {
 	defer func() {
 		r.reg.Remove(peerID)
 		_ = p.Close()

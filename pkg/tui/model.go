@@ -51,6 +51,9 @@ type Model struct {
 	messages      []protocol.StoredMessage
 	peers         []protocol.Presence
 	lastSubmitted string
+
+	// M3.6：用户没有跟随底部时新消息的计数；MarkRead 时清零。
+	unread int
 }
 
 // New 构造一个未连接、待 Init 的 Model。
@@ -153,6 +156,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if k.Code == tea.KeyEnter && k.Mod&tea.ModShift == 0 {
 			return m, m.trySubmitInput()
 		}
+		// M3.6 历史区滚屏路由：
+		// textarea focus 时会拦截 Up/PgUp 等键，所以这几个按键必须由
+		// 外层 Model 先抓走，转给 historyView。
+		//
+		// End  → 滚到底部并清零 unread（「跟到底」动作）。
+		// PgUp → 整页上滚（不会到 AtBottom，所以不清 zero）。
+		// PgDn → 整页下滚；若到底则 markRead。
+		switch k.Code {
+		case tea.KeyEnd:
+			m.history.GotoBottom()
+			m.MarkRead()
+			return m, nil
+		case tea.KeyPgUp:
+			m.history.PageUp()
+			return m, nil
+		case tea.KeyPgDown:
+			m.history.PageDown()
+			if m.history.AtBottom() {
+				m.MarkRead()
+			}
+			return m, nil
+		}
 		// 其他键自动 focus textInput 后透传过去——首次按键即激活输入框。
 		var cmds []tea.Cmd
 		if !m.input.Focused() {
@@ -193,6 +218,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // applyEvent 把 core.Event 反映到 Model 状态。
+//
+// M3.6 关键修正：新消息永远进 viewport 内容（refreshHistory 总会调
+// SetContent），这样用户即使在最顶也能滚下去看到旧消息集合。是否跟着
+// 滚到底、unread 计数如何，取决于事件**发生之前**用户是否就在底部：
+//
+//   - 之前在底部（wasAtBottom=true） → 跟着滚，unread 不变；
+//   - 之前不在底部（wasAtBottom=false） → 保留 yoffset，unread++。
+//
+// 为什么用「之前」而非 SetContent 之后的 AtBottom：viewport.SetContent
+// 会按新 maxYOffset clamp yoffset，新消息到来后 AtBottom 的语义会被
+// 「内容增长」污染，必须锚定更新前的状态。
 func (m *Model) applyEvent(e core.Event) {
 	switch e.Kind {
 	case core.EventState:
@@ -201,8 +237,12 @@ func (m *Model) applyEvent(e core.Event) {
 		}
 	case core.EventMessage:
 		if e.Message != nil {
+			wasAtBottom := m.history.AtBottom()
 			m.appendMessage(*e.Message)
 			m.refreshHistory()
+			if !wasAtBottom {
+				m.unread++
+			}
 		}
 	case core.EventPresence:
 		if e.Presence != nil {
@@ -211,11 +251,21 @@ func (m *Model) applyEvent(e core.Event) {
 	}
 }
 
-// refreshHistory 把当前 m.messages 推给 historyView，强制滚到底部。
-// M3.3 阶段不区分「用户在中间看历史 → 不强拉」策略，每条新消息都强制 Tail。
-// M3.4+ 引入未读计数时切换为 autoTailOnly=true 并做 unread 标记。
+// refreshHistory 把当前 m.messages 推给 historyView。
+//
+// 行为：
+//   - 总是把当前消息全量写入 viewport（SetContent）；用户滚动到任意位置
+//     都能看到「已发生但未读」的消息内容。
+//   - 仅在视口当前已经在底部时才主动 GotoBottom，保持「跟随」语义；
+//     否则用户的滚动位置不被踢回底部。
+//
+// bubble 的 viewport.SetContent 不重置 yoffset，只在新 maxYOffset 变小时
+// 把 yoffset 拉到新 maxYOffset，所以这里依赖 AtBottom 判断是干净的。
 func (m *Model) refreshHistory() {
-	m.history.SetMessages(m.messages, false)
+	m.history.SetMessages(m.messages)
+	if m.history.AtBottom() {
+		m.history.GotoBottom()
+	}
 }
 
 // trySubmitInput 把当前 textInput 内容投递到 inbox，清空输入框。
@@ -312,8 +362,10 @@ func (m *Model) View() tea.View {
 	return v
 }
 
-// renderStatus 生成状态栏字符串：连接状态 + 用户/设备 + hub URL。
-// M3.3 是纯文本；M3.4+ 接 Wireshark 风格末尾再加 latency/last_seq。
+// renderStatus 生成状态栏字符串：连接状态 + 用户/设备 + hub URL + 未读计数。
+//
+// M3.6 新增：当 unread > 0 时附加 `unread=N`，让用户在不切回 history 区的
+// 情况下也知道有多少条新消息等着看；点 End / 滚到底部后此标记自动消失。
 func (m *Model) renderStatus() string {
 	conn := "offline"
 	if m.connected {
@@ -324,6 +376,9 @@ func (m *Model) renderStatus() string {
 		"user=" + m.user,
 		"device=" + m.device,
 		"hub=" + m.hubURL,
+	}
+	if m.unread > 0 {
+		parts = append(parts, "unread="+itoa(m.unread))
 	}
 	out := ""
 	for i, p := range parts {
@@ -429,6 +484,48 @@ func (m *Model) LastSubmitted() string { return m.lastSubmitted }
 // FocusInput 把光标放回输入框；外部 program 启动时调用一次。
 func (m *Model) FocusInput() tea.Cmd {
 	return m.input.Focus()
+}
+
+// MarkRead 把未读计数清零。End / 滚回底部 / 跟随模式下底部本身就直接
+// 同步显示，所以都会调到这里。该方法幂等：unread 已经是 0 时不做事。
+func (m *Model) MarkRead() {
+	if m.unread != 0 {
+		m.unread = 0
+	}
+}
+
+// UnreadCount 返回当前累计的未读消息数；M3.6 起供 status 栏与测试用。
+func (m *Model) UnreadCount() int { return m.unread }
+
+// GotoBottom 把 history 区强制滚回底部并清零 unread。
+//
+// 与 Update 内的 End 键路由等价的方法形态——外部可以在收到一条
+// 「用户跳到底部」事件（如跳转链接）后用同一个 API。
+func (m *Model) GotoBottom() {
+	m.history.GotoBottom()
+	m.MarkRead()
+}
+
+// PageUp 把 history 上滚一页。M3.6 给测试与脚本式访问用。
+func (m *Model) PageUp() { m.history.PageUp() }
+
+// PageDown 把 history 下滚一页；若到底则清零 unread。
+func (m *Model) PageDown() {
+	m.history.PageDown()
+	if m.history.AtBottom() {
+		m.MarkRead()
+	}
+}
+
+// ScrollUp 把 history 上滚 n 行。给自定义键盘映射留口子。
+func (m *Model) ScrollUp(n int) { m.history.ScrollUp(n) }
+
+// ScrollDown 把 history 下滚 n 行；若到底则清零 unread。
+func (m *Model) ScrollDown(n int) {
+	m.history.ScrollDown(n)
+	if m.history.AtBottom() {
+		m.MarkRead()
+	}
 }
 
 // AttachSender 在 Dial 成功后接入 Sender，让 Update 看到出站事件。

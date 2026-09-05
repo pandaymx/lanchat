@@ -56,14 +56,18 @@ func (h *historyView) SetSize(w, height int) {
 	h.inner.SetHeight(height)
 }
 
-// SetMessages 替换内容为 msgs 的格式化结果，并自动滚到底部。
+// SetMessages 把 msgs 序列化为字符串并写入 viewport。
 //
-// autoTailOnly 决定如果用户已经手动向上滚动，是否还要把视口拉回底部：
-// M3.3 暂传 false（仅在初始化时拉底），M3.4+ 再做「未读时不强拉」策略。
-func (h *historyView) SetMessages(msgs []protocol.StoredMessage, autoTailOnly bool) {
+// 与 M3.3 时期不同：M3.6 不再自动 GotoBottom。
+// 调用方（M3.6 的 refreshHistory）负责根据 AtBottom 决定是否拉回底部：
+//   - 用户在底部 → 跟随新消息，调用方再调一次 GotoBottom()
+//   - 用户在中段/顶部 → 保持当前 yoffset（不打断阅读），未读计数累加
+//
+// 同时不再接受 autoTailOnly 开关——AtBottom 状态是 viewport 自描述的，
+// 不需要外部再传一个冗余信号。这把 SetMessages 收敛成「纯内容替换」。
+func (h *historyView) SetMessages(msgs []protocol.StoredMessage) {
 	if len(msgs) == 0 {
 		h.inner.SetContent("")
-		h.inner.GotoBottom()
 		return
 	}
 	lines := make([]string, 0, len(msgs))
@@ -71,9 +75,37 @@ func (h *historyView) SetMessages(msgs []protocol.StoredMessage, autoTailOnly bo
 		lines = append(lines, formatMessage(msgs[i]))
 	}
 	h.inner.SetContent(strings.Join(lines, "\n"))
-	if autoTailOnly && !h.inner.AtBottom() {
+}
+
+// ScrollUp 把视口上滚 n 行；n<=0 时无操作。M3.6 给 Model 提供显式 API，
+// 不依赖底层 textarea 的键位，因为 textarea 默认会拦截 Up/Down。
+func (h *historyView) ScrollUp(n int) {
+	if n <= 0 {
 		return
 	}
+	h.inner.ScrollUp(n)
+}
+
+// ScrollDown 把视口下滚 n 行；若超过内容下界则停在底部。
+func (h *historyView) ScrollDown(n int) {
+	if n <= 0 {
+		return
+	}
+	h.inner.ScrollDown(n)
+}
+
+// PageUp 整页上滚。等价于 ScrollUp(Height())。
+func (h *historyView) PageUp() {
+	h.inner.PageUp()
+}
+
+// PageDown 整页下滚。等价于 ScrollDown(Height())。
+func (h *historyView) PageDown() {
+	h.inner.PageDown()
+}
+
+// GotoBottom 滚到最底；用户「我要看新消息」的明确动作。
+func (h *historyView) GotoBottom() {
 	h.inner.GotoBottom()
 }
 
@@ -83,7 +115,8 @@ func (h *historyView) Width() int { return h.inner.Width() }
 // Height 返回当前视口高度，主要给测试断言用。
 func (h *historyView) Height() int { return h.inner.Height() }
 
-// AtBottom 报告视口是否已滚到底部，给外面的 unread 计数逻辑用。
+// AtBottom 报告视口是否已滚到底部，给 M3.6 的 unread 计数判断用：
+// 新消息到达时若用户在底部就跟着滚下去；否则只累加 unread。
 func (h *historyView) AtBottom() bool { return h.inner.AtBottom() }
 
 // formatMessage 把 StoredMessage 渲染为单行文本。

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -564,3 +565,262 @@ func TestSendCmd_OnSenderError_PublishesErrMsg(t *testing.T) {
 		t.Fatal("expected errMsg in inbox after sendCmd failure")
 	}
 }
+
+// ============================================================
+// M3.6 新增测试：未读计数 + 滚屏路由
+// ============================================================
+
+// pumpFew 灌 n 条（n ≤ viewport 高度）消息，确保 viewport AtBottom=true。
+// viewport 高度由后续 WindowSizeMsg(width=80, height=24) 决定 bodyH=20。
+func pumpFew(m *Model, n int) {
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := 0; i < n; i++ {
+		msg := protocol.StoredMessage{
+			SenderUserID: "u1",
+			Body:         "line",
+			ServerSeq:    uint64(i + 1),
+		}
+		m.applyEvent(core.Event{Kind: core.EventMessage, Message: &msg})
+	}
+}
+
+// pumpOverflow 灌超出 viewport 高度（>20）的消息，自然撑爆 viewport、
+// 触发部分 unread 累计；用于「不在底部」语义测试。
+func pumpOverflow(m *Model, n int) {
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for i := 0; i < n; i++ {
+		msg := protocol.StoredMessage{
+			SenderUserID: "u1",
+			Body:         "line",
+			ServerSeq:    uint64(i + 1),
+		}
+		m.applyEvent(core.Event{Kind: core.EventMessage, Message: &msg})
+	}
+}
+
+// TestApplyEvent_Message_AccumulatesUnread_WhenNotAtBottom 验证：用户
+// 离开底部时，新消息只累加 unread、不破坏阅读位置。
+func TestApplyEvent_Message_AccumulatesUnread_WhenNotAtBottom(t *testing.T) {
+	m := New(Config{})
+	pumpFew(m, 5) // viewport h=20，未撑爆，AtBottom=true
+	if !m.history.AtBottom() {
+		t.Fatal("history should be at bottom after a small pump")
+	}
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("unread should start at 0, got %d", got)
+	}
+
+	// 撑爆 viewport：pumpOverflow 让 viewport maxYOffset>0、AtBottom=false。
+	pumpOverflow(m, 25)
+	if m.history.AtBottom() {
+		t.Fatal("history should be off-bottom after pump overflow")
+	}
+
+	pre := m.UnreadCount() // 撑爆期间已经累计了一些（>0）
+	for i := 0; i < 3; i++ {
+		msg := protocol.StoredMessage{
+			SenderUserID: "u9",
+			Body:         "late",
+			ServerSeq:    uint64(100 + i),
+		}
+		m.applyEvent(core.Event{Kind: core.EventMessage, Message: &msg})
+	}
+	if got := m.UnreadCount(); got != pre+3 {
+		t.Fatalf("unread should rise to %d, got %d", pre+3, got)
+	}
+	if m.history.AtBottom() {
+		t.Fatal("history should NOT snap back to bottom while user is scrolled away")
+	}
+}
+
+// TestApplyEvent_Message_NoUnread_WhenAtBottom 验证：用户在底部时
+// 新消息直接刷新 viewport 并保持底部，不增 unread。
+func TestApplyEvent_Message_NoUnread_WhenAtBottom(t *testing.T) {
+	m := New(Config{})
+	pumpFew(m, 5)
+	if !m.history.AtBottom() {
+		t.Fatal("prereq: history should be at bottom after a small pump")
+	}
+	msg := protocol.StoredMessage{SenderUserID: "u1", Body: "tail", ServerSeq: 99}
+	m.applyEvent(core.Event{Kind: core.EventMessage, Message: &msg})
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("unread should stay 0 while following the tail, got %d", got)
+	}
+	if !m.history.AtBottom() {
+		t.Fatal("history should still be at bottom after a tail-pushed event")
+	}
+}
+
+// TestMarkRead_Idempotent 验证 MarkRead 是幂等的：unread 已经是 0 时再调
+// 也不算错。
+func TestMarkRead_Idempotent(t *testing.T) {
+	m := New(Config{})
+	m.Update(eventMsg{event: core.Event{
+		Kind:  core.EventState,
+		State: &core.StateInfo{Connected: true},
+	}})
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("baseline unread want 0, got %d", got)
+	}
+	m.MarkRead()
+	m.MarkRead()
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("idempotent MarkRead should keep unread at 0, got %d", got)
+	}
+}
+
+// TestMarkRead_ResetsAccumulator 验证有累计时 MarkRead 清零。
+func TestMarkRead_ResetsAccumulator(t *testing.T) {
+	m := New(Config{})
+	pumpOverflow(m, 25) // 撑爆 → 自动累计一部分 unread
+	pre := m.UnreadCount()
+	if pre == 0 {
+		t.Fatal("pre: pump overflow should accumulate unread")
+	}
+	for i := 0; i < 5; i++ {
+		msg := protocol.StoredMessage{SenderUserID: "u1", Body: "x", ServerSeq: uint64(i + 100)}
+		m.applyEvent(core.Event{Kind: core.EventMessage, Message: &msg})
+	}
+	if got := m.UnreadCount(); got != pre+5 {
+		t.Fatalf("expected unread=%d, got %d", pre+5, got)
+	}
+	m.MarkRead()
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("after MarkRead unread should be 0, got %d", got)
+	}
+}
+
+// TestRenderStatus_ShowsUnreadWhenNonZero 验证 status 栏在 unread>0 时
+// 出现 unread=N。
+func TestRenderStatus_ShowsUnreadWhenNonZero(t *testing.T) {
+	m := New(Config{User: "alice", Device: "lap", HubURL: "ws://h:9000"})
+	pumpOverflow(m, 25) // 撑爆产生 unread
+	st := m.renderStatus()
+	if !strings.Contains(st, "unread=") {
+		t.Fatalf("status should contain unread= marker, got %q", st)
+	}
+}
+
+// TestRenderStatus_OmitsUnreadWhenZero 回归：unread=0 时不出现 unread=
+// 标记，避免每帧多 7 字节噪音。
+func TestRenderStatus_OmitsUnreadWhenZero(t *testing.T) {
+	m := New(Config{User: "alice", Device: "lap"})
+	st := m.renderStatus()
+	if strings.Contains(st, "unread=") {
+		t.Fatalf("status should not show unread when 0, got %q", st)
+	}
+}
+
+// TestUpdate_KeyEnd_ClearsUnread 验证 End 把 history 拉到底并清零 unread。
+func TestUpdate_KeyEnd_ClearsUnread(t *testing.T) {
+	m := New(Config{})
+	pumpOverflow(m, 25) // 撑爆有 unread
+	pre := m.UnreadCount()
+	if pre == 0 {
+		t.Fatal("pre: pump overflow should accumulate unread")
+	}
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	if cmd != nil {
+		t.Fatalf("End key should yield nil cmd, got non-nil")
+	}
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("End should clear unread, got %d", got)
+	}
+	if !m.history.AtBottom() {
+		t.Fatal("End should leave history at bottom")
+	}
+}
+
+// TestUpdate_KeyPgUp_KeepsUnread 验证 PgUp 单纯上滚，不清 unread。
+func TestUpdate_KeyPgUp_KeepsUnread(t *testing.T) {
+	m := New(Config{})
+	pumpOverflow(m, 25)
+	pre := m.UnreadCount()
+	if pre == 0 {
+		t.Fatal("pre: unread should be >0 before PgUp")
+	}
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgUp})
+	if got := m.UnreadCount(); got != pre {
+		t.Fatalf("PgUp must not clear unread, want %d got %d", pre, got)
+	}
+}
+
+// TestUpdate_KeyPgDown_ClearsWhenReachingBottom 验证 PgDn 在用户回到底部时清零 unread。
+func TestUpdate_KeyPgDown_ClearsWhenReachingBottom(t *testing.T) {
+	m := New(Config{})
+	pumpOverflow(m, 25)
+	pre := m.UnreadCount()
+	if pre == 0 {
+		t.Fatal("pre: unread should be >0")
+	}
+
+	// viewport h=20，一次 PageDown 即把 yoffset 推到 20，覆盖到当前 maxYOffset。
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyPgDown})
+	if !m.history.AtBottom() {
+		t.Fatal("PgDown should bring viewport back to bottom")
+	}
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("PgDown-to-bottom should clear unread, got %d", got)
+	}
+}
+
+// TestGotoBottom_MethodClearsUnread 验证公开方法 GotoBottom 的等价行为。
+func TestGotoBottom_MethodClearsUnread(t *testing.T) {
+	m := New(Config{})
+	pumpOverflow(m, 25)
+	if m.UnreadCount() == 0 {
+		t.Fatal("pre: unread should be >0")
+	}
+	m.GotoBottom()
+	if m.UnreadCount() != 0 {
+		t.Fatalf("GotoBottom should clear unread, got %d", m.UnreadCount())
+	}
+	if !m.history.AtBottom() {
+		t.Fatal("GotoBottom should leave history at bottom")
+	}
+}
+
+// TestScrollDown_MethodClearsAtBottom 验证 ScrollDown 到底后清零 unread。
+func TestScrollDown_MethodClearsAtBottom(t *testing.T) {
+	m := New(Config{})
+	pumpOverflow(m, 25)
+	if m.UnreadCount() == 0 {
+		t.Fatal("pre: unread should be >0")
+	}
+
+	// 一个足够大的 ScrollDown 把视口直撞到底。
+	m.ScrollDown(1 << 20)
+	if m.UnreadCount() != 0 {
+		t.Fatalf("ScrollDown-to-bottom should clear unread, got %d", m.UnreadCount())
+	}
+	if !m.history.AtBottom() {
+		t.Fatal("ScrollDown should land at bottom")
+	}
+}
+
+// TestRefreshHistory_KeepsScrollPosition 验证非底部追加消息后 viewport
+// 仍停留用户位置——content 已更新（SetMessages 总写），但 yoffset 不动。
+func TestRefreshHistory_KeepsScrollPosition(t *testing.T) {
+	m := New(Config{})
+	pumpOverflow(m, 25)
+	if m.history.AtBottom() {
+		t.Fatal("prereq: pumpOverflow(25) should overflow and leave AtBottom=false")
+	}
+
+	pre := m.UnreadCount()
+	m.applyEvent(core.Event{
+		Kind:    core.EventMessage,
+		Message: &protocol.StoredMessage{SenderUserID: "u1", Body: "more", ServerSeq: 999},
+	})
+	if got := m.UnreadCount(); got != pre+1 {
+		t.Fatalf("unread should rise by 1, want %d got %d", pre+1, got)
+	}
+	if m.history.AtBottom() {
+		t.Fatalf("refreshHistory while scrolled-away should NOT snap to bottom")
+	}
+}
+
+// keep referenced imports compile-clean when test list varies.
+var _ = fmt.Sprint

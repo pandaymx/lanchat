@@ -23,9 +23,9 @@
 | M3.1 | 依赖与骨架 | `bubbletea/v2` + `lipgloss/v2` + `bubbles/v2` 引入，`pkg/tui` 建包 | ✅ `c214f27` |
 | M3.2 | Model 骨架 | `Config`/`Model`/`Init`/`Update`/`View`，`eventMsg`/`errMsg`/`quitMsg` 适配层 | ✅ `524d2df` |
 | M3.3 | 输入区 + 历史区 | `input.go`(textarea) / `history.go`(viewport) / `layout.go`(lipgloss 拼装) / `submitMsg`，**Enter 提交 · Shift+Enter 换行** | ✅ `8f951c8` |
-| M3.4 | 程序入口 | `cmd/tui/main.go`：起 bubbletea Program、`FocusInput`、优雅退出 | ⬜ 待做 |
-| M3.5 | client 接线 | client adapter：`client.Events()` → `Model.Publish`；`submitMsg` → `core.Send` | ⬜ 待做 |
-| M3.6 | 未读与滚屏 | history 切 `autoTailOnly=true`（用户滚上去时不强拉），status 显示未读计数 | ⬜ 待做 |
+| M3.4 | 程序入口 | `cmd/tui/main.go`：起 bubbletea Program、`FocusInput`、优雅退出 | ✅ `0d309f7` |
+| M3.5 | client 接线 | client adapter：`client.Events()` → `Model.Publish`；`submitMsg` → `Sender.Send`；双 Session 经 fake.Hub 端到端验证 | ✅ `78abdb4` |
+| M3.6 | 未读与滚屏 | history 切「用户在底 → 强拉尾 / 离开底 → 仅累计 unread」二分；End / PgDn 到底清零；status 显示 `unread=N` | ✅ 本 commit |
 | M3.7 | 集成回归 | **必须复跑 catch-up 顺序验证**（`TestOfflineCatchUp`），确认 M3 改动未破坏离线补发 | ⬜ 待做 |
 | M3.8 | 自适应与性能 | resize 后重排；history 改增量 append 替代全量 `SetContent` | ⬜ 待做 |
 | M3.9 | 收尾打磨 | 帮助面板、键位提示、错误展示 | ⬜ 待做 |

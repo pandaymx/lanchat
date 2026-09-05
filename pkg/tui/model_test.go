@@ -347,6 +347,10 @@ func TestApplyEvent_Message_PushesIntoHistory(t *testing.T) {
 	}
 }
 
+// ============================================================
+// M3.4 新增测试：程序入口配套（alt screen / 启动聚焦）
+// ============================================================
+
 // TestLayoutDims_SidebarCapAndMin 验证 layoutDims 上下限夹紧。
 func TestLayoutDims_SidebarCapAndMin(t *testing.T) {
 	// 极窄终端：sidebar 应让位给 history（≤ width - historyMinWidth）。
@@ -358,5 +362,46 @@ func TestLayoutDims_SidebarCapAndMin(t *testing.T) {
 	_, sw, _ = layoutDims(300, 60)
 	if sw > sidebarMaxWidth {
 		t.Errorf("sidebar should be capped at MaxWidth=%d, got %d", sidebarMaxWidth, sw)
+	}
+}
+
+// TestView_AltScreenEnabled 验证 View 启用 alt screen buffer。
+//
+// bubbletea v2 把 alt screen 从 Program option 移到了 View 字段，
+// 所以断言落在 View 上而不是 Program 构造参数。
+func TestView_AltScreenEnabled(t *testing.T) {
+	m := New(Config{})
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !m.View().AltScreen {
+		t.Fatal("View().AltScreen should be true so the terminal is restored on exit")
+	}
+}
+
+// TestUpdate_WindowSizeMsg_FocusesInput 验证尺寸就绪后输入框自动获得焦点。
+//
+// 时序：Init 阶段终端大小未知，不能 focus；WindowSizeMsg 到达后
+// 才调 FocusInput，且只在未 focus 时调（避免 resize 反复重启光标 blink）。
+func TestUpdate_WindowSizeMsg_FocusesInput(t *testing.T) {
+	m := New(Config{})
+	if m.input.Focused() {
+		t.Fatal("input should not be focused before any WindowSizeMsg")
+	}
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if !m.input.Focused() {
+		t.Fatal("input should be focused after the first WindowSizeMsg")
+	}
+	// 二次 resize 不应改变 focus 状态（仍为 true）。
+	_, _ = m.Update(tea.WindowSizeMsg{Width: 90, Height: 30})
+	if !m.input.Focused() {
+		t.Fatal("input should stay focused after a subsequent resize")
+	}
+}
+
+// TestFocusInput_ReturnsCmd 验证 FocusInput 返回非 nil 的 tea.Cmd（光标 blink）。
+func TestFocusInput_ReturnsCmd(t *testing.T) {
+	m := New(Config{})
+	cmd := m.FocusInput()
+	if cmd == nil {
+		t.Fatal("FocusInput should return a tea.Cmd for the cursor blink timer")
 	}
 }

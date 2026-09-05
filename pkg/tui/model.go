@@ -96,7 +96,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.history.SetSize(msg.Width-sidebarW, bodyH)
 		m.input.SetSize(msg.Width, inputH)
 		m.refreshHistory()
-		return m, nil
+		// 尺寸就绪后才聚焦输入框（Init 阶段终端大小未知）。
+		// Focused 时不再重复 focus，避免每次 resize 都重启一次光标 blink。
+		var cmd tea.Cmd
+		if !m.input.Focused() {
+			cmd = m.FocusInput()
+		}
+		return m, cmd
 
 	case tea.KeyMsg:
 		k := msg.Key()
@@ -245,6 +251,7 @@ func (m *Model) RequestQuit(reason string) {
 
 // View 返回当前帧的四区拼装结果。
 // M3.3 已替换占位文字 → status / (history+sidebar) / input 三段纵向布局。
+// M3.4 起启用 AltScreen：退出后终端不留残影，符合 TUI 应用惯例。
 func (m *Model) View() tea.View {
 	status := m.renderStatus()
 	historyView := m.history.View()
@@ -252,7 +259,9 @@ func (m *Model) View() tea.View {
 	inputView := m.input.View()
 
 	body := renderLayout(m.width, m.height, status, historyView, sidebarView, inputView)
-	return tea.NewView(body)
+	v := tea.NewView(body)
+	v.AltScreen = true
+	return v
 }
 
 // renderStatus 生成状态栏字符串：连接状态 + 用户/设备 + hub URL。

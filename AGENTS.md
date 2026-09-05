@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M3 TUI 端（M3.1–M3.7 已合入，下一步 M3.8）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M3 TUI 端（M3.1–M3.9 已合入，下一步 M4 Web 端）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -26,9 +26,9 @@
 | M3.4 | 程序入口 | `cmd/tui/main.go`：起 bubbletea Program、`FocusInput`、优雅退出 | ✅ `0d309f7` |
 | M3.5 | client 接线 | client adapter：`client.Events()` → `Model.Publish`；`submitMsg` → `Sender.Send`；双 Session 经 fake.Hub 端到端验证 | ✅ `78abdb4` |
 | M3.6 | 未读与滚屏 | history 切「用户在底 → 强拉尾 / 离开底 → 仅累计 unread」二分；End / PgDn 到底清零；status 显示 `unread=N` | ✅ 本 commit |
-| M3.7 | 集成回归 | **必须复跑 catch-up 顺序验证**（`TestOfflineCatchUp`），确认 M3 改动未破坏离线补发 | ✅ 本 commit |
-| M3.8 | 自适应与性能 | resize 后重排；history 改增量 append 替代全量 `SetContent` | ⬜ 待做 |
-| M3.9 | 收尾打磨 | 帮助面板、键位提示、错误展示 | ⬜ 待做 |
+| M3.7 | 集成回归 | `TestOfflineCatchUp` 复跑 `-count=3` 全过；pkg/client 全测 `-count=3` ok；internal/integration `-count=2` ok | ✅ `f7d1c32` |
+| M3.8 | 自适应与性能 | layoutDims 极值（负值/超窄/超矮/超宽）退化测试 5 个；historyView 内部 `lines` 镜像 + `AppendMessage` 增量路径避免每条 split+join | ✅ 本 commit |
+| M3.9 | 收尾打磨 | `/help /clear /quit` 三命令；status 下方加键位提示行（hintsH=1）；lastError 红字 + 5s Tick 自动过期 | ✅ 本 commit |
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 

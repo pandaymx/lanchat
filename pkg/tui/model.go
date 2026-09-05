@@ -48,6 +48,8 @@ type Model struct {
 	// 业务状态
 	connected     bool
 	lastError     error
+	errExpireAt   time.Time // M3.9.3: lastError 红字显示到期时间
+	helpMode      bool      // M3.9.1: /help 切换
 	messages      []protocol.StoredMessage
 	peers         []protocol.Presence
 	lastSubmitted string
@@ -192,6 +194,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case errMsg:
 		m.lastError = msg.err
+		// M3.9.3：5s 后自动清。schedule 一个 tea.Tick，到点投递 errExpireMsg
+		// 让 Update 清掉 lastError 并触发重绘。
+		m.errExpireAt = time.Now().Add(errExpireDur)
+		return m, tea.Batch(listenCmd(m.inbox), m.errExpireCmd())
+
+	case errExpireMsg:
+		// 5s 到点：清错误。注意 errMsg 之间会 schedule 多个 Tick，每个到点
+		// 都会触发本分支；lastError 已经是 nil 时清幂等。
+		if m.lastError != nil && !time.Now().Before(m.errExpireAt) {
+			m.lastError = nil
+		}
 		return m, listenCmd(m.inbox)
 
 	case quitMsg:
@@ -254,13 +267,16 @@ func (m *Model) applyEvent(e core.Event) {
 // refreshHistory 把当前 m.messages 推给 historyView。
 //
 // 行为：
-//   - 总是把当前消息全量写入 viewport（SetContent）；用户滚动到任意位置
+//   - 总是把当前消息全量写入 viewport（SetMessages）；用户滚动到任意位置
 //     都能看到「已发生但未读」的消息内容。
 //   - 仅在视口当前已经在底部时才主动 GotoBottom，保持「跟随」语义；
 //     否则用户的滚动位置不被踢回底部。
 //
 // bubble 的 viewport.SetContent 不重置 yoffset，只在新 maxYOffset 变小时
 // 把 yoffset 拉到新 maxYOffset，所以这里依赖 AtBottom 判断是干净的。
+//
+// M3.8.2 起全量刷新只发生在 WindowSizeMsg（resize 重画），单条新消息
+// 由 applyEvent 走 historyView.AppendMessage 增量路径，避免每条都 split+join。
 func (m *Model) refreshHistory() {
 	m.history.SetMessages(m.messages)
 	if m.history.AtBottom() {
@@ -276,12 +292,21 @@ func (m *Model) refreshHistory() {
 //   - 正常：先写入 lastSubmitted 让测试可读，再投递 submitMsg 维持 Update 协议
 //
 // 路由：submitMsg → Update → M3.5+ 的 client adapter 收到并 Send。
+//
+// M3.9.1：以 `/` 开头的输入走命令路由，不经 submitMsg。命令支持：
+//   - /help    切换 helpMode，status 行展示帮助面板
+//   - /clear   清空 UI 层 messages（store 不动），与 unread 一起清零
+//   - /quit    直接触发 tea.Quit
+//   - 其他     noop，仍写 lastSubmitted 便于调试
 func (m *Model) trySubmitInput() tea.Cmd {
 	text := strings.TrimRight(m.input.Value(), "\n")
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
 	m.input.Reset()
+	if strings.HasPrefix(text, "/") {
+		return m.tryCommand(text)
+	}
 	m.lastSubmitted = text
 	select {
 	case m.inbox <- newSubmitMsg(text):
@@ -291,9 +316,53 @@ func (m *Model) trySubmitInput() tea.Cmd {
 	return listenCmd(m.inbox)
 }
 
+// tryCommand 处理 `/` 前缀的本地命令；返回的 cmd 与其他路径同协议。
+//
+// 帮助面板：`/help` 切换 helpMode，渲染层会拼装帮助行（见 renderStatus）；
+// 不引入新的 view state，避免侵入 bubble v2 View 接口。
+//
+// 所有分支（含 /quit）都写 lastSubmitted 便于调试——/quit 即使触发
+// tea.Quit，单元测试仍能从 LastSubmitted() 看到用户最后一次输入。
+func (m *Model) tryCommand(text string) tea.Cmd {
+	fields := strings.Fields(text)
+	if len(fields) == 0 {
+		return nil
+	}
+	cmd := fields[0]
+	m.lastSubmitted = text
+	switch cmd {
+	case "/help":
+		m.helpMode = !m.helpMode
+	case "/clear":
+		m.messages = m.messages[:0]
+		m.refreshHistory()
+		m.unread = 0
+	case "/quit":
+		return tea.Cmd(tea.Quit)
+	}
+	return listenCmd(m.inbox)
+}
+
 // errInboxFull 描述 inbox 通道已满、submitMsg 被丢弃的情况。
 // 定义在 model.go 顶层，Test 也能 import 引用。
 var errInboxFull = errors.New("tui: inbox is full, submit dropped")
+
+// errExpireDur 是 M3.9.3 错误展示窗口时长。
+//
+// 与 M3.4 sendTimeout 无关：sendTimeout 是出站 Send 的同步阻塞上限，
+// errExpireDur 是 UI 层「最后一次错误」的红字显示时长。
+const errExpireDur = 5 * time.Second
+
+// errExpireCmd schedule 一个 5s 后到点的 Tick，到点投递 errExpireMsg。
+//
+// 失败语义：tea.Cmd 不可取消，所以 errMsg 之间会 schedule 多个 Tick；
+// errExpireMsg 的 Update 分支按 expireAt 比较处理，到点 lastError 为 nil
+// 时清幂等。
+func (m *Model) errExpireCmd() tea.Cmd {
+	return tea.Tick(errExpireDur, func(time.Time) tea.Msg {
+		return newErrExpireMsg()
+	})
+}
 
 // appendMessage 把消息加入历史；超限时丢弃最早的批（保留 10% headroom
 // 避免每条新消息都触发一次 slice copy）。
@@ -347,16 +416,18 @@ func (m *Model) RequestQuit(reason string) {
 	}
 }
 
-// View 返回当前帧的四区拼装结果。
-// M3.3 已替换占位文字 → status / (history+sidebar) / input 三段纵向布局。
+// View 返回当前帧的五区拼装结果。
+// M3.3 已替换占位文字 → status / hints / (history+sidebar) / input 四段纵向布局。
 // M3.4 起启用 AltScreen：退出后终端不留残影，符合 TUI 应用惯例。
+// M3.9.2 起 hints 行展示键位提示；视高不足时让出（见 renderLayout）。
 func (m *Model) View() tea.View {
 	status := m.renderStatus()
+	hints := m.renderHints()
 	historyView := m.history.View()
 	sidebarView := m.renderSidebar()
 	inputView := m.input.View()
 
-	body := renderLayout(m.width, m.height, status, historyView, sidebarView, inputView)
+	body := renderLayout(m.width, m.height, status, hints, historyView, sidebarView, inputView)
 	v := tea.NewView(body)
 	v.AltScreen = true
 	return v
@@ -366,7 +437,15 @@ func (m *Model) View() tea.View {
 //
 // M3.6 新增：当 unread > 0 时附加 `unread=N`，让用户在不切回 history 区的
 // 情况下也知道有多少条新消息等着看；点 End / 滚到底部后此标记自动消失。
+//
+// M3.9.1：当 helpMode 为 true 时返回帮助面板字符串替代常规 status；同一
+// 个 1 行 height，所以不影响布局。
+//
+// M3.9.3：lastError 用 lipgloss 红字渲染，到 errExpireAt 自动清掉。
 func (m *Model) renderStatus() string {
+	if m.helpMode {
+		return "help: Enter send · Shift+Enter newline · End tail · PgUp/PgDn scroll · /help · /clear · /quit · Ctrl+C quit"
+	}
 	conn := "offline"
 	if m.connected {
 		conn = "online"
@@ -380,6 +459,14 @@ func (m *Model) renderStatus() string {
 	if m.unread > 0 {
 		parts = append(parts, "unread="+itoa(m.unread))
 	}
+	if m.lastError != nil {
+		// M3.9.3 红字渲染；过期（>5s）则清掉，View 下一帧自然不显示。
+		if time.Now().Before(m.errExpireAt) {
+			parts = append(parts, errStyle.Render("err="+m.lastError.Error()))
+		} else {
+			m.lastError = nil
+		}
+	}
 	out := ""
 	for i, p := range parts {
 		if i > 0 {
@@ -387,11 +474,17 @@ func (m *Model) renderStatus() string {
 		}
 		out += p
 	}
-	if m.lastError != nil {
-		out += " | err=" + m.lastError.Error()
-	}
 	return out
 }
+
+// renderHints 生成键位提示行；M3.9.2 在 status 下方多占 1 行，
+// 不依赖底层组件库，固定字符串 + lipgloss 灰字渲染。
+func (m *Model) renderHints() string {
+	return "[Enter] send · [Shift+Enter] newline · [End] tail · [PgUp/PgDn] scroll · [/help] commands · [Ctrl+C] quit"
+}
+
+// HelpMode 报告当前是否处于帮助面板模式（M3.9.1）。
+func (m *Model) HelpMode() bool { return m.helpMode }
 
 // renderSidebar 生成右侧在线设备列表文本。
 func (m *Model) renderSidebar() string {

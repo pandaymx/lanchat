@@ -42,6 +42,17 @@ type sentMsg struct {
 	text string
 }
 
+// errExpireMsg 表示 5 秒错误显示窗口到点。
+//
+// M3.9.3：错误展示改为「5s 后自动清」，由 errMsg 触发时 schedule 一个
+// tea.Tick，到点投递本 Msg 让 Update 清掉 lastError + 触发重绘。
+// 若在 5s 内有新的 errMsg，旧 schedule 会被新的覆盖（tea 调度模型：同一
+// 程序内 Cmd 不可取消，schedule 完即 fire——所以是「窗口最迟 5s 内消失」
+// 语义，不会无限延展）。
+type errExpireMsg struct{}
+
+func newErrExpireMsg() errExpireMsg { return errExpireMsg{} }
+
 func newSentMsg(text string) sentMsg { return sentMsg{text: text} }
 
 func newEventMsg(e core.Event) eventMsg { return eventMsg{event: e} }

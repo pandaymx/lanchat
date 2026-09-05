@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/viewport"
@@ -15,8 +14,12 @@ import (
 //
 // 职责：把 Model.messages 序列化为纯字符串并交给 viewport 渲染；
 // 不参与任何事件路由（viewport 自己消费 PageUp/PageDown/Up/Down 等）。
+//
+// M3.8.2 起内部镜像一份 []string 缓冲，让 AppendMessage 单条增量追加
+// 走 SetContentLines 而非 SetContent，避免每次新消息都全量 split+join。
 type historyView struct {
 	inner viewport.Model
+	lines []string
 }
 
 // 历史消息行最大宽度；超过则折叠显示，避免撑爆窄终端。
@@ -30,7 +33,7 @@ func newHistoryView() historyView {
 		viewport.WithWidth(40),
 		viewport.WithHeight(10),
 	)
-	return historyView{inner: vp}
+	return historyView{inner: vp, lines: make([]string, 0, 256)}
 }
 
 // Init 返回 viewport 自己的初始化 Cmd。
@@ -65,16 +68,32 @@ func (h *historyView) SetSize(w, height int) {
 //
 // 同时不再接受 autoTailOnly 开关——AtBottom 状态是 viewport 自描述的，
 // 不需要外部再传一个冗余信号。这把 SetMessages 收敛成「纯内容替换」。
+//
+// M3.8.2 起内部维护 lines 镜像缓冲，避免每条新消息都全量 split+join。
 func (h *historyView) SetMessages(msgs []protocol.StoredMessage) {
-	if len(msgs) == 0 {
-		h.inner.SetContent("")
-		return
-	}
-	lines := make([]string, 0, len(msgs))
+	h.lines = h.lines[:0]
 	for i := range msgs {
-		lines = append(lines, formatMessage(msgs[i]))
+		h.lines = append(h.lines, formatMessage(msgs[i]))
 	}
-	h.inner.SetContent(strings.Join(lines, "\n"))
+	h.applyLines()
+}
+
+// AppendMessage 单条增量追加到 viewport 内容。
+//
+// M3.8.2 引入：消息高频到达（每秒数十条）时，避免每条都走全量 SetMessages
+// + SetContent 重新 split+join。SetContentLines 在 lines 不含 \r\n 的情况下
+// 走快速路径（O(n) 扫描但常数项比 split 小）。
+//
+// 调用方（M3.8.2 的 Model.appendMessage）按需触发，wasAtBottom 锚定的
+// 行为由 Model.applyEvent 负责；本方法只管内容追加。
+func (h *historyView) AppendMessage(msg protocol.StoredMessage) {
+	h.lines = append(h.lines, formatMessage(msg))
+	h.applyLines()
+}
+
+// applyLines 把 h.lines 镜像给底层 viewport，统一 SetContentLines 的入口。
+func (h *historyView) applyLines() {
+	h.inner.SetContentLines(h.lines)
 }
 
 // ScrollUp 把视口上滚 n 行；n<=0 时无操作。M3.6 给 Model 提供显式 API，

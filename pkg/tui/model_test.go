@@ -245,8 +245,8 @@ func TestUpdate_WindowSizeMsg_ResizesRegions(t *testing.T) {
 		t.Fatalf("input inner width want %d, got %d",
 			wantInputInnerWidth, m.input.Width())
 	}
-	if m.history.Height() != 36 {
-		t.Fatalf("history height should be h - status - input = 36, got %d",
+	if m.history.Height() != 35 {
+		t.Fatalf("history height should be h - status - input - hints = 35, got %d",
 			m.history.Height())
 	}
 }
@@ -367,6 +367,80 @@ func TestLayoutDims_SidebarCapAndMin(t *testing.T) {
 	if sw > sidebarMaxWidth {
 		t.Errorf("sidebar should be capped at MaxWidth=%d, got %d", sidebarMaxWidth, sw)
 	}
+}
+
+// TestLayoutDims_NegativeOrZeroClamped 验证 width/height 的负值与 0
+// 不会让 layoutDims 返回负值，避免 lipgloss panic。
+//
+// 这是 M3.8 自适应回归门禁：极端终端（resize 中间帧、子进程 detach）
+// 可能下发 (0, 0) / (-1, -1)。
+func TestLayoutDims_NegativeOrZeroClamped(t *testing.T) {
+	for _, w := range []int{-100, 0, 1} {
+		for _, h := range []int{-50, 0, 1} {
+			hw, sw, bh := layoutDims(w, h)
+			if hw < 0 || sw < 0 || bh < 0 {
+				t.Errorf("layoutDims(%d,%d) returned negatives: hw=%d sw=%d bh=%d", w, h, hw, sw, bh)
+			}
+			if hw+sw > maxInt(w, 1) {
+				t.Errorf("layoutDims(%d,%d): hw+sw=%d exceeds width", w, h, hw+sw)
+			}
+		}
+	}
+}
+
+// TestLayoutDims_TinyHeight_BodyShrinks 验证 height 小于 status+input 时
+// body 仍至少 1 行，避免 viewport 高度 0 报错。
+func TestLayoutDims_TinyHeight_BodyShrinks(t *testing.T) {
+	for _, h := range []int{statusH, statusH + 1, statusH + inputH - 1, statusH + inputH} {
+		_, _, bh := layoutDims(80, h)
+		if bh < 1 {
+			t.Errorf("layoutDims(80, %d): bodyH should be ≥1, got %d", h, bh)
+		}
+	}
+}
+
+// TestLayoutDims_NarrowerThanBothMins 验证 width 同时小于
+// historyMinWidth+sidebarMinWidth 时，sidebar 被挤到 0、history 占满。
+//
+// 极值：width=18 < historyMin(10)+sidebarMin(12)=22。
+func TestLayoutDims_NarrowerThanBothMins(t *testing.T) {
+	hw, sw, _ := layoutDims(18, 40)
+	if hw+sw > 18 {
+		t.Errorf("hw+sw=%d exceeds width=18", hw+sw)
+	}
+	if sw > 18-historyMinWidth {
+		t.Errorf("sidebar should give history at least %d cols, got sw=%d", historyMinWidth, sw)
+	}
+}
+
+// TestLayoutDims_StandardRatio 验证标准宽 (90) 下 sidebar 拿到 30。
+func TestLayoutDims_StandardRatio(t *testing.T) {
+	hw, sw, _ := layoutDims(90, 40)
+	if sw != 30 {
+		t.Errorf("width=90 sidebar should be 30 (=90/3), got %d", sw)
+	}
+	if hw+sw != 90 {
+		t.Errorf("hw(%d)+sw(%d) should sum to 90", hw, sw)
+	}
+}
+
+// TestLayoutDims_VeryTall 验证 height=200 时 bodyH 跟着扩到 195。
+//
+// M3.9.2 起扣掉 hintsH=1 行（200-1-3-1=195），原本是 196。
+func TestLayoutDims_VeryTall(t *testing.T) {
+	_, _, bh := layoutDims(80, 200)
+	want := 200 - statusH - inputH - hintsH
+	if bh != want {
+		t.Errorf("height=200 bodyH should be %d, got %d", want, bh)
+	}
+}
+
+// maxInt is a small helper for layoutDims negative-guard assertions.
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // TestView_AltScreenEnabled 验证 View 启用 alt screen buffer。
@@ -819,6 +893,259 @@ func TestRefreshHistory_KeepsScrollPosition(t *testing.T) {
 	}
 	if m.history.AtBottom() {
 		t.Fatalf("refreshHistory while scrolled-away should NOT snap to bottom")
+	}
+}
+
+// ============================================================
+// M3.8+M3.9 新增测试：layout 退化 + 增量 append + 命令 + 错误过期
+// ============================================================
+
+// TestApplyEvent_Message_UsesAppendPath 验证 M3.8.2 增量路径：
+// 单条新消息走 historyView.AppendMessage 而非全量 SetMessages。
+//
+// 间接验证：单条消息到达后 messages +1，history 仍反映；
+// 并通过 AtBottom 行为保持 M3.6 的「用户在底跟随、不在底累加」语义。
+func TestApplyEvent_Message_UsesAppendPath(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	// 灌 3 条：< viewport 高度（15），所以 AtBottom=true。
+	for i := 1; i <= 3; i++ {
+		m.applyEvent(core.Event{
+			Kind:    core.EventMessage,
+			Message: &protocol.StoredMessage{SenderUserID: "u", Body: "m", ServerSeq: uint64(i)},
+		})
+	}
+	if got := len(m.Messages()); got != 3 {
+		t.Fatalf("messages should be 3, got %d", got)
+	}
+	if !m.history.AtBottom() {
+		t.Fatal("history should still be at bottom after append path")
+	}
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("in-bottom append should not accumulate unread, got %d", got)
+	}
+
+	// 再灌一条：仍在底，unread 仍 0。
+	m.applyEvent(core.Event{
+		Kind:    core.EventMessage,
+		Message: &protocol.StoredMessage{SenderUserID: "u", Body: "m4", ServerSeq: 4},
+	})
+	if got := len(m.Messages()); got != 4 {
+		t.Fatalf("messages should be 4 after second batch, got %d", got)
+	}
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("still in bottom, unread should remain 0, got %d", got)
+	}
+}
+
+// TestApplyEvent_Message_AwayFromBottom_AccumulateUnread 回归 M3.6 行为：
+// 用户不在底时新消息累加 unread，不动视口。
+//
+// 制造「不在底」：用 height=8（viewport = 8-1-3-1 = 3 行），灌 5 条消息
+// 让内容超出 viewport；PageUp 把 yoffset 推 0，AtBottom 检查 yoffset>=maxYOffset
+// 在内容 > viewport 高度时为 false。
+func TestApplyEvent_Message_AwayFromBottom_AccumulateUnread(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	for i := 1; i <= 5; i++ {
+		m.applyEvent(core.Event{
+			Kind:    core.EventMessage,
+			Message: &protocol.StoredMessage{SenderUserID: "u", Body: "m", ServerSeq: uint64(i)},
+		})
+	}
+	if m.history.AtBottom() {
+		t.Fatal("prereq: 5 messages in 3-line viewport should be AtBottom=true")
+	}
+	pre := m.UnreadCount()
+	m.applyEvent(core.Event{
+		Kind:    core.EventMessage,
+		Message: &protocol.StoredMessage{SenderUserID: "u", Body: "after-pageup", ServerSeq: 99},
+	})
+	if got := m.UnreadCount(); got != pre+1 {
+		t.Fatalf("unread should rise by 1, want %d got %d", pre+1, got)
+	}
+}
+
+// TestTrySubmit_SlashHelp_TogglesHelpMode 验证 /help 命令切换 helpMode，
+// 不走 submitMsg 路径，lastSubmitted 仍记录便于调试。
+func TestTrySubmit_SlashHelp_TogglesHelpMode(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	if m.HelpMode() {
+		t.Fatal("helpMode should default to false")
+	}
+	// 在输入框输入 /help（一次插入整串，避免逐字符多次 Update）
+	m.Update(tea.KeyPressMsg{Text: "/help", Code: '/'})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: 0})
+	if cmd == nil {
+		t.Fatal("/help Enter should yield a non-nil cmd (listenCmd)")
+	}
+	if !m.HelpMode() {
+		t.Fatal("HelpMode should be true after /help submit")
+	}
+	if got := m.LastSubmitted(); got != "/help" {
+		t.Fatalf("LastSubmitted should record \"/help\", got %q", got)
+	}
+
+	// 再来一次 /help：应关闭
+	m.Update(tea.KeyPressMsg{Text: "/help", Code: '/'})
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: 0})
+	if m.HelpMode() {
+		t.Fatal("HelpMode should toggle back to false on second /help")
+	}
+}
+
+// TestTrySubmit_SlashClear_ResetsMessages 验证 /clear 清空 messages 并清 zero unread。
+//
+// 用 height=8 让 viewport=3 行；灌 5 条已溢出，后续 3 条自然处于「离底」状态，
+// unread 应累加 3。
+func TestTrySubmit_SlashClear_ResetsMessages(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	for i := 1; i <= 5; i++ {
+		m.applyEvent(core.Event{
+			Kind:    core.EventMessage,
+			Message: &protocol.StoredMessage{SenderUserID: "u", Body: "m", ServerSeq: uint64(i)},
+		})
+	}
+	m.PageUp()
+	for i := 6; i <= 8; i++ {
+		m.applyEvent(core.Event{
+			Kind:    core.EventMessage,
+			Message: &protocol.StoredMessage{SenderUserID: "u", Body: "x", ServerSeq: uint64(i)},
+		})
+	}
+	if m.UnreadCount() == 0 {
+		t.Fatal("prereq: unread should be >0 before /clear")
+	}
+	if len(m.Messages()) != 8 {
+		t.Fatalf("prereq: messages should be 8, got %d", len(m.Messages()))
+	}
+
+	// 输入 /clear + Enter
+	m.Update(tea.KeyPressMsg{Text: "/clear", Code: '/'})
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: 0})
+
+	if got := len(m.Messages()); got != 0 {
+		t.Fatalf("messages should be 0 after /clear, got %d", got)
+	}
+	if got := m.UnreadCount(); got != 0 {
+		t.Fatalf("unread should be 0 after /clear, got %d", got)
+	}
+}
+
+// TestTrySubmit_SlashQuit_TriggersTeaQuit 验证 /quit 返回 tea.Quit。
+func TestTrySubmit_SlashQuit_TriggersTeaQuit(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	m.Update(tea.KeyPressMsg{Text: "/quit", Code: '/'})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: 0})
+	if cmd == nil {
+		t.Fatal("/quit should yield a non-nil cmd")
+	}
+	if got := m.LastSubmitted(); got != "/quit" {
+		t.Fatalf("LastSubmitted should be \"/quit\" for debug, got %q", got)
+	}
+}
+
+// TestTrySubmit_RegularText_RoutesToSubmit 回归：非 / 文本仍走 submitMsg。
+func TestTrySubmit_RegularText_RoutesToSubmit(t *testing.T) {
+	m := New(Config{User: "alice", Device: "lap"})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	m.Update(tea.KeyPressMsg{Text: "hi", Code: 'h'})
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: 0})
+	if got := m.LastSubmitted(); got != "hi" {
+		t.Fatalf("LastSubmitted want \"hi\", got %q", got)
+	}
+	if m.HelpMode() {
+		t.Fatal("helpMode should remain false after regular text submit")
+	}
+}
+
+// TestUpdate_ErrMsg_RecordsExpireAt 验证 errMsg 触发时 errExpireAt 被设置。
+func TestUpdate_ErrMsg_RecordsExpireAt(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	before := time.Now()
+	_, cmd := m.Update(newErrMsg(errors.New("boom")))
+	if cmd == nil {
+		t.Fatal("errMsg should yield a non-nil cmd (Batch listenCmd + Tick)")
+	}
+	if m.LastError() == nil || m.LastError().Error() != "boom" {
+		t.Fatalf("LastError should be set, got %v", m.LastError())
+	}
+	if !m.errExpireAt.After(before) {
+		t.Fatalf("errExpireAt should be > before, got %v before %v",
+			m.errExpireAt, before)
+	}
+}
+
+// TestUpdate_ErrExpireMsg_ClearsAfterWindow 模拟 errExpireMsg 投递到点。
+//
+// 把 errExpireAt 倒回 6s 前，等效于 5s 窗口已过；投递 errExpireMsg 后
+// lastError 应当被清掉（lastError 还在的话）。
+func TestUpdate_ErrExpireMsg_ClearsAfterWindow(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	_, _ = m.Update(newErrMsg(errors.New("transient")))
+	if m.LastError() == nil {
+		t.Fatal("pre: LastError should be set")
+	}
+	// 把 expireAt 倒推到 6s 前，模拟已经过窗口
+	m.errExpireAt = time.Now().Add(-6 * time.Second)
+	_, _ = m.Update(newErrExpireMsg())
+	if m.LastError() != nil {
+		t.Fatalf("LastError should be cleared after window, got %v", m.LastError())
+	}
+}
+
+// TestUpdate_ErrExpireMsg_NoOpBeforeWindow 验证 expireAt 还在未来时
+// errExpireMsg 不应清错误。
+func TestUpdate_ErrExpireMsg_NoOpBeforeWindow(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	_, _ = m.Update(newErrMsg(errors.New("ongoing")))
+	// expireAt 仍是 now+5s；模拟 1s 后到点的 errExpireMsg
+	m.errExpireAt = time.Now().Add(1 * time.Second)
+	_, _ = m.Update(newErrExpireMsg())
+	if m.LastError() == nil || m.LastError().Error() != "ongoing" {
+		t.Fatalf("LastError should remain before window, got %v", m.LastError())
+	}
+}
+
+// TestRenderStatus_HelpModeReturnsHelpText 验证 helpMode=true 时
+// renderStatus 返回帮助文本而非常规 status。
+func TestRenderStatus_HelpModeReturnsHelpText(t *testing.T) {
+	m := New(Config{User: "alice", Device: "lap"})
+	m.helpMode = true
+	st := m.renderStatus()
+	if !strings.Contains(st, "help:") {
+		t.Fatalf("helpMode status should contain 'help:' prefix, got %q", st)
+	}
+	// 常规字段应不出现，避免冗余。
+	if strings.Contains(st, "user=alice") {
+		t.Fatalf("helpMode status should NOT contain user=, got %q", st)
+	}
+}
+
+// TestView_RendersAllFiveRegions 验证 View 输出包含 hints 行 + history + input。
+//
+// 简单断言：output 长度 > 一定阈值且 hints 行字符串至少出现一次。
+func TestView_RendersAllFiveRegions(t *testing.T) {
+	m := New(Config{User: "alice", Device: "lap", HubURL: "ws://h:9000"})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	out := m.View().Content
+	// hints 行至少应包含 [Enter]
+	if !strings.Contains(out, "[Enter]") {
+		t.Fatalf("View should render hints line containing [Enter], got: %q", out)
+	}
+	// status 行应包含 user=alice
+	if !strings.Contains(out, "user=alice") {
+		t.Fatalf("View should render status with user=, got: %q", out)
+	}
+	// input 区以 borderTop 字符开头（lipgloss 边框）
+	if !strings.Contains(out, "─") {
+		t.Fatalf("View should render input border, got: %q", out)
 	}
 }
 

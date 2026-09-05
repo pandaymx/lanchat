@@ -32,6 +32,12 @@ type textInput struct {
 //
 // 占位符提示、字符上限 4096（一段长代码片段够用且不会撑爆内存）；
 // ShowLineNumbers 关闭，背景行不画数字，UI 更紧凑。
+//
+// 关闭 virtual cursor：bubbles/textarea 默认用 "virtual cursor"（用样式自己画
+// 光标、隐藏真实终端光标）。在 Windows 终端 + 中文输入法场景下，IME 候选框
+// 需要跟随真实终端光标；virtual cursor 会让 IME 候选框漂到窗口右下角。
+// 关闭后 textarea 会通过 Cursor() 返回真实光标位置，bubbletea 把它同步给
+// 终端，输入法候选框就能正确跟到输入位置。
 func newTextInput() textInput {
 	ti := textarea.New()
 	ti.Placeholder = "type a message (Enter to send, Shift+Enter for newline)"
@@ -39,6 +45,8 @@ func newTextInput() textInput {
 	ti.ShowLineNumbers = false
 	ti.SetWidth(defaultInputWidth)
 	ti.SetHeight(defaultInputHeight)
+	// 真实光标（非 virtual cursor），让 Windows 终端 IME 候选框跟随输入位置。
+	ti.SetVirtualCursor(false)
 	ti.KeyMap.InsertNewline = key.NewBinding(
 		key.WithKeys("shift+enter", "ctrl+j"),
 		key.WithHelp("shift+enter", "insert newline"),

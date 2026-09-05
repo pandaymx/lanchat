@@ -333,6 +333,20 @@ func TestUpdate_BlankSubmit_NoOp(t *testing.T) {
 	}
 }
 
+// TestNewTextInput_DisableVirtualCursor 验证默认关闭 virtual cursor。
+//
+// textarea v2 默认 useVirtualCursor=true，会在终端里隐藏真实光标并自己用样式
+// 画光标；Windows 中文输入法候选框需要真实光标位置来跟随，否则会漂到窗口
+// 右下角（用户反馈"输入法候选框在右边"）。newTextInput 必须显式把 virtual
+// cursor 关掉，让 textarea.Cursor() 返回真实光标位置，bubbletea 把它同步给
+// 终端后 IME 候选框才能正确跟到输入位置。
+func TestNewTextInput_DisableVirtualCursor(t *testing.T) {
+	ti := newTextInput()
+	if ti.inner.VirtualCursor() {
+		t.Fatal("newTextInput should disable virtual cursor for Windows IME positioning")
+	}
+}
+
 // TestUpdate_CtrlC_StillQuits 回归：M3.3 改键位路由后 Ctrl+C 仍 Quit。
 func TestUpdate_CtrlC_StillQuits(t *testing.T) {
 	m := New(Config{})
@@ -510,12 +524,18 @@ func TestUpdate_WindowSizeMsg_FocusesInput(t *testing.T) {
 	}
 }
 
-// TestFocusInput_ReturnsCmd 验证 FocusInput 返回非 nil 的 tea.Cmd（光标 blink）。
+// TestFocusInput_ReturnsCmd 验证 FocusInput 正确聚焦输入框。
+//
+// 之前开启 virtual cursor 时，Focus() 会返回光标 blink timer 的 Cmd；关闭
+// virtual cursor（为让 Windows IME 候选框跟随真实光标）后，textarea 自己
+// 的 virtual cursor 被隐藏，Focus() 返回 nil，但真实光标由 bubbletea program
+// 管理。本测试只保证调用后不 panic、输入框确实 focus，不强求返回非 nil Cmd。
 func TestFocusInput_ReturnsCmd(t *testing.T) {
 	m := New(Config{})
 	cmd := m.FocusInput()
-	if cmd == nil {
-		t.Fatal("FocusInput should return a tea.Cmd for the cursor blink timer")
+	_ = cmd // 允许 nil（virtual cursor 关闭时）或非 nil（开启时），这里不做断言
+	if !m.input.Focused() {
+		t.Fatal("FocusInput should focus the input")
 	}
 }
 

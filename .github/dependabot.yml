@@ -17,6 +17,8 @@
 #    依赖升级是被验证过才合的。
 #
 # 4. 安全更新（security updates）无需在此声明，仓库开启 Dependabot 后默认生效。
+#    唯一的例外是 bun 生态——它目前只有 version updates，没有 security updates，
+#    详见下方对应条目的注释。
 #
 # 参考：
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
@@ -78,9 +80,22 @@ updates:
       - dependencies
       - docker
 
-  # ------------------------------------------------------- npm 开发工具链
+  # ------------------------------------------------------- bun 开发工具链
   # 只是 commitlint / semantic-release / lefthook，不参与运行时，月度够用。
-  - package-ecosystem: npm
+  #
+  # 为什么是 bun 而不是 npm：npm 生态只改 package.json，不会重新生成 bun.lock；
+  # 而 release.yml 里有 `bun install --frozen-lockfile`，lockfile 一旦与
+  # package.json 漂移，下次 tag push 发版会直接失败
+  # （error: lockfile had changes, but lockfile is frozen）。
+  # 换成 bun 生态后 dependabot 会同步维护两者。
+  #
+  # 前置条件（均满足）：bun >= v1.1.39，且是文本格式 bun.lock
+  # （不支持 legacy 二进制 bun.lockb）。本项目 packageManager 为 bun@1.3.14，
+  # bun.lock 是 JSON 文本，都符合。
+  #
+  # 代价：bun 生态目前只支持 version updates，没有 security updates。
+  # 这里全是 devDependencies、不进生产产物，风险可接受。
+  - package-ecosystem: bun
     directory: /
     schedule:
       interval: monthly

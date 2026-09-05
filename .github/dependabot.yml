@@ -1,0 +1,93 @@
+# Dependabot 依赖更新配置
+#
+# 与仓库既有约定的对齐说明（改这个文件前请先读）：
+#
+# 1. commit prefix 必须落在 commitlint.config.js 的 scope 白名单内
+#    （core|proto|hub|tui|web|desktop|mobile|store|deps|ci|docs|repo|release）。
+#    刻意不开 `commit-message.include: scope` —— 开启后 dependabot 会生成
+#    `deps(gomod)` / `deps(npm_dev)` 这类 scope，不在白名单中。云端建 commit 不走
+#    lefthook 所以当时不报错，但本地 rebase / cherry-pick 这些 commit 会被
+#    commit-msg 钩子拦下。只用 prefix 生成 `deps:` / `ci:` 是最稳的。
+#
+# 2. deps: / ci: 前缀不会触发 semantic-release 发版 —— conventionalcommits
+#    preset 只把 fix/feat/perf 等当发版信号。依赖更新合入后不会误发版本号，
+#    符合预期（见 .releaserc.json）。
+#
+# 3. CI 的 on.pull_request 覆盖 main，所以下面每个 PR 都会跑 lint / test / build，
+#    依赖升级是被验证过才合的。
+#
+# 4. 安全更新（security updates）无需在此声明，仓库开启 Dependabot 后默认生效。
+#
+# 参考：
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------- Go 模块
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '03:00'
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+      - go
+    groups:
+      # charm.land 是 Bubble Tea 生态 v2 的新家（bubbletea / bubbles / lipgloss）。
+      # 三者版本强联动，拆成多个 PR 会互相冲突，合成一个。
+      charm:
+        patterns:
+          - 'charm.land/*'
+      # 其余 Go 依赖合成一个，避免 PR 洪水。
+      go-modules:
+        patterns:
+          - '*'
+        exclude-patterns:
+          - 'charm.land/*'
+
+  # ------------------------------------------------------- GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+      time: '04:00'
+      timezone: Asia/Shanghai
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - ci
+
+  # ------------------------------------------------------ Docker 基础镜像
+  # 覆盖 Dockerfile 里的 golang:1.27-alpine 与 distroless 运行时镜像。
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+      time: '04:30'
+      timezone: Asia/Shanghai
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - docker
+
+  # ------------------------------------------------------- npm 开发工具链
+  # 只是 commitlint / semantic-release / lefthook，不参与运行时，月度够用。
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+      time: '05:00'
+      timezone: Asia/Shanghai
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+      - tooling

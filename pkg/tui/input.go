@@ -19,6 +19,11 @@ const (
 // 为实现「Enter 提交 / Shift+Enter 换行」语义，构造时把 InsertNewline 重绑
 // 到 "shift+enter" + "ctrl+j"。于是裸 Enter 落到本组件 default 分支不做事，
 // 由 outer Model.Update 拦截后负责清空 + 投递 submitMsg。
+//
+// 注：小键盘 Enter (KeyKpEnter) 与主键盘 Enter 在 bubbles key binding 字符串
+// 层面无法区分（bubbletea 两者都 stringify 为 "enter"），但 outer Model 读到
+// 的 Key.Code 是不同 rune。本组件不需要单独处理 kpenter——outer 把小键盘 Enter
+// 也路由到 trySubmitInput / InsertNewline，与主键盘 Enter 行为一致。
 type textInput struct {
 	inner textarea.Model
 }

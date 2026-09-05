@@ -161,8 +161,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Cmd(tea.Quit)
 		}
 		// Enter（不带 Shift）→ 提交。Shift+Enter 落到 textInput 自己换行。
-		if k.Code == tea.KeyEnter && k.Mod&tea.ModShift == 0 {
-			return m, m.trySubmitInput()
+		// 小键盘 Enter 也是同样的语义：bubbletea 把它解为不同的 KeyCode
+		// (tea.KeyKpEnter)，老代码只判 KeyEnter 所以漏过；这里补上。
+		if k.Code == tea.KeyEnter || k.Code == tea.KeyKpEnter {
+			if k.Mod&tea.ModShift == 0 {
+				return m, m.trySubmitInput()
+			}
+			// Shift+Enter / Shift+小键盘 Enter：继续往下到 textInput 触发换行。
 		}
 		// M3.6 历史区滚屏路由：
 		// textarea focus 时会拦截 Up/PgUp 等键，所以这几个按键必须由

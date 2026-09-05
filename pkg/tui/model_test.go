@@ -284,6 +284,41 @@ func TestUpdate_ShiftEnterInsertsNewline(t *testing.T) {
 	}
 }
 
+// TestUpdate_KpEnterRoutesToSubmit 验证小键盘 Enter（KeyKpEnter）也走提交路径。
+// 之前 outer 只判 KeyEnter，bubbletea 把小键盘 Enter 解为不同 Code (1114126 vs 13)，
+// 漏过导致「数字键 Enter 无法发送消息」。
+func TestUpdate_KpEnterRoutesToSubmit(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.KeyPressMsg{Text: "h", Code: 'h'})
+	m.Update(tea.KeyPressMsg{Text: "i", Code: 'i'})
+	if got := m.input.Value(); got != "hi" {
+		t.Fatalf("input should hold 'hi' before submit, got %q", got)
+	}
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyKpEnter, Mod: 0})
+	if got := m.LastSubmitted(); got != "hi" {
+		t.Fatalf("KpEnter: LastSubmitted want 'hi', got %q", got)
+	}
+	if v := m.input.Value(); v != "" {
+		t.Fatalf("KpEnter: input should be cleared after submit, got %q", v)
+	}
+}
+
+// TestUpdate_ShiftKpEnterInsertsNewline 验证 Shift+小键盘 Enter 也走换行而非提交。
+func TestUpdate_ShiftKpEnterInsertsNewline(t *testing.T) {
+	m := New(Config{})
+	m.Update(tea.KeyPressMsg{Text: "a", Code: 'a'})
+	before := m.LastSubmitted()
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyKpEnter, Mod: tea.ModShift})
+	if got := m.LastSubmitted(); got != before {
+		t.Fatalf("Shift+KpEnter should NOT submit, LastSubmitted %q → %q",
+			before, got)
+	}
+	v := m.input.Value()
+	if !strings.Contains(v, "\n") {
+		t.Fatalf("Shift+KpEnter should append newline; input value=%q", v)
+	}
+}
+
 // TestUpdate_BlankSubmit_NoOp 验证空白文本提交时不投递。
 func TestUpdate_BlankSubmit_NoOp(t *testing.T) {
 	m := New(Config{})

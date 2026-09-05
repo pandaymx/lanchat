@@ -53,7 +53,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.27'
-          cache: false
+          # charm.land/bubbletea 等冷缓存首次下载链长，
+          # 启用 actions/setup-go 原生 module cache 避免每个 commit 都重新下载
+          cache: true
       - name: Run tests with race
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
       - uses: actions/upload-artifact@v4

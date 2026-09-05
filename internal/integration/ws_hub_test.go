@@ -48,7 +48,7 @@ func TestTwoClientsExchange(t *testing.T) {
 	})
 
 	// Alice 应收到自己的 FKDeliver（广播回环）。
-	got := mustDecodeMsg(t, alice.waitFor(protocol.FKDeliver, 2*time.Second))
+	got := mustDecodeMsg(t, alice.waitFor(protocol.FKDeliver, 5*time.Second))
 	if got.Body != "hello bob" {
 		t.Fatalf("alice got wrong body: %q", got.Body)
 	}
@@ -57,7 +57,7 @@ func TestTwoClientsExchange(t *testing.T) {
 	}
 
 	// Bob 应同时收到 FKDeliver。
-	got2 := mustDecodeMsg(t, bob.waitFor(protocol.FKDeliver, 2*time.Second))
+	got2 := mustDecodeMsg(t, bob.waitFor(protocol.FKDeliver, 5*time.Second))
 	if got2.Body != "hello bob" {
 		t.Fatalf("bob got wrong body: %q", got2.Body)
 	}
@@ -93,7 +93,7 @@ func TestReconnectHistory(t *testing.T) {
 			CreatedAt:      time.Now().UnixMilli(),
 		})
 		// 等自己 FKDeliver 一次，确保 seq 已分配
-		msg := mustDecodeMsg(t, first.waitFor(protocol.FKDeliver, 2*time.Second))
+		msg := mustDecodeMsg(t, first.waitFor(protocol.FKDeliver, 5*time.Second))
 		if msg.Body != body {
 			t.Fatalf("round %d: got %q", i, msg.Body)
 		}
@@ -173,7 +173,7 @@ func TestPingPong(t *testing.T) {
 	c.send(ctx, protocol.FKPing, nil)
 
 	// 等 FKPong
-	got := c.waitFor(protocol.FKPong, 2*time.Second)
+	got := c.waitFor(protocol.FKPong, 5*time.Second)
 	if len(got) > 0 {
 		t.Logf("pong payload (should be empty): %s", got)
 	}

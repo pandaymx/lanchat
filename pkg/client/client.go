@@ -34,7 +34,14 @@ type ConnectOptions struct {
 	RequestHistory bool
 	// HistoryLimit 是首屏拉取条数；<=0 默认 50。
 	HistoryLimit int
+	// HistoryWaitTimeout 限定第一次 FKHistoryReq 后等待响应的最长时长。
+	// 超过则放弃「先把 history 排到 deliver 之前」的有序保证，按 FKDeliver 到达顺序直接 publish。
+	// <=0 时默认 5s；0 不应被理解为立即放弃——它会把 FKDeliver 当成主线，是常规下不应选的语义。
+	HistoryWaitTimeout time.Duration
 }
+
+// defaultHistoryWaitTimeout 是 HistoryWaitTimeout 的兜底值。
+const defaultHistoryWaitTimeout = 5 * time.Second
 
 // Client 是面向业务的高层 API。
 type Client struct {
@@ -49,6 +56,17 @@ type Client struct {
 	// 内存压力可控：每个 Client 进程内最多见过 N 条消息；定时 GC 待 M2 引入。
 	seenMu sync.Mutex
 	seen   map[string]struct{}
+
+	// awaitingHistory 为 true 表示「FKHistoryReq 已发出、还没拿到响应」期间，
+	// 用来在 race window 里为 FKDeliver 排队——详见 deliverMessage / flushPendingDeliver。
+	// 这是一道 catch-up 期间的事件顺序护栏：FKDeliver 不能跑到 FKHistoryResp 的消息前面，
+	// 否则 bus 上会出现 [M2, M1] 这种乱序事件（hub 端广播是异步、跨 goroutine 的）。
+	awaitingHistory atomic.Bool
+	// pendingDeliver 是 catch-up 窗口里到达的 FKDeliver，等 FKHistoryResp 一来再 flush。
+	// 内部字段都在 pendingMu 保护下读写，包含与 timer goroutine (forceFlushPending) 的同步。
+	pendingMu      sync.Mutex
+	pendingDeliver []protocol.StoredMessage
+	lastHistorySeq uint64
 
 	closed atomic.Bool
 	done   chan struct{}
@@ -72,6 +90,9 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 	if opts.RequestHistory && opts.HistoryLimit <= 0 {
 		opts.HistoryLimit = 50
 	}
+	if opts.HistoryWaitTimeout <= 0 {
+		opts.HistoryWaitTimeout = defaultHistoryWaitTimeout
+	}
 	// 1. 发送 Hello（带 ResumeFrom）
 	hello := c.hello
 	hello.ResumeFrom = opts.ResumeFrom
@@ -85,14 +106,19 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 
 	// 2. 主动请求历史（若有）
 	if opts.RequestHistory {
+		c.awaitingHistory.Store(true)
 		req := protocol.HistoryRequest{After: opts.ResumeFrom, Limit: opts.HistoryLimit}
 		reqPayload, _ := json.Marshal(req)
 		if err := c.conn.Send(ctx, protocol.Frame{
 			Kind:    protocol.FKHistoryReq,
 			Payload: reqPayload,
 		}); err != nil {
+			c.awaitingHistory.Store(false)
 			return fmt.Errorf("send history req: %w", err)
 		}
+		// 兜底超时：Hub 没响应也不能让 buffer 一直挂起；超时后按到达顺序直接 publish。
+		// 用闭包捕获 opts 的超时；Close() 也会强制清（见 forceFlushPending），保证 quit 路径无残留。
+		time.AfterFunc(opts.HistoryWaitTimeout, c.forceFlushPending)
 	}
 
 	go c.readPump(ctx)
@@ -131,20 +157,32 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 		if err := json.Unmarshal(f.Payload, &msg); err != nil {
 			return
 		}
-		// 幂等持久化，upsert-by-ID 保证 ServerSeq 由 Hub 补齐
+		// 幂等持久化，upsert-by-ID 保证 ServerSeq 由 Hub 补齐；
+		// 入事件总线走 deliverMessage 入口，受 catch-up 缓冲护栏约束。
 		_ = c.store.AppendMessage(ctx, msg)
-		c.publishMessageOnce(&msg)
+		c.deliverMessage(&msg)
 
 	case protocol.FKHistoryResp:
 		var resp protocol.HistoryResponse
 		if err := json.Unmarshal(f.Payload, &resp); err != nil {
 			return
 		}
+		// history resp 的内容必须按 Hub 给的顺序直送 publishMessageOnce，
+		// 不能走 deliverMessage——后者在 awaitingHistory 时会全部进 buffer，
+		// 而 buffer 在 flushPendingDeliver 里又会被 lastHistorySeq 过滤掉，
+		// 就把 history 自己的消息也丢了。
+		// 这里走直送：先按 Hub 给的升序把 history 推入事件总线，期间累计最大 ServerSeq；
+		// 然后 flushPendingDeliver 把 catch-up 窗口里抢着到达、且比 history 更新的 FKDeliver 补发。
 		for i := range resp.Messages {
 			m := resp.Messages[i]
 			_ = c.store.AppendMessage(ctx, m)
 			c.publishMessageOnce(&m)
+			// 通过 pendingMu 保护下写入 lastHistorySeq；
+			// flushPendingDeliver 紧随其后读，forceFlushPending 的 timer goroutine 也通过同一把锁读，
+			// 这样不依赖 happens-before 也能让 race detector 通过。
+			c.setLastHistorySeq(m.ServerSeq)
 		}
+		c.flushPendingDeliver()
 		// 末尾通知"已同步"，调用方可挂回调触发 UI 刷新
 		c.bus.Publish(core.Event{
 			Kind:  core.EventState,
@@ -192,6 +230,94 @@ func (c *Client) publishMessageOnce(msg *protocol.StoredMessage) bool {
 		Message:        &m,
 	})
 	return true
+}
+
+// deliverMessage 是 FKDeliver / FKHistoryResp 共用的「入事件总线」入口。
+//
+// 在 Connect 请求了 history 的情况下，catch-up 窗口里到达的 FKDeliver 需要排队：
+// hub 的 broadcast 是异步的（跨 goroutine），FKHistoryReq 与后续 aliceB 发送的 FKMessage
+// 之间存在真实的 race，新连上来的 bobB 可能先收到「刚被广播出去的 M2」，
+// 后收到「FKHistoryResp 里的 [M1, M2]」，结果事件总线出现 [M2, M1] 这种乱序。
+// 这里把 race window 里的 FKDeliver 先缓存；FKHistoryResp 到达后 flush 一次，
+// 保证事件总线上的消息序列在 ServerSeq 上单调递增。
+func (c *Client) deliverMessage(msg *protocol.StoredMessage) {
+	if msg == nil {
+		return
+	}
+	if c.awaitingHistory.Load() {
+		c.pendingMu.Lock()
+		c.pendingDeliver = append(c.pendingDeliver, *msg)
+		c.pendingMu.Unlock()
+		return
+	}
+	c.publishMessageOnce(msg)
+}
+
+// flushPendingDeliver 在 FKHistoryResp 收完时被调用一次：
+//  1. 把 await 期间收集到的 FKDeliver 按"是否已被 history 覆盖"过滤；
+//  2. 把剩余的、确实比 history 更新的 FKDeliver 顺序补发到事件总线；
+//  3. 清掉 awaitingHistory，让后续 FKDeliver 走直送路径。
+//
+// publishMessageOnce 的 seen 集合已经能拦住"FKHistoryResp + 重复 FKDeliver"的重复事件；
+// 这里只解决"乱序"。flush 不排序——pendingDeliver 按到达顺序追加，
+// hub 的 broadcast 单条是同步顺序发出，单条 FKDeliver 内部已是有序；
+// 但 race window 里 M2 的 deliver 跑到 history resp 之前是站得住的，
+// 所以需要这条护栏保证总线上"history 先 → race 来的 deliver 后"。
+func (c *Client) flushPendingDeliver() {
+	if !c.awaitingHistory.CompareAndSwap(true, false) {
+		// 已经被超时路径或 Close 兜底清过；不重复 flush。
+		return
+	}
+	c.pendingMu.Lock()
+	pending := c.pendingDeliver
+	c.pendingDeliver = nil
+	c.pendingMu.Unlock()
+	last := c.peekLastHistorySeq()
+
+	for i := range pending {
+		m := &pending[i]
+		// ServerSeq <= lastHistorySeq 的已经在 FKHistoryResp 里走过 publishMessageOnce，
+		// 这里再走也只是命中 seen 集合，但省去一次哈希查找更稳。
+		if m.ServerSeq != 0 && m.ServerSeq <= last {
+			continue
+		}
+		c.publishMessageOnce(m)
+	}
+}
+
+// forceFlushPending 是 Connect 设的兜底超时回调。timeout 后无论是否拿到 FKHistoryResp，
+// 都强制走"按到达顺序直送"——这是降级语义，事件顺序有可能非严格按 ServerSeq，
+// 但不能因为 hub 一次没回就把整个客户端卡住。
+func (c *Client) forceFlushPending() {
+	if !c.awaitingHistory.CompareAndSwap(true, false) {
+		return
+	}
+	c.pendingMu.Lock()
+	pending := c.pendingDeliver
+	c.pendingDeliver = nil
+	c.pendingMu.Unlock()
+	for i := range pending {
+		c.publishMessageOnce(&pending[i])
+	}
+}
+
+// peekLastHistorySeq / setLastHistorySeq 把 lastHistorySeq 的访问串行化到 pendingMu 上：
+// setLastHistorySeq 由 dispatch FKHistoryResp goroutine 写，
+// peekLastHistorySeq 由 flushPendingDeliver / forceFlushPending（timer goroutine 也在内）读，
+// 跨 goroutine 读写不加锁 race detector 会报警。
+func (c *Client) peekLastHistorySeq() uint64 {
+	c.pendingMu.Lock()
+	v := c.lastHistorySeq
+	c.pendingMu.Unlock()
+	return v
+}
+
+func (c *Client) setLastHistorySeq(seq uint64) {
+	c.pendingMu.Lock()
+	if seq > c.lastHistorySeq {
+		c.lastHistorySeq = seq
+	}
+	c.pendingMu.Unlock()
 }
 
 // SendMessage 发出一条消息。Client 立即返回（不阻塞等回执）。
@@ -260,10 +386,15 @@ func (c *Client) Subscribe(buf int) core.Subscription {
 func (c *Client) Done() <-chan struct{} { return c.done }
 
 // Close 幂等关闭连接。返回 readPump 退出所花的时间。
+//
+// 关闭前先把 awaitingHistory 兜底清掉，避免 catch-up 缓冲里的待发消息因为超时回调
+// 撞上一个正在 Close 的 Client（forceFlushPending 与 flushPendingDeliver 都按
+// awaitingHistory 的 CompareAndSwap 互斥，多次调用安全）。
 func (c *Client) Close() error {
 	if c.closed.Swap(true) {
 		return nil
 	}
+	c.forceFlushPending()
 	err := c.conn.Close()
 	<-c.done
 	return err

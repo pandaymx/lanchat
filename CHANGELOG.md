@@ -1,3 +1,21 @@
+## [0.3.0](https://github.com/pandaymx/lanchat/compare/v0.2.0...v0.3.0) (2026-09-05)
+
+### Features
+
+* **tui:** 接 Session 适配层，让 submitMsg 经 Sender 真正发到 hub ([78abdb4](https://github.com/pandaymx/lanchat/commit/78abdb4089294362bcaed57387cc85533b7bf594))
+* **tui:** 引入 bubbletea/v2 + lipgloss/v2 + bubbles/v2 依赖并建立 pkg/tui 骨架 ([c214f27](https://github.com/pandaymx/lanchat/commit/c214f270027db8355e3ea9ae1ff491a98d9cfddd))
+* **tui:** 增加 cmd/tui 程序入口，启用 alt screen 与尺寸就绪后聚焦 ([0d309f7](https://github.com/pandaymx/lanchat/commit/0d309f72f37a1d21595bbcad145bebad804def7e))
+* **tui:** 增加 textarea/viewport 区域与 Enter/Shift+Enter 键位路由 ([8f951c8](https://github.com/pandaymx/lanchat/commit/8f951c86f14fe8df88772937aaa29a45b05f41e1))
+* **tui:** M3.6 未读计数 + 滚屏路由（用户离底时不强拉） ([c9be141](https://github.com/pandaymx/lanchat/commit/c9be1419f34494312bc03d4735345bd00ef0659d))
+* **tui:** M3.8+M3.9 自适应 + 收尾打包 ([8fbb909](https://github.com/pandaymx/lanchat/commit/8fbb909ad3cba42f31a26b3d1cd684444b8900bd))
+* **tui:** Model 骨架 + eventMsg 适配层 ([524d2df](https://github.com/pandaymx/lanchat/commit/524d2df0375df2438e9532285a544ac7c0285631))
+
+### Bug Fixes
+
+* **ci:** 启用 go module cache + 放宽 ws_hub 集成测试等待超时 ([d880756](https://github.com/pandaymx/lanchat/commit/d880756d310ec4dcae5dd3ad36e5bdc738e53880))
+* **core:** catch-up 窗口护栏防止 FKDeliver 抢跑 FKHistoryResp ([6b3e216](https://github.com/pandaymx/lanchat/commit/6b3e216d303269f924186184c98f32903cf98605))
+* **repo:** 用 eventually() 重试 helper 修复 race+cover 偶发 5s 超时 ([21a8901](https://github.com/pandaymx/lanchat/commit/21a89014c844b4be7e1ebec5463014b1fa30cfa5))
+
 ## [0.2.0](https://github.com/pandaymx/lanchat/compare/v0.1.0...v0.2.0) (2026-09-05)
 
 ### Features

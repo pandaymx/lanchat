@@ -1,0 +1,17 @@
+{
+  "tui.input.placeholder": "type a message (Enter to send, Shift+Enter for newline)",
+  "tui.input.help.newline": "insert newline",
+  "tui.status.online": "online",
+  "tui.status.offline": "offline",
+  "tui.status.label.user": "user",
+  "tui.status.label.device": "device",
+  "tui.status.label.hub": "hub",
+  "tui.status.label.unread": "unread",
+  "tui.status.label.err": "err",
+  "tui.hints.row": "[Enter] send · [Shift+Enter] newline · [End] tail · [PgUp/PgDn] scroll · [/help] commands · [Ctrl+C] quit",
+  "tui.help.row": "help: Enter send · Shift+Enter newline · End tail · PgUp/PgDn scroll · /help · /clear · /quit · Ctrl+C quit",
+  "tui.sidebar.empty": "peers: (none yet)",
+  "tui.sidebar.prefix": "peers:",
+  "tui.history.fallback.user": "?",
+  "tui.history.fallback.time": "??:??:??"
+}

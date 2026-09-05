@@ -1,0 +1,17 @@
+{
+  "tui.input.placeholder": "输入消息（Enter 发送，Shift+Enter 换行）",
+  "tui.input.help.newline": "插入换行",
+  "tui.status.online": "在线",
+  "tui.status.offline": "离线",
+  "tui.status.label.user": "用户",
+  "tui.status.label.device": "设备",
+  "tui.status.label.hub": "中心",
+  "tui.status.label.unread": "未读",
+  "tui.status.label.err": "错误",
+  "tui.hints.row": "[Enter] 发送 · [Shift+Enter] 换行 · [End] 跳到底部 · [PgUp/PgDn] 滚动 · [/help] 命令 · [Ctrl+C] 退出",
+  "tui.help.row": "help: Enter 发送 · Shift+Enter 换行 · End 跳到底部 · PgUp/PgDn 滚动 · /help · /clear · /quit · Ctrl+C 退出",
+  "tui.sidebar.empty": "peers：（暂无）",
+  "tui.sidebar.prefix": "peers:",
+  "tui.history.fallback.user": "?",
+  "tui.history.fallback.time": "??:??:??"
+}

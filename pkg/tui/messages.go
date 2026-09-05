@@ -33,6 +33,17 @@ type submitMsg struct {
 	text string
 }
 
+// sentMsg 是一条出站消息的成功回执，由 sendCmd 在底层 Send 返回 nil 时投递。
+//
+// 它存在的唯一目的是让 Update 的 switch 有一个可匹配的分支来续上
+// listenCmd 循环 —— Update 的 default 分支返回 nil cmd，若 sendCmd 直接返回
+// nil Msg，事件循环会在这里断掉（后续 inbox 消息再也收不到）。
+type sentMsg struct {
+	text string
+}
+
+func newSentMsg(text string) sentMsg { return sentMsg{text: text} }
+
 func newEventMsg(e core.Event) eventMsg { return eventMsg{event: e} }
 func newErrMsg(err error) errMsg        { return errMsg{err: err} }
 func newQuitMsg(reason string) quitMsg  { return quitMsg{reason: reason} }
@@ -46,4 +57,5 @@ var (
 	_ tea.Msg = errMsg{}
 	_ tea.Msg = quitMsg{}
 	_ tea.Msg = submitMsg{}
+	_ tea.Msg = sentMsg{}
 )

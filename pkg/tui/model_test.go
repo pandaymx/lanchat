@@ -1,9 +1,12 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -403,5 +406,161 @@ func TestFocusInput_ReturnsCmd(t *testing.T) {
 	cmd := m.FocusInput()
 	if cmd == nil {
 		t.Fatal("FocusInput should return a tea.Cmd for the cursor blink timer")
+	}
+}
+
+// ============================================================
+// M3.5 新增测试：Sender 出站路径 + AttachSender 切换
+// ============================================================
+
+// fakeSender 记录 Send 调用次数与最近一次 ctx / body。
+//
+// 只在 model_test 内部用，所以留在 *_test.go 即可；不导出。
+type fakeSender struct {
+	mu      sync.Mutex
+	calls   int
+	last    string
+	lastCtx context.Context
+	err     error // 注入的固定错误；nil 表示成功
+}
+
+func (s *fakeSender) Send(ctx context.Context, body string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls++
+	s.last = body
+	s.lastCtx = ctx
+	return s.err
+}
+
+func (s *fakeSender) callsFn() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+func (s *fakeSender) lastFn() (string, context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.last, s.lastCtx
+}
+
+// TestSubmitMsg_NoSenderFallback 验证无 Sender 时 submitMsg 仍记
+// lastSubmitted 并续链 listenCmd——M3.3 的行为不能因为 M3.5 改造而回归。
+func TestSubmitMsg_NoSenderFallback(t *testing.T) {
+	m := New(Config{User: "alice", Device: "lap", HubURL: "ws://h"})
+
+	// 直接投递 submitMsg。Update 应返回 listenCmd，lastSubmitted 立刻可读。
+	_, cmd := m.Update(submitMsg{text: "hello"})
+	if cmd == nil {
+		t.Fatal("submitMsg with no sender must still return a command (listenCmd)")
+	}
+	if m.LastSubmitted() != "hello" {
+		t.Fatalf("lastSubmitted=%q want %q", m.LastSubmitted(), "hello")
+	}
+}
+
+// TestSubmitMsg_WithSender_KeepsListenChain 验证有 Sender 时 Update 返回
+// 的是 sendCmd（不是 listenCmd），并保持 lastSubmitted 写入。
+//
+// runCmd() 调用会让 fakeSender.calls 递增到 1，验证 sendCmd 真的调到了 Sender。
+func TestSubmitMsg_WithSender_KeepsListenChain(t *testing.T) {
+	snd := &fakeSender{}
+	m := New(Config{User: "alice", Device: "lap", HubURL: "ws://h", Sender: snd})
+
+	_, cmd := m.Update(submitMsg{text: "send me"})
+	if cmd == nil {
+		t.Fatal("submitMsg with sender must return sendCmd")
+	}
+	if m.LastSubmitted() != "send me" {
+		t.Fatalf("lastSubmitted=%q want %q", m.LastSubmitted(), "send me")
+	}
+
+	// 实际跑一次 sendCmd，验证它真调 Sender.Send。
+	out := cmd()
+	if _, ok := out.(sentMsg); !ok {
+		t.Fatalf("sendCmd should return sentMsg, got %T", out)
+	}
+	if got := snd.callsFn(); got != 1 {
+		t.Fatalf("Sender.Send should be called once, got %d", got)
+	}
+	if body, ctx := snd.lastFn(); body != "send me" || ctx == nil {
+		t.Fatalf("Sender body=%q want %q, ctx=%v", body, "send me", ctx)
+	}
+	// deadline 应在 sendTimeout 内，且已设了 Deadline。
+	deadline, ok := snd.lastCtx.Deadline()
+	if !ok {
+		t.Fatal("sendCtx must have a deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > sendTimeout {
+		t.Fatalf("deadline should be within (0, %v], got %v", sendTimeout, remaining)
+	}
+}
+
+// TestSentMsg_RoutesBackToListen 验证 sentMsg 命中后 Update 返回的 cmd 不为 nil。
+//
+// 不能直接 run cmd() 验证 listenCmd——listenCmd 阻塞在 inbox 上，
+// 空 inbox 会让测试死锁。这里只能做静态断言：cmd != nil 才算有续链意图；
+// 实际 listenCmd 的行为由 TestSubmitMsg_NoSenderFallback 与
+// sendCmd 端到端（TestSession_SendDeliversToPeer）一并验证。
+func TestSentMsg_RoutesBackToListen(t *testing.T) {
+	m := New(Config{})
+	_, cmd := m.Update(sentMsg{text: "ok"})
+	if cmd == nil {
+		t.Fatal("sentMsg must return a non-nil cmd (listenCmd) to keep the loop alive")
+	}
+}
+
+// TestAttachSender_OverridesAndReadsBack 验证 AttachSender / Sender 访问器。
+func TestAttachSender_OverridesAndReadsBack(t *testing.T) {
+	m := New(Config{})
+	if m.Sender() != nil {
+		t.Fatalf("default Sender should be nil, got %T", m.Sender())
+	}
+	snd := &fakeSender{}
+	m.AttachSender(snd)
+	if m.Sender() != snd {
+		t.Fatalf("Sender() should return attached instance, got %T", m.Sender())
+	}
+
+	// 替换：AttachSender 后可以替换；后续 submitMsg 用新 sender。
+	snd2 := &fakeSender{}
+	m.AttachSender(snd2)
+	if m.Sender() != snd2 {
+		t.Fatalf("AttachSender should replace, got %T", m.Sender())
+	}
+}
+
+// TestSendCmd_OnSenderError_PublishesErrMsg 验证 Sender.Send 报错时
+// sendCmd 投递 errMsg 到 inbox（不丢错误），但仍回 sentMsg 续链。
+func TestSendCmd_OnSenderError_PublishesErrMsg(t *testing.T) {
+	snd := &fakeSender{err: errors.New("network down")}
+	m := New(Config{Sender: snd})
+
+	_, cmd := m.Update(submitMsg{text: "boom"})
+	out := cmd()
+
+	if _, ok := out.(sentMsg); !ok {
+		t.Fatalf("sendCmd should still return sentMsg on error, got %T", out)
+	}
+
+	// 错误应进入 inbox（errMsg），Update 路由后写到 lastError。
+	select {
+	case msg := <-m.inbox:
+		errMsg, ok := msg.(errMsg)
+		if !ok {
+			t.Fatalf("expected errMsg in inbox, got %T", msg)
+		}
+		if errMsg.err == nil || errMsg.err.Error() != "network down" {
+			t.Fatalf("error mismatch: %v", errMsg.err)
+		}
+		// 模拟 Update 把它写到 lastError
+		_, _ = m.Update(errMsg)
+		if !strings.Contains(m.LastError().Error(), "network down") {
+			t.Fatalf("LastError should surface the send failure, got %v", m.LastError())
+		}
+	default:
+		t.Fatal("expected errMsg in inbox after sendCmd failure")
 	}
 }

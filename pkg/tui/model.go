@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -11,11 +13,18 @@ import (
 )
 
 // Config 是 Model 的依赖注入。
+//
+// Sender 可选：无 Sender 时 TUI 仍能跑（仅记 lastSubmitted 给测试/调试看），
+// cmd/tui 接入 Session 后会注入；测试用例继续用 nil 即可。
 type Config struct {
 	User    string
 	Device  string
 	HubURL  string
 	MaxHist int // <=0 走默认 5000
+
+	// Sender 是出站消息的窄接口。Model.submitMsg 命中后会把
+	// 文本交给 Sender.Send，再通过 sentMsg 续上 listenCmd。
+	Sender Sender
 }
 
 // Model 是 TUI 的核心状态。
@@ -28,6 +37,7 @@ type Model struct {
 	user, device, hubURL string
 	maxHist              int
 	inbox                chan tea.Msg
+	sender               Sender
 
 	// UI 状态
 	width, height int
@@ -54,6 +64,7 @@ func New(cfg Config) *Model {
 		hubURL:  cfg.HubURL,
 		maxHist: cfg.MaxHist,
 		inbox:   make(chan tea.Msg, 64),
+		sender:  cfg.Sender,
 		input:   newTextInput(),
 		history: newHistoryView(),
 	}
@@ -74,6 +85,34 @@ func listenCmd(inbox <-chan tea.Msg) tea.Cmd {
 			return newQuitMsg("inbox closed")
 		}
 		return msg
+	}
+}
+
+// sendTimeout 是出站 Send 的硬性上限。
+//
+// bubbletea 的 Cmd 同步阻塞会让事件循环停顿，所以这里必须显式限时。
+// 与 Session.Send 的内部行为无关——Client.SendMessage 本身也会再设一次 ctx，
+// 这里是 UI 层的兜底，避免 ui 卡住看不到报错。
+const sendTimeout = 5 * time.Second
+
+// sendCmd 调 Sender.Send 把文本发到 hub，并把结果回包成 Msg 继续事件循环。
+//
+// 成功 → 返回 sentMsg（Update 接着再 listenCmd，把循环续上）
+// 失败 → 仍返回 sentMsg（让 Update 续链），同时投递 errMsg 走错误渲染；
+//
+//	这里不返回 errMsg 是因为 Update 的 switch 没有「通用错误」分支，
+//	错误已经进入 inbox 会被随后的 errMsg / listenCmd 自然处理。
+func sendCmd(s Sender, text string, inbox chan<- tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if err := s.Send(ctx, text); err != nil {
+			select {
+			case inbox <- newErrMsg(err):
+			default:
+			}
+		}
+		return newSentMsg(text)
 	}
 }
 
@@ -135,9 +174,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Cmd(tea.Quit)
 
 	case submitMsg:
-		// M3.5+ 由 client adapter 在事件循环里把这里收到的文本调 core.Send；
-		// 当前阶段仅记录到 lastSubmitted，便于测试断言。
+		// M3.5：有 sender 时把文本交给 Sender.Send，失败转 errMsg，成功用
+		// sentMsg 续链 listenCmd；无 sender 时退回到 M3.3 行为（仅记 lastSubmitted，
+		// 给单元测试观察用），保证 M3.4 之前的测试不回归。
 		m.lastSubmitted = msg.text
+		if m.sender == nil {
+			return m, listenCmd(m.inbox)
+		}
+		return m, sendCmd(m.sender, msg.text, m.inbox)
+
+	case sentMsg:
+		// sendCmd 成功回执。msg.text 暂不入状态，仅续链 listenCmd。
+		_ = msg.text
 		return m, listenCmd(m.inbox)
 	}
 
@@ -374,15 +422,34 @@ func (m *Model) Ready() bool { return m.ready }
 // InboxLen 返回 inbox 当前缓冲长度，方便测试断言。
 func (m *Model) InboxLen() int { return len(m.inbox) }
 
-// LastSubmitted 返回最近一次用户通过 Enter 提交的文本。
-// 当前阶段（无 client adapter）仅作测试钩子，M3.5+ 由 client adapter
-// 在事件循环里读到 submitMsg 并调 core.Send 后，这里仍保留原值。
+// LastSubmitted returns the most recently submitted text (set on both
+// the M3.3 standalone path and the M3.5 Sender-backed path).
 func (m *Model) LastSubmitted() string { return m.lastSubmitted }
 
 // FocusInput 把光标放回输入框；外部 program 启动时调用一次。
 func (m *Model) FocusInput() tea.Cmd {
 	return m.input.Focus()
 }
+
+// AttachSender 在 Dial 成功后接入 Sender，让 Update 看到出站事件。
+//
+// 必须在 tea.NewProgram 启动前调用——之后 Update 就在 bubbletea goroutine
+// 上跑，submitMsg 会读 m.sender；这里没有并发争用，但调用顺序错了会导致
+// 启动后前几条 submit 走 nil-sender 分支被 silently dropped。
+//
+// 使用示例（cmd/tui/main.go）：
+//
+//	m := tui.New(cfg)
+//	sess, _ := tui.Dial(...)
+//	m.AttachSender(sess)
+//	go sess.Pump(ctx, m.Publish)
+//	p := tea.NewProgram(m)
+func (m *Model) AttachSender(s Sender) { m.sender = s }
+
+// Sender returns the currently attached sender (nil if no live link).
+//
+// 测试与诊断用；运行时一般不需要。
+func (m *Model) Sender() Sender { return m.sender }
 
 // uniqueUsers 计算去重后的在线用户数。
 func uniqueUsers(peers []protocol.Presence) int {

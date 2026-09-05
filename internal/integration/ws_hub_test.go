@@ -28,6 +28,7 @@ func TestTwoClientsExchange(t *testing.T) {
 		UserID:          "alice",
 	})
 	defer alice.close()
+	alice.awaitReady()
 
 	bob := dial(t, fx.addr, protocol.Hello{
 		ProtocolVersion: 1,
@@ -35,6 +36,7 @@ func TestTwoClientsExchange(t *testing.T) {
 		UserID:          "bob",
 	})
 	defer bob.close()
+	bob.awaitReady()
 
 	// Alice 发消息。
 	alice.send(ctx, protocol.FKMessage, protocol.StoredMessage{
@@ -82,6 +84,7 @@ func TestReconnectHistory(t *testing.T) {
 		DeviceID:        "alice-laptop",
 		UserID:          "alice",
 	})
+	first.awaitReady()
 	for i, body := range []string{"one", "two", "three"} {
 		first.send(ctx, protocol.FKMessage, protocol.StoredMessage{
 			ID:             body,
@@ -111,6 +114,7 @@ func TestReconnectHistory(t *testing.T) {
 		ResumeFrom:      0,
 	})
 	defer second.close()
+	second.awaitReady()
 
 	// Hub 不知道 FKHistoryReq 的精确语义（M2 没实现），所以这里只验证
 	// 真 hub 起得来 + FKHello 不被拒 + Hub 不崩。

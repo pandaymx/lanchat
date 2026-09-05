@@ -159,3 +159,30 @@ func (c *wsClient) close() {
 	c.cancel()
 	_ = c.ws.Close(websocket.StatusNormalClosure, "bye")
 }
+
+// awaitReady 等到 Hub 已处理本连接的 FKHello，再做下一步动作。
+//
+// 用 FKPing→FKPong 往返做屏障：serveLoop 是按到达顺序处理帧的，
+// FKPong 返回等价于「Hub 已经看到并处理完了你之前发的所有帧」，
+// 也就意味着 hubstate.Registry.MarkHello 已调用，helloOK=true。
+//
+// 不做这个屏障的后果（已实测）：
+//
+//	alice := dial(...)
+//	bob   := dial(...)
+//	alice.send(FKMessage, ...)
+//	↑ 此刻 Bob 的 FKHello 还在 TCP 缓冲里，Hub serveLoop 还没读到，
+//	Hub 收到 FKMessage 走 broadcast 时 AllPeers 只看到 alice 一条，
+//	bob 永远收不到 FKDeliver —— eventually 必超时。
+//
+// 用法：dial 后立刻 awaitReady；多连接场景下要等每个都 awaitReady 才发消息。
+func (c *wsClient) awaitReady() {
+	c.t.Helper()
+	if err := c.writeFrame(context.Background(), protocol.FKPing, nil); err != nil {
+		c.t.Fatalf("awaitReady: write ping: %v", err)
+	}
+	_, ok := c.tryWait(protocol.FKPong, 5*time.Second)
+	if !ok {
+		c.t.Fatalf("awaitReady: never got pong (hub not processing frames?)")
+	}
+}

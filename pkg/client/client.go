@@ -54,10 +54,23 @@ type Client struct {
 	store core.Store
 	bus   core.EventBus
 
+	// pumpCtx / pumpCancel 是 readPump 自己的生命周期。
+	//
+	// 与 Connect 传入的 ctx 解耦：调用方传入的 ctx 只用于 hello/history req send
+	// 的写超时；readPump 跑在 pumpCtx 上，由 Client.Close() 统一取消。
+	//
+	// 这是 B 方案的核心：cmd/tui 的 dialSession 会 defer cancel(dialCtx)，
+	// 旧实现把这个 ctx 一路传给 readPump → dialSession 一返回 readPump 就死，
+	// 客户端收不到任何服务端帧（FKHistoryResp / FKDeliver），TUI 顶上变 offline
+	// 但 sender 仍能"成功" send（hub 真收到）—— 消息广播出去但客户端读不出来，
+	// 现象就是"发消息是空的"。
+	pumpCtx    context.Context
+	pumpCancel context.CancelFunc
+
 	// seen 跟踪已发射 EventMessage 的消息 ID，防止：
 	//   1. 同一个消息先以 FKDeliver 到达、后以 FKHistoryResp 补发时，bus 上出现两次事件；
 	//   2. 重连场景下同一历史区间的消息二次入站。
-	// 内存压力可控：每个 Client 进程内最多见过 N 条消息；定时 GC 待 M2 引入。
+	// 内存压力可忽略：每个 Client 进程内最多见过 N 条消息；定时 GC 待 M2 引入。
 	seenMu sync.Mutex
 	seen   map[string]struct{}
 
@@ -89,6 +102,12 @@ func New(hello protocol.Hello, conn core.Conn, store core.Store, bus core.EventB
 }
 
 // Connect 握手 + (可选)历史补发，然后启动 readPump。
+//
+// ctx 的作用范围仅限本次调用内 hello/history req 的 send 写超时。
+// readPump 跑在 Client 自己的 pumpCtx 上（Connect 一起、Close 一关），
+// 不受 ctx 取消影响——否则 cmd/tui dialSession defer cancel(dialCtx)
+// 会把 readPump 一起干掉，客户端收不到任何服务端帧。
+//
 // 必须在 conn 已被 Transport.Dial 返回后调用。
 func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 	if opts.RequestHistory && opts.HistoryLimit <= 0 {
@@ -97,15 +116,23 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 	if opts.HistoryWaitTimeout <= 0 {
 		opts.HistoryWaitTimeout = defaultHistoryWaitTimeout
 	}
+
+	// 起 pumpCtx：readPump 的生命周期由 Client 自己管理，与调用方 ctx 解耦。
+	// 即使 ctx 在 Connect 返回后被取消（典型场景：cmd/tui 的 defer dialCancel()），
+	// readPump 也会继续跑，直到 Client.Close()。
+	c.pumpCtx, c.pumpCancel = context.WithCancel(context.Background())
+
 	// 1. 发送 Hello（带 ResumeFrom）
 	hello := c.hello
 	hello.ResumeFrom = opts.ResumeFrom
 	payload, err := json.Marshal(hello)
 	if err != nil {
+		c.pumpCancel()
 		return fmt.Errorf("marshal hello: %w", err)
 	}
 	cliLog.Info("send hello", "user", hello.UserID, "device", hello.DeviceID, "resume_from", hello.ResumeFrom)
 	if err := c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKHello, Payload: payload}); err != nil {
+		c.pumpCancel()
 		return fmt.Errorf("send hello: %w", err)
 	}
 
@@ -120,6 +147,7 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 			Payload: reqPayload,
 		}); err != nil {
 			c.awaitingHistory.Store(false)
+			c.pumpCancel()
 			return fmt.Errorf("send history req: %w", err)
 		}
 		// 兜底超时：Hub 没响应也不能让 buffer 一直挂起；超时后按到达顺序直接 publish。
@@ -127,14 +155,14 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 		time.AfterFunc(opts.HistoryWaitTimeout, c.forceFlushPending)
 	}
 
-	go c.readPump(ctx)
+	go c.readPump(c.pumpCtx) //nolint:contextcheck // pumpCtx 由 Client 自身管理，Client 没有父 ctx
 	return nil
 }
 
 // readPump 把服务端帧分发到 EventBus 与 Store。
 //
-// ctx 来源：通常 Connect 传入的 ctx；其取消后读循环退出。
-// Close() 通过关闭底 conn 让 Recv 立即返回错误，也能让 readPump 退出。
+// ctx 来源：Connect 起的 pumpCtx（Client 内部管理），与调用方传入的 dialCtx 解耦。
+// 退出条件：pumpCancel 被调（Close 路径）或 conn 被关（对端断开）。
 func (c *Client) readPump(ctx context.Context) {
 	defer close(c.done)
 	cliLog.Debug("readPump started")
@@ -408,11 +436,19 @@ func (c *Client) Done() <-chan struct{} { return c.done }
 // 关闭前先把 awaitingHistory 兜底清掉，避免 catch-up 缓冲里的待发消息因为超时回调
 // 撞上一个正在 Close 的 Client（forceFlushPending 与 flushPendingDeliver 都按
 // awaitingHistory 的 CompareAndSwap 互斥，多次调用安全）。
+//
+// 关闭顺序：pumpCancel → forceFlushPending → conn.Close → 等 done。
+// 先取消 pumpCtx 让 readPump 走 ctx-canceled 路径退出，再关 conn。
+// 反过来 readPump 也会退出，但走的是 conn-closed 路径，错误语义不同（"对端断了" vs "本地关了"）。
+// c.closed=true 已经屏蔽了那条路径上的 EventState 误发，但顺序仍按"主动取消在前"更直观。
 func (c *Client) Close() error {
 	if c.closed.Swap(true) {
 		return nil
 	}
 	cliLog.Info("close client")
+	if c.pumpCancel != nil {
+		c.pumpCancel()
+	}
 	c.forceFlushPending()
 	err := c.conn.Close()
 	<-c.done

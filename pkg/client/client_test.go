@@ -411,3 +411,124 @@ func TestMultiDeviceCursor(t *testing.T) {
 		t.Fatalf("d2 cursor 仍应为 %d，实际 %d", lastSeq, c2)
 	}
 }
+
+// TestClientInternalPumpCtx_CloseCancelsReadPump 验证 B 方案的健全性：
+// Client 内部 pumpCtx 由 Close 取消，readPump 在 Close 后能正常退出。
+//
+// 这是 dialSession ctx 传递 bug 修复后的最小健全性测试：
+// 即使外部 ctx 不 cancel，Close 也要能把 readPump 拉下来。
+func TestClientInternalPumpCtx_CloseCancelsReadPump(t *testing.T) {
+	tr, _, store := newTransportWithHub(t, "lanchat-test-pumpctx-close")
+
+	bus := event.New()
+	hello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "alice",
+		UserID:          "alice",
+	}
+	conn, err := tr.Dial(context.Background(), "memory://lanchat-test-pumpctx-close", hello)
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	c := client.New(hello, conn, store, bus)
+
+	if err := c.Connect(context.Background(), client.ConnectOptions{
+		RequestHistory: false,
+	}); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	// Connect 之后 readPump 应已启动：Done() 还没关
+	select {
+	case <-c.Done():
+		t.Fatal("readPump 不该在 Connect 后立即退出")
+	default:
+	}
+
+	// Close 应让 readPump 在合理时间内退出
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-c.Done():
+		// OK
+	case <-time.After(2 * time.Second):
+		t.Fatal("Close 后 readPump 未在 2s 内退出")
+	}
+
+	// 二次 Close 幂等
+	if err := c.Close(); err != nil {
+		t.Fatalf("二次 Close 应幂等，got %v", err)
+	}
+}
+
+// TestExternalCtxCancelDoesNotKillReadPump 是 dialSession ctx bug 的回归测试：
+// 调用方传给 Connect 的 dialCtx 在 Connect 返回后被 cancel 不应影响 readPump，
+// 否则 cmd/tui 的 defer dialCancel() 会让 readPump 死在握手后一毫秒。
+//
+// 旧实现的失败模式：dialCtx 被一路传给 readPump → 外部 ctx cancel → Recv 立即 ctx canceled
+// → readPump 退出 → TUI 顶上变 offline 但 sender 仍能"成功" send，
+// 现象是"发消息是空的"（hub 真处理了 + 广播了 + TCP 写了，但客户端读不出来）。
+func TestExternalCtxCancelDoesNotKillReadPump(t *testing.T) {
+	tr, _, store := newTransportWithHub(t, "lanchat-test-isolate-pumpctx")
+
+	aliceHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "alice",
+		UserID:          "alice",
+	}
+	bobHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "bob",
+		UserID:          "bob",
+	}
+
+	// 1. alice 用可 cancel 的 dialCtx 调 Connect（模拟 cmd/tui 的 dialCtx）
+	busA := event.New()
+	connA, err := tr.Dial(context.Background(), "memory://lanchat-test-isolate-pumpctx", aliceHello)
+	if err != nil {
+		t.Fatalf("alice Dial: %v", err)
+	}
+	alice := client.New(aliceHello, connA, store, busA)
+
+	dialCtx, dialCancel := context.WithCancel(context.Background())
+	if err := alice.Connect(dialCtx, client.ConnectOptions{
+		RequestHistory: false,
+	}); err != nil {
+		t.Fatalf("alice Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = alice.Close() })
+
+	// 2. 立刻 cancel 外部 ctx —— 模拟 cmd/tui dialSession defer cancel
+	dialCancel()
+	time.Sleep(50 * time.Millisecond) // 给任何"假性 bug"机会浮出
+
+	// 3. alice 的 readPump 应仍活着：bob 发消息，alice 应该能收到
+	busB := event.New()
+	connB, err := tr.Dial(context.Background(), "memory://lanchat-test-isolate-pumpctx", bobHello)
+	if err != nil {
+		t.Fatalf("bob Dial: %v", err)
+	}
+	bob := client.New(bobHello, connB, store, busB)
+	if err := bob.Connect(context.Background(), client.ConnectOptions{
+		RequestHistory: false,
+	}); err != nil {
+		t.Fatalf("bob Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = bob.Close() })
+
+	if err := bob.SendMessage(context.Background(), "c1", "after-external-cancel"); err != nil {
+		t.Fatalf("bob send: %v", err)
+	}
+
+	aliceSub := alice.Subscribe(64)
+	defer aliceSub.Close()
+
+	ev := waitForEvent(t, aliceSub, core.EventMessage, 2*time.Second)
+	if ev == nil {
+		t.Fatal("readPump 已死：alice 在外部 ctx cancel 后收不到 bob 的消息（dialSession bug 复发）")
+	}
+	if ev.Message == nil || ev.Message.Body != "after-external-cancel" {
+		t.Fatalf("消息内容错: %+v", ev.Message)
+	}
+}

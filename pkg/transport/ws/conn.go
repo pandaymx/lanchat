@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )

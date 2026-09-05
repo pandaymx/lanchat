@@ -16,7 +16,10 @@ pre-commit:
     go-fmt:
       glob: '*.go'
       # gofumpt 管代码格式，gci 管 import 分组，两者职责不重叠，顺序固定
-      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && gofumpt -l -w {staged_files} && gci write {staged_files}
+      #
+      # gci 必须传与 .golangci.yml 一致的 sections + --no-lex-order，
+      # 否则会丢失「第三方 vs 本项目」之间的空行，被 lint 报格式错。
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && gofumpt -l -w {staged_files} && gci write --no-lex-order -s standard -s default -s "prefix(github.com/pandaymx/lanchat)" {staged_files}
       stage_fixed: true
     templ-fmt:
       glob: '*.templ'

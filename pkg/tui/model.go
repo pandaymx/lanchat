@@ -9,8 +9,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
+
+// tuiLog 是 pkg/tui 的 logger。包级单例，组件多不便注入。
+var tuiLog = logging.New("tui")
 
 // Config 是 Model 的依赖注入。
 //
@@ -111,7 +115,9 @@ func sendCmd(s Sender, text string, inbox chan<- tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 		defer cancel()
+		tuiLog.Debug("sendCmd", "len", len(text))
 		if err := s.Send(ctx, text); err != nil {
+			tuiLog.Error("Sender.Send failed", "err", err, "len", len(text))
 			select {
 			case inbox <- newErrMsg(err):
 			default:
@@ -247,6 +253,11 @@ func (m *Model) applyEvent(e core.Event) {
 	case core.EventState:
 		if e.State != nil {
 			m.connected = e.State.Connected
+			if e.State.Err != nil {
+				tuiLog.Error("connection state error", "connected", e.State.Connected, "err", e.State.Err)
+			} else {
+				tuiLog.Info("connection state changed", "connected", e.State.Connected)
+			}
 		}
 	case core.EventMessage:
 		if e.Message != nil {
@@ -256,6 +267,7 @@ func (m *Model) applyEvent(e core.Event) {
 			if !wasAtBottom {
 				m.unread++
 			}
+			tuiLog.Debug("message applied", "seq", e.Message.ServerSeq, "from", e.Message.SenderUserID, "len", len(e.Message.Body), "unread", m.unread)
 		}
 	case core.EventPresence:
 		if e.Presence != nil {

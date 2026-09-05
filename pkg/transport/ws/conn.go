@@ -23,8 +23,12 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
+
+// connLog 是 ws.Conn 收发帧的 logger。包级单例，不引入注入。
+var connLog = logging.New("ws.conn")
 
 // conn 把 *websocket.Conn 包装成 core.Conn 与 hubstate.Peer。
 //
@@ -94,10 +98,13 @@ func (c *conn) Send(ctx context.Context, f protocol.Frame) error {
 	// 每次 Writer() 调用都是一条独立 message。
 	var buf bytes.Buffer
 	if err := protocol.EncodeFrame(&buf, f); err != nil {
+		connLog.Error("encode frame failed", "kind", f.Kind, "err", err)
 		return err
 	}
+	connLog.Debug("send frame", "kind", f.Kind, "len", buf.Len(), "dev", c.devID)
 	if err := c.ws.Write(writeCtx, websocket.MessageBinary, buf.Bytes()); err != nil {
 		// 写失败意味着连接已不可用，直接关掉避免后续重试
+		connLog.Error("ws write failed", "kind", f.Kind, "err", err)
 		_ = c.Close()
 		return err
 	}
@@ -124,12 +131,20 @@ func (c *conn) Recv(ctx context.Context) (protocol.Frame, error) {
 		if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
 			websocket.CloseStatus(err) == websocket.StatusGoingAway ||
 			errors.Is(err, io.EOF) {
+			connLog.Debug("ws closed by peer", "dev", c.devID)
 			return protocol.Frame{}, io.EOF
 		}
+		connLog.Error("ws read failed", "dev", c.devID, "err", err)
 		return protocol.Frame{}, err
 	}
 
-	return protocol.DecodeFrame(bytes.NewReader(data))
+	frame, err := protocol.DecodeFrame(bytes.NewReader(data))
+	if err != nil {
+		connLog.Error("decode frame failed", "len", len(data), "err", err)
+		return frame, err
+	}
+	connLog.Debug("recv frame", "kind", frame.Kind, "len", len(data), "dev", c.devID)
+	return frame, nil
 }
 
 // Close 关闭连接。幂等。

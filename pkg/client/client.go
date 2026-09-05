@@ -21,8 +21,12 @@ import (
 	"time"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
+
+// cliLog 是 Client 收发与状态机的 logger。
+var cliLog = logging.New("client")
 
 // ConnectOptions 是 Connect 的可选项。
 type ConnectOptions struct {
@@ -100,6 +104,7 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 	if err != nil {
 		return fmt.Errorf("marshal hello: %w", err)
 	}
+	cliLog.Info("send hello", "user", hello.UserID, "device", hello.DeviceID, "resume_from", hello.ResumeFrom)
 	if err := c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKHello, Payload: payload}); err != nil {
 		return fmt.Errorf("send hello: %w", err)
 	}
@@ -109,6 +114,7 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 		c.awaitingHistory.Store(true)
 		req := protocol.HistoryRequest{After: opts.ResumeFrom, Limit: opts.HistoryLimit}
 		reqPayload, _ := json.Marshal(req)
+		cliLog.Debug("send history req", "after", opts.ResumeFrom, "limit", opts.HistoryLimit)
 		if err := c.conn.Send(ctx, protocol.Frame{
 			Kind:    protocol.FKHistoryReq,
 			Payload: reqPayload,
@@ -131,10 +137,12 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 // Close() 通过关闭底 conn 让 Recv 立即返回错误，也能让 readPump 退出。
 func (c *Client) readPump(ctx context.Context) {
 	defer close(c.done)
+	cliLog.Debug("readPump started")
 	for {
 		f, err := c.conn.Recv(ctx)
 		if err != nil {
 			if !c.closed.Load() {
+				cliLog.Error("readPump recv failed", "err", err)
 				c.bus.Publish(core.Event{
 					Kind: core.EventState,
 					State: &core.StateInfo{
@@ -142,6 +150,8 @@ func (c *Client) readPump(ctx context.Context) {
 						Err:       err,
 					},
 				})
+			} else {
+				cliLog.Debug("readPump exited after close")
 			}
 			return
 		}
@@ -151,10 +161,12 @@ func (c *Client) readPump(ctx context.Context) {
 
 // dispatch 根据帧类型分发。
 func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
+	cliLog.Debug("dispatch", "kind", f.Kind, "len", len(f.Payload))
 	switch f.Kind {
 	case protocol.FKDeliver:
 		var msg protocol.StoredMessage
 		if err := json.Unmarshal(f.Payload, &msg); err != nil {
+			cliLog.Error("unmarshal FKDeliver failed", "err", err)
 			return
 		}
 		// 幂等持久化，upsert-by-ID 保证 ServerSeq 由 Hub 补齐；
@@ -165,8 +177,10 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 	case protocol.FKHistoryResp:
 		var resp protocol.HistoryResponse
 		if err := json.Unmarshal(f.Payload, &resp); err != nil {
+			cliLog.Error("unmarshal FKHistoryResp failed", "err", err)
 			return
 		}
+		cliLog.Debug("history resp received", "count", len(resp.Messages))
 		// history resp 的内容必须按 Hub 给的顺序直送 publishMessageOnce，
 		// 不能走 deliverMessage——后者在 awaitingHistory 时会全部进 buffer，
 		// 而 buffer 在 flushPendingDeliver 里又会被 lastHistorySeq 过滤掉，
@@ -192,6 +206,7 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 	case protocol.FKError:
 		var e protocol.ErrorPayload
 		_ = json.Unmarshal(f.Payload, &e)
+		cliLog.Error("server error", "code", e.Code, "msg", e.Message)
 		c.bus.Publish(core.Event{
 			Kind: core.EventState,
 			State: &core.StateInfo{
@@ -203,6 +218,7 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 
 	case protocol.FKPong:
 		// 心跳应答，仅 log-and-drop；M2 起将暴露给上层做延迟统计。
+		cliLog.Debug("pong received")
 
 	default:
 		// 其它帧不在 M1 范围内，静默丢弃。
@@ -341,10 +357,12 @@ func (c *Client) SendMessage(ctx context.Context, convID, body string) error {
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
 	}
+	cliLog.Debug("send FKMessage", "conv", convID, "len", len(body))
 	if err := c.conn.Send(ctx, protocol.Frame{
 		Kind:    protocol.FKMessage,
 		Payload: payload,
 	}); err != nil {
+		cliLog.Error("send FKMessage failed", "conv", convID, "err", err)
 		return err
 	}
 	// 乐观本地缓存（FKDeliver 到达时同 ID upsert，会把 ServerSeq 从 0 更新成 Hub 分配值）。
@@ -394,6 +412,7 @@ func (c *Client) Close() error {
 	if c.closed.Swap(true) {
 		return nil
 	}
+	cliLog.Info("close client")
 	c.forceFlushPending()
 	err := c.conn.Close()
 	<-c.done

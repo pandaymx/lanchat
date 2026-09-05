@@ -22,6 +22,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/transport/ws"
 	"github.com/pandaymx/lanchat/pkg/tui"
 )
@@ -57,7 +58,25 @@ func main() {
 	convID := flag.String("conv", "", "会话 ID；留空走 default (=lobby)")
 	maxHist := flag.Int("max-hist", 0, "内存保留的最大消息条数；<=0 用默认 5000")
 	noConnect := flag.Bool("no-connect", false, "跳过连接 hub（仅用于 UI 调试）")
+	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
+	logFormat := flag.String("log-format", "text", "日志格式：text|json")
+	logFile := flag.String("log-file", defaultLogFile(), "日志文件路径；默认走 $TMPDIR/lanchat-tui-$$.log（TUI AltScreen 占用 stderr）")
 	flag.Parse()
+
+	lvl, lvlErr := logging.ParseLevel(*logLevel)
+	fmt2, fmtErr := logging.ParseFormat(*logFormat)
+	if err := logging.Init(lvl, fmt2, *logFile); err != nil {
+		fmt.Fprintln(os.Stderr, "lanchat-tui: logging init:", err)
+		os.Exit(1)
+	}
+	if lvlErr != nil {
+		logging.New("tui").Warn("invalid -log-level, fallback to info", "input", *logLevel, "err", lvlErr)
+	}
+	if fmtErr != nil {
+		logging.New("tui").Warn("invalid -log-format, fallback to text", "input", *logFormat, "err", fmtErr)
+	}
+	logger := logging.New("tui")
+	logger.Info("starting tui", "version", version, "commit", commit, "user", *user, "device", *device, "hub", *hubURL, "log_file", *logFile)
 
 	if err := run(runOptions{
 		User:      *user,
@@ -67,9 +86,25 @@ func main() {
 		MaxHist:   *maxHist,
 		NoConnect: *noConnect,
 	}); err != nil {
+		logger.Error("tui exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "lanchat-tui:", err)
 		os.Exit(1)
 	}
+}
+
+// defaultLogFile 给出 TUI 默认日志路径。
+//
+// bubbletea 的 AltScreen 会接管 stderr 并把光标定位、切到 alternate buffer；
+// 在那之后写 stderr 的日志会被 bubbletea 的渲染覆盖或丢失。
+// 因此 TUI 默认走 $TMPDIR/lanchat-tui-$$.log（按 PID 区分并发实例）。
+//
+// $TMPDIR 在 Linux/macOS 是合理路径；Windows 走 GetTempDir（缺省时退化为 ""）。
+func defaultLogFile() string {
+	dir := os.TempDir()
+	if dir == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s%clanchat-tui-%d.log", dir, os.PathSeparator, os.Getpid())
 }
 
 // runOptions 收纳 run 的入参，避免签名再长一截。

@@ -13,6 +13,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
 
@@ -53,6 +54,8 @@ func (t *Transport) pathOrDefault() string {
 
 // ---- 客户端角色 ----
 
+var transLog = logging.New("transport.ws")
+
 // Dial 拨号到 target 并建立 WebSocket 连接。
 //
 // target 支持两种写法：
@@ -68,14 +71,17 @@ func (t *Transport) Dial(ctx context.Context, target string, hello protocol.Hell
 		return nil, err
 	}
 
+	transLog.Debug("dial", "url", u, "device", hello.DeviceID)
 	// 第二个返回值是 HTTP 响应，成功时其 Body 已被库置为 nil
 	// （库文档：You never need to close resp.Body yourself）。
 	// 失败时连接为 nil，也没有可关闭的资源。故此处忽略它是正确的。
 	//nolint:bodyclose // coder/websocket 接管了底层连接，Body 不由调用方关闭
 	wsConn, _, err := websocket.Dial(ctx, u, nil)
 	if err != nil {
+		transLog.Error("dial failed", "url", u, "err", err)
 		return nil, fmt.Errorf("dial %s: %w", u, err)
 	}
+	transLog.Info("dial ok", "url", u, "device", hello.DeviceID)
 	return newConn(wsConn, hello.DeviceID), nil
 }
 
@@ -121,17 +127,21 @@ const shutdownTimeout = 5 * time.Second
 func (t *Transport) Listen(ctx context.Context, addr string, onConn func(core.Conn, protocol.Hello) error) error {
 	path := t.pathOrDefault()
 
+	transLog.Info("listen start", "addr", addr, "path", path)
 	mux := http.NewServeMux()
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		wsConn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			// upgrade 失败：可能是普通 HTTP 请求或非 WS 客户端。
 			// 不写响应体——Accept 失败时已经写过了，再写会报 superfluous WriteHeader。
+			transLog.Debug("ws upgrade rejected", "remote", r.RemoteAddr, "err", err)
 			return
 		}
 		c := newConn(wsConn, "")
+		transLog.Debug("ws accepted", "remote", r.RemoteAddr)
 		go func() {
 			if err := onConn(c, protocol.Hello{}); err != nil {
+				transLog.Debug("onConn returned err, closing", "remote", r.RemoteAddr, "err", err)
 				_ = c.Close()
 			}
 		}()
@@ -144,6 +154,7 @@ func (t *Transport) Listen(ctx context.Context, addr string, onConn func(core.Co
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		transLog.Error("listen failed", "addr", addr, "err", err)
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 
@@ -158,12 +169,15 @@ func (t *Transport) Listen(ctx context.Context, addr string, onConn func(core.Co
 		// 既不因父 ctx 已取消而立即放弃，也不会无限期卡住。
 		shutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer cancel()
+		transLog.Info("shutdown begin", "timeout", shutdownTimeout)
 		_ = srv.Shutdown(shutCtx)
 	}()
 
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		// 监听失败（端口占用等）是真实错误，要往上抛
+		transLog.Error("serve failed", "addr", addr, "err", err)
 		return fmt.Errorf("serve: %w", err)
 	}
+	transLog.Info("listen stopped", "addr", addr)
 	return ctx.Err()
 }

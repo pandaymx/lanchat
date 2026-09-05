@@ -225,7 +225,62 @@ lefthook install     # 装 git 钩子（clone 后必做）
 4. 提交信息按 §5.1 写
 5. **不要**在 commit message 里加 `Co-Authored-By` 之类的自动签名，除非用户要求
 
-## 11. 不确定时
+## 11. 日志规范
+
+**库选择**：标准库 `log/slog`（Go 1.21+）。不引入 zap/zerolog —— 与本仓库零 transitive 依赖策略一致。
+
+**包**：统一通过 `pkg/logging` 门面，**不要**直接 `import "log/slog"` 然后 `slog.Info(...)`。
+
+### 11.1 三层 API
+
+| 调用 | 谁用 | 何时调 |
+|---|---|---|
+| `logging.Init(level, format, file)` | `cmd/hub/main.go` / `cmd/tui/main.go` | main 里调一次，注入全局 handler |
+| `logging.New("pkg-name")` | 任意 pkg 包级 var | 拿带 `component=pkg-name` attr 的 logger |
+| `xxx.Info/Warn/Error/Debug(msg, "k", v, ...)` | 业务代码 | 触发日志 |
+
+### 11.2 关键 gotcha：不要用 `slog.Default().With(...)`
+
+```go
+// ❌ 错误：包级 init 时固化 stdlib 默认 handler
+var log = slog.Default().With("component", "x")
+// logging.Init 在 main() 调 SetDefault 时不会替换这里已派生的 logger
+// stdlib 默认 handler 把 level 字符串 format 进 message 字段
+// 出现 `msg="INFO xxx component=x ..."` 这种污染
+
+// ✅ 正确：pkg/logging.ComponentLogger 每次走当前 slog.Default()
+var log = logging.New("x")  // 返回 *logging.ComponentLogger
+log.Info(...)  // 内部走 slog.Default().Log(...)
+```
+
+回归测试见 `pkg/logging/logging_test.go:TestComponentLogger_PicksUpNewDefault`。
+
+### 11.3 flag
+
+| cmd | flag | 默认 |
+|---|---|---|
+| `hub` | `-log-level` | `info` |
+| `hub` | `-log-format` | `text`（生产用 `json` 接 Loki/CloudWatch） |
+| `hub` | `-log-file` | 空（走 stderr） |
+| `tui` | `-log-level` | `info` |
+| `tui` | `-log-format` | `text` |
+| `tui` | `-log-file` | `$TMPDIR/lanchat-tui-$$.log`（AltScreen 占用 stderr，必须落盘） |
+
+### 11.4 埋点原则
+
+- **不要每个函数都埋**：业务关键路径（connect/disconnect、send/receive、broadcast、catch-up sequence、permission deny）必须埋
+- **热路径低开销**：高频循环（每帧渲染、每条消息都走）只走 Debug 级别，默认 Info 不输出
+- **错误必埋**：所有 `return err` 之前必须 `log.Error(...)` 或留 fmt 包里的 error
+- **不要 print 日志**：调试残留用 Debug 级别 + `git grep -nP 'fmt\.Println|Fprintf\(os\.Stderr'` 自查
+
+### 11.5 限制（M1 阶段不引入）
+
+- ❌ log file 滚动（lumberjack） → 部署侧 logrotate
+- ❌ 结构化 trace/span 字段 → 留接口位等 OpenTelemetry
+- ❌ request_id 串联 → 等真有多步调用场景再加
+- ❌ 接 Loki/CloudWatch → M5 部署阶段
+
+## 12. 不确定时
 
 - 架构层面的取舍 → 先用文字讨论，得到共识再写代码；讨论结果记录在 `git commit` / PR 描述
 - 本文件有歧义或过时 → 直接改本文件，并在 commit message 里说明

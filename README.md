@@ -74,6 +74,9 @@ make lint            # golangci-lint
 | `-addr` | `:9000` | 监听地址（`:9000` 或 `127.0.0.1:9000`） |
 | `-path` | `/ws` | WebSocket upgrade 路径 |
 | `-max-history` | `500` | 单次 `FKHistoryReq` 补发的最大条数 |
+| `-log-level` | `info` | `debug`/`info`/`warn`/`error` |
+| `-log-format` | `text` | `text`/`json`（生产用 `json` 接聚合） |
+| `-log-file` | 空（stderr） | 日志文件路径；`M1` 不做滚动，部署侧 `logrotate` |
 
 ### `cmd/tui`
 
@@ -85,6 +88,9 @@ make lint            # golangci-lint
 | `-conv` | `lobby` | 会话 ID，默认频道 `lobby` |
 | `-max-hist` | `5000` | 客户端内存保留的最大消息条数 |
 | `-no-connect` | `false` | 跳过连 Hub（仅用于 UI 调试，禁用交互链路） |
+| `-log-level` | `info` | 同 hub |
+| `-log-format` | `text` | 同 hub |
+| `-log-file` | `$TMPDIR/lanchat-tui-$$.log` | bubbletea `AltScreen` 占用 stderr，必须落盘 |
 
 ### TUI 内置命令
 
@@ -103,7 +109,7 @@ make lint            # golangci-lint
 | M0 | 工程地基（lefthook/golangci-lint/semantic-release） | ✅ | — |
 | M1 | 接口契约（`pkg/core` + `pkg/protocol` v1 + fake transport） | ✅ | `v0.1.0` |
 | M2 | Hub 服务端（Router/Registry/History + WS Transport + `cmd/hub`） | ✅ | `v0.2.0` + Docker |
-| **M3** | **TUI 客户端（bubbletea/v2 + 自适应 layout + / 命令 + 未读计数）** | **✅** | **`v0.3.0` 待发** |
+| **M3** | **TUI 客户端（bubbletea/v2 + 自适应 layout + / 命令 + 未读计数 + slog 日志）** | **✅** | **`v0.3.0` 待发** |
 | M4 | Web 端 | ⬜ | — |
 | M5 | 多 transport（gRPC / QUIC） | ⬜ | — |
 | M6 | 鉴权（Token） | ⬜ | — |

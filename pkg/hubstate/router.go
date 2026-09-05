@@ -9,8 +9,12 @@ import (
 	"time"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
+
+// routerLog 是 Router 协议状态机的 logger。
+var routerLog = logging.New("hubstate.router")
 
 // Router 是 Hub 的核心状态机：把进来的 Frame 翻译成状态变更与投递。
 //
@@ -94,6 +98,7 @@ func (r *Router) Sequencer() *Sequencer { return r.seq }
 // 限流判断）。若登记发生在 goroutine 里，这里就会有一场数据竞争。
 func (r *Router) Attach(ctx context.Context, p Peer) uint64 {
 	peerID := r.reg.Add(p, p.DeviceID(), "")
+	routerLog.Info("peer attached", "peer", peerID, "device", p.DeviceID())
 	go r.serveLoop(ctx, peerID, p)
 	return peerID
 }
@@ -116,6 +121,7 @@ func (r *Router) serveLoop(ctx context.Context, peerID uint64, p Peer) {
 	defer func() {
 		r.reg.Remove(peerID)
 		_ = p.Close()
+		routerLog.Info("peer detached", "peer", peerID)
 	}()
 
 	for {
@@ -128,6 +134,7 @@ func (r *Router) serveLoop(ctx context.Context, peerID uint64, p Peer) {
 		if err := r.HandleFrame(ctx, peerID, p, f); err != nil {
 			// 协议违规：能通知就通知一声再走
 			if errors.Is(err, errFatal) {
+				routerLog.Warn("fatal frame, closing peer", "peer", peerID, "kind", f.Kind, "err", err)
 				r.sendError(ctx, p, protocol.ErrInvalidFrame, err.Error())
 			}
 			return
@@ -160,6 +167,7 @@ func fatalf(format string, args ...any) error {
 //	FKTyping     —— 广播给同会话其它设备（不持久化）
 //	其它         —— 静默丢弃
 func (r *Router) HandleFrame(ctx context.Context, peerID uint64, p Peer, f protocol.Frame) error {
+	routerLog.Debug("frame received", "peer", peerID, "kind", f.Kind, "len", len(f.Payload))
 	switch f.Kind {
 
 	case protocol.FKHello:
@@ -205,6 +213,8 @@ func (r *Router) handleHello(ctx context.Context, peerID uint64, p Peer, f proto
 			return fatalf("unmarshal hello: %v", err)
 		}
 		if hello.ProtocolVersion != protocol.ProtocolVersion {
+			routerLog.Warn("protocol version mismatch",
+				"peer", peerID, "got", hello.ProtocolVersion, "want", protocol.ProtocolVersion)
 			r.sendError(ctx, p, protocol.ErrProtocolMismatch,
 				"unsupported protocol version")
 			return fatalf("protocol version %d != %d",
@@ -213,6 +223,7 @@ func (r *Router) handleHello(ctx context.Context, peerID uint64, p Peer, f proto
 	}
 	// 握手通过：之后这条连接才参与投递
 	r.reg.MarkHello(peerID, hello.DeviceID, hello.UserID)
+	routerLog.Info("peer handshake ok", "peer", peerID, "user", hello.UserID, "device", hello.DeviceID)
 	return nil
 }
 
@@ -237,8 +248,12 @@ func (r *Router) handleMessage(ctx context.Context, f protocol.Frame) error {
 		m.CreatedAt = time.Now().UnixMilli()
 	}
 
+	routerLog.Info("message received",
+		"seq", m.ServerSeq, "from", m.SenderUserID, "dev", m.SenderDeviceID, "conv", m.ConversationID)
+
 	if r.store != nil {
 		if err := r.store.AppendMessage(ctx, m); err != nil {
+			routerLog.Error("store append failed", "seq", m.ServerSeq, "err", err)
 			// 落库失败也不关连接，但**不广播**——
 			// 宁可让客户端补发时拉到，也不能广播一条没存住的消息（重启就消失）
 			//nolint:nilerr // 故意丢弃：断连会让整条会话的后续消息全丢，代价更大
@@ -373,6 +388,7 @@ func (r *Router) handleTyping(ctx context.Context, peerID uint64, f protocol.Fra
 // broadcast 把一帧发给所有已握手的连接。单条失败不影响其它。
 func (r *Router) broadcast(ctx context.Context, f protocol.Frame) {
 	peers := r.reg.AllPeers()
+	routerLog.Debug("broadcast", "kind", f.Kind, "peer_count", len(peers))
 	_ = SendToPeers(ctx, peers, func(ctx context.Context, p Peer) error {
 		return p.Send(ctx, f)
 	})

@@ -18,7 +18,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/hubstate"
+	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
 	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
@@ -55,9 +55,25 @@ func main() {
 	addr := flag.String("addr", ":9000", "监听地址，例如 :9000 或 127.0.0.1:9000")
 	path := flag.String("path", wstransport.DefaultPath, "WebSocket upgrade 路径")
 	maxHistory := flag.Int("max-history", 500, "单次 FKHistoryReq 补发的最大条数")
+	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
+	logFormat := flag.String("log-format", "text", "日志格式：text|json")
+	logFile := flag.String("log-file", "", "日志文件路径；空走 stderr")
 	flag.Parse()
 
-	logger := log.New(os.Stdout, "hub ", log.LstdFlags|log.Lmsgprefix)
+	// 解析日志 flag；不识别走默认 + stderr 警告，不中断启动。
+	lvl, lvlErr := logging.ParseLevel(*logLevel)
+	fmt2, fmtErr := logging.ParseFormat(*logFormat)
+	if err := logging.Init(lvl, fmt2, *logFile); err != nil {
+		fmt.Fprintln(os.Stderr, "hub: logging init:", err)
+		os.Exit(1)
+	}
+	if lvlErr != nil {
+		logging.New("hub").Warn("invalid -log-level, fallback to info", "input", *logLevel, "err", lvlErr)
+	}
+	if fmtErr != nil {
+		logging.New("hub").Warn("invalid -log-format, fallback to text", "input", *logFormat, "err", fmtErr)
+	}
+	logger := logging.New("hub")
 
 	// signal.NotifyContext：SIGINT/SIGTERM 触发 ctx 取消 与 run 关停联动。
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -70,13 +86,13 @@ func main() {
 	})
 	tr := wstransport.New().WithPath(*path)
 
-	logger.Printf("starting hub %s (commit %s) on %s%s", version, commit, *addr, *path)
+	logger.Info("starting hub", "version", version, "commit", commit, "addr", *addr, "path", *path)
 
 	if err := run(ctx, logger, tr, router, *addr); err != nil &&
 		!errors.Is(err, context.Canceled) {
-		logger.Fatalf("hub exited with error: %v", err)
+		logger.Error("hub exited with error", "err", err)
 	}
-	logger.Print("hub stopped gracefully")
+	logger.Info("hub stopped gracefully")
 }
 
 // run 起 Listen 并阻塞到 ctx 取消。
@@ -85,7 +101,7 @@ func main() {
 // 我们把这个当成正常退出码（不视为错误）。
 func run(
 	ctx context.Context,
-	logger *log.Logger,
+	logger *logging.ComponentLogger,
 	tr *wstransport.Transport,
 	router *hubstate.Router,
 	addr string,
@@ -99,7 +115,7 @@ func run(
 			// 这里直接断言；不是 Peer 类型的连接我们关掉。
 			p, ok := conn.(hubstate.Peer)
 			if !ok {
-				logger.Printf("connection type %T is not hubstate.Peer; rejecting", conn)
+				logger.Warn("connection type is not hubstate.Peer; rejecting", "type", fmt.Sprintf("%T", conn))
 				_ = conn.Close()
 				return fmt.Errorf("incompatible peer type %T", conn)
 			}
@@ -115,9 +131,9 @@ func run(
 	if err := waitForListener(ctx, probeAddr, readyTimeout); err != nil {
 		// probe 失败不一定要 fatal：Listen 自己会通过 listenErr 报错；
 		// 这里只是日志提示，不阻塞等待。
-		logger.Printf("ready probe skipped: %v", err)
+		logger.Warn("ready probe skipped", "err", err)
 	} else {
-		logger.Printf("listening on %s", probeAddr)
+		logger.Info("listening", "addr", probeAddr)
 	}
 
 	if err := <-listenErr; err != nil && !errors.Is(err, http.ErrServerClosed) &&

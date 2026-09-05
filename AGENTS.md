@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M3 TUI 端（M3.1–M3.3 已合入，下一步 M3.4）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M3 TUI 端（M3.1–M3.7 已合入，下一步 M3.8）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -26,7 +26,7 @@
 | M3.4 | 程序入口 | `cmd/tui/main.go`：起 bubbletea Program、`FocusInput`、优雅退出 | ✅ `0d309f7` |
 | M3.5 | client 接线 | client adapter：`client.Events()` → `Model.Publish`；`submitMsg` → `Sender.Send`；双 Session 经 fake.Hub 端到端验证 | ✅ `78abdb4` |
 | M3.6 | 未读与滚屏 | history 切「用户在底 → 强拉尾 / 离开底 → 仅累计 unread」二分；End / PgDn 到底清零；status 显示 `unread=N` | ✅ 本 commit |
-| M3.7 | 集成回归 | **必须复跑 catch-up 顺序验证**（`TestOfflineCatchUp`），确认 M3 改动未破坏离线补发 | ⬜ 待做 |
+| M3.7 | 集成回归 | **必须复跑 catch-up 顺序验证**（`TestOfflineCatchUp`），确认 M3 改动未破坏离线补发 | ✅ 本 commit |
 | M3.8 | 自适应与性能 | resize 后重排；history 改增量 append 替代全量 `SetContent` | ⬜ 待做 |
 | M3.9 | 收尾打磨 | 帮助面板、键位提示、错误展示 | ⬜ 待做 |
 

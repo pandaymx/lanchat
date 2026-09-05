@@ -11,7 +11,26 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M0 工程地基（尚未写代码）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M3 TUI 端（M3.1–M3.3 已合入，下一步 M3.4）。架构决策摘要内嵌于本文档 §12。
+
+### 1.1 M3 子任务拆解与进度
+
+> 拆解依据：`pkg/tui` 代码注释里已写死的 `M3.x+` 约定 + 实际 commit 历史。
+> 后续子任务若与此处不符，以用户口头决定为准，并回来改本表。
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M3.1 | 依赖与骨架 | `bubbletea/v2` + `lipgloss/v2` + `bubbles/v2` 引入，`pkg/tui` 建包 | ✅ `c214f27` |
+| M3.2 | Model 骨架 | `Config`/`Model`/`Init`/`Update`/`View`，`eventMsg`/`errMsg`/`quitMsg` 适配层 | ✅ `524d2df` |
+| M3.3 | 输入区 + 历史区 | `input.go`(textarea) / `history.go`(viewport) / `layout.go`(lipgloss 拼装) / `submitMsg`，**Enter 提交 · Shift+Enter 换行** | ✅ `8f951c8` |
+| M3.4 | 程序入口 | `cmd/tui/main.go`：起 bubbletea Program、`FocusInput`、优雅退出 | ⬜ 待做 |
+| M3.5 | client 接线 | client adapter：`client.Events()` → `Model.Publish`；`submitMsg` → `core.Send` | ⬜ 待做 |
+| M3.6 | 未读与滚屏 | history 切 `autoTailOnly=true`（用户滚上去时不强拉），status 显示未读计数 | ⬜ 待做 |
+| M3.7 | 集成回归 | **必须复跑 catch-up 顺序验证**（`TestOfflineCatchUp`），确认 M3 改动未破坏离线补发 | ⬜ 待做 |
+| M3.8 | 自适应与性能 | resize 后重排；history 改增量 append 替代全量 `SetContent` | ⬜ 待做 |
+| M3.9 | 收尾打磨 | 帮助面板、键位提示、错误展示 | ⬜ 待做 |
+
+**M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 
 ---
 

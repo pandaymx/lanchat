@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"errors"
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/pandaymx/lanchat/pkg/core"
@@ -29,12 +32,15 @@ type Model struct {
 	// UI 状态
 	width, height int
 	ready         bool
+	input         textInput
+	history       historyView
 
 	// 业务状态
-	connected bool
-	lastError error
-	messages  []protocol.StoredMessage
-	peers     []protocol.Presence
+	connected     bool
+	lastError     error
+	messages      []protocol.StoredMessage
+	peers         []protocol.Presence
+	lastSubmitted string
 }
 
 // New 构造一个未连接、待 Init 的 Model。
@@ -48,6 +54,8 @@ func New(cfg Config) *Model {
 		hubURL:  cfg.HubURL,
 		maxHist: cfg.MaxHist,
 		inbox:   make(chan tea.Msg, 64),
+		input:   newTextInput(),
+		history: newHistoryView(),
 	}
 }
 
@@ -69,23 +77,44 @@ func listenCmd(inbox <-chan tea.Msg) tea.Cmd {
 	}
 }
 
-// Update 处理键盘 / WindowSizeMsg / 外部事件 / 错误事件 / 退出事件。
+// Update 处理键盘 / WindowSizeMsg / 外部事件 / 错误事件 / 退出事件 / 提交事件。
 // 所有状态写入都在这一处 goroutine，无锁。
+//
+// 键位路由优先级（与方案 §10 一致）：
+//  1. Ctrl+C         → Quit
+//  2. Enter 无 Shift → 取值、清空、投递 submitMsg（让 client adapter 在
+//     eventMsg-style 路径上送到 hub；M3.5+ 实现）
+//     Enter 带 Shift → 落到分支 3，由 textarea 自己处理换行
+//  3. 其他键         → 转发给 textInput.Update
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
+		_, sidebarW, bodyH := layoutDims(msg.Width, msg.Height)
+		m.history.SetSize(msg.Width-sidebarW, bodyH)
+		m.input.SetSize(msg.Width, inputH)
+		m.refreshHistory()
 		return m, nil
 
 	case tea.KeyMsg:
 		k := msg.Key()
-		// Ctrl+C 主动退出；M3.3+ 把可输入键路由到 textarea.Model。
+		// Ctrl+C 主动退出。
 		if k.Code == 'c' && k.Mod == tea.ModCtrl {
 			return m, tea.Cmd(tea.Quit)
 		}
-		return m, nil
+		// Enter（不带 Shift）→ 提交。Shift+Enter 落到 textInput 自己换行。
+		if k.Code == tea.KeyEnter && k.Mod&tea.ModShift == 0 {
+			return m, m.trySubmitInput()
+		}
+		// 其他键自动 focus textInput 后透传过去——首次按键即激活输入框。
+		var cmds []tea.Cmd
+		if !m.input.Focused() {
+			cmds = append(cmds, m.input.Focus())
+		}
+		cmds = append(cmds, m.input.Update(msg))
+		return m, tea.Batch(cmds...)
 
 	case eventMsg:
 		m.applyEvent(msg.event)
@@ -98,6 +127,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case quitMsg:
 		_ = msg.reason
 		return m, tea.Cmd(tea.Quit)
+
+	case submitMsg:
+		// M3.5+ 由 client adapter 在事件循环里把这里收到的文本调 core.Send；
+		// 当前阶段仅记录到 lastSubmitted，便于测试断言。
+		m.lastSubmitted = msg.text
+		return m, listenCmd(m.inbox)
 	}
 
 	return m, nil
@@ -113,6 +148,7 @@ func (m *Model) applyEvent(e core.Event) {
 	case core.EventMessage:
 		if e.Message != nil {
 			m.appendMessage(*e.Message)
+			m.refreshHistory()
 		}
 	case core.EventPresence:
 		if e.Presence != nil {
@@ -120,6 +156,40 @@ func (m *Model) applyEvent(e core.Event) {
 		}
 	}
 }
+
+// refreshHistory 把当前 m.messages 推给 historyView，强制滚到底部。
+// M3.3 阶段不区分「用户在中间看历史 → 不强拉」策略，每条新消息都强制 Tail。
+// M3.4+ 引入未读计数时切换为 autoTailOnly=true 并做 unread 标记。
+func (m *Model) refreshHistory() {
+	m.history.SetMessages(m.messages, false)
+}
+
+// trySubmitInput 把当前 textInput 内容投递到 inbox，清空输入框。
+//
+// 三类 Noop：
+//   - 空白：返回 nil cmd，不投递
+//   - inbox 已满：仍写 lastSubmitted（保证观测），但丢掉消息并发 quit 提示
+//   - 正常：先写入 lastSubmitted 让测试可读，再投递 submitMsg 维持 Update 协议
+//
+// 路由：submitMsg → Update → M3.5+ 的 client adapter 收到并 Send。
+func (m *Model) trySubmitInput() tea.Cmd {
+	text := strings.TrimRight(m.input.Value(), "\n")
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	m.input.Reset()
+	m.lastSubmitted = text
+	select {
+	case m.inbox <- newSubmitMsg(text):
+	default:
+		m.PublishError(errInboxFull)
+	}
+	return listenCmd(m.inbox)
+}
+
+// errInboxFull 描述 inbox 通道已满、submitMsg 被丢弃的情况。
+// 定义在 model.go 顶层，Test 也能 import 引用。
+var errInboxFull = errors.New("tui: inbox is full, submit dropped")
 
 // appendMessage 把消息加入历史；超限时丢弃最早的批（保留 10% headroom
 // 避免每条新消息都触发一次 slice copy）。
@@ -173,9 +243,86 @@ func (m *Model) RequestQuit(reason string) {
 	}
 }
 
-// View 返回占位视图。M3.3 替换为 status / history / sidebar / textarea。
+// View 返回当前帧的四区拼装结果。
+// M3.3 已替换占位文字 → status / (history+sidebar) / input 三段纵向布局。
 func (m *Model) View() tea.View {
-	return tea.NewView("lanchat tui (m3.2 skeleton)")
+	status := m.renderStatus()
+	historyView := m.history.View()
+	sidebarView := m.renderSidebar()
+	inputView := m.input.View()
+
+	body := renderLayout(m.width, m.height, status, historyView, sidebarView, inputView)
+	return tea.NewView(body)
+}
+
+// renderStatus 生成状态栏字符串：连接状态 + 用户/设备 + hub URL。
+// M3.3 是纯文本；M3.4+ 接 Wireshark 风格末尾再加 latency/last_seq。
+func (m *Model) renderStatus() string {
+	conn := "offline"
+	if m.connected {
+		conn = "online"
+	}
+	parts := []string{
+		conn,
+		"user=" + m.user,
+		"device=" + m.device,
+		"hub=" + m.hubURL,
+	}
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += " | "
+		}
+		out += p
+	}
+	if m.lastError != nil {
+		out += " | err=" + m.lastError.Error()
+	}
+	return out
+}
+
+// renderSidebar 生成右侧在线设备列表文本。
+func (m *Model) renderSidebar() string {
+	if len(m.peers) == 0 {
+		return "peers: (none yet)"
+	}
+	online := 0
+	for _, p := range m.peers {
+		if p.Online {
+			online++
+		}
+	}
+	out := "peers: " + itoa(online) + "/" + itoa(len(m.peers)) + "\n"
+	for _, p := range m.peers {
+		if !p.Online {
+			continue
+		}
+		out += "● " + p.UserID + "@" + p.DeviceID + "\n"
+	}
+	return out
+}
+
+// itoa 是 strconv.Itoa 的极简替代，避免在 renderSidebar 顶层 import strconv。
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
 }
 
 // User returns the user identity bound at construction.
@@ -217,6 +364,16 @@ func (m *Model) Ready() bool { return m.ready }
 
 // InboxLen 返回 inbox 当前缓冲长度，方便测试断言。
 func (m *Model) InboxLen() int { return len(m.inbox) }
+
+// LastSubmitted 返回最近一次用户通过 Enter 提交的文本。
+// 当前阶段（无 client adapter）仅作测试钩子，M3.5+ 由 client adapter
+// 在事件循环里读到 submitMsg 并调 core.Send 后，这里仍保留原值。
+func (m *Model) LastSubmitted() string { return m.lastSubmitted }
+
+// FocusInput 把光标放回输入框；外部 program 启动时调用一次。
+func (m *Model) FocusInput() tea.Cmd {
+	return m.input.Focus()
+}
 
 // uniqueUsers 计算去重后的在线用户数。
 func uniqueUsers(peers []protocol.Presence) int {

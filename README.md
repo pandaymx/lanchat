@@ -49,14 +49,29 @@ make build           # 版本号从 git tag 注入
 # 窗口 A —— 启 Hub
 go run ./cmd/hub -addr :9000
 
-# 窗口 B —— 启 TUI 连本机 Hub
+# 窗口 B —— 启 TUI 连本机 Hub（自动探测 $LANG，zh_CN.UTF-8 会渲染中文 UI）
 go run ./cmd/tui -hub ws://127.0.0.1:9000/ws -user alice
 
-# 窗口 C —— 再启一个 TUI 模拟同事
-go run ./cmd/tui -hub ws://127.0.0.1:9000/ws -user bob -device bob-laptop
+# 窗口 C —— 再启一个 TUI 模拟同事（强制英文 UI）
+go run ./cmd/tui -hub ws://127.0.0.1:9000/ws -user bob -device bob-laptop -lang en
+
+# 窗口 D —— 强制中文 UI（不管 env）
+go run ./cmd/tui -hub ws://127.0.0.1:9000/ws -user carol -lang zh-cn
 ```
 
 关掉 B 再开，消息仍然在（`pkg/client` 内存 history + Hub 端 `FKHistoryReq` 补发）。
+
+**M3.10 真机验收要点**（zh-cn ↔ en 双窗口混跑）：
+
+| 视觉元素 | zh-cn 文案 | en 文案 |
+|---|---|---|
+| 状态栏连接状态 | 在线 / 离线 | online / offline |
+| 状态栏字段名 | 用户 / 设备 / 中心 / 未读 / 错误 | user / device / hub / unread / err |
+| 键位提示行 | `[Enter] 发送 · [Shift+Enter] 换行 · ...` | `[Enter] send · [Shift+Enter] newline · ...` |
+| 输入框占位符 | 输入消息（Enter 发送，Shift+Enter 换行） | type a message (Enter to send, Shift+Enter for newline) |
+| Sidebar peers | peers：（暂无） | peers: (none yet) |
+
+`./tui -lang-list` 能即时列出当前 binary 嵌入的所有 locale。
 
 ### 3. 跑测试
 

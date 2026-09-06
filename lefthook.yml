@@ -45,7 +45,11 @@ pre-commit:
 commit-msg:
   commands:
     commitlint:
-      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && bunx commitlint --edit {1}
+      # 显式用 bun 跑 bin 脚本（--bun 强制 bun runtime）：commitlint 的
+      # shebang 是 /usr/bin/env node，而 node 只在 fnm 交互 shell PATH 里，
+      # lefthook 由 git 非交互调起时找不到 node 会 exit 127。不走 bunx——
+      # bunx 在 dash 下解析 bin 同样 127，直接给脚本路径最稳。
+      run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && bun --bun ./node_modules/.bin/commitlint --edit {1}
 
 # 推送前：全量 lint + 全量测试（慢，但只在 push 时付这个代价）
 pre-push:

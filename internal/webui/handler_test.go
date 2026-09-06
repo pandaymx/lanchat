@@ -28,7 +28,7 @@ func newTestHandler(t *testing.T, d *stubDialer) (*Handler, *stubDialer) {
 		d = &stubDialer{}
 	}
 	mgr := newTestManager(t, d)
-	h := NewHandler(Config{Version: "test"}, mgr)
+	h := NewHandler(Config{Version: "test", Translator: testTranslator()}, mgr)
 	return h, d
 }
 
@@ -394,8 +394,9 @@ func TestTemplate_EscapesMessageBody(t *testing.T) {
 
 // TestTemplate_ConnStatus 验证断连渲染 banner、已连接渲染空（state 帧 swap 清屏）。
 func TestTemplate_ConnStatus(t *testing.T) {
+	tr := testTranslator()
 	var sb strings.Builder
-	if err := templates.ConnStatus(false).Render(t.Context(), &sb); err != nil {
+	if err := templates.ConnStatus(tr, false).Render(t.Context(), &sb); err != nil {
 		t.Fatalf("render disconnected: %v", err)
 	}
 	got := sb.String()
@@ -404,11 +405,67 @@ func TestTemplate_ConnStatus(t *testing.T) {
 	}
 
 	sb.Reset()
-	if err := templates.ConnStatus(true).Render(t.Context(), &sb); err != nil {
+	if err := templates.ConnStatus(tr, true).Render(t.Context(), &sb); err != nil {
 		t.Fatalf("render connected: %v", err)
 	}
 	if strings.TrimSpace(sb.String()) != "" {
 		t.Errorf("connected must render empty to clear banner, got %q", sb.String())
+	}
+}
+
+// TestWebI18N_AllChromeKeysUsed 用 fakeTranslator 收集一次完整渲染里被
+// 查询的 key，断言 6 个 web.* chrome key 全部走到——防止新增硬编码中文
+// 文案绕开 i18n，也防止模板引用了 bundle 里不存在的 key（fake 对任意
+// key 都返回，bundle 侧完整性由 agents-check 钩子 + cmd/tui E2E 兜底）。
+func TestWebI18N_AllChromeKeysUsed(t *testing.T) {
+	tr := &fakeTranslator{}
+
+	// 1) 首页：空消息 + 有更多历史 → composer/placeholder/send、empty、load_more。
+	home := templates.HomeData{
+		Meta:    templates.PageMeta{Title: "t", User: "alice", Device: "web"},
+		HasMore: true,
+		Tr:      tr,
+	}
+	var sb strings.Builder
+	if err := templates.Home(home).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render home: %v", err)
+	}
+
+	// 2) 断连 banner → state.disconnected。
+	sb.Reset()
+	if err := templates.ConnStatus(tr, false).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render conn status: %v", err)
+	}
+
+	// 3) HistoryPage 带 LoadMore → 再命中一次 load_more（片段路径）。
+	sb.Reset()
+	if err := templates.HistoryPage(tr, nil, true, 42).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render history page: %v", err)
+	}
+
+	// 4) 历史错误 banner → web.history.error（走 handler 真实路径）。
+	mgr := newTestManager(t, &stubDialer{histErr: context.DeadlineExceeded})
+	h := NewHandler(Config{Version: "test", Translator: tr}, mgr)
+	rec := httptest.NewRecorder()
+	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	want := map[string]bool{
+		"web.composer.placeholder": false,
+		"web.composer.send":        false,
+		"web.messages.empty":       false,
+		"web.history.load_more":    false,
+		"web.state.disconnected":   false,
+		"web.history.error":        false,
+	}
+	for _, k := range tr.keys() {
+		if _, ok := want[k]; ok {
+			want[k] = true
+		}
+	}
+	for k, hit := range want {
+		if !hit {
+			t.Errorf("i18n key %q never queried during render", k)
+		}
 	}
 }
 

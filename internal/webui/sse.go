@@ -196,7 +196,7 @@ func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
 		connected := e.State != nil && e.State.Connected
 		// state 帧整段 swap 进 #conn-state：断连出 banner，重连渲染空内容清掉。
 		var buf bytes.Buffer
-		if err := templates.ConnStatus(connected).Render(s.ctx, &buf); err != nil {
+		if err := templates.ConnStatus(s.tr, connected).Render(s.ctx, &buf); err != nil {
 			s.logger.Error("render state frame failed", "err", err)
 			return 0, nil, false
 		}

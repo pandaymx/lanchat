@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pandaymx/lanchat/internal/webui/templates"
 	"github.com/pandaymx/lanchat/pkg/client"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/event"
@@ -116,6 +117,9 @@ type ManagerConfig struct {
 	// SweepInterval 是 janitor 扫描间隔，<=0 用 defaultSweepInterval；
 	// 测试里故意调大以关掉后台扫描，改用手动 SweepExpired。
 	SweepInterval time.Duration
+	// Translator 是 UI chrome 文案翻译器（M4.7），透传给每个 Session；
+	// SSE state 帧渲染 ConnStatus 时用。nil 时模板兜底返回 key 字面值。
+	Translator templates.Translator
 }
 
 const (
@@ -253,6 +257,7 @@ func (m *Manager) create(ctx context.Context, cookie string) (*Session, error) {
 		writers:  make(map[*sseWriter]struct{}),
 		ctx:      sessCtx,
 		cancel:   sessCancel,
+		tr:       m.cfg.Translator,
 		logger:   logging.New("web"),
 	}
 	sess.startPump()
@@ -358,6 +363,10 @@ type Session struct {
 	// （fake transport 的 Router 读循环绑定 Dial ctx）。shutdown 时 cancel。
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// tr 是 UI chrome 文案翻译器（M4.7），SSE state 帧渲染 ConnStatus 用；
+	// 装配遗漏时为 nil，templates.T 兜底返回 key 字面值。
+	tr templates.Translator
 
 	logger *logging.ComponentLogger
 }

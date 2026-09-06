@@ -8,10 +8,39 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
 )
+
+// ---- i18n 测试替身 -----------------------------------------------------------
+
+// testTranslator 返回 zh-cn bundle：webui 测试断言沿用中文文案，
+// 与生产 locale 探测解耦。bundle 是 embed 只读的，每次现取无副作用。
+func testTranslator() i18n.Translator {
+	return i18n.MustLoadEmbedded([]string{"en", "zh-cn"}, "en").ForLocale("zh-cn")
+}
+
+// fakeTranslator 记录所有被查询的 key 并返回 "T:"+key 前缀串，
+// 供「该渲染的文案都走了 i18n」类断言使用。
+type fakeTranslator struct {
+	mu     sync.Mutex
+	called []string
+}
+
+func (f *fakeTranslator) T(key string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.called = append(f.called, key)
+	return "T:" + key
+}
+
+func (f *fakeTranslator) keys() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.called...)
+}
 
 // ---- 测试替身 ---------------------------------------------------------------
 
@@ -194,6 +223,7 @@ func newTestManager(t *testing.T, d *stubDialer) *Manager {
 		DialTimeout:   time.Second,
 		SessionTTL:    time.Minute,
 		SweepInterval: time.Hour,
+		Translator:    testTranslator(),
 	}, d.dial)
 	t.Cleanup(m.CloseAll)
 	return m

@@ -87,6 +87,9 @@ var _ Client = (*client.Client)(nil)
 // Manager / Session 上——多 session 场景下 Handler 不持有单一身份。
 type Config struct {
 	Version string // ldflags 注入，仅展示用
+	// Translator 是 UI chrome 文案翻译器（M4.7）；nil 时模板兜底返回
+	// key 字面值（见 templates.T）。cmd/web 装配期注入 i18n bundle。
+	Translator templates.Translator
 }
 
 // Handler 持有 web 端所有 HTTP 路由与其依赖。
@@ -175,6 +178,7 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 		},
 		Messages:  views,
 		Connected: sess.alive(),
+		Tr:        h.cfg.Translator,
 		// 首屏拉满 limit 即认为可能还有更早的消息（store 是内存视图，
 		// 无法直接区分"正好 50 条"与"还有更多"；点一次加载更多便知分晓）。
 		HasMore: histErr == nil && len(msgs) == historyLimit,
@@ -183,7 +187,7 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 		data.OldestSeq = int64(msgs[0].ServerSeq)
 	}
 	if histErr != nil {
-		data.Error = "历史加载失败，显示可能不完整"
+		data.Error = templates.T(h.cfg.Translator, "web.history.error")
 	}
 	h.renderHome(w, r, data)
 }
@@ -229,7 +233,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := templates.HistoryPage(views, resp.HasMore, nextBefore).Render(r.Context(), w); err != nil {
+	if err := templates.HistoryPage(h.cfg.Translator, views, resp.HasMore, nextBefore).Render(r.Context(), w); err != nil {
 		h.logger.Error("render history page failed", "err", err)
 	}
 }

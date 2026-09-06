@@ -77,9 +77,13 @@ fi
 
 # 排除注释行（i18n_test.go 注释里出现过 m.t("online") 这类假引用）
 used_keys="$(grep -rnE '\.t\("[a-z.]+"\)' pkg/tui | grep -vE ':[0-9]+:[[:space:]]*//' | grep -oE '"[a-z.]+"' | tr -d '"' | sort -u)"
+# web 端（M4.7）：模板里 T(tr, "web.xxx") 与 handler 里 templates.T(...) 引用，
+# 扫 internal/webui 下 .go / .templ（*_templ.go 生成物不入库，扫了也无害）。
+web_used_keys="$(grep -rhoE '"web\.[a-z._]+"' internal/webui --include='*.go' --include='*.templ' | tr -d '"' | sort -u)"
+used_keys="$(printf '%s\n%s\n' "$used_keys" "$web_used_keys" | sort -u)"
 missing="$(comm -23 <(printf '%s\n' "$used_keys") <(printf '%s\n' "$en_keys"))"
 if [ -z "$missing" ]; then
-  ok "pkg/tui 引用的 key 全部存在于 bundle（$(echo "$used_keys" | wc -l) 个引用 key）"
+  ok "pkg/tui + internal/webui 引用的 key 全部存在于 bundle（$(echo "$used_keys" | wc -l) 个引用 key）"
 else
   bad "代码引用了 bundle 不存在的 key: $(echo "$missing" | tr '\n' ' ')"
 fi

@@ -27,10 +27,10 @@ templ Message(m MessageView) {
 // 片段 = 更早的消息（升序）+ 可能的新按钮行，替换后按钮仍在列表最顶、
 // 新消息接在按钮下方、再接原有列表——视觉上就是"往上长出一段历史"。
 // 没有更多时片段不含按钮，本行直接被消息替换，按钮消失。
-templ LoadMore(href string) {
+templ LoadMore(tr Translator, href string) {
 	<li class="load-more">
 		<button hx-get={ href } hx-swap="outerHTML" hx-target="closest li">
-			加载更早消息
+			{ T(tr, "web.history.load_more") }
 		</button>
 	</li>
 }
@@ -39,9 +39,9 @@ templ LoadMore(href string) {
 //
 // nextBefore 是本批最老一条的 ServerSeq，作为下一次翻页游标；
 // more=false 时不渲染按钮（已到最早）。
-templ HistoryPage(msgs []MessageView, more bool, nextBefore int64) {
+templ HistoryPage(tr Translator, msgs []MessageView, more bool, nextBefore int64) {
 	if more {
-		@LoadMore(HistoryHref(nextBefore))
+		@LoadMore(tr, HistoryHref(nextBefore))
 	}
 	for _, m := range msgs {
 		@Message(m)

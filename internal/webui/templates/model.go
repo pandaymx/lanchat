@@ -20,6 +20,25 @@ type PageMeta struct {
 	Version string
 }
 
+// Translator 是模板渲染时的 UI chrome 文案查询接口。
+//
+// 由 internal/webui 在装配期注入（cmd/web 启动时把 internal/i18n 的
+// bundle.ForLocale 结果传进来）；templates 不 import internal/i18n，
+// 保持模板包无业务依赖，测试也可以塞任意 fake。
+// 接口形状与 pkg/tui.Translator 一致（照 AGENTS.md §13 注入模式）。
+type Translator interface {
+	T(key string) string
+}
+
+// T 是模板里的文案查询入口：tr 为 nil（装配遗漏）时返回 key 字面值——
+// 与 i18n.Bundle 缺 key 的 fallback 行为一致，页面至少不 panic、不出空串。
+func T(tr Translator, key string) string {
+	if tr == nil {
+		return key
+	}
+	return tr.T(key)
+}
+
 // Who 返回 "user@device" 形式的身份串。
 //
 // 为什么不在 templ 里写 `{ meta.User }@{ meta.Device }`：templ 把 `@` 当作
@@ -41,6 +60,9 @@ type HomeData struct {
 	Error     string
 	HasMore   bool
 	OldestSeq int64
+	// Tr 是 UI chrome 文案翻译器；由 cmd/web 装配期注入 i18n bundle，
+	// 缺省 nil 时 T() 兜底返回 key 字面值。
+	Tr Translator
 }
 
 // HistoryHref 构造「加载更早消息」按钮的 hx-get URL。

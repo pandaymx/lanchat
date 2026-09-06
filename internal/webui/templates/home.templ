@@ -21,17 +21,17 @@ templ Home(data HomeData) {
 		</header>
 		// 连接状态区：SSE state 帧整段 swap（断连出 banner，重连清空）。
 		<div id="conn-state" hx-sse="swap:state" hx-swap="innerHTML">
-			@ConnStatus(data.Connected)
+			@ConnStatus(data.Tr, data.Connected)
 		</div>
 		if data.Error != "" {
 			<div class="banner">{ data.Error }</div>
 		}
 		<ul id="messages" class="messages" hx-sse="swap:message" hx-swap="beforeend">
 			if data.HasMore {
-				@LoadMore(HistoryHref(data.OldestSeq))
+				@LoadMore(data.Tr, HistoryHref(data.OldestSeq))
 			}
 			if len(data.Messages) == 0 {
-				<li class="empty">（暂无消息）</li>
+				<li class="empty">{ T(data.Tr, "web.messages.empty") }</li>
 			} else {
 				for _, m := range data.Messages {
 					@Message(m)
@@ -44,12 +44,12 @@ templ Home(data HomeData) {
 		<form class="composer" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
 			<textarea
 				name="body"
-				placeholder="输入消息（Enter 发送，Shift+Enter 换行）"
+				placeholder={ T(data.Tr, "web.composer.placeholder") }
 				rows="1"
 				hx-on:keydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();this.closest('form').requestSubmit()}"
 				hx-on:input="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,200)+'px'"
 			></textarea>
-			<button type="submit">发送</button>
+			<button type="submit">{ T(data.Tr, "web.composer.send") }</button>
 		</form>
 	}
 }
@@ -59,8 +59,8 @@ templ Home(data HomeData) {
 // 断连时渲染提示条；connected 时渲染空内容——重连后 state=connected
 // 帧整段 innerHTML swap，banner 被清空。EventSource 自带自动重连，
 // 服务端 session 重建（Manager.GetOrCreate 死会话重建）后恢复推流。
-templ ConnStatus(connected bool) {
+templ ConnStatus(tr Translator, connected bool) {
 	if !connected {
-		<div class="banner offline">连接已断开，正在自动重连…</div>
+		<div class="banner offline">{ T(tr, "web.state.disconnected") }</div>
 	}
 }

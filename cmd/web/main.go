@@ -24,9 +24,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
+	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/internal/webui"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
@@ -60,6 +62,8 @@ func main() {
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
 	logFile := flag.String("log-file", "", "日志文件路径；留空走 stderr")
+	lang := flag.String("lang", "", "界面语言（en / zh-CN ...）；留空自动探测 $LC_ALL / $LANG / $LANGUAGE")
+	langList := flag.Bool("lang-list", false, "列出已加载的 locale 并退出")
 	flag.Parse()
 
 	lvl, lvlErr := logging.ParseLevel(*logLevel)
@@ -75,16 +79,42 @@ func main() {
 		logging.New("web").Warn("invalid -log-format, fallback to text", "input", *logFormat, "err", fmtErr)
 	}
 
+	// 启动期加载 i18n bundle（与 cmd/tui 同一套，照 AGENTS.md §13）。
+	// 命令行先于 env 探测，让用户在 CI / 容器里能用 -lang 强制覆盖 $LANG。
+	bundle := i18n.MustLoadEmbedded([]string{"en", "zh-cn"}, "en")
+	if *langList {
+		locales := bundle.Locales()
+		sort.Strings(locales)
+		fmt.Printf("available locales: %v\n", locales)
+		fmt.Printf("active fallback  : %s\n", "en")
+		return
+	}
+	resolvedLocale := resolveLocale(*lang)
+	logging.New("web").Info("i18n resolved", "locale", resolvedLocale)
+
 	if err := run(runOptions{
-		Addr:    *addr,
-		HubURL:  *hubURL,
-		User:    *user,
-		ConvID:  *convID,
-		Version: version,
+		Addr:       *addr,
+		HubURL:     *hubURL,
+		User:       *user,
+		ConvID:     *convID,
+		Version:    version,
+		Translator: bundle.ForLocale(resolvedLocale),
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "lanchat-web:", err)
 		os.Exit(1)
 	}
+}
+
+// resolveLocale 在 -lang 与 env 之间做优先级排序：flag > env > fallback。
+//
+// env 部分直接走 i18n.DetectLocale（处理 $LC_ALL / $LANG / $LANGUAGE
+// + BCP 47 简化的同名变体）。flag 显式给了空串就视为"未指定"，走 env。
+// 未知 locale 不在这里报错——Bundle.T 自动走 fallback 链到 "en"。
+func resolveLocale(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return i18n.DetectLocale(os.Environ(), "en")
 }
 
 // runOptions 收纳 run 的入参，避免签名再长一截。
@@ -94,6 +124,9 @@ type runOptions struct {
 	User    string
 	ConvID  string
 	Version string
+	// Translator 是 UI chrome 文案翻译器；Handler 与 Manager 各持一份
+	// （首页/历史片段渲染 + SSE state 帧渲染）。
+	Translator i18n.Translator
 }
 
 // run 起 HTTP 服务并阻塞到收到退出信号。
@@ -112,15 +145,16 @@ func run(opts runOptions) error {
 	// 多 tab 共享同一份 Session；退出时 CloseAll 按 cli.Close → store.Close
 	// 顺序释放全部 Session（顺序铁律见 webui.DialClient 注释）。
 	mgr := webui.NewManager(webui.ManagerConfig{
-		HubURL:    opts.HubURL,
-		User:      opts.User,
-		ConvID:    opts.ConvID,
-		Transport: wstransport.New(),
+		HubURL:     opts.HubURL,
+		User:       opts.User,
+		ConvID:     opts.ConvID,
+		Transport:  wstransport.New(),
+		Translator: opts.Translator,
 	}, nil)
 	defer mgr.CloseAll()
 
 	mux := http.NewServeMux()
-	h := webui.NewHandler(webui.Config{Version: opts.Version}, mgr)
+	h := webui.NewHandler(webui.Config{Version: opts.Version, Translator: opts.Translator}, mgr)
 	h.Routes(mux)
 
 	srv := &http.Server{

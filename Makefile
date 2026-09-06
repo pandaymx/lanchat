@@ -20,12 +20,14 @@ BIN_DIR := bin
 all: lint test build
 
 ## build: 构建全部 cmd 到 bin/
-build:
+## 依赖 templ：*_templ.go 被 .gitignore 排除，不先生成就会编译失败
+build: templ
 	@mkdir -p $(BIN_DIR)
 	go build -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/ ./cmd/...
 
 ## test: 跑全量测试（带竞态检测）
-test:
+## 同样依赖 templ，理由同 build
+test: templ
 	go test -race ./...
 
 ## lint: 静态检查
@@ -53,6 +55,13 @@ run-hub:
 ## run-tui: 运行终端客户端
 run-tui:
 	go run -ldflags "$(LDFLAGS)" ./cmd/tui
+
+## run-web: 运行浏览器端（默认 :9001；需先起 hub）
+## 用法：make run-web HUB=ws://127.0.0.1:9000/ws USER=alice
+HUB ?= ws://127.0.0.1:9000/ws
+USER ?= alice
+run-web: templ
+	go run -ldflags "$(LDFLAGS)" ./cmd/web -hub-url "$(HUB)" -user "$(USER)"
 
 ## hooks: 安装 git 钩子（clone 后必做）
 hooks:

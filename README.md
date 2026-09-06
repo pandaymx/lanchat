@@ -88,9 +88,22 @@ make lint            # golangci-lint
 | `-conv` | `lobby` | 会话 ID，默认频道 `lobby` |
 | `-max-hist` | `5000` | 客户端内存保留的最大消息条数 |
 | `-no-connect` | `false` | 跳过连 Hub（仅用于 UI 调试，禁用交互链路） |
+| `-lang` | 自动探测 | 界面语言（`en` / `zh-cn` ...）；覆盖 `$LC_ALL` / `$LANG` / `$LANGUAGE` |
+| `-lang-list` | — | 列出已加载的 locale 并退出 |
 | `-log-level` | `info` | 同 hub |
 | `-log-format` | `text` | 同 hub |
 | `-log-file` | `$TMPDIR/lanchat-tui-$$.log` | bubbletea `AltScreen` 占用 stderr，必须落盘 |
+
+### 国际化（i18n）
+
+`pkg/tui` 的 UI chrome（状态栏、hints、help 面板、sidebar、输入框占位符、
+消息行 fallback）走 `pkg/tui.Translator` 接口注入。`cmd/tui` 启动期从
+`internal/i18n.MustLoadEmbedded([]string{"en", "zh-cn"}, "en")` 加载 bundles，
+按 `-lang` → `$LC_ALL` → `$LANG` → `$LANGUAGE` → `"en"` 优先级解析 locale，
+未知 locale 自动落 fallback。
+
+新增翻译：在 `internal/i18n/bundles/<locale>.json` 加键值，键名约定
+`domain.area.item`（如 `tui.status.online`），无需改 Go 代码。
 
 ### TUI 内置命令
 
@@ -109,7 +122,7 @@ make lint            # golangci-lint
 | M0 | 工程地基（lefthook/golangci-lint/semantic-release） | ✅ | — |
 | M1 | 接口契约（`pkg/core` + `pkg/protocol` v1 + fake transport） | ✅ | `v0.1.0` |
 | M2 | Hub 服务端（Router/Registry/History + WS Transport + `cmd/hub`） | ✅ | `v0.2.0` + Docker |
-| **M3** | **TUI 客户端（bubbletea/v2 + 自适应 layout + / 命令 + 未读计数 + slog 日志）** | **✅** | **`v0.3.0` 待发** |
+| **M3** | **TUI 客户端（bubbletea/v2 + 自适应 layout + / 命令 + 未读计数 + slog 日志 + i18n）** | **✅** | **`v0.3.0` 待发** |
 | M4 | Web 端 | ⬜ | — |
 | M5 | 多 transport（gRPC / QUIC） | ⬜ | — |
 | M6 | 鉴权（Token） | ⬜ | — |

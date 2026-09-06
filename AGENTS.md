@@ -29,6 +29,7 @@
 | M3.7 | 集成回归 | `TestOfflineCatchUp` 复跑 `-count=3` 全过；pkg/client 全测 `-count=3` ok；internal/integration `-count=2` ok | ✅ `f7d1c32` |
 | M3.8 | 自适应与性能 | layoutDims 极值（负值/超窄/超矮/超宽）退化测试 5 个；historyView 内部 `lines` 镜像 + `AppendMessage` 增量路径避免每条 split+join | ✅ 本 commit |
 | M3.9 | 收尾打磨 | `/help /clear /quit` 三命令；status 下方加键位提示行（hintsH=1）；lastError 红字 + 5s Tick 自动过期 | ✅ 本 commit |
+| M3.10 | TUI i18n | `pkg/tui.Translator` 接口（注入而非 import）+ `internal/i18n` 包（embed.FS + JSON + DetectLocale）+ `cmd/tui -lang` flag；14 处 UI 文案走 i18n，bundles `en` / `zh-cn` 双语 | ✅ `6fa8af4` → `5ce8c5c` → `96a60d6` → `017ea68` → `f94ab72` |
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 
@@ -76,6 +77,7 @@ lanchat/
 │   └── sync.go        #   离线补发
 ├── internal/
 │   ├── hub/           # 服务端：连接管理、路由、广播、鉴权
+│   ├── i18n/          # 共享 i18n bundle 加载器（embed.FS JSON，被 cmd/tui 引用；pkg/tui 自身不 import）
 │   ├── webui/         # Web 端：templ 模板 + 静态资源
 │   ├── tui/           # 终端 UI：Bubble Tea
 │   └── discovery/     # mDNS 广播与发现
@@ -285,3 +287,37 @@ log.Info(...)  // 内部走 slog.Default().Log(...)
 - 架构层面的取舍 → 先用文字讨论，得到共识再写代码；讨论结果记录在 `git commit` / PR 描述
 - 本文件有歧义或过时 → 直接改本文件，并在 commit message 里说明
 - 用户没明确要求的重构/优化 → 不做（偏好最小改动）
+
+---
+
+## 13. 国际化（i18n，落地于 M3.10）
+
+**目的**：仅给 TUI UI chrome 提供本地化字符串；hub 端日志、协议消息体不在翻译范围。
+
+**架构铁律**：
+
+1. `pkg/tui` 不得 import `internal/i18n`（保持 `pkg/` 与 `internal/` 边界）。
+   解决办法：`pkg/tui` 内置 `Translator interface { T(key string) string }`，
+   `cmd/tui` 启动期调 `internal/i18n.MustLoadEmbedded(...)` 拿到 bundle 后
+   把 `bundle.ForLocale(locale)` 注入 `tui.Config.Translator`。
+2. bundle 文件用 JSON + `embed.FS` 嵌入，零 codegen。
+3. locale key 一律小写存储：`bundles/zh-cn.json`，Load/T/Tf 内部 `strings.ToLower`，
+   允许调用方传 `"zh-CN"` / `"ZH-CN"` / `"zh-cn"` 都命中。**但文件名要小写**。
+4. fallback 链：locale → `fallbackLocale` (en) → key 字面值。
+5. key 命名约定：`domain.area.item`（flat，不分 namespace）。
+
+**使用入口**：
+
+| 调用方 | 路径 |
+|---|---|
+| `pkg/tui` UI 文案 | `m.t("tui.status.online")` → 走 Config.Translator |
+| `cmd/tui` 启动 | `bundle := i18n.MustLoadEmbedded([]string{"en", "zh-cn"}, "en")`<br>`locale := i18n.DetectLocale(os.Environ(), "en")`<br>`cfg.Translator = bundle.ForLocale(locale)` |
+| `cmd/tui` flag | `-lang <locale>`（flag 优先 → env → fallback）· `-lang-list` |
+
+**新增翻译**：在 `internal/i18n/bundles/<locale>.json` 加键值，无需改 Go 代码。
+
+**测试要求**：
+
+- `internal/i18n`：17 个测试覆盖 Load / T / Tf / ForLocale / LocateSet / DetectLocale（BCP 47 简化）
+- `pkg/tui`：`fakeTranslator` + `called/calledCount/SetLocale` 测试 14 key 都被命中文案
+- `cmd/tui`：`TestBundlesEndToEnd_ZHCN` 走完整链路（embedded bundle + DetectLocale → 中文返回）

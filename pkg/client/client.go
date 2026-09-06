@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -92,6 +93,14 @@ type Client struct {
 	pendingDeliver []protocol.StoredMessage
 	lastHistorySeq uint64
 
+	// peers 是当前在线成员名单（M7.2），按 DeviceID 索引。
+	// Hub 握手后发 roster + 上下线广播，dispatch 里 upsert；offline 直接删除。
+	// 与消息不同：presence 是瞬时状态、不持久化，重连后 hub 重发 roster 自然重建。
+	// Web 多 Tab 共享同一个 Client，新 Session 订阅 EventBus 时 roster 事件早已
+	// 过去、无处可查，所以首屏成员列表从这里取快照。
+	peersMu sync.RWMutex
+	peers   map[string]protocol.Presence
+
 	closed atomic.Bool
 	done   chan struct{}
 }
@@ -104,6 +113,7 @@ func New(hello protocol.Hello, conn core.Conn, store core.Store, bus core.EventB
 		store: store,
 		bus:   bus,
 		seen:  make(map[string]struct{}),
+		peers: make(map[string]protocol.Presence),
 		done:  make(chan struct{}),
 	}
 }
@@ -272,9 +282,56 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 		// 心跳应答，仅 log-and-drop；M2 起将暴露给上层做延迟统计。
 		cliLog.Debug("pong received")
 
+	case protocol.FKPresence:
+		// M7.2：设备上下线通知。Hub 在握手后发在线名单 + 广播上下线。
+		// 先更新 Client 自己的名单快照（Peers() 供 Web 首屏渲染），
+		// 再发布事件让 UI 实时刷新；顺序保证订阅者收到事件时快照已最新。
+		var pr protocol.Presence
+		if err := json.Unmarshal(f.Payload, &pr); err != nil {
+			cliLog.Error("unmarshal FKPresence failed", "err", err)
+			return
+		}
+		c.applyPresence(pr)
+		c.bus.Publish(core.Event{
+			Kind:     core.EventPresence,
+			Presence: &pr,
+		})
+
 	default:
 		// 其它帧不在 M1 范围内，静默丢弃。
 	}
+}
+
+// applyPresence 把一条 Presence 更新进内部名单（M7.2）。
+// online 按 DeviceID upsert；offline 直接删除——成员列表只展示在线设备。
+// DeviceID 为空的异常帧忽略，避免产生无法归属的条目。
+func (c *Client) applyPresence(pr protocol.Presence) {
+	if pr.DeviceID == "" {
+		return
+	}
+	c.peersMu.Lock()
+	defer c.peersMu.Unlock()
+	if pr.Online {
+		c.peers[pr.DeviceID] = pr
+	} else {
+		delete(c.peers, pr.DeviceID)
+	}
+}
+
+// Peers 返回当前在线成员名单快照，按 DeviceID 升序（结果稳定，便于渲染与测试）。
+//
+// 数据源是 Client 内部维护的 presence 状态（Hub roster + 上下线广播），
+// 不是事件总线——新订阅者（如 Web 新开 Tab 的 Session）错过历史事件后
+// 仍能从这里拿到首屏名单。
+func (c *Client) Peers() []protocol.Presence {
+	c.peersMu.RLock()
+	out := make([]protocol.Presence, 0, len(c.peers))
+	for _, pr := range c.peers {
+		out = append(out, pr)
+	}
+	c.peersMu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].DeviceID < out[j].DeviceID })
+	return out
 }
 
 // publishMessageOnce 防止同一 ID 的消息重复发射到 EventBus。

@@ -629,7 +629,104 @@ func TestFetchHistory(t *testing.T) {
 	}
 	for i, m := range resp.Messages {
 		if m.ServerSeq != uint64(i+1) {
-			t.Fatalf("before 翻页第 %d 条 seq 应为 %d，实际 %d", i, i+1, m.ServerSeq)
+			t.Fatalf("before 翻页第 %d 条 seq 应为 %d，实际 %d", i+1, i+1, m.ServerSeq)
 		}
 	}
+}
+
+// TestPresence 验证 M7.2 在线状态端到端：
+//   - bob 上线时 alice 收到 EventPresence(online)；
+//   - bob 的 Peers() 快照含 roster（alice）与自己的回显；
+//   - bob 断开后 alice 收到 EventPresence(offline)，且 Peers() 移除 bob。
+func TestPresence(t *testing.T) {
+	tr, _, store := newTransportWithHub(t, "lanchat-test")
+
+	aliceHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "alice-laptop",
+		UserID:          "alice",
+	}
+	bobHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "bob-laptop",
+		UserID:          "bob",
+	}
+
+	alice := newClient(t, tr, store, aliceHello, 0)
+	aliceSub := alice.Subscribe(64)
+	defer aliceSub.Close()
+
+	bob := newClient(t, tr, store, bobHello, 0)
+
+	// alice 应收到 bob 上线事件。订阅建立时 alice 自己的上线回显帧可能
+	// 还在途中（广播与 Connect 返回是跨 goroutine 的），跳过非 bob 的事件。
+	ev := waitForPresence(t, aliceSub, "bob-laptop", true, 2*time.Second)
+	if ev == nil {
+		t.Fatal("alice 未收到 bob 上线的 EventPresence")
+	}
+
+	// bob 的名单快照应含 alice（roster）与自己（上线回显）。
+	waitFor(t, 2*time.Second, func() bool {
+		got := bob.Peers()
+		has := func(dev string) bool {
+			for _, p := range got {
+				if p.DeviceID == dev {
+					return true
+				}
+			}
+			return false
+		}
+		return has("alice-laptop") && has("bob-laptop")
+	})
+
+	// bob 断开 → alice 收到 offline 事件，且 bob 从 alice 名单移除。
+	if err := bob.Close(); err != nil {
+		t.Fatalf("bob close: %v", err)
+	}
+	ev = waitForPresence(t, aliceSub, "bob-laptop", false, 2*time.Second)
+	if ev == nil {
+		t.Fatal("alice 未收到 bob 下线的 EventPresence")
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, p := range alice.Peers() {
+			if p.DeviceID == "bob-laptop" {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+// waitForPresence 等到指定设备、指定在线状态的 EventPresence，超时返回 nil。
+// 其它设备的 presence 事件（如自己的上线回显）跳过。
+func waitForPresence(t *testing.T, sub core.Subscription, device string, online bool, timeout time.Duration) *core.Event {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ev, ok := <-sub.C():
+			if !ok {
+				return nil
+			}
+			if ev.Kind == core.EventPresence && ev.Presence != nil &&
+				ev.Presence.DeviceID == device && ev.Presence.Online == online {
+				return &ev
+			}
+		case <-deadline:
+			return nil
+		}
+	}
+}
+
+// waitFor 在 timeout 内轮询 cond 直到为 true，超时即失败。
+func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("condition not met within timeout")
 }

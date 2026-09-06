@@ -1,3 +1,20 @@
+## [0.5.0](https://github.com/pandaymx/lanchat/compare/v0.4.0...v0.5.0) (2026-09-06)
+
+### Features
+
+* **core:** Client 收发 typing——SendTyping 与 Typing() 快照 ([f2d59ac](https://github.com/pandaymx/lanchat/commit/f2d59ace1653c139ac9ff3469827afc1ab812805))
+* **core:** Client 维护在线名单快照并发布 EventPresence ([ac6255d](https://github.com/pandaymx/lanchat/commit/ac6255d7a8e438a2e1e26ae9ea3c235eecb4a9de))
+* **hub:** 在线状态广播——握手发 roster、上下线广播 FKPresence ([7ee980e](https://github.com/pandaymx/lanchat/commit/7ee980e54dbe9470d0fe880e5abc4cad6135df99))
+* **hub:** typing 帧按注册表盖戳身份并广播 ([93048e0](https://github.com/pandaymx/lanchat/commit/93048e0d736b27de94136889ff8d4183aa06f06a))
+* **proto:** Typing 帧负载结构与 core.Event.Typing 字段 ([fb5e281](https://github.com/pandaymx/lanchat/commit/fb5e28104b5ab66e8f0de5ee9b1e597dc3bb39b2))
+* **tui:** 正在输入指示——输入节流上发与 hints 行状态 ([7487d5f](https://github.com/pandaymx/lanchat/commit/7487d5f29481c5642aba8b2120785a2af3a8d85c))
+* **web:** 在线成员条——首屏 roster 渲染 + presence SSE 实时刷新 ([576200f](https://github.com/pandaymx/lanchat/commit/576200f30fb337699d7056454438d228e58eb115)), closes [#peers](https://github.com/pandaymx/lanchat/issues/peers)
+* **web:** 正在输入条——/typing 端点与 typing SSE 帧 ([af4a02a](https://github.com/pandaymx/lanchat/commit/af4a02a1134f98b4c7705d137f84adc0c747708d))
+
+### Bug Fixes
+
+* **repo:** commitlint 钩子改用 bun 直接运行，修非交互 shell 找不到 node ([99e577c](https://github.com/pandaymx/lanchat/commit/99e577cb0e4d55e7788f823887e09358b05a8129))
+
 ## [0.4.0](https://github.com/pandaymx/lanchat/compare/v0.3.0...v0.4.0) (2026-09-06)
 
 ### Features

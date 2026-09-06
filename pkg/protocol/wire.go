@@ -109,10 +109,17 @@ type Hello struct {
 type Delivered = StoredMessage
 
 // HistoryRequest 用于补发请求。
+//
+// 分页方向二选一：
+//   - After>0：增量补发，返回 ServerSeq 严格大于 After 的最早一批（升序）；
+//   - Before>0：向更早翻页，返回 ServerSeq 严格小于 Before 的最晚一批（仍按升序）。
+//
+// Before 优先（>0 时 After 被忽略）；两者都为 0 表示从最老的消息开始。
 type HistoryRequest struct {
 	// ConversationIDs 为空表示查所有参与会话。
 	ConversationIDs []string `json:"c,omitempty"`
-	After           uint64   `json:"a"` // ServerSeq 必须严格大于此值才返回
+	After           uint64   `json:"a"`           // ServerSeq 必须严格大于此值才返回
+	Before          uint64   `json:"b,omitempty"` // ServerSeq 必须严格小于此值才返回（向更早翻页）
 	Limit           int      `json:"l,omitempty"`
 }
 

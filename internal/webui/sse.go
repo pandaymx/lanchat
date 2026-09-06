@@ -2,8 +2,10 @@ package webui
 
 import (
 	"bytes"
+	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/pandaymx/lanchat/internal/webui/templates"
 	"github.com/pandaymx/lanchat/pkg/core"
@@ -16,15 +18,29 @@ import (
 // 一个卡住的慢 tab 不能拖累同 session 的其它 tab。
 const writerBuf = 128
 
+// sseChunk 是 fanout 通道里的一帧。
+//
+// seq 是消息帧的 ServerSeq（state 等非消息帧为 0），供重连补发后的
+// 幂等去重：事件循环里 seq <= writer.skipSeq 的帧直接丢弃（该消息
+// 已由 catchUp 直接补写给本连接）。
+type sseChunk struct {
+	seq  uint64
+	data []byte
+}
+
 // sseWriter 是一条 SSE 连接在 Session fanout 里的登记。
 // pump 把渲染好的帧写进 ch；/events handler 的事件循环读 ch 写 ResponseWriter。
+//
+// skipSeq 是重连补发阈值：catchUp 直接补写过的消息序号上界，
+// fanout 缓冲里同序号的帧在事件循环里跳过，保证重连不重复、不丢失。
 type sseWriter struct {
-	ch chan []byte
+	ch      chan sseChunk
+	skipSeq atomic.Uint64
 }
 
 // addWriter 登记一条新 SSE 连接（多 tab 共享 session 时会有多个）。
 func (s *Session) addWriter() *sseWriter {
-	w := &sseWriter{ch: make(chan []byte, writerBuf)}
+	w := &sseWriter{ch: make(chan sseChunk, writerBuf)}
 	s.mu.Lock()
 	s.writers[w] = struct{}{}
 	s.mu.Unlock()
@@ -56,7 +72,8 @@ func (s *Session) closeWriters() {
 }
 
 // broadcast 把一帧投递给所有当前 writer；慢 writer（ch 满）丢帧不阻塞。
-func (s *Session) broadcast(frame []byte) {
+// seq 为消息帧的 ServerSeq（非消息帧传 0），随帧带上供重连去重。
+func (s *Session) broadcast(seq uint64, frame []byte) {
 	s.mu.Lock()
 	ws := make([]*sseWriter, 0, len(s.writers))
 	for w := range s.writers {
@@ -65,7 +82,7 @@ func (s *Session) broadcast(frame []byte) {
 	s.mu.Unlock()
 	for _, w := range ws {
 		select {
-		case w.ch <- frame:
+		case w.ch <- sseChunk{seq: seq, data: frame}:
 		default:
 			s.logger.Warn("sse writer slow, frame dropped", "cookie", s.id)
 		}
@@ -90,36 +107,75 @@ func (s *Session) startPump() {
 				s.logger.Info("event pump stopped: hub connection lost", "cookie", s.id)
 				return
 			case e := <-sub.C():
-				frame, ok := s.sseFrame(e)
+				seq, frame, ok := s.sseFrame(e)
 				if !ok {
 					continue
 				}
-				s.broadcast(frame)
+				s.broadcast(seq, frame)
 			}
 		}
 	}()
 }
 
-// sseFrame 把一条 core.Event 翻译成完整 SSE 帧；ok=false 表示不产生帧。
+// catchUp 是断线重连补发：把本地 Store 中 seq 严格大于 lastID 的消息
+// 作为 message 帧直接写给本条 SSE 连接，并把补发上界记到 writer——
+// 补发窗口内已 fanout 进通道缓冲的同序号帧会在事件循环里被跳过，
+// 因此与实时帧天然幂等（不重复、不丢失）。
+//
+// 数据源是 client 本地 Store（Connect 的 catch-up 已拉过最近历史）；
+// lastID 太老、超出本地窗口的缺口补不到，刷新整页即可恢复（M4 可接受）。
+func (s *Session) catchUp(w http.ResponseWriter, flusher http.Flusher, wr *sseWriter, lastID uint64) {
+	msgs, err := s.cli.History(s.ctx, s.convID, lastID, historyLimit)
+	if err != nil {
+		s.logger.Warn("catch-up history failed", "cookie", s.id, "after", lastID, "err", err)
+		return
+	}
+	var maxSeq uint64
+	for i := range msgs {
+		seq, frame, ok := s.sseFrame(core.Event{Kind: core.EventMessage, Message: &msgs[i]})
+		if !ok {
+			continue
+		}
+		if _, err := w.Write(frame); err != nil {
+			s.logger.Info("catch-up write failed, dropping client", "cookie", s.id, "err", err)
+			return
+		}
+		if seq > maxSeq {
+			maxSeq = seq
+		}
+	}
+	if maxSeq > 0 {
+		flusher.Flush()
+		// 阈值在补发帧全部写出后设置：此后事件循环里 seq<=maxSeq 的
+		// fanout 帧（补发期间入缓冲的）一律跳过。
+		wr.skipSeq.Store(maxSeq)
+		s.logger.Debug("catch-up replayed", "cookie", s.id, "after", lastID, "count", len(msgs))
+	}
+}
+
+// sseFrame 把一条 core.Event 翻译成完整 SSE 帧。
+//
+// 返回值 seq 为消息帧的 ServerSeq（非消息帧为 0），随帧进 fanout 通道
+// 供重连去重；ok=false 表示不产生帧。
 //
 // message 帧的 data 是渲染好的 <li> HTML 片段（templates.Message），按 SSE
 // 规范逐行加 "data: " 前缀——templ 产物含换行（用户消息体可含换行），
 // 整块塞一行会断帧；浏览器会把多个 data 行用 \n 拼回原文。
 // id 行只在 ServerSeq > 0 时输出：EventSource 重连会带 Last-Event-ID 头，
-// M4.6 可用它做断线补发。
+// handleEvents 用它做断线补发（见 catchUp）。
 //
 // 渲染发生在 pump goroutine，用 Session 生命周期 ctx。
-func (s *Session) sseFrame(e core.Event) ([]byte, bool) {
+func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
 	switch e.Kind {
 	case core.EventMessage:
 		m := e.Message
 		if m == nil || m.ConversationID != s.convID {
-			return nil, false
+			return 0, nil, false
 		}
 		var buf bytes.Buffer
 		if err := templates.Message(s.newView(m)).Render(s.ctx, &buf); err != nil {
 			s.logger.Error("render message frame failed", "err", err)
-			return nil, false
+			return 0, nil, false
 		}
 		var sb strings.Builder
 		sb.WriteString("event: message\n")
@@ -134,7 +190,7 @@ func (s *Session) sseFrame(e core.Event) ([]byte, bool) {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
-		return []byte(sb.String()), true
+		return m.ServerSeq, []byte(sb.String()), true
 
 	case core.EventState:
 		connected := e.State != nil && e.State.Connected
@@ -142,7 +198,7 @@ func (s *Session) sseFrame(e core.Event) ([]byte, bool) {
 		var buf bytes.Buffer
 		if err := templates.ConnStatus(connected).Render(s.ctx, &buf); err != nil {
 			s.logger.Error("render state frame failed", "err", err)
-			return nil, false
+			return 0, nil, false
 		}
 		var sb strings.Builder
 		sb.WriteString("event: state\n")
@@ -152,11 +208,11 @@ func (s *Session) sseFrame(e core.Event) ([]byte, bool) {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
-		return []byte(sb.String()), true
+		return 0, []byte(sb.String()), true
 
 	default:
 		// EventRead / EventPresence / EventTyping：M4 不渲染。
-		return nil, false
+		return 0, nil, false
 	}
 }
 

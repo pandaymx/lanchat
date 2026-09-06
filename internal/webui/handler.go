@@ -326,7 +326,28 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
+	// 断线重连补发：EventSource 自动把最后收到的 message 帧 id 放在
+	// Last-Event-ID 头里。把缺口消息直接补写给本连接（幂等去重由
+	// writer.skipSeq + 事件循环过滤保证，见 sse.go catchUp）。
+	if lastID := parseLastEventID(r); lastID > 0 {
+		sess.catchUp(w, flusher, wr, lastID)
+	}
+
 	h.serveSSE(r.Context(), w, flusher, sess, wr)
+}
+
+// parseLastEventID 读取 EventSource 重连自动携带的 Last-Event-ID 头。
+// 缺失或非法（非正整数）返回 0——视为全新连接，不补发。
+func parseLastEventID(r *http.Request) uint64 {
+	id := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	if id == "" {
+		return 0
+	}
+	n, err := strconv.ParseUint(id, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // serveSSE 是单条 SSE 连接的写循环。
@@ -351,13 +372,18 @@ func (h *Handler) serveSSE(ctx context.Context, w http.ResponseWriter, flusher h
 				return
 			}
 			flusher.Flush()
-		case frame, ok := <-wr.ch:
+		case chunk, ok := <-wr.ch:
 			if !ok {
 				// session 没了：结束流，浏览器自动重连。
 				h.logger.Info("sse stream closed: session gone", "cookie", sess.id)
 				return
 			}
-			if _, err := w.Write(frame); err != nil {
+			// 重连补发已直接写过该序号（catchUp），fanout 缓冲里的
+			// 同序号帧跳过，保证补发与实时帧幂等不重复。
+			if chunk.seq > 0 && chunk.seq <= wr.skipSeq.Load() {
+				continue
+			}
+			if _, err := w.Write(chunk.data); err != nil {
 				h.logger.Info("sse write failed, dropping client", "cookie", sess.id, "err", err)
 				return
 			}

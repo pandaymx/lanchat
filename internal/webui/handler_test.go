@@ -167,6 +167,45 @@ func skipReadyFrame(t *testing.T, r *bufio.Reader) {
 	}
 }
 
+// expectNoFrame 断言窗口期内没有任何 SSE 帧到达（验证不补发/帧已被过滤）。
+// 超时后读 goroutine 仍挂在流上，连接 cleanup 关 body 时自然退出。
+func expectNoFrame(t *testing.T, r *bufio.Reader, timeout time.Duration) {
+	t.Helper()
+	ch := make(chan string, 1)
+	go func() {
+		f, err := readSSEFrame(r)
+		if err == nil {
+			ch <- f
+		}
+	}()
+	select {
+	case f := <-ch:
+		t.Fatalf("expected no frame within %v, got %q", timeout, f)
+	case <-time.After(timeout):
+	}
+}
+
+// startSSEWithLastID 打开 /events 流并携带 Last-Event-ID 头
+// （模拟浏览器 EventSource 断线重连）。lastID 为空则不带头。
+func startSSEWithLastID(t *testing.T, srv *httptest.Server, lastID string) *bufio.Reader {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	if lastID != "" {
+		req.Header.Set("Last-Event-ID", lastID)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return bufio.NewReader(resp.Body)
+}
+
 // fanoutMsgEvent 造一条本会话的消息事件供 stub client 注入。
 func fanoutMsgEvent(seq uint64, id, body string) core.Event {
 	return core.Event{
@@ -698,6 +737,94 @@ func TestHandleEvents_DeliversStateFrame(t *testing.T) {
 	if strings.Contains(frame, "连接已断开") {
 		t.Errorf("connected frame must clear banner, got %q", frame)
 	}
+}
+
+// TestParseLastEventID 验证 Last-Event-ID 头解析（缺失/非法/正常）。
+func TestParseLastEventID(t *testing.T) {
+	for _, tc := range []struct {
+		head string
+		want uint64
+	}{
+		{"", 0}, {"abc", 0}, {"0", 0}, {"42", 42}, {"  7 ", 7},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/events", nil)
+		if tc.head != "" {
+			req.Header.Set("Last-Event-ID", tc.head)
+		}
+		if got := parseLastEventID(req); got != tc.want {
+			t.Errorf("Last-Event-ID=%q → %d, want %d", tc.head, got, tc.want)
+		}
+	}
+}
+
+// replayMsgs 构造预置在 stub 本地"Store"里的历史消息。
+func replayMsgs(seqs ...uint64) []protocol.StoredMessage {
+	out := make([]protocol.StoredMessage, 0, len(seqs))
+	for _, s := range seqs {
+		out = append(out, protocol.StoredMessage{
+			ID: "m" + strconv.FormatUint(s, 10), ServerSeq: s,
+			ConversationID: "lobby", SenderUserID: "bob",
+			Body: "missed-" + strconv.FormatUint(s, 10),
+		})
+	}
+	return out
+}
+
+// TestHandleEvents_ReplaysMissedOnReconnect 验证断线重连补发：
+// 携带 Last-Event-ID:5 的连接在 ready 帧后收到本地 Store 中 seq>5
+// 的消息帧（6、7），按升序补写。
+func TestHandleEvents_ReplaysMissedOnReconnect(t *testing.T) {
+	h, _ := newTestHandler(t, &stubDialer{history: replayMsgs(6, 7)})
+	srv := startTestServer(t, h) // seed GET / 建 session
+
+	reader := startSSEWithLastID(t, srv, "5")
+	skipReadyFrame(t, reader)
+
+	f6 := readFrameTimeout(t, reader, 2*time.Second)
+	if !strings.Contains(f6, "id: 6") || !strings.Contains(f6, "missed-6") {
+		t.Errorf("replay frame 1 = %q, want id:6 missed-6", f6)
+	}
+	f7 := readFrameTimeout(t, reader, 2*time.Second)
+	if !strings.Contains(f7, "id: 7") || !strings.Contains(f7, "missed-7") {
+		t.Errorf("replay frame 2 = %q, want id:7 missed-7", f7)
+	}
+}
+
+// TestHandleEvents_CatchUpIsIdempotent 验证补发与实时帧幂等：补发写过
+// seq6 后，fanout 通道里同序号帧（补发窗口竞态）被跳过，seq7 正常投递。
+func TestHandleEvents_CatchUpIsIdempotent(t *testing.T) {
+	d := &stubDialer{history: replayMsgs(6)}
+	h, _ := newTestHandler(t, d)
+	srv := startTestServer(t, h)
+
+	reader := startSSEWithLastID(t, srv, "5")
+	skipReadyFrame(t, reader)
+
+	frame := readFrameTimeout(t, reader, 2*time.Second)
+	if !strings.Contains(frame, "id: 6") {
+		t.Fatalf("replay frame = %q, want id:6", frame)
+	}
+
+	// fanout 再来一条同 seq6（模拟补发窗口内已入缓冲的实时帧）+ 新 seq7。
+	d.client(0).events <- fanoutMsgEvent(6, "m6", "missed-6")
+	d.client(0).events <- fanoutMsgEvent(7, "m7", "live-7")
+
+	frame = readFrameTimeout(t, reader, 2*time.Second)
+	if !strings.Contains(frame, "id: 7") || !strings.Contains(frame, "live-7") {
+		t.Errorf("post-catchup frame = %q, want id:7 live-7 (seq6 must be deduped)", frame)
+	}
+	expectNoFrame(t, reader, 300*time.Millisecond)
+}
+
+// TestHandleEvents_NoLastEventIDNoReplay 验证全新连接（无 Last-Event-ID）
+// 不补发：ready 帧后窗口期内无消息帧。
+func TestHandleEvents_NoLastEventIDNoReplay(t *testing.T) {
+	h, _ := newTestHandler(t, &stubDialer{history: replayMsgs(6)})
+	srv := startTestServer(t, h)
+
+	reader := startSSE(t, srv)
+	skipReadyFrame(t, reader)
+	expectNoFrame(t, reader, 300*time.Millisecond)
 }
 
 // TestHandleEvents_EndsOnHubLoss 验证 hub 连接断开（cli.Done 关闭）时

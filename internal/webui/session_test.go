@@ -64,8 +64,21 @@ func (s *stubClient) Subscribe(_ int) core.Subscription {
 	return &stubSubscription{c: s.events}
 }
 
-func (s *stubClient) History(_ context.Context, _ string, _ uint64, _ int) ([]protocol.StoredMessage, error) {
-	return s.history, s.histErr
+// History 返回预置消息中 ServerSeq 严格大于 after 的子集（升序），
+// 与真实 Store 语义一致，供首屏渲染与重连补发（catchUp）共用。
+func (s *stubClient) History(_ context.Context, _ string, after uint64, _ int) ([]protocol.StoredMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.histErr != nil {
+		return nil, s.histErr
+	}
+	var out []protocol.StoredMessage
+	for _, m := range s.history {
+		if m.ServerSeq > after {
+			out = append(out, m)
+		}
+	}
+	return out, nil
 }
 
 // FetchHistory 记录 before 游标并返回预置的分页响应。

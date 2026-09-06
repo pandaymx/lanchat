@@ -80,6 +80,10 @@ type Client interface {
 	// EventBus 重放，首屏成员列表只能从 Client 的连接级状态取；SSE 推送
 	// 的 presence 帧也以它为数据源渲染全量列表。
 	Peers() []protocol.Presence
+	// Typing 返回当前正在输入的成员快照（M7.3），typing SSE 帧的数据源。
+	Typing() []protocol.Typing
+	// SendTyping 上发「正在输入」提示（M7.3）；POST /typing 的出站路径。
+	SendTyping(ctx context.Context) error
 	Done() <-chan struct{}
 	// Close 释放底层连接（Manager 回收 Session 时调，顺序先于 store.Close）。
 	Close() error
@@ -119,9 +123,54 @@ func NewHandler(cfg Config, mgr *Manager) *Handler {
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleHome)
 	mux.HandleFunc("/messages", h.handleMessages)
+	mux.HandleFunc("/typing", h.handleTyping)
 	mux.HandleFunc("/history", h.handleHistory)
 	mux.HandleFunc("/events", h.handleEvents)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", StaticHandler()))
+}
+
+// handleTyping 是「正在输入」端点（M7.3）：
+//
+//   - POST：浏览器 input 节流上发，透传给 client.SendTyping（hub 盖戳广播）；
+//   - GET：typing 指示条自刷新用——片段渲染后 6s 自动 GET 一次，停止输入
+//     后 client 快照惰性过期为空，返回的空片段把指示条清掉并停止轮询。
+func (h *Handler) handleTyping(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		sess, err := h.ensureSession(w, r)
+		if err != nil {
+			h.logger.Error("typing: session unavailable", "err", err)
+			http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := sess.cli.SendTyping(r.Context()); err != nil {
+			h.logger.Debug("send typing failed", "err", err)
+			http.Error(w, "typing failed", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodGet:
+		// 自刷新只读快照：拨号失败/无会话都渲染空片段（清掉指示条）。
+		views := []templates.TypingView(nil)
+		if sess, err := h.ensureSession(w, r); err == nil {
+			views = templates.NewTypingViews(sess.cli.Typing())
+		}
+		h.renderTyping(w, r, views)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// renderTyping 渲染 typing 指示条片段（GET /typing 与 SSE typing 帧共用）。
+func (h *Handler) renderTyping(w http.ResponseWriter, r *http.Request, views []templates.TypingView) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	var tr templates.Translator
+	if h.cfg.Translator != nil {
+		tr = h.cfg.Translator
+	}
+	if err := templates.TypingBar(tr, views).Render(r.Context(), w); err != nil {
+		h.logger.Error("render typing bar failed", "err", err)
+	}
 }
 
 // ensureSession 取当前请求的 Session：无 cookie 则当场签发并惰性拨号。

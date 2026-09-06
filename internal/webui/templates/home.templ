@@ -29,6 +29,10 @@ templ Home(data HomeData) {
 		<div id="peers" hx-sse="swap:presence" hx-swap="innerHTML">
 			@Peers(data.Tr, data.Peers)
 		</div>
+		// 正在输入指示条：SSE typing 帧整段 swap（M7.3）。首屏为空。
+		// 非空片段自带 6s 后 GET /typing 自刷新（outerHTML）：持续输入时
+		// 新 SSE 帧不断续期；停止输入后快照过期，自刷新取到空片段自行清除。
+		<div id="typing" hx-sse="swap:typing" hx-swap="innerHTML"></div>
 		if data.Error != "" {
 			<div class="banner">{ data.Error }</div>
 		}
@@ -47,6 +51,8 @@ templ Home(data HomeData) {
 		// Enter 发送、Shift+Enter 换行；isComposing 保护中文输入法组词期间的 Enter。
 		// requestSubmit() 触发原生 submit 事件，htmx 照常拦截成 AJAX POST；
 		// input 事件做高度自适应（上限 200px），发送后 after-request reset 复原。
+		// M7.3：textarea 上挂 typing 上发——leading throttle，首个 input 立即
+		// 发，之后 3s 最多一次；空 body 不触发；停止输入后靠对端 TTL 消失。
 		<form class="composer" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
 			<textarea
 				name="body"
@@ -54,6 +60,9 @@ templ Home(data HomeData) {
 				rows="1"
 				hx-on:keydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();this.closest('form').requestSubmit()}"
 				hx-on:input="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,200)+'px'"
+				hx-post="/typing"
+				hx-trigger="input[value.trim()!=''] throttle:3s"
+				hx-swap="none"
 			></textarea>
 			<button type="submit">{ T(data.Tr, "web.composer.send") }</button>
 		</form>
@@ -91,4 +100,20 @@ templ Peers(tr Translator, peers []PeerView) {
 			}
 		}
 	</div>
+}
+
+// TypingBar 是「正在输入」指示片段（M7.3）：SSE typing 帧 innerHTML swap
+// 进 #typing，也由 GET /typing 自刷新 outerHTML 返回。
+//
+// 非空片段带 hx-get=/typing + load delay 6s：渲染后 6s 自动再拉一次
+// 快照——对方持续输入时新 SSE 帧会先到（片段整体被替换、定时器续期）；
+// 对方停止输入后 client 快照惰性过期为空，自刷新拿到空片段把指示清掉。
+// 空片段渲染为空字符串，outerHTML swap 后节点消失、不再轮询。
+templ TypingBar(tr Translator, typing []TypingView) {
+	if len(typing) > 0 {
+		<div class="typing-bar" hx-get="/typing" hx-trigger="load delay:6s" hx-swap="outerHTML">
+			<span class="typing-dots">…</span>
+			<span class="typing-text">{ TypingText(tr, typing) }</span>
+		</div>
+	}
 }

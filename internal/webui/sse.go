@@ -213,8 +213,21 @@ func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
 		}
 		return 0, sseDataFrame("presence", buf.Bytes()), true
 
+	case core.EventTyping:
+		// M7.3：有人正在输入。事件到达时 client 的 typing 快照已更新
+		// （dispatch 先 applyTyping 后发布事件），取全量快照整段重渲
+		// #typing。片段自带 6s 后 GET /typing 自刷新——停止输入后没有
+		// 新事件，靠这次刷新取到空快照把指示条清掉；持续输入时新帧
+		// 不断 swap，定时器随之续期。
+		var buf bytes.Buffer
+		if err := templates.TypingBar(s.tr, templates.NewTypingViews(s.cli.Typing())).Render(s.ctx, &buf); err != nil {
+			s.logger.Error("render typing frame failed", "err", err)
+			return 0, nil, false
+		}
+		return 0, sseDataFrame("typing", buf.Bytes()), true
+
 	default:
-		// EventRead / EventTyping：M7 仍不渲染。
+		// EventRead：M7 仍不渲染。
 		return 0, nil, false
 	}
 }

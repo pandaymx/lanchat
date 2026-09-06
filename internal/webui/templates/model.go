@@ -8,7 +8,9 @@
 package templates
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pandaymx/lanchat/pkg/protocol"
@@ -39,6 +41,16 @@ func T(tr Translator, key string) string {
 		return key
 	}
 	return tr.T(key)
+}
+
+// Tf 是带一个占位参数的文案查询（M7.3 typing 指示用）：
+// 先取模板串再 fmt.Sprintf，tr 为 nil 时退回 key 字面值。
+func Tf(tr Translator, key string, arg string) string {
+	tmpl := T(tr, key)
+	if tr == nil {
+		return tmpl
+	}
+	return fmt.Sprintf(tmpl, arg)
 }
 
 // Who 返回 "user@device" 形式的身份串。
@@ -138,4 +150,33 @@ func NewPeerViews(peers []protocol.Presence, selfDevice string) []PeerView {
 		})
 	}
 	return out
+}
+
+// TypingView 是「正在输入」指示条中一个名字的视图模型（M7.3）。
+type TypingView struct {
+	User string
+}
+
+// NewTypingViews 把协议 Typing 快照转成视图模型（client.Typing()
+// 已按 UserID 去重排序）。
+func NewTypingViews(typing []protocol.Typing) []TypingView {
+	out := make([]TypingView, 0, len(typing))
+	for _, t := range typing {
+		out = append(out, TypingView{User: t.UserID})
+	}
+	return out
+}
+
+// TypingText 返回指示条文案：1 人走 web.typing.one，多人走
+// web.typing.many（名字逗号连接）。放在 Go 侧拼串，templ 保持纯渲染
+// （与 PageMeta.Who() 同模式）。
+func TypingText(tr Translator, typing []TypingView) string {
+	if len(typing) == 1 {
+		return Tf(tr, "web.typing.one", typing[0].User)
+	}
+	names := make([]string, len(typing))
+	for i, t := range typing {
+		names[i] = t.User
+	}
+	return Tf(tr, "web.typing.many", strings.Join(names, ", "))
 }

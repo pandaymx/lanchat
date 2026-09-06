@@ -69,6 +69,11 @@ type stubClient struct {
 	// peers 是 Peers() 快照的预置返回（M7.2 成员列表）。
 	peers []protocol.Presence
 
+	// typers 是 Typing() 快照的预置返回（M7.3 正在输入）；
+	// sendTypingCalls 记录 SendTyping 调用次数。
+	typers          []protocol.Typing
+	sendTypingCalls int
+
 	events chan core.Event
 	done   chan struct{}
 
@@ -139,6 +144,29 @@ func (s *stubClient) Peers() []protocol.Presence {
 	return out
 }
 
+// Typing 返回预置的正在输入快照（M7.3）。
+func (s *stubClient) Typing() []protocol.Typing {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]protocol.Typing, len(s.typers))
+	copy(out, s.typers)
+	return out
+}
+
+// SendTyping 记录调用次数（M7.3）。
+func (s *stubClient) SendTyping(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sendTypingCalls++
+	return nil
+}
+
+func (s *stubClient) typingCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sendTypingCalls
+}
+
 func (s *stubClient) Done() <-chan struct{} { return s.done }
 
 // Close 记录关闭次数并幂等关闭 done（Manager 回收 Session 时调用）。
@@ -194,6 +222,9 @@ type stubDialer struct {
 
 	// peers 复制给每个新 client 的 Peers() 预置返回（M7.2）。
 	peers []protocol.Presence
+
+	// typers 复制给每个新 client 的 Typing() 预置返回（M7.3）。
+	typers []protocol.Typing
 }
 
 func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store, error) {
@@ -210,6 +241,7 @@ func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store,
 	cli.fetchResp = d.fetchResp
 	cli.fetchErr = d.fetchErr
 	cli.peers = d.peers
+	cli.typers = d.typers
 	d.clients = append(d.clients, cli)
 	return cli, memory.New(), nil
 }

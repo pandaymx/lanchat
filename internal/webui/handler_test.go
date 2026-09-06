@@ -449,6 +449,16 @@ func TestWebI18N_AllChromeKeysUsed(t *testing.T) {
 		t.Fatalf("render peers: %v", err)
 	}
 
+	// 3.6) 正在输入：1 人走 one、多人走 many（M7.3）。
+	sb.Reset()
+	if err := templates.TypingBar(tr, []templates.TypingView{{User: "alice"}}).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render typing bar (one): %v", err)
+	}
+	sb.Reset()
+	if err := templates.TypingBar(tr, []templates.TypingView{{User: "alice"}, {User: "bob"}}).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render typing bar (many): %v", err)
+	}
+
 	// 4) 历史错误 banner → web.history.error（走 handler 真实路径）。
 	mgr := newTestManager(t, &stubDialer{histErr: context.DeadlineExceeded})
 	h := NewHandler(Config{Version: "test", Translator: tr}, mgr)
@@ -465,6 +475,8 @@ func TestWebI18N_AllChromeKeysUsed(t *testing.T) {
 		"web.peers.title":          false,
 		"web.peers.empty":          false,
 		"web.peers.you":            false,
+		"web.typing.one":           false,
+		"web.typing.many":          false,
 	}
 	for _, k := range tr.keys() {
 		if _, ok := want[k]; ok {
@@ -1264,6 +1276,119 @@ func TestHandleEvents_PresenceFrame(t *testing.T) {
 	} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("presence frame missing %q\ngot: %q", want, frame)
+		}
+	}
+}
+
+// ---- handleTyping (M7.3) ---------------------------------------------------
+
+// TestHandleTyping_PostReturns204 验证 POST /typing 透传 SendTyping 并回 204。
+func TestHandleTyping_PostReturns204(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	rec := httptest.NewRecorder()
+
+	h.handleTyping(rec, httptest.NewRequest(http.MethodPost, "/typing", nil))
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("POST /typing status = %d, want 204", rec.Code)
+	}
+	if got := d.client(0).typingCalls(); got != 1 {
+		t.Errorf("SendTyping called %d times, want 1", got)
+	}
+}
+
+// TestHandleTyping_GetRendersSnapshot 验证 GET /typing 返回当前 typing
+// 快照片段（指示条自刷新路径）；快照为空时渲染空片段。
+func TestHandleTyping_GetRendersSnapshot(t *testing.T) {
+	d := &stubDialer{
+		typers: []protocol.Typing{{UserID: "bob", DeviceID: "dev-bob"}},
+	}
+	h, _ := newTestHandler(t, d)
+
+	rec := httptest.NewRecorder()
+	h.handleTyping(rec, httptest.NewRequest(http.MethodGet, "/typing", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /typing status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "typing-bar") || !strings.Contains(body, "bob") {
+		t.Errorf("typing snapshot fragment missing bar/name, got: %q", body)
+	}
+
+	// 快照清空后（模拟 TTL 过期）再拉一次，应渲染空片段。
+	// 注意：httptest 请求不带 cookie jar，第二次 GET 会拨号出新 client，
+	// 所以要清 dialer 模板；已建 client 一并清掉。
+	d.mu.Lock()
+	d.typers = nil
+	d.mu.Unlock()
+	cli := d.client(0)
+	cli.mu.Lock()
+	cli.typers = nil
+	cli.mu.Unlock()
+
+	rec2 := httptest.NewRecorder()
+	h.handleTyping(rec2, httptest.NewRequest(http.MethodGet, "/typing", nil))
+	if strings.Contains(rec2.Body.String(), "typing-bar") {
+		t.Errorf("empty typing snapshot must render empty fragment, got: %q", rec2.Body.String())
+	}
+}
+
+// TestHandleTyping_RejectsPut 验证非 GET/POST 方法回 405 且不拨号。
+func TestHandleTyping_RejectsPut(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	rec := httptest.NewRecorder()
+
+	h.handleTyping(rec, httptest.NewRequest(http.MethodPut, "/typing", nil))
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PUT /typing status = %d, want 405", rec.Code)
+	}
+	if d.dialCount() != 0 {
+		t.Errorf("dial count = %d, want 0 (method check must come before dial)", d.dialCount())
+	}
+}
+
+// TestHandleTyping_DialFailure503 验证 POST 拨号失败回 503。
+func TestHandleTyping_DialFailure503(t *testing.T) {
+	h, _ := newTestHandler(t, &stubDialer{err: context.DeadlineExceeded})
+	rec := httptest.NewRecorder()
+
+	h.handleTyping(rec, httptest.NewRequest(http.MethodPost, "/typing", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestHandleEvents_TypingFrame 验证 M7.3：EventTyping 被推成 typing
+// SSE 帧，片段以 client.Typing() 快照全量重渲。
+func TestHandleEvents_TypingFrame(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+
+	reader := startTestSSE(t, h)
+	if _, err := readSSEFrame(reader); err != nil { // 跳过 ready 注释帧
+		t.Fatalf("read ready frame: %v", err)
+	}
+
+	cli := d.client(0)
+	cli.mu.Lock()
+	cli.typers = []protocol.Typing{{UserID: "bob", DeviceID: "dev-bob"}}
+	cli.mu.Unlock()
+
+	cli.events <- core.Event{
+		Kind:   core.EventTyping,
+		Typing: &protocol.Typing{UserID: "bob", DeviceID: "dev-bob"},
+	}
+
+	frame := readFrameTimeout(t, reader, 2*time.Second)
+	for _, want := range []string{
+		"event: typing\n",
+		"bob",
+		"typing-bar",
+		`hx-get="/typing"`,
+	} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("typing frame missing %q\ngot: %q", want, frame)
 		}
 	}
 }

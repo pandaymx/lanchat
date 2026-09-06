@@ -119,9 +119,20 @@ func (r *Router) ServePeer(ctx context.Context, p Peer) {
 // serveLoop 是 Attach 与 ServePeer 共用的读循环主体。
 func (r *Router) serveLoop(ctx context.Context, peerID uint64, p Peer) {
 	defer func() {
-		r.reg.Remove(peerID)
+		// 注销必须先于 Close：先摘注册表，后续 broadcastPresence 的快照里
+		// 自然不含本连接，offline 帧不会回发给正在关闭的自己。
+		id, _ := r.reg.Remove(peerID)
 		_ = p.Close()
 		routerLog.Info("peer detached", "peer", peerID)
+		// M7.2：握过手的设备离场时广播 offline。用 WithoutCancel 派生 ctx：
+		// 退出原因往往就是 ctx 取消/Recv 失败，但广播本身不应被连接生命周期
+		// 一起取消（best-effort 通知其余在线者）。同设备仍有连接在册
+		// （断线重连新旧共存）时 HasDevice 防抖跳过。
+		if id.HelloOK && id.DeviceID != "" && !r.reg.HasDevice(id.DeviceID) {
+			r.broadcastPresence(context.WithoutCancel(ctx), protocol.Presence{
+				UserID: id.UserID, DeviceID: id.DeviceID, Online: false,
+			})
+		}
 	}()
 
 	for {
@@ -224,7 +235,59 @@ func (r *Router) handleHello(ctx context.Context, peerID uint64, p Peer, f proto
 	// 握手通过：之后这条连接才参与投递
 	r.reg.MarkHello(peerID, hello.DeviceID, hello.UserID)
 	routerLog.Info("peer handshake ok", "peer", peerID, "user", hello.UserID, "device", hello.DeviceID)
+	if err := r.announceOnline(ctx, p, hello); err != nil {
+		return fatalf("announce online: %v", err)
+	}
 	return nil
+}
+
+// announceOnline 是握手成功后的在线状态广播（M7.2）：
+//
+//  1. 先给新连接单发当前在线名单（不含自己）——让它一上来就能渲染出
+//     「现在谁在线」，而不是干等下一次有人上下线；
+//  2. 再向全体（含自己）广播自己的上线——别人据此把该设备加进列表，
+//     自己收到回显也无妨，客户端按 DeviceID upsert 天然幂等。
+//
+// 名单单发失败视为连接已坏（返回 error 由 handleHello 判 fatal 关连接）：
+// 连握手后的第一帧都写不进去，这条连接没有继续服务的价值。
+// 后续全员广播与消息广播同语义（best-effort），单条失败不断连。
+// 设备身份为空的连接（异常握手）跳过广播，避免产生无法归属的 Presence。
+func (r *Router) announceOnline(ctx context.Context, p Peer, hello protocol.Hello) error {
+	if hello.DeviceID == "" {
+		return nil
+	}
+	for _, pr := range r.reg.OnlinePresence(hello.DeviceID) {
+		if err := r.sendPresence(ctx, p, pr); err != nil {
+			return err
+		}
+	}
+	r.broadcastPresence(ctx, protocol.Presence{
+		UserID: hello.UserID, DeviceID: hello.DeviceID, Online: true,
+	})
+	return nil
+}
+
+// sendPresence 给单条连接发一个 Presence 帧。
+func (r *Router) sendPresence(ctx context.Context, p Peer, pr protocol.Presence) error {
+	payload, err := json.Marshal(pr)
+	if err != nil {
+		//nolint:nilerr // 序列化 Presence 不可能失败；失败了也无补救动作
+		return nil
+	}
+	if err := p.Send(ctx, protocol.Frame{Kind: protocol.FKPresence, Payload: payload}); err != nil {
+		return fmt.Errorf("send presence: %w", err)
+	}
+	return nil
+}
+
+// broadcastPresence 把一个 Presence 帧广播给所有已握手连接。
+func (r *Router) broadcastPresence(ctx context.Context, pr protocol.Presence) {
+	payload, err := json.Marshal(pr)
+	if err != nil {
+		//nolint:nilerr // 序列化 Presence 不可能失败
+		return
+	}
+	r.broadcast(ctx, protocol.Frame{Kind: protocol.FKPresence, Payload: payload})
 }
 
 // handleMessage 是写路径：分配序号 → 落库 → 进缓冲 → 广播。

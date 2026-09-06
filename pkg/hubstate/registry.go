@@ -3,6 +3,8 @@ package hubstate
 import (
 	"context"
 	"sync"
+
+	"github.com/pandaymx/lanchat/pkg/protocol"
 )
 
 // Registry 是在线连接表，回答「一条消息该发给谁」。
@@ -137,17 +139,59 @@ func (r *Registry) MarkHello(peerID uint64, deviceID, userID string) {
 	e.helloOK = true
 }
 
-// Remove 注销一条连接。幂等：重复调用无副作用。
-func (r *Registry) Remove(peerID uint64) {
+// Identity 是连接注销时返回的协议身份快照，供 serveLoop 在连接断开后
+// 广播 offline Presence 使用（注册表条目是私有的，这里给外部一个只读视图）。
+type Identity struct {
+	DeviceID string
+	UserID   string
+	HelloOK  bool
+}
+
+// Remove 注销一条连接，返回被注销条目的身份快照。
+// 幂等：条目不存在时返回零值 + false。
+func (r *Registry) Remove(peerID uint64) (Identity, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	e, ok := r.conns[peerID]
 	if !ok {
-		return
+		return Identity{}, false
 	}
+	id := Identity{DeviceID: e.deviceID, UserID: e.userID, HelloOK: e.helloOK}
 	r.unindexLocked(peerID, e.deviceID, e.userID)
 	delete(r.conns, peerID)
+	return id, true
+}
+
+// OnlinePresence 返回所有已握手连接的去重在线名单（按 DeviceID 去重，
+// 断线重连期间同设备的新旧连接短暂共存，名单里只出现一次）。
+// excludeDeviceID 非空时跳过该设备（给新连接发名单时不包含它自己）。
+func (r *Registry) OnlinePresence(excludeDeviceID string) []protocol.Presence {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	seen := make(map[string]struct{})
+	out := make([]protocol.Presence, 0, len(r.conns))
+	for _, e := range r.conns {
+		if !e.helloOK || e.deviceID == "" || e.deviceID == excludeDeviceID {
+			continue
+		}
+		if _, dup := seen[e.deviceID]; dup {
+			continue
+		}
+		seen[e.deviceID] = struct{}{}
+		out = append(out, protocol.Presence{UserID: e.userID, DeviceID: e.deviceID, Online: true})
+	}
+	return out
+}
+
+// HasDevice 报告某设备当前是否仍有连接在册（含未握手的）。
+// 连接断开广播 offline 前用来防抖：设备重连（新连接已入册）时旧连接的
+// 离场不应把还在在线的设备标成下线。
+func (r *Registry) HasDevice(deviceID string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.byDevice[deviceID]) > 0
 }
 
 // PeersForUser 返回该 User 的所有已握手连接（跨全部 Device）。

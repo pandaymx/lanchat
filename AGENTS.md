@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M3 TUI 端（M3.1–M3.9 已合入，下一步 M4 Web 端）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M4 Web 端（M4.1–M4.3 已合入，下一步 M4.4 多 Tab Session）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -30,6 +30,18 @@
 | M3.8 | 自适应与性能 | layoutDims 极值（负值/超窄/超矮/超宽）退化测试 5 个；historyView 内部 `lines` 镜像 + `AppendMessage` 增量路径避免每条 split+join | ✅ 本 commit |
 | M3.9 | 收尾打磨 | `/help /clear /quit` 三命令；status 下方加键位提示行（hintsH=1）；lastError 红字 + 5s Tick 自动过期 | ✅ 本 commit |
 | M3.10 | TUI i18n | `pkg/tui.Translator` 接口（注入而非 import）+ `internal/i18n` 包（embed.FS + JSON + DetectLocale）+ `cmd/tui -lang` flag；14 处 UI 文案走 i18n，bundles `en` / `zh-cn` 双语 | ✅ `6fa8af4` → `5ce8c5c` → `96a60d6` → `017ea68` → `f94ab72` |
+
+**M4 子任务拆解与进度**（当前里程碑，M4.1–M4.3 已合入）：
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M4.1 | Web 方案拍板 | SSE（EventSource 原生，反代零配置）+ thin proxy（复用 pkg/client.Client）+ MVP 单会话（ADR-011/012） | ✅ proposal 本地保留（docs/proposals/ 不入库） |
+| M4.2 | Web 骨架 | `cmd/web` -addr :9001 + 三路由占位 + templ 模板 + vendored htmx/sse-ext 内嵌 + CI/Makefile 适配 | ✅ `007a173` → `918fc53` → `004ba51` |
+| M4.3 | handler 接 client | `internal/webui/session.go` DialClient 装配 + SSE 推流 + POST /api/messages Send + fake hub E2E 双 web 互发 | ✅ `3e635a0` → `70f4269` → `32180e1` |
+| M4.4 | 多 Tab Session | cookie 签发 + Manager.GetOrCreate/Release + Session.fanout 多 SSEWriter 订阅 | ⬜ 待起手 |
+| M4.5 | 输入体验 | Enter 提交 / Shift+Enter 换行、错误展示 banner（state.disconnected）、历史「加载更多」 | ⬜ |
+| M4.6 | 自动重连 | EventSource 重连 + Last-Event-ID 断线补发（server 幂等） | ⬜ |
+| M4.7 | Web i18n | 复用 internal/i18n bundle + Translator 模式 | ⬜ |
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 

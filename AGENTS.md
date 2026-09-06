@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M5 持久化（M5.1–M5.3 已合入，hub 默认 libSQL 文件库落盘，ADR-013），下一步 M6 部署打磨。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M6 服务发现（M6.1–M6.3 已合入：hub mDNS 广播，tui/web 零参数自动发现），下一步继续体验打磨与部署。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -52,6 +52,16 @@
 | M5.3 | 文档收尾 | AGENTS.md 技术栈/进度表更新 | ✅ 本 commit |
 
 **M5 验收标准**：hub 关掉重开消息还在；重启后新消息序号接续不撞号；客户端离线补发在重启后仍可用；`CGO_ENABLED=0` 全平台（linux/arm64、windows/amd64）构建通过。
+
+**M6 子任务拆解与进度**（mDNS 服务发现）：
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M6.1 | 发现包 | `internal/discovery`（grandcat/zeroconf 纯 Go，零 CGO）：Broadcast 注册 `_lanchat._tcp`（TXT 带 ws path/version）、Discover 浏览去重排序、DiscoverHubURL 返回首个实例 ws URL；首个实例后 800ms grace 提前返回（实测 ~1.4s）；无组播环境 ErrNoHub 降级 | ✅ `00e45de` |
+| M6.2 | 三端接线 | cmd/hub `-mdns`（默认开）广播；cmd/tui `-hub` 留空自动发现；cmd/web `-hub-url` 留空自动发现；实测 web 无参启动 → 发现 `ws://192.168.1.47:19000/ws` → dial ok | ✅ `a50f3a6` |
+| M6.3 | 文档收尾 | AGENTS.md M6 进度表 | ✅ 本 commit |
+
+**M6 验收标准**：hub 启动后局域网内 tui/web 不带地址参数即可自动发现并连上；`-mdns=false` / 显式 `-hub` 仍可手动指定；CGO_ENABLED=0 交叉编译不受影响。
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 

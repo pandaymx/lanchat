@@ -31,6 +31,12 @@ type stubClient struct {
 	history []protocol.StoredMessage
 	histErr error
 
+	// fetchResp/fetchErr 是 FetchHistory（/history 分页端点）的预置返回。
+	// fetchBefore 记录最后一次调用的 before 游标，供断言分页参数。
+	fetchResp   protocol.HistoryResponse
+	fetchErr    error
+	fetchBefore uint64
+
 	events chan core.Event
 	done   chan struct{}
 
@@ -60,6 +66,23 @@ func (s *stubClient) Subscribe(_ int) core.Subscription {
 
 func (s *stubClient) History(_ context.Context, _ string, _ uint64, _ int) ([]protocol.StoredMessage, error) {
 	return s.history, s.histErr
+}
+
+// FetchHistory 记录 before 游标并返回预置的分页响应。
+func (s *stubClient) FetchHistory(_ context.Context, _ string, _, before uint64, _ int) (protocol.HistoryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fetchBefore = before
+	if s.fetchErr != nil {
+		return protocol.HistoryResponse{}, s.fetchErr
+	}
+	return s.fetchResp, nil
+}
+
+func (s *stubClient) lastFetchBefore() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fetchBefore
 }
 
 func (s *stubClient) Done() <-chan struct{} { return s.done }
@@ -110,6 +133,10 @@ type stubDialer struct {
 	history []protocol.StoredMessage
 	histErr error
 	sendErr error
+
+	// fetchResp/fetchErr 复制给每个新 client 的 FetchHistory 预置返回。
+	fetchResp protocol.HistoryResponse
+	fetchErr  error
 }
 
 func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store, error) {
@@ -123,6 +150,8 @@ func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store,
 	cli.history = d.history
 	cli.histErr = d.histErr
 	cli.sendErr = d.sendErr
+	cli.fetchResp = d.fetchResp
+	cli.fetchErr = d.fetchErr
 	d.clients = append(d.clients, cli)
 	return cli, memory.New(), nil
 }

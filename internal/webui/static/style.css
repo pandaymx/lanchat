@@ -135,6 +135,27 @@ body {
   text-align: center;
 }
 
+/* 「加载更早消息」按钮行：居中、弱化，hover 变亮 */
+.messages .load-more {
+  text-align: center;
+  padding: 0.25rem 0;
+}
+
+.messages .load-more button {
+  background: transparent;
+  color: var(--fg-dim);
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius);
+  padding: 0.25rem 0.9rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.messages .load-more button:hover {
+  color: var(--fg);
+  border-color: var(--fg-dim, #666);
+}
+
 /* ---- 输入区 ---- */
 
 .composer {

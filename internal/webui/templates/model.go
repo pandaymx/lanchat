@@ -7,7 +7,10 @@
 // embed.FS 嵌入二进制——局域网自托管场景下不依赖外网。
 package templates
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // PageMeta 是 base 模板需要的公共 head 信息。
 type PageMeta struct {
@@ -28,13 +31,24 @@ func (p PageMeta) Who() string {
 
 // HomeData 是 home 模板的渲染入参。
 //
-// M4.2 骨架阶段只有 Meta/Messages/Connected/Error；M4.3 接通真 hub 后
-// 补 HasMore 等字段（见 docs/proposals/2026-09-05-m4-web-proposal.md §5.5）。
+// HasMore/OldestSeq 驱动首屏「加载更早消息」按钮：首屏拉满 historyLimit
+// 条时认为可能还有更早的消息，OldestSeq 是当前最老一条的 ServerSeq，
+// 作为第一个 /history?before= 的游标。
 type HomeData struct {
 	Meta      PageMeta
 	Messages  []MessageView
 	Connected bool
 	Error     string
+	HasMore   bool
+	OldestSeq int64
+}
+
+// HistoryHref 构造「加载更早消息」按钮的 hx-get URL。
+//
+// 放在 Go 侧拼串：templ 模板里不引 strconv，保持模板纯渲染
+// （同 PageMeta.Who() 的考量）。
+func HistoryHref(before int64) string {
+	return "/history?before=" + strconv.FormatInt(before, 10)
 }
 
 // MessageView 是单条消息的视图模型。

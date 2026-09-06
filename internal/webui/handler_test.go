@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -453,6 +454,129 @@ func TestHandleMessages_DialFailure503(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// ---- handleHistory ---------------------------------------------------------
+
+// olderMsgs 构造一页"更早"的消息（按 seq 升序）。
+func olderMsgs(seqs ...uint64) []protocol.StoredMessage {
+	out := make([]protocol.StoredMessage, 0, len(seqs))
+	for _, s := range seqs {
+		out = append(out, protocol.StoredMessage{
+			ID:             "m" + strconv.FormatUint(s, 10),
+			ConversationID: "lobby",
+			ServerSeq:      s,
+			SenderUserID:   "alice",
+			Body:           "older-" + strconv.FormatUint(s, 10),
+		})
+	}
+	return out
+}
+
+// TestHandleHistory_RendersOlderPage 验证分页端点：before 透传给 client，
+// 响应含消息片段 + 新 LoadMore 按钮（游标为本批最老 seq）。
+func TestHandleHistory_RendersOlderPage(t *testing.T) {
+	d := &stubDialer{fetchResp: protocol.HistoryResponse{
+		Messages: olderMsgs(8, 9), HasMore: true,
+	}}
+	h, _ := newTestHandler(t, d)
+
+	rec := httptest.NewRecorder()
+	h.handleHistory(rec, httptest.NewRequest(http.MethodGet, "/history?before=10", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if got := d.client(0).lastFetchBefore(); got != 10 {
+		t.Errorf("FetchHistory before = %d, want 10", got)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"older-8", "older-9", "加载更早消息", `/history?before=8`, `hx-swap="outerHTML"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+// TestHandleHistory_NoMoreHidesButton 验证 HasMore=false 时片段不含按钮
+// （按钮被消息替换，分页到头）。
+func TestHandleHistory_NoMoreHidesButton(t *testing.T) {
+	d := &stubDialer{fetchResp: protocol.HistoryResponse{Messages: olderMsgs(1, 2), HasMore: false}}
+	h, _ := newTestHandler(t, d)
+
+	rec := httptest.NewRecorder()
+	h.handleHistory(rec, httptest.NewRequest(http.MethodGet, "/history?before=3", nil))
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "older-1") || !strings.Contains(body, "older-2") {
+		t.Errorf("messages missing: %s", body)
+	}
+	if strings.Contains(body, "加载更早消息") {
+		t.Errorf("HasMore=false 不应渲染按钮: %s", body)
+	}
+}
+
+// TestHandleHistory_BadBefore 验证非法/缺失 before 返回 400 且不拨号。
+func TestHandleHistory_BadBefore(t *testing.T) {
+	for _, q := range []string{"/history", "/history?before=abc", "/history?before=0"} {
+		h, d := newTestHandler(t, nil)
+		rec := httptest.NewRecorder()
+		h.handleHistory(rec, httptest.NewRequest(http.MethodGet, q, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s status = %d, want 400", q, rec.Code)
+		}
+		if d.dialCount() != 0 {
+			t.Errorf("%s: dial happened before validation", q)
+		}
+	}
+}
+
+// TestHandleHistory_RejectsPost 验证 POST /history 被拒（405，且不拨号）。
+func TestHandleHistory_RejectsPost(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	rec := httptest.NewRecorder()
+	h.handleHistory(rec, httptest.NewRequest(http.MethodPost, "/history?before=3", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+	if d.dialCount() != 0 {
+		t.Error("dial happened before method check")
+	}
+}
+
+// TestHandleHistory_FetchError503 验证拉取失败回 503。
+func TestHandleHistory_FetchError503(t *testing.T) {
+	h, _ := newTestHandler(t, &stubDialer{fetchErr: context.DeadlineExceeded})
+	rec := httptest.NewRecorder()
+	h.handleHistory(rec, httptest.NewRequest(http.MethodGet, "/history?before=10", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+// TestHandleHome_LoadMoreButton 验证首屏拉满 historyLimit 条时渲染
+// 「加载更早消息」按钮，游标为最老一条的 seq。
+func TestHandleHome_LoadMoreButton(t *testing.T) {
+	msgs := make([]protocol.StoredMessage, historyLimit)
+	for i := range msgs {
+		seq := uint64(100 + i)
+		msgs[i] = protocol.StoredMessage{
+			ID: "m", ConversationID: "lobby", ServerSeq: seq,
+			SenderUserID: "alice", Body: "x",
+		}
+	}
+	h, _ := newTestHandler(t, &stubDialer{history: msgs})
+
+	rec := httptest.NewRecorder()
+	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "加载更早消息") {
+		t.Error("首屏拉满 limit 应渲染加载更多按钮")
+	}
+	if !strings.Contains(body, "/history?before=100") {
+		t.Error("按钮游标应为最老一条 seq=100")
 	}
 }
 

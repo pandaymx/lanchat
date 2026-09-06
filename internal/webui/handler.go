@@ -25,6 +25,7 @@ package webui
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,6 +72,10 @@ type Client interface {
 	SendMessage(ctx context.Context, convID, body string) error
 	Subscribe(buf int) core.Subscription
 	History(ctx context.Context, convID string, after uint64, limit int) ([]protocol.StoredMessage, error)
+	// FetchHistory 向 hub 同步拉取一段历史（before>0 向更早翻页）。
+	// 结果已写入 client 本地 Store，但不发布 EventMessage——分页片段
+	// 由本端点直接渲染返回，避免经 SSE 通道重复追加。
+	FetchHistory(ctx context.Context, convID string, after, before uint64, limit int) (protocol.HistoryResponse, error)
 	Done() <-chan struct{}
 	// Close 释放底层连接（Manager 回收 Session 时调，顺序先于 store.Close）。
 	Close() error
@@ -107,6 +112,7 @@ func NewHandler(cfg Config, mgr *Manager) *Handler {
 func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleHome)
 	mux.HandleFunc("/messages", h.handleMessages)
+	mux.HandleFunc("/history", h.handleHistory)
 	mux.HandleFunc("/events", h.handleEvents)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", StaticHandler()))
 }
@@ -169,11 +175,63 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 		},
 		Messages:  views,
 		Connected: sess.alive(),
+		// 首屏拉满 limit 即认为可能还有更早的消息（store 是内存视图，
+		// 无法直接区分"正好 50 条"与"还有更多"；点一次加载更多便知分晓）。
+		HasMore: histErr == nil && len(msgs) == historyLimit,
+	}
+	if data.HasMore {
+		data.OldestSeq = int64(msgs[0].ServerSeq)
 	}
 	if histErr != nil {
 		data.Error = "历史加载失败，显示可能不完整"
 	}
 	h.renderHome(w, r, data)
+}
+
+// handleHistory 是「加载更早消息」的分页端点（M4.5）。
+//
+// 查询参数 before=<ServerSeq>：返回该序号之前的最晚 historyLimit 条
+// （升序）。响应是 HistoryPage 片段——消息 <li> 序列 + 可能的新
+// LoadMore 按钮，由 htmx outerHTML 替换被点击的按钮行。
+func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	before, err := strconv.ParseUint(r.URL.Query().Get("before"), 10, 64)
+	if err != nil || before == 0 {
+		http.Error(w, "before query param must be a positive seq", http.StatusBadRequest)
+		return
+	}
+
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		h.logger.Error("history: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	resp, err := sess.cli.FetchHistory(r.Context(), sess.convID, 0, before, historyLimit)
+	if err != nil {
+		h.logger.Error("fetch history failed", "conv", sess.convID, "before", before, "err", err)
+		http.Error(w, "history unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	views := make([]templates.MessageView, 0, len(resp.Messages))
+	for i := range resp.Messages {
+		views = append(views, sess.newView(&resp.Messages[i]))
+	}
+	// 下一页游标：本批最老一条的 seq（resp.Messages 升序，首条即最老）。
+	var nextBefore int64
+	if resp.HasMore && len(resp.Messages) > 0 {
+		nextBefore = int64(resp.Messages[0].ServerSeq)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := templates.HistoryPage(views, resp.HasMore, nextBefore).Render(r.Context(), w); err != nil {
+		h.logger.Error("render history page failed", "err", err)
+	}
 }
 
 // renderHome 统一渲染入口，供 handleHome 与将来可能的错误渲染复用。

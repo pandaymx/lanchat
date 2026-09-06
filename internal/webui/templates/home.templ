@@ -27,6 +27,9 @@ templ Home(data HomeData) {
 			<div class="banner">{ data.Error }</div>
 		}
 		<ul id="messages" class="messages" hx-sse="swap:message" hx-swap="beforeend">
+			if data.HasMore {
+				@LoadMore(HistoryHref(data.OldestSeq))
+			}
 			if len(data.Messages) == 0 {
 				<li class="empty">（暂无消息）</li>
 			} else {

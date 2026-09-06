@@ -36,6 +36,10 @@ pre-commit:
       glob: '*.go'
       # 用 ./... 而非 ./pkg/... ./internal/...，避免目录尚未创建时 matched no packages 导致误失败
       run: export PATH="$HOME/go/bin:$HOME/.bun/bin:$PATH" && go test ./...
+    agents-check:
+      # 仓库级一致性检查（templ pin / gci sections / commitlint scope / i18n key）
+      # 毫秒级只读检查，失败即阻止提交；修复指引见 .agents/tools/check.sh 输出
+      run: bash .agents/tools/check.sh
 
 # 提交信息：Conventional Commits + scope 白名单
 commit-msg:

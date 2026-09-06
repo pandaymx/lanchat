@@ -1,16 +1,16 @@
 // Command web 是 lanchat 的浏览器端入口：
 //  1. flag 取运行参数
 //  2. logging.Init 接 slog（与 cmd/hub / cmd/tui 同风格）
-//  3. 构造 internal/webui.Handler 并挂路由
-//  4. http.Server 起在 -addr，signal.NotifyContext 做优雅退出
+//  3. 以 ws transport 拨号 hub，装配 pkg/client.Client（internal/webui.DialClient）
+//  4. 构造 internal/webui.Handler 并挂路由
+//  5. http.Server 起在 -addr，signal.NotifyContext 做优雅退出
 //
 // 启动方式（先跑 hub，再跑 web）：
 //
 //	./bin/hub -addr :9000
 //	./bin/web -addr :9001 -hub-url ws://127.0.0.1:9000/ws -user alice
 //
-// 本文件不持有任何业务逻辑：路由在 internal/webui.Handler，
-// M4.3 起业务（Session / SSE fan-out）也在 internal/webui。
+// 本文件不持有任何业务逻辑：路由与 SSE / 发消息 / 历史都在 internal/webui。
 package main
 
 import (
@@ -27,6 +27,7 @@ import (
 
 	"github.com/pandaymx/lanchat/internal/webui"
 	"github.com/pandaymx/lanchat/pkg/logging"
+	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
 )
 
 // 版本号由构建注入，见 Makefile LDFLAGS。不要在这里写死版本号。
@@ -42,6 +43,9 @@ var (
 // 所以 Shutdown 会一直等；给个上限防止运维时卡住。
 const shutdownTimeout = 5 * time.Second
 
+// dialTimeout 是启动期连 hub 的超时上限。失败直接退出，由运维层重启兜底。
+const dialTimeout = 5 * time.Second
+
 func main() {
 	// --version 必须在 flag.Parse 之前识别：
 	// flag 不认这个 flag，会先报"flag provided but not defined"再退出。
@@ -51,7 +55,7 @@ func main() {
 	}
 
 	addr := flag.String("addr", ":9001", "HTTP 监听地址（:9001 或 127.0.0.1:9001）")
-	hubURL := flag.String("hub-url", "", "hub 的 ws 地址；M4.2 骨架阶段暂不使用，M4.3 接通")
+	hubURL := flag.String("hub-url", "", "hub 的 ws 地址，必填（如 ws://127.0.0.1:9000/ws）")
 	user := flag.String("user", "anonymous", "显示名（昵称即用）")
 	device := flag.String("device", "", "设备标识；留空自动生成 web-<random>")
 	convID := flag.String("conv", "lobby", "会话 ID；默认 lobby")
@@ -89,7 +93,7 @@ func main() {
 // runOptions 收纳 run 的入参，避免签名再长一截。
 type runOptions struct {
 	Addr    string
-	HubURL  string // M4.2 未使用；M4.3 起传给 Session
+	HubURL  string // hub 的 ws 地址，必填
 	User    string
 	Device  string
 	ConvID  string
@@ -104,6 +108,30 @@ func run(opts runOptions) error {
 	if opts.Device == "" {
 		opts.Device = defaultDeviceName()
 	}
+	if opts.HubURL == "" {
+		return errors.New("-hub-url is required (e.g. ws://127.0.0.1:9000/ws)")
+	}
+
+	// 拨号 + 握手（Hello + 历史补发）。hub 不在线时直接退出，让
+	// shell / 运维层做重启兜底；hub 自动重连是 M4.6 的活（提案 §M4.5）。
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), dialTimeout)
+	cli, store, err := webui.DialClient(dialCtx, webui.DialOptions{
+		Transport: wstransport.New(),
+		HubURL:    opts.HubURL,
+		User:      opts.User,
+		Device:    opts.Device,
+	})
+	dialCancel()
+	if err != nil {
+		return fmt.Errorf("connect hub: %w", err)
+	}
+	// 释放顺序有讲究：先 cli.Close()（停 readPump），再 store.Close()，
+	// 反过来的话 readPump 可能还在往已关闭的 store 里写（见 session.go 注释）。
+	defer func() {
+		_ = cli.Close()
+		_ = store.Close()
+	}()
+	logger.Info("hub connected", "hub", opts.HubURL, "device", opts.Device)
 
 	mux := http.NewServeMux()
 	h := webui.NewHandler(webui.Config{
@@ -111,7 +139,7 @@ func run(opts runOptions) error {
 		Device:  opts.Device,
 		ConvID:  opts.ConvID,
 		Version: opts.Version,
-	})
+	}, cli)
 	h.Routes(mux)
 
 	srv := &http.Server{

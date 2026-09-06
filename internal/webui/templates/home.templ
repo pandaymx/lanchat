@@ -22,12 +22,12 @@ templ Home(data HomeData) {
 		if data.Error != "" {
 			<div class="banner">{ data.Error }</div>
 		}
-		<ul id="messages" class="messages">
+		<ul id="messages" class="messages" hx-sse="swap:message" hx-swap="beforeend">
 			if len(data.Messages) == 0 {
 				<li class="empty">（暂无消息）</li>
 			} else {
 				for _, m := range data.Messages {
-					@message(m)
+					@Message(m)
 				}
 			}
 		</ul>

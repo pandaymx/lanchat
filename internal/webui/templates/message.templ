@@ -9,7 +9,7 @@ package templates
 //
 // templ 对 { } 插值自动做 HTML 转义，Body 里的 < > & 不会被当标签解析
 // （见 docs/proposals/2026-09-05-m4-web-proposal.md R9：XSS 防护）。
-templ message(m MessageView) {
+templ Message(m MessageView) {
 	<li id={ "msg-" + m.ID }>
 		<span class="msg-meta">{ m.AtText }</span>
 		if m.Self {

@@ -74,6 +74,13 @@ type Client struct {
 	seenMu sync.Mutex
 	seen   map[string]struct{}
 
+	// histWait 是 FetchHistory 的同步等待点：非 nil 时，下一个到达的
+	// FKHistoryResp 会被送给该 channel，且消息只写 Store、不发布 EventMessage。
+	// 分页结果由调用方自行渲染——否则旧消息会经实时通道（SSE）当新消息
+	// 重复追加到界面底部。nil 时（Connect 的 catch-up 补发）走原发布路径。
+	histMu   sync.Mutex
+	histWait chan protocol.HistoryResponse
+
 	// awaitingHistory 为 true 表示「FKHistoryReq 已发出、还没拿到响应」期间，
 	// 用来在 race window 里为 FKDeliver 排队——详见 deliverMessage / flushPendingDeliver。
 	// 这是一道 catch-up 期间的事件顺序护栏：FKDeliver 不能跑到 FKHistoryResp 的消息前面，
@@ -209,6 +216,23 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 			return
 		}
 		cliLog.Debug("history resp received", "count", len(resp.Messages))
+
+		// FetchHistory 的分页响应：消息只落 Store，不发布事件。
+		// 调用方拿到 resp 自行渲染（Web 端「加载更多」把片段插到列表顶部）；
+		// 若走下面的 publishMessageOnce，SSE 实时通道会把这些旧消息当新消息
+		// beforeend 重复追加到界面底部。
+		c.histMu.Lock()
+		wait := c.histWait
+		c.histWait = nil
+		c.histMu.Unlock()
+		if wait != nil {
+			for i := range resp.Messages {
+				_ = c.store.AppendMessage(ctx, resp.Messages[i])
+			}
+			wait <- resp
+			return
+		}
+
 		// history resp 的内容必须按 Hub 给的顺序直送 publishMessageOnce，
 		// 不能走 deliverMessage——后者在 awaitingHistory 时会全部进 buffer，
 		// 而 buffer 在 flushPendingDeliver 里又会被 lastHistorySeq 过滤掉，
@@ -416,6 +440,59 @@ func (c *Client) SendRead(ctx context.Context, convID string, serverSeq uint64) 
 // History 直接读本地 Store。已含已读游标过滤在调用方做。
 func (c *Client) History(ctx context.Context, convID string, after uint64, limit int) ([]protocol.StoredMessage, error) {
 	return c.store.History(ctx, convID, after, limit)
+}
+
+// FetchHistory 向 Hub 请求一段历史并同步等待响应。
+//
+//   - before>0：向更早翻页（ServerSeq 严格小于 before 的最晚一批，升序）；
+//   - before==0 且 after>0：增量补发（严格大于 after 的最早一批）。
+//
+// 返回的消息已写入本地 Store，但**不会**发布 EventMessage 事件——
+// 分页结果由调用方自行渲染（Web「加载更多」把片段插到列表顶部），
+// 避免旧消息经 SSE 实时通道当新消息重复追加。
+//
+// 同一 Client 同时只允许一个 FetchHistory 在途（UI 上也只有一个分页按钮）。
+func (c *Client) FetchHistory(ctx context.Context, convID string, after, before uint64, limit int) (protocol.HistoryResponse, error) {
+	if c.closed.Load() {
+		return protocol.HistoryResponse{}, core.ErrClosed
+	}
+	ch := make(chan protocol.HistoryResponse, 1)
+	c.histMu.Lock()
+	if c.histWait != nil {
+		c.histMu.Unlock()
+		return protocol.HistoryResponse{}, fmt.Errorf("fetch history already in flight")
+	}
+	c.histWait = ch
+	c.histMu.Unlock()
+	defer func() {
+		c.histMu.Lock()
+		c.histWait = nil
+		c.histMu.Unlock()
+	}()
+
+	req := protocol.HistoryRequest{
+		ConversationIDs: []string{convID},
+		After:           after,
+		Before:          before,
+		Limit:           limit,
+	}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return protocol.HistoryResponse{}, fmt.Errorf("marshal history req: %w", err)
+	}
+	cliLog.Debug("send fetch history req", "conv", convID, "after", after, "before", before, "limit", limit)
+	if err := c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKHistoryReq, Payload: payload}); err != nil {
+		return protocol.HistoryResponse{}, fmt.Errorf("send history req: %w", err)
+	}
+
+	select {
+	case resp := <-ch:
+		return resp, nil
+	case <-ctx.Done():
+		return protocol.HistoryResponse{}, ctx.Err()
+	case <-c.done:
+		return protocol.HistoryResponse{}, core.ErrClosed
+	}
 }
 
 // Cursor 读取该设备在某会话的已读游标。

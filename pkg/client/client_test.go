@@ -532,3 +532,104 @@ func TestExternalCtxCancelDoesNotKillReadPump(t *testing.T) {
 		t.Fatalf("消息内容错: %+v", ev.Message)
 	}
 }
+
+// newClientNoHistory dial + Connect 但不主动补发历史（RequestHistory=false），
+// 用于 FetchHistory 测试：历史完全由测试中的显式调用驱动。
+func newClientNoHistory(t *testing.T, tr *fake.Transport, hello protocol.Hello) *client.Client {
+	t.Helper()
+	bus := event.New()
+	store := memory.New()
+	conn, err := tr.Dial(context.Background(), "memory://lanchat-test", hello)
+	if err != nil {
+		t.Fatalf("Dial failed: %v", err)
+	}
+	c := client.New(hello, conn, store, bus)
+	if err := c.Connect(context.Background(), client.ConnectOptions{RequestHistory: false}); err != nil {
+		t.Fatalf("Connect failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = c.Close()
+		_ = store.Close()
+	})
+	return c
+}
+
+// TestFetchHistory 验证手动历史拉取：
+//  1. before=0/after=0 从最老返回全部，升序；
+//  2. before=N 返回 ServerSeq 严格小于 N 的最晚一批；
+//  3. 分页响应只写 Store、不发布 EventMessage（静默，避免 SSE 重复追加）。
+func TestFetchHistory(t *testing.T) {
+	tr, _, _ := newTransportWithHub(t, "lanchat-test")
+
+	aliceHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "alice-laptop",
+		UserID:          "alice",
+	}
+	alice := newClient(t, tr, memory.New(), aliceHello, 0)
+
+	// alice 发 5 条，等 5 条 FKDeliver 回环确认 hub 已全部入库入 history。
+	aliceSub := alice.Subscribe(64)
+	defer aliceSub.Close()
+	for i := 0; i < 5; i++ {
+		if err := alice.SendMessage(context.Background(), "conv-1", "m"); err != nil {
+			t.Fatalf("SendMessage: %v", err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		if waitForEvent(t, aliceSub, core.EventMessage, 2*time.Second) == nil {
+			t.Fatalf("第 %d 条消息未确认入站", i+1)
+		}
+	}
+
+	carolHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "carol-laptop",
+		UserID:          "carol",
+	}
+	carol := newClientNoHistory(t, tr, carolHello)
+	carolSub := carol.Subscribe(64)
+	defer carolSub.Close()
+
+	// 1. 全量拉取：before=0/after=0 从最老开始。
+	resp, err := carol.FetchHistory(context.Background(), "conv-1", 0, 0, 100)
+	if err != nil {
+		t.Fatalf("FetchHistory: %v", err)
+	}
+	if len(resp.Messages) != 5 {
+		t.Fatalf("应返回 5 条，实际 %d", len(resp.Messages))
+	}
+	for i, m := range resp.Messages {
+		if m.ServerSeq != uint64(i+1) {
+			t.Fatalf("第 %d 条 seq 应为 %d，实际 %d", i, i+1, m.ServerSeq)
+		}
+	}
+
+	// 2. 静默：分页响应不发布 EventMessage（窗口期内 0 条消息事件）。
+	if got := collectEvents(t, carolSub, core.EventMessage, 300*time.Millisecond); len(got) != 0 {
+		t.Fatalf("FetchHistory 不应发布 EventMessage，实际收到 %d 条", len(got))
+	}
+
+	// 3. 消息已写入 carol 本地 Store。
+	got, err := carol.History(context.Background(), "conv-1", 0, 100)
+	if err != nil {
+		t.Fatalf("carol History: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("carol store 应有 5 条，实际 %d", len(got))
+	}
+
+	// 4. before 翻页：before=4 → seq<4 的 1,2,3。
+	resp, err = carol.FetchHistory(context.Background(), "conv-1", 0, 4, 100)
+	if err != nil {
+		t.Fatalf("FetchHistory before: %v", err)
+	}
+	if len(resp.Messages) != 3 {
+		t.Fatalf("before=4 应返回 3 条，实际 %d", len(resp.Messages))
+	}
+	for i, m := range resp.Messages {
+		if m.ServerSeq != uint64(i+1) {
+			t.Fatalf("before 翻页第 %d 条 seq 应为 %d，实际 %d", i, i+1, m.ServerSeq)
+		}
+	}
+}

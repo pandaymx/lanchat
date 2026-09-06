@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M4 Web 端已全部合入（M4.1–M4.7），下一步 M5 持久化落地 libSQL（ADR-013）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M5 持久化（M5.1–M5.3 已合入，hub 默认 libSQL 文件库落盘，ADR-013），下一步 M6 部署打磨。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -43,6 +43,16 @@
 | M4.6 | 自动重连 | EventSource 重连 + Last-Event-ID 断线补发（catchUp 补写 + sseChunk 带 seq + writer skipSeq 幂等去重） | ✅ `6c7ae15` |
 | M4.7 | Web i18n | 复用 internal/i18n bundle：templates.Translator 窄接口 + T() nil 兜底，Config/ManagerConfig 注入，cmd/web -lang/-lang-list flag | ✅ `126f541` |
 
+**M5 子任务拆解与进度**（持久化，M5.1–M5.2 已合入）：
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M5.1 | libSQL store | `pkg/store/libsql` 实现 core.Store（libsql-client-go + blank import modernc.org/sqlite 注册本地引擎，纯 Go 零 CGO）；五表幂等迁移；UPSERT/History 升序/游标 MAX 单调；MaxSeq + RecentMessages 恢复原语 | ✅ `f631656` |
+| M5.2 | hub 接线与重启恢复 | `cmd/hub -db` flag（默认 `lanchat.db` 文件库，`-db memory` 纯内存）；StartSeq=MaxSeq 防序号撞车；RecentMessages 灌回内存补发缓冲（HistoryRestoreLimit=5000）；TestRouterRestoreFromStore | ✅ `de53143` → `2d44610` |
+| M5.3 | 文档收尾 | AGENTS.md 技术栈/进度表更新 | ✅ 本 commit |
+
+**M5 验收标准**：hub 关掉重开消息还在；重启后新消息序号接续不撞号；客户端离线补发在重启后仍可用；`CGO_ENABLED=0` 全平台（linux/arm64、windows/amd64）构建通过。
+
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 
 ---
@@ -54,13 +64,13 @@
 | 语言 | Go 1.27 | |
 | 前端 | templ + HTMX | **不引入 React/Vue/任何 JS 框架，不引入前端构建工具** |
 | 传输 | WebSocket（一期唯一实现） | 必须走 `Transport` 接口 |
-| 存储 | `modernc.org/sqlite` | **纯 Go 无 CGO** |
+| 存储 | libSQL 纯 Go 驱动 | **libsql-client-go + blank import modernc.org/sqlite 本地引擎，纯 Go 无 CGO（ADR-013）**；DSN 用 `file:<path>` |
 | 任务入口 | Makefile（Go 侧）/ package.json（Node 侧） | 不用 bun 包办 Go 命令 |
 | Node 运行时 | bun 1.3.14 | **只用于 commitlint 与 semantic-release** |
 
 **禁止引入**：任何需要 CGO 的依赖、JS 前端框架、ORM（手写 SQL）、除标准库 `log/slog` 外的日志库。
 
-**关键库的选型理由**：WebSocket 用 `coder/websocket`（gorilla 已归档）；SQLite 用 `modernc.org/sqlite`（`mattn/go-sqlite3` 需 CGO，会毁掉交叉编译与 gomobile）。
+**关键库的选型理由**：WebSocket 用 `coder/websocket`（gorilla 已归档）；存储用 libSQL 纯 Go 驱动（ADR-013）：`libsql-client-go` 走标准 `database/sql`，本地 `file:` DSN 自身不带引擎，必须 blank import `modernc.org/sqlite`（注册名 "sqlite"）——禁用 CGO 版 `mattn/go-sqlite3`（会毁掉交叉编译与 gomobile），也不引 CGO 版 go-libsql。
 
 ---
 

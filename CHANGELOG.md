@@ -1,3 +1,41 @@
+## [0.4.0](https://github.com/pandaymx/lanchat/compare/v0.3.0...v0.4.0) (2026-09-06)
+
+### Features
+
+* **core:** Client.FetchHistory 同步拉取历史分页 ([07d4dbe](https://github.com/pandaymx/lanchat/commit/07d4dbe502887dcf817b74d8c8048ca67802bde3))
+* **deps:** 引入 templ v0.3.1020 + vendored htmx 1.9.12（含 SSE 扩展） ([007a173](https://github.com/pandaymx/lanchat/commit/007a173ac0a1def5da5b8bebf39f645227d1372b))
+* **hub:** 新增 internal/discovery mDNS/DNS-SD 服务发现（M6.1） ([00e45de](https://github.com/pandaymx/lanchat/commit/00e45de7bae8db670ad3b97a8cd5084c80d11521))
+* **hub:** cmd/hub 接入 libSQL 持久化与重启恢复（M5.2） ([2d44610](https://github.com/pandaymx/lanchat/commit/2d446102224e9da92624ae8838645d400036330e))
+* **hub:** History.Query 支持 Before 向更早翻页 ([a5d1cc9](https://github.com/pandaymx/lanchat/commit/a5d1cc97450fbaef55d994f525aa092f11a3cd55))
+* **hub:** hub mDNS 广播与 tui/web 自动发现接线（M6.2） ([a50f3a6](https://github.com/pandaymx/lanchat/commit/a50f3a6ad7f87db0bda605d38a3cf0ce7d3ce158))
+* **proto:** HistoryRequest 加 Before 字段支持向更早翻页 ([1a09ec6](https://github.com/pandaymx/lanchat/commit/1a09ec6f0b08891cd42208c03605ff6af3b6c5f0))
+* **repo:** 接入 slog 日志系统（pkg/logging + 全链路埋点 + flag） ([f5b7fd1](https://github.com/pandaymx/lanchat/commit/f5b7fd1091b3e56077c386809b61aee2413526c7))
+* **store:** 新增 pkg/store/libsql 持久化实现（ADR-013） ([f631656](https://github.com/pandaymx/lanchat/commit/f6316562f428146c7205d9120bad93dd4bc84ebf))
+* **tui:** 接入 Translator 接口，14 处 UI 文案走 i18n ([475f9e7](https://github.com/pandaymx/lanchat/commit/475f9e7bcc4163369308a3147ced23542c3dc21d))
+* **tui:** 上翻到顶自动加载更早历史（M7.1） ([27b435d](https://github.com/pandaymx/lanchat/commit/27b435d28fe93464748a0aac7f874b19acd32ee9))
+* **tui:** 新增 internal/i18n 包 + embed bundles/en + bundles/zh-CN + 全套测试 ([6fa8af4](https://github.com/pandaymx/lanchat/commit/6fa8af4b7cbbc4cb47859daad34b969ca825d2d2))
+* **tui:** cmd/tui 加 -lang / -lang-list flag，启动期加载 i18n bundle 注入 Model ([445c390](https://github.com/pandaymx/lanchat/commit/445c390cd6696b33f66916cefd85faea5225393e))
+* **web:** 断连 banner——SSE state 帧 swap 连接状态区 ([8d8291e](https://github.com/pandaymx/lanchat/commit/8d8291ecd110891e76ae34eba2b29e4ab8f6cb4c)), closes [#conn-state](https://github.com/pandaymx/lanchat/issues/conn-state)
+* **web:** 历史「加载更早消息」分页（/history 端点） ([c1c1ff8](https://github.com/pandaymx/lanchat/commit/c1c1ff8208deba9ebb1ddd878411488d0f6cc4cc))
+* **web:** 输入框 Enter 发送、Shift+Enter 换行 ([3b1bd56](https://github.com/pandaymx/lanchat/commit/3b1bd56269c04dfefd1333f25ccc10bf5572e302))
+* **web:** cookie 签发与 Session Manager 复用/TTL 回收 ([a792f82](https://github.com/pandaymx/lanchat/commit/a792f821564ae7a7b0eea09406f7c41630049304))
+* **web:** DialClient 装配 pkg/client 拨号与握手 ([3e635a0](https://github.com/pandaymx/lanchat/commit/3e635a01b3ba037b2edde4183a70c673d3ebad07))
+* **web:** handler 注入 Client——SSE 推流 + 发消息转发 + 首页历史 ([70f4269](https://github.com/pandaymx/lanchat/commit/70f426964e9fc4483e733ef841c78649cfa8a9d8))
+* **web:** Last-Event-ID 断线重连补发（SSE catch-up） ([6c7ae15](https://github.com/pandaymx/lanchat/commit/6c7ae15ba7ab3910f519105e1cc7c0d791b6b34d))
+* **web:** M4.2 骨架 —— cmd/web 起 :9001 + 三路由占位 + templ 模板 ([918fc53](https://github.com/pandaymx/lanchat/commit/918fc53e42edf91379ba8b1e2a43f1124c56142e))
+* **web:** Session fanout 多 SSEWriter，handler 接 Manager 惰性拨号 ([e50e221](https://github.com/pandaymx/lanchat/commit/e50e2214478482fa635ed4da0ca2f74de260bb57))
+* **web:** Web 端 i18n（复用 internal/i18n bundle，-lang flag） ([126f541](https://github.com/pandaymx/lanchat/commit/126f5410ffb1738769d1c5a116b26989b8a1ce95))
+
+### Bug Fixes
+
+* **repo:** awaitReady 屏障修复 race+cover 下 FKHello 异步竞争致 Bob 漏收 FKDeliver ([ab3efb0](https://github.com/pandaymx/lanchat/commit/ab3efb0af26b335b7ca6617c6b3786c2c11ecc9d))
+* **repo:** Client 起内部 pumpCtx 隔离 readPump 与 dialCtx ([0f0225f](https://github.com/pandaymx/lanchat/commit/0f0225fc3d62e9fa345c147c51a55c95abfd62a2))
+* **repo:** Makefile fmt 的 gci 补 sections 参数与钩子对齐 ([25b11ce](https://github.com/pandaymx/lanchat/commit/25b11cef5d76c2b153e0b61519aefc7f025e2f2f))
+* **store:** 补 History rows.Close 的 errcheck 忽略 ([de53143](https://github.com/pandaymx/lanchat/commit/de5314390b31d4b654f741d5ca618321ae5e2958))
+* **tui:** 关闭 textarea virtual cursor，让 Windows 中文输入法候选框跟随输入位置 ([c8211a7](https://github.com/pandaymx/lanchat/commit/c8211a75115568dfc87ebe5be66b7e76a81728bc))
+* **tui:** 小键盘 Enter 也路由到 trySubmitInput / InsertNewline ([3f84983](https://github.com/pandaymx/lanchat/commit/3f84983f3ccbb2049071b09e536c15affa0c6983))
+* **tui:** bundle 内部 locale 一律 lowercase，避免 zh-CN ↔ zh-cn 静默回退 ([e56e7db](https://github.com/pandaymx/lanchat/commit/e56e7db8d7478f28eb8f05218b104d14c46e6553))
+
 ## [0.3.0](https://github.com/pandaymx/lanchat/compare/v0.2.0...v0.3.0) (2026-09-05)
 
 ### Features

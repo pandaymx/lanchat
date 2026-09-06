@@ -296,7 +296,7 @@ func (r *Router) handleHistoryReq(ctx context.Context, p Peer, f protocol.Frame)
 	if len(req.ConversationIDs) == 1 {
 		convID = req.ConversationIDs[0]
 	}
-	resp := r.hist.Query(convID, req.After, limit)
+	resp := r.hist.Query(convID, req.After, req.Before, limit)
 
 	payload, err := json.Marshal(resp)
 	if err != nil {

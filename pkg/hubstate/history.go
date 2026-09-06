@@ -64,15 +64,20 @@ func (h *History) Append(m protocol.StoredMessage) {
 	h.buckets[m.ConversationID] = b
 }
 
-// Query 返回 ServerSeq 严格大于 after 的消息，按升序，最多 limit 条。
+// Query 返回历史消息，按 ServerSeq 升序，最多 limit 条。
 //
-// 参数语义：
+// 分页方向（before 优先）：
+//   - before>0：向更早翻页，返回 ServerSeq 严格小于 before 的最晚一批；
+//     HasMore=true 表示 before 之前还有更老的消息，客户端用本批第一条
+//     的 ServerSeq 作为新的 before 继续翻。
+//   - before==0 且 after>0：增量补发，返回 ServerSeq 严格大于 after 的最早一批；
+//     HasMore=true 时用本批最后一条的 ServerSeq 作为新的 after 续传。
+//   - 两者都为 0：从最老的消息开始。
+//
+// 其余参数语义：
 //   - convID 为空表示跨所有会话查询（客户端首次全量拉取）
 //   - limit <= 0 表示不限条数（调用方负责设上限，见 Router）
-//
-// HasMore 为 true 时客户端应再发一次 HistoryReq 续传，
-// 用最后一条的 ServerSeq 作为新的 after。
-func (h *History) Query(convID string, after uint64, limit int) protocol.HistoryResponse {
+func (h *History) Query(convID string, after, before uint64, limit int) protocol.HistoryResponse {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -96,6 +101,23 @@ func (h *History) Query(convID string, after uint64, limit int) protocol.History
 		sort.SliceStable(list, func(i, j int) bool {
 			return list[i].ServerSeq < list[j].ServerSeq
 		})
+	}
+
+	// 向更早翻页：hi 是第一个 ServerSeq >= before 的下标，[0,hi) 即全部更老消息。
+	// 取其中最晚的 limit 条（窗口 [lo,hi)），返回仍是升序。
+	if before > 0 {
+		hi := sort.Search(len(list), func(i int) bool { return list[i].ServerSeq >= before })
+		lo := 0
+		if limit > 0 && hi-limit > 0 {
+			lo = hi - limit
+		}
+		if lo >= hi {
+			return protocol.HistoryResponse{Messages: nil, HasMore: false}
+		}
+		out := make([]protocol.StoredMessage, hi-lo)
+		copy(out, list[lo:hi])
+		// 窗口前还有消息 → 还能继续往更老翻。
+		return protocol.HistoryResponse{Messages: out, HasMore: lo > 0}
 	}
 
 	// 二分找第一个 ServerSeq > after 的下标

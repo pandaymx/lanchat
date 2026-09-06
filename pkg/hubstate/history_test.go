@@ -22,7 +22,7 @@ func TestHistoryQueryAfter(t *testing.T) {
 		h.Append(msg("c1", i))
 	}
 
-	resp := h.Query("c1", 0, 0)
+	resp := h.Query("c1", 0, 0, 0)
 	if len(resp.Messages) != 5 {
 		t.Fatalf("after=0 应返回 5 条，实际 %d", len(resp.Messages))
 	}
@@ -35,7 +35,7 @@ func TestHistoryQueryAfter(t *testing.T) {
 	}
 
 	// after=3 应返回 4,5 —— 严格大于，不含 3
-	resp = h.Query("c1", 3, 0)
+	resp = h.Query("c1", 3, 0, 0)
 	if len(resp.Messages) != 2 {
 		t.Fatalf("after=3 应返回 2 条，实际 %d", len(resp.Messages))
 	}
@@ -50,7 +50,7 @@ func TestHistoryQueryLimitAndHasMore(t *testing.T) {
 		h.Append(msg("c1", i))
 	}
 
-	resp := h.Query("c1", 0, 3)
+	resp := h.Query("c1", 0, 0, 3)
 	if len(resp.Messages) != 3 {
 		t.Fatalf("limit=3 应返回 3 条，实际 %d", len(resp.Messages))
 	}
@@ -60,12 +60,62 @@ func TestHistoryQueryLimitAndHasMore(t *testing.T) {
 
 	// 续传：用最后一条的 seq 作为新的 after
 	last := resp.Messages[2].ServerSeq
-	resp2 := h.Query("c1", last, 3)
+	resp2 := h.Query("c1", last, 0, 3)
 	if len(resp2.Messages) != 3 {
 		t.Fatalf("续传应返回 3 条，实际 %d", len(resp2.Messages))
 	}
 	if !resp2.HasMore {
 		t.Error("还剩 4 条时 HasMore 应为 true")
+	}
+}
+
+func TestHistoryQueryBefore(t *testing.T) {
+	h := NewHistory()
+	for i := uint64(1); i <= 10; i++ {
+		h.Append(msg("c1", i))
+	}
+
+	// before=10,limit=3：seq<10 的最晚 3 条 → 7,8,9（升序），前面还有 → HasMore
+	resp := h.Query("c1", 0, 10, 3)
+	if len(resp.Messages) != 3 {
+		t.Fatalf("before=10 limit=3 应返回 3 条，实际 %d", len(resp.Messages))
+	}
+	if resp.Messages[0].ServerSeq != 7 || resp.Messages[2].ServerSeq != 9 {
+		t.Fatalf("应返回 7,8,9，实际 %d..%d",
+			resp.Messages[0].ServerSeq, resp.Messages[2].ServerSeq)
+	}
+	if !resp.HasMore {
+		t.Error("前面还剩 6 条时 HasMore 应为 true")
+	}
+
+	// 向更早翻页：用本批第一条 seq 作为新的 before → 4,5,6
+	resp = h.Query("c1", 0, resp.Messages[0].ServerSeq, 3)
+	if resp.Messages[0].ServerSeq != 4 || resp.Messages[2].ServerSeq != 6 {
+		t.Fatalf("应返回 4,5,6，实际 %d..%d",
+			resp.Messages[0].ServerSeq, resp.Messages[2].ServerSeq)
+	}
+
+	// 再翻 → 1,2,3，到头 HasMore=false
+	resp = h.Query("c1", 0, resp.Messages[0].ServerSeq, 3)
+	if resp.Messages[0].ServerSeq != 1 || resp.Messages[2].ServerSeq != 3 {
+		t.Fatalf("应返回 1,2,3，实际 %d..%d",
+			resp.Messages[0].ServerSeq, resp.Messages[2].ServerSeq)
+	}
+	if resp.HasMore {
+		t.Error("已到最老时 HasMore 应为 false")
+	}
+
+	// before=1：没有更老消息 → 空
+	resp = h.Query("c1", 0, 1, 3)
+	if len(resp.Messages) != 0 {
+		t.Fatalf("before=1 应返回 0 条，实际 %d", len(resp.Messages))
+	}
+
+	// before 优先于 after：before=5,after=8 应取 seq<5 的（2,3,4），而非 >8
+	resp = h.Query("c1", 8, 5, 3)
+	if resp.Messages[0].ServerSeq != 2 || resp.Messages[2].ServerSeq != 4 {
+		t.Fatalf("before 应优先于 after，期望 2,3,4，实际 %d..%d",
+			resp.Messages[0].ServerSeq, resp.Messages[2].ServerSeq)
 	}
 }
 
@@ -76,7 +126,7 @@ func TestHistoryQueryEmptyBoundary(t *testing.T) {
 	}
 
 	// after 超过最大值 → 空且无更多
-	resp := h.Query("c1", 99, 0)
+	resp := h.Query("c1", 99, 0, 0)
 	if len(resp.Messages) != 0 {
 		t.Fatalf("应返回空，实际 %d", len(resp.Messages))
 	}
@@ -85,7 +135,7 @@ func TestHistoryQueryEmptyBoundary(t *testing.T) {
 	}
 
 	// 不存在的会话
-	resp = h.Query("nope", 0, 0)
+	resp = h.Query("nope", 0, 0, 0)
 	if len(resp.Messages) != 0 {
 		t.Fatalf("不存在的会话应返回空，实际 %d", len(resp.Messages))
 	}
@@ -102,7 +152,7 @@ func TestHistoryCrossConversation(t *testing.T) {
 	h.Append(msg("c2", 4))
 	h.Append(msg("c1", 5))
 
-	resp := h.Query("", 0, 0)
+	resp := h.Query("", 0, 0, 0)
 	if len(resp.Messages) != 5 {
 		t.Fatalf("跨会话应返回 5 条，实际 %d", len(resp.Messages))
 	}
@@ -113,7 +163,7 @@ func TestHistoryCrossConversation(t *testing.T) {
 	}
 
 	// 跨会话也能 after 过滤
-	resp = h.Query("", 3, 0)
+	resp = h.Query("", 3, 0, 0)
 	if len(resp.Messages) != 2 {
 		t.Fatalf("after=3 跨会话应返回 2 条，实际 %d", len(resp.Messages))
 	}
@@ -128,10 +178,10 @@ func TestHistoryReturnsCopy(t *testing.T) {
 	h := NewHistory()
 	h.Append(msg("c1", 1))
 
-	resp := h.Query("c1", 0, 0)
+	resp := h.Query("c1", 0, 0, 0)
 	resp.Messages[0].Body = "mutated"
 
-	if got := h.Query("c1", 0, 0).Messages[0].Body; got != "body" {
+	if got := h.Query("c1", 0, 0, 0).Messages[0].Body; got != "body" {
 		t.Fatalf("修改返回值不应影响内部状态，实际 %q", got)
 	}
 }
@@ -163,7 +213,7 @@ func TestHistoryBounded(t *testing.T) {
 	}
 
 	// 裁剪后仍保持有序且是最新的那批
-	resp := h.Query("c1", 0, 0)
+	resp := h.Query("c1", 0, 0, 0)
 	for i := 1; i < len(resp.Messages); i++ {
 		if resp.Messages[i-1].ServerSeq >= resp.Messages[i].ServerSeq {
 			t.Fatalf("裁剪后顺序被破坏：%d >= %d",

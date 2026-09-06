@@ -323,6 +323,41 @@ func TestRouterHistoryReqPerDevice(t *testing.T) {
 	}
 }
 
+// TestRouterHistoryReqBefore 验证 Before 翻页参数透传到 Query：
+// 灌 5 条后请求 before=4,limit=2，应返回 seq 2,3（<4 的最晚 2 条，升序）。
+func TestRouterHistoryReqBefore(t *testing.T) {
+	ctx := context.Background()
+	r, _ := setupRouter(t)
+	p, id := addPeer(t, r, "dev-1", "u-1")
+
+	for i := 1; i <= 5; i++ {
+		msg := protocol.StoredMessage{ID: "m", ConversationID: "c1", ServerSeq: uint64(i)}
+		_ = r.HandleFrame(ctx, id, p,
+			protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg)})
+	}
+
+	req := protocol.HistoryRequest{ConversationIDs: []string{"c1"}, Before: 4, Limit: 2}
+	if err := r.HandleFrame(ctx, id, p,
+		protocol.Frame{Kind: protocol.FKHistoryReq, Payload: mustPayload(t, req)}); err != nil {
+		t.Fatalf("history req: %v", err)
+	}
+
+	resps := p.framesOf(protocol.FKHistoryResp)
+	if len(resps) != 1 {
+		t.Fatalf("应收到 1 个 FKHistoryResp，实际 %d", len(resps))
+	}
+	var resp protocol.HistoryResponse
+	if err := json.Unmarshal(resps[0].Payload, &resp); err != nil {
+		t.Fatalf("unmarshal resp: %v", err)
+	}
+	if len(resp.Messages) != 2 || resp.Messages[0].ServerSeq != 2 || resp.Messages[1].ServerSeq != 3 {
+		t.Fatalf("before=4 limit=2 应返回 seq 2,3，实际 %+v", resp.Messages)
+	}
+	if !resp.HasMore {
+		t.Error("seq 1 还在更前面，HasMore 应为 true")
+	}
+}
+
 // TestRouterHistoryLimitCapped 验证 limit 被 maxHistoryLimit 截断。
 func TestRouterHistoryLimitCapped(t *testing.T) {
 	ctx := context.Background()

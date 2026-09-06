@@ -265,7 +265,7 @@ func (s *Store) History(ctx context.Context, convID string, after uint64, limit 
 	if err != nil {
 		return nil, fmt.Errorf("libsql: history conv %q after %d: %w", convID, after, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanMessages(rows)
 }
 

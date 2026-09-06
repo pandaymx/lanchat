@@ -70,6 +70,8 @@ type Client interface {
 	Subscribe(buf int) core.Subscription
 	History(ctx context.Context, convID string, after uint64, limit int) ([]protocol.StoredMessage, error)
 	Done() <-chan struct{}
+	// Close 释放底层连接（Manager 回收 Session 时调，顺序先于 store.Close）。
+	Close() error
 }
 
 var _ Client = (*client.Client)(nil)

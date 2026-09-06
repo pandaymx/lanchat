@@ -32,6 +32,8 @@ type stubClient struct {
 
 	events chan core.Event
 	done   chan struct{}
+
+	closeCount int
 }
 
 type sendRecord struct {
@@ -65,6 +67,25 @@ func (s *stubClient) History(_ context.Context, _ string, _ uint64, _ int) ([]pr
 }
 
 func (s *stubClient) Done() <-chan struct{} { return s.done }
+
+// Close 记录关闭次数并幂等关闭 done（Manager 回收 Session 时调用）。
+func (s *stubClient) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeCount++
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
+	return nil
+}
+
+func (s *stubClient) closed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closeCount > 0
+}
 
 // sentCount / lastSend 供断言用（sends 由 handler goroutine 写，加锁读）。
 func (s *stubClient) sentCount() int {

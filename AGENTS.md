@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M7 体验打磨（M7.1 TUI 上翻分页 / M7.2 在线成员已合入）；**v0.4.0 已发布**（含 M4 Web / M5 libSQL 持久化 / M6 mDNS / M7.1）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M7 体验打磨（M7.1 TUI 上翻分页 / M7.2 在线成员 / M7.3 正在输入已合入）；**v0.4.0 已发布**（含 M4 Web / M5 libSQL 持久化 / M6 mDNS / M7.1）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -69,6 +69,7 @@
 |---|---|---|---|
 | M7.1 | TUI 上翻分页 | PgUp 到顶自动 FetchHistory（Before 分页，50 条/页）；Session 实现 HistoryFetcher 窄接口；去重合并 + YOffset 锚点不跳屏；HasMore 到头停止；失败可重试 | ✅ `27b435d` |
 | M7.2 | 在线成员端到端 | hub 握手后发 roster + 广播 FKPresence（下线广播带重连防抖）；Client 维护在线名单快照 Peers()；TUI 侧栏首次有数据；Web 在线成员条（首屏渲染 + presence SSE 帧 swap，自己标「(you)」） | ✅ `7ee980e` → `ac6255d` → `576200f` |
+| M7.3 | 正在输入指示 | FKTyping 帧：客户端发空负载、hub 按注册表盖戳身份广播（防伪造）；Client 维护 typing 快照（6s TTL 惰性过期、按 UserID 去重、消息/下线清除）；TUI 输入 3s 节流上发 + hints 行「X 正在输入…」；Web `/typing` 端点（POST 上发 / GET 自刷新）+ typing SSE 帧，片段 6s 自刷新清除、htmx leading throttle 上发 | ✅ `fb5e281` → `93048e0` → `f2d59ac` → `7487d5f` → `af4a02a` |
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 

@@ -18,8 +18,9 @@ import (
 // M3.8.2 起内部镜像一份 []string 缓冲，让 AppendMessage 单条增量追加
 // 走 SetContentLines 而非 SetContent，避免每次新消息都全量 split+join。
 type historyView struct {
-	inner viewport.Model
-	lines []string
+	inner      viewport.Model
+	lines      []string
+	translator Translator // M3.10：本地化接口
 }
 
 // 历史消息行最大宽度；超过则折叠显示，避免撑爆窄终端。
@@ -28,12 +29,22 @@ const messageLineWrap = 200
 // newHistoryView 用合理默认值构造一个 historyView。
 //
 // 初始 width/height 是占位，会被 WindowSizeMsg 触发的 SetSize 覆盖。
-func newHistoryView() historyView {
+//
+// M3.10：tr 为 nil 时用 nopTranslator fallback。
+func newHistoryView(tr Translator) historyView {
 	vp := viewport.New(
 		viewport.WithWidth(40),
 		viewport.WithHeight(10),
 	)
-	return historyView{inner: vp, lines: make([]string, 0, 256)}
+	if tr == nil {
+		tr = nopTranslator{}
+	}
+	return historyView{inner: vp, lines: make([]string, 0, 256), translator: tr}
+}
+
+// t 是 historyView 内部 helper，转发到 translator；M3.10 加。
+func (h *historyView) t(key string) string {
+	return h.translator.T(key)
 }
 
 // Init 返回 viewport 自己的初始化 Cmd。
@@ -73,7 +84,7 @@ func (h *historyView) SetSize(w, height int) {
 func (h *historyView) SetMessages(msgs []protocol.StoredMessage) {
 	h.lines = h.lines[:0]
 	for i := range msgs {
-		h.lines = append(h.lines, formatMessage(msgs[i]))
+		h.lines = append(h.lines, formatMessage(h, msgs[i]))
 	}
 	h.applyLines()
 }
@@ -87,7 +98,7 @@ func (h *historyView) SetMessages(msgs []protocol.StoredMessage) {
 // 调用方（M3.8.2 的 Model.appendMessage）按需触发，wasAtBottom 锚定的
 // 行为由 Model.applyEvent 负责；本方法只管内容追加。
 func (h *historyView) AppendMessage(msg protocol.StoredMessage) {
-	h.lines = append(h.lines, formatMessage(msg))
+	h.lines = append(h.lines, formatMessage(h, msg))
 	h.applyLines()
 }
 
@@ -142,15 +153,18 @@ func (h *historyView) AtBottom() bool { return h.inner.AtBottom() }
 //
 // 格式：`[HH:MM:SS] user: body`；M4+ 计划叠加 Markdown 渲染与发送者颜色。
 // 当前阶段重在排版骨架稳定，色彩/高亮留到 M3.4 之后。
-func formatMessage(m protocol.StoredMessage) string {
+//
+// M3.10：fallback 字符（"?"、"??:??:??"）走 Translator；en/zh-CN 都用
+// 同一字面字符（不需要翻译），但留出 hook 以备未来扩展。
+func formatMessage(h *historyView, m protocol.StoredMessage) string {
 	who := m.SenderUserID
 	if who == "" {
 		who = m.SenderDeviceID
 	}
 	if who == "" {
-		who = "?"
+		who = h.t("tui.history.fallback.user")
 	}
-	ts := formatUnixMilli(m.CreatedAt)
+	ts := formatUnixMilli(m.CreatedAt, h)
 	body := m.Body
 	if len(body) > messageLineWrap {
 		body = body[:messageLineWrap] + "..."
@@ -159,9 +173,11 @@ func formatMessage(m protocol.StoredMessage) string {
 }
 
 // formatUnixMilli 把 Unix 毫秒格式化为 HH:MM:SS；零值（未设置）返回 "??:??:??"。
-func formatUnixMilli(ms int64) string {
+//
+// M3.10：fallback 走 Translator。
+func formatUnixMilli(ms int64, h *historyView) string {
 	if ms == 0 {
-		return "??:??:??"
+		return h.t("tui.history.fallback.time")
 	}
 	return time.UnixMilli(ms).Format("15:04:05")
 }

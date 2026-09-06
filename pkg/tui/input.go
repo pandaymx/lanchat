@@ -25,7 +25,8 @@ const (
 // 的 Key.Code 是不同 rune。本组件不需要单独处理 kpenter——outer 把小键盘 Enter
 // 也路由到 trySubmitInput / InsertNewline，与主键盘 Enter 行为一致。
 type textInput struct {
-	inner textarea.Model
+	inner      textarea.Model
+	translator Translator
 }
 
 // newTextInput 用合理默认值构造一个 textInput。
@@ -38,9 +39,14 @@ type textInput struct {
 // 需要跟随真实终端光标；virtual cursor 会让 IME 候选框漂到窗口右下角。
 // 关闭后 textarea 会通过 Cursor() 返回真实光标位置，bubbletea 把它同步给
 // 终端，输入法候选框就能正确跟到输入位置。
-func newTextInput() textInput {
+//
+// M3.10：tr 为 nil 时用 nopTranslator fallback，placeholder 显示原始 key 串。
+func newTextInput(tr Translator) textInput {
+	if tr == nil {
+		tr = nopTranslator{}
+	}
 	ti := textarea.New()
-	ti.Placeholder = "type a message (Enter to send, Shift+Enter for newline)"
+	ti.Placeholder = tr.T("tui.input.placeholder")
 	ti.CharLimit = maxMessageChars
 	ti.ShowLineNumbers = false
 	ti.SetWidth(defaultInputWidth)
@@ -49,9 +55,9 @@ func newTextInput() textInput {
 	ti.SetVirtualCursor(false)
 	ti.KeyMap.InsertNewline = key.NewBinding(
 		key.WithKeys("shift+enter", "ctrl+j"),
-		key.WithHelp("shift+enter", "insert newline"),
+		key.WithHelp("shift+enter", tr.T("tui.input.help.newline")),
 	)
-	return textInput{inner: ti}
+	return textInput{inner: ti, translator: tr}
 }
 
 // Init 是占位实现。textarea.Model 不暴露 Init 方法（New 后即可使用），

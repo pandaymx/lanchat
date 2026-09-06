@@ -29,6 +29,10 @@ type Config struct {
 	// Sender 是出站消息的窄接口。Model.submitMsg 命中后会把
 	// 文本交给 Sender.Send，再通过 sentMsg 续上 listenCmd。
 	Sender Sender
+
+	// Translator 是 UI 文案本地化接口（M3.10）；nil 时 Model 用 nopTranslator
+	// fallback，UI 显示原始 key 串。cmd/tui 启动期会注入 i18n.Bundle.ForLocale。
+	Translator Translator
 }
 
 // Model 是 TUI 的核心状态。
@@ -42,6 +46,7 @@ type Model struct {
 	maxHist              int
 	inbox                chan tea.Msg
 	sender               Sender
+	translator           Translator // M3.10：UI 文案本地化接口
 
 	// UI 状态
 	width, height int
@@ -63,20 +68,36 @@ type Model struct {
 }
 
 // New 构造一个未连接、待 Init 的 Model。
+//
+// 默认 cfg.Translator 用 defaultENTranslator（pkg/tui 内置 14 个 key 的
+// 英文文案），单元测试无需每处都注入；cmd/tui 启动期会被
+// i18n.Bundle.ForLocale 覆盖。
 func New(cfg Config) *Model {
 	if cfg.MaxHist <= 0 {
 		cfg.MaxHist = 5000
 	}
-	return &Model{
-		user:    cfg.User,
-		device:  cfg.Device,
-		hubURL:  cfg.HubURL,
-		maxHist: cfg.MaxHist,
-		inbox:   make(chan tea.Msg, 64),
-		sender:  cfg.Sender,
-		input:   newTextInput(),
-		history: newHistoryView(),
+	if cfg.Translator == nil {
+		cfg.Translator = defaultENTranslator{}
 	}
+	return &Model{
+		user:       cfg.User,
+		device:     cfg.Device,
+		hubURL:     cfg.HubURL,
+		maxHist:    cfg.MaxHist,
+		inbox:      make(chan tea.Msg, 64),
+		sender:     cfg.Sender,
+		translator: cfg.Translator,
+		input:      newTextInput(cfg.Translator),
+		history:    newHistoryView(cfg.Translator),
+	}
+}
+
+// t 是 Model 内部的文案查表 helper：把 key 转给 Translator，
+// nil-safe 由 New 时 nopTranslator 兜底。
+//
+// 所有 UI 文案都走这条路径，让 fake translator 测试能集中断言 key 调用。
+func (m *Model) t(key string) string {
+	return m.translator.T(key)
 }
 
 // Init 启动 inbox → Update 的循环。
@@ -461,25 +482,25 @@ func (m *Model) View() tea.View {
 // M3.9.3：lastError 用 lipgloss 红字渲染，到 errExpireAt 自动清掉。
 func (m *Model) renderStatus() string {
 	if m.helpMode {
-		return "help: Enter send · Shift+Enter newline · End tail · PgUp/PgDn scroll · /help · /clear · /quit · Ctrl+C quit"
+		return m.t("tui.help.row")
 	}
-	conn := "offline"
+	conn := m.t("tui.status.offline")
 	if m.connected {
-		conn = "online"
+		conn = m.t("tui.status.online")
 	}
 	parts := []string{
 		conn,
-		"user=" + m.user,
-		"device=" + m.device,
-		"hub=" + m.hubURL,
+		m.t("tui.status.label.user") + "=" + m.user,
+		m.t("tui.status.label.device") + "=" + m.device,
+		m.t("tui.status.label.hub") + "=" + m.hubURL,
 	}
 	if m.unread > 0 {
-		parts = append(parts, "unread="+itoa(m.unread))
+		parts = append(parts, m.t("tui.status.label.unread")+"="+itoa(m.unread))
 	}
 	if m.lastError != nil {
 		// M3.9.3 红字渲染；过期（>5s）则清掉，View 下一帧自然不显示。
 		if time.Now().Before(m.errExpireAt) {
-			parts = append(parts, errStyle.Render("err="+m.lastError.Error()))
+			parts = append(parts, errStyle.Render(m.t("tui.status.label.err")+"="+m.lastError.Error()))
 		} else {
 			m.lastError = nil
 		}
@@ -496,17 +517,23 @@ func (m *Model) renderStatus() string {
 
 // renderHints 生成键位提示行；M3.9.2 在 status 下方多占 1 行，
 // 不依赖底层组件库，固定字符串 + lipgloss 灰字渲染。
+//
+// M3.10：文案走 Translator；fallback en 行宽约 80 字符，窄终端会被
+// lipgloss 截断（详见 layout_test.go 的 widthConsistent）。
 func (m *Model) renderHints() string {
-	return "[Enter] send · [Shift+Enter] newline · [End] tail · [PgUp/PgDn] scroll · [/help] commands · [Ctrl+C] quit"
+	return m.t("tui.hints.row")
 }
 
 // HelpMode 报告当前是否处于帮助面板模式（M3.9.1）。
 func (m *Model) HelpMode() bool { return m.helpMode }
 
 // renderSidebar 生成右侧在线设备列表文本。
+//
+// M3.10：empty 文案走 Translator。zh-CN "peers：（暂无）" 与 en
+// "peers: (none yet)" 行宽相近，layout 不受影响。
 func (m *Model) renderSidebar() string {
 	if len(m.peers) == 0 {
-		return "peers: (none yet)"
+		return m.t("tui.sidebar.empty")
 	}
 	online := 0
 	for _, p := range m.peers {
@@ -514,7 +541,7 @@ func (m *Model) renderSidebar() string {
 			online++
 		}
 	}
-	out := "peers: " + itoa(online) + "/" + itoa(len(m.peers)) + "\n"
+	out := m.t("tui.sidebar.prefix") + " " + itoa(online) + "/" + itoa(len(m.peers)) + "\n"
 	for _, p := range m.peers {
 		if !p.Online {
 			continue

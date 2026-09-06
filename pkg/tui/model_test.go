@@ -341,7 +341,7 @@ func TestUpdate_BlankSubmit_NoOp(t *testing.T) {
 // cursor 关掉，让 textarea.Cursor() 返回真实光标位置，bubbletea 把它同步给
 // 终端后 IME 候选框才能正确跟到输入位置。
 func TestNewTextInput_DisableVirtualCursor(t *testing.T) {
-	ti := newTextInput()
+	ti := newTextInput(nil)
 	if ti.inner.VirtualCursor() {
 		t.Fatal("newTextInput should disable virtual cursor for Windows IME positioning")
 	}

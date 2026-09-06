@@ -101,20 +101,36 @@ type Client struct {
 	peersMu sync.RWMutex
 	peers   map[string]protocol.Presence
 
+	// typers 是「正在输入」的设备表（M7.3），按 DeviceID 索引最后收到的
+	// 时间。与 peers 同属瞬时连接状态、不持久化；惰性过期——Typing() 快照
+	// 顺带清掉 typingTTL 前的旧条目，无需后台定时器。
+	typers map[string]typingEntry
+
 	closed atomic.Bool
 	done   chan struct{}
 }
 
+// typingEntry 是一台设备「正在输入」的记录（M7.3）。
+type typingEntry struct {
+	user string
+	at   time.Time
+}
+
+// typingTTL 是 typing 状态在 Client 快照里的保留时长；与 UI 层的
+// 展示有效期同量级（节流间隔的 2 倍），容忍丢帧但不长时间残留。
+const typingTTL = 6 * time.Second
+
 // New 用已建立的 Conn 构造 Client（Conn 由 Transport.Dial 或服务端 Accept 给出）。
 func New(hello protocol.Hello, conn core.Conn, store core.Store, bus core.EventBus) *Client {
 	return &Client{
-		hello: hello,
-		conn:  conn,
-		store: store,
-		bus:   bus,
-		seen:  make(map[string]struct{}),
-		peers: make(map[string]protocol.Presence),
-		done:  make(chan struct{}),
+		hello:  hello,
+		conn:   conn,
+		store:  store,
+		bus:    bus,
+		seen:   make(map[string]struct{}),
+		peers:  make(map[string]protocol.Presence),
+		typers: make(map[string]typingEntry),
+		done:   make(chan struct{}),
 	}
 }
 
@@ -297,6 +313,25 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 			Presence: &pr,
 		})
 
+	case protocol.FKTyping:
+		// M7.3：他人正在输入。负载是 Hub 盖戳后的身份；自己发的 typing
+		// 不会回显（Hub 排除发送者），这里收到的一律是别人。
+		// 先更新 Client 的 typing 快照（Typing() 供 Web SSE 帧全量重渲），
+		// 再发布事件让 UI 即时刷新。
+		var ty protocol.Typing
+		if err := json.Unmarshal(f.Payload, &ty); err != nil {
+			cliLog.Error("unmarshal FKTyping failed", "err", err)
+			return
+		}
+		if ty.DeviceID == "" {
+			return
+		}
+		c.applyTyping(ty)
+		c.bus.Publish(core.Event{
+			Kind:   core.EventTyping,
+			Typing: &ty,
+		})
+
 	default:
 		// 其它帧不在 M1 范围内，静默丢弃。
 	}
@@ -315,7 +350,16 @@ func (c *Client) applyPresence(pr protocol.Presence) {
 		c.peers[pr.DeviceID] = pr
 	} else {
 		delete(c.peers, pr.DeviceID)
+		// 设备离线，它的「正在输入」一并清除。
+		delete(c.typers, pr.DeviceID)
 	}
+}
+
+// applyTyping 记录/刷新一台设备的「正在输入」时间（M7.3）。
+func (c *Client) applyTyping(ty protocol.Typing) {
+	c.peersMu.Lock()
+	defer c.peersMu.Unlock()
+	c.typers[ty.DeviceID] = typingEntry{user: ty.UserID, at: time.Now()}
 }
 
 // Peers 返回当前在线成员名单快照，按 DeviceID 升序（结果稳定，便于渲染与测试）。
@@ -331,6 +375,33 @@ func (c *Client) Peers() []protocol.Presence {
 	}
 	c.peersMu.RUnlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].DeviceID < out[j].DeviceID })
+	return out
+}
+
+// Typing 返回当前正在输入的成员快照（M7.3），按 UserID 去重升序。
+//
+// 惰性过期：顺带清掉 typingTTL 前的条目，无需后台定时器。typing 是
+// 瞬时状态，Web SSE 帧每次以全量快照重渲；TUI 自己维护事件驱动的
+// 过期 Tick，不读本快照。
+func (c *Client) Typing() []protocol.Typing {
+	now := time.Now()
+	c.peersMu.Lock()
+	for dev, e := range c.typers {
+		if now.Sub(e.at) >= typingTTL {
+			delete(c.typers, dev)
+		}
+	}
+	seen := make(map[string]struct{}, len(c.typers))
+	out := make([]protocol.Typing, 0, len(c.typers))
+	for dev, e := range c.typers {
+		if _, dup := seen[e.user]; dup {
+			continue
+		}
+		seen[e.user] = struct{}{}
+		out = append(out, protocol.Typing{UserID: e.user, DeviceID: dev})
+	}
+	c.peersMu.Unlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
 	return out
 }
 
@@ -492,6 +563,20 @@ func (c *Client) SendRead(ctx context.Context, convID string, serverSeq uint64) 
 		return err
 	}
 	return c.store.SetCursor(ctx, c.hello.DeviceID, convID, serverSeq)
+}
+
+// SendTyping 上发「正在输入」提示（M7.3）。负载为空——身份由 Hub 按
+// 连接注册表盖戳。瞬时提示 best-effort：发送失败只 Debug 日志、不报错，
+// 调用方（UI 层）负责节流（建议 ≥3s 一次），避免每个按键都打帧。
+func (c *Client) SendTyping(ctx context.Context) error {
+	if c.closed.Load() {
+		return core.ErrClosed
+	}
+	if err := c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKTyping}); err != nil {
+		cliLog.Debug("send FKTyping failed", "err", err)
+		return err
+	}
+	return nil
 }
 
 // History 直接读本地 Store。已含已读游标过滤在调用方做。

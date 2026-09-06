@@ -697,6 +697,69 @@ func TestPresence(t *testing.T) {
 	})
 }
 
+// TestTyping 验证 M7.3「正在输入」端到端：
+//   - bob 调 SendTyping，alice 收到 EventTyping 且身份是 Hub 盖戳的 bob；
+//   - bob 自己收不到回显。
+func TestTyping(t *testing.T) {
+	tr, _, store := newTransportWithHub(t, "lanchat-test")
+
+	aliceHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "alice-laptop",
+		UserID:          "alice",
+	}
+	bobHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "bob-laptop",
+		UserID:          "bob",
+	}
+
+	alice := newClient(t, tr, store, aliceHello, 0)
+	aliceSub := alice.Subscribe(64)
+	defer aliceSub.Close()
+	bob := newClient(t, tr, store, bobHello, 0)
+
+	// 吃掉上线阶段的 presence 事件，避免干扰 typing 断言。
+	drainPresence(t, aliceSub, 500*time.Millisecond)
+
+	if err := bob.SendTyping(context.Background()); err != nil {
+		t.Fatalf("SendTyping: %v", err)
+	}
+
+	// alice 应收到 bob 的 typing；bob 的身份以 Hub 盖戳为准。
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev, ok := <-aliceSub.C():
+			if !ok {
+				t.Fatal("subscription closed")
+			}
+			if ev.Kind != core.EventTyping {
+				continue
+			}
+			if ev.Typing == nil || ev.Typing.DeviceID != "bob-laptop" || ev.Typing.UserID != "bob" {
+				t.Fatalf("typing 事件身份不符: %+v", ev.Typing)
+			}
+			return
+		case <-deadline:
+			t.Fatal("alice 未收到 bob 的 EventTyping")
+		}
+	}
+}
+
+// drainPresence 排空订阅通道里截止到 quiet 时间内的事件（上线阶段的
+// presence 噪声），用于让后续断言只面对新事件。
+func drainPresence(t *testing.T, sub core.Subscription, quiet time.Duration) {
+	t.Helper()
+	for {
+		select {
+		case <-sub.C():
+		case <-time.After(quiet):
+			return
+		}
+	}
+}
+
 // waitForPresence 等到指定设备、指定在线状态的 EventPresence，超时返回 nil。
 // 其它设备的 presence 事件（如自己的上线回显）跳过。
 func waitForPresence(t *testing.T, sub core.Subscription, device string, online bool, timeout time.Duration) *core.Event {

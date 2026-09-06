@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/pandaymx/lanchat/pkg/core"
@@ -415,34 +414,29 @@ func (r *Router) handleRead(ctx context.Context, p Peer, f protocol.Frame) error
 	return nil
 }
 
-// handleTyping 转发「正在输入」给同会话的其它连接。
+// handleTyping 转发「正在输入」给除发送者外的所有已握手连接（M7.3）。
 //
-// 不持久化：这是瞬时提示，重启后没有意义（与 Presence 同理）。
-// 原始帧直接透传，Hub 不解析其内容——它只需要知道要发给谁。
-func (r *Router) handleTyping(ctx context.Context, peerID uint64, f protocol.Frame) error {
-	// 排除发送者自己：没人需要看到"我正在输入"的回显
-	r.reg.mu.RLock()
-	type item struct {
-		id   uint64
-		peer Peer
+// 不持久化：瞬时提示，重启后没有意义（与 Presence 同理）。
+// 客户端上发的负载被忽略——身份以注册表为准（客户端无权声明他人身份），
+// Hub 盖上发送者的 UserID/DeviceID 后再广播，接收方据此渲染「谁在输入」。
+// 未握手连接的 typing 静默丢弃；单次提示丢失无所谓，best-effort 发送。
+func (r *Router) handleTyping(ctx context.Context, peerID uint64, _ protocol.Frame) error {
+	id, ok := r.reg.IdentityOf(peerID)
+	if !ok || id.DeviceID == "" {
+		return nil
 	}
-	peers := make([]item, 0, len(r.reg.conns))
-	for id, e := range r.reg.conns {
-		if e.helloOK && id != peerID {
-			peers = append(peers, item{id: id, peer: e.peer})
-		}
+	payload, err := json.Marshal(protocol.Typing{UserID: id.UserID, DeviceID: id.DeviceID})
+	if err != nil {
+		// Typing 是固定简单结构，marshal 实践中不会失败；真失败了把
+		// 错误抛给上层日志，而不是静默吞掉（nilerr）。
+		return fmt.Errorf("marshal typing: %w", err)
 	}
-	r.reg.mu.RUnlock()
-
-	var wg sync.WaitGroup
-	for _, it := range peers {
-		wg.Add(1)
-		go func(p Peer) {
-			defer wg.Done()
-			_ = p.Send(ctx, f) // 单次提示丢失无所谓
-		}(it.peer)
-	}
-	wg.Wait()
+	out := protocol.Frame{Kind: protocol.FKTyping, Payload: payload}
+	peers := r.reg.OthersPeers(peerID)
+	routerLog.Debug("typing broadcast", "peer", peerID, "device", id.DeviceID, "recipients", len(peers))
+	_ = SendToPeers(ctx, peers, func(ctx context.Context, p Peer) error {
+		return p.Send(ctx, out)
+	})
 	return nil
 }
 

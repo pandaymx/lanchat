@@ -194,6 +194,32 @@ func (r *Registry) HasDevice(deviceID string) bool {
 	return len(r.byDevice[deviceID]) > 0
 }
 
+// IdentityOf 返回某连接握手后的权威身份（M7.3 typing 盖戳用）；
+// 连接不存在或尚未握手时 ok=false。
+func (r *Registry) IdentityOf(peerID uint64) (Identity, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	e, ok := r.conns[peerID]
+	if !ok || !e.helloOK {
+		return Identity{}, false
+	}
+	return Identity{DeviceID: e.deviceID, UserID: e.userID, HelloOK: true}, true
+}
+
+// OthersPeers 返回除 excludePeerID 外所有已握手连接（M7.3 typing 广播用：
+// 提示发给除发送者本人外的所有人）。
+func (r *Registry) OthersPeers(excludePeerID uint64) []Peer {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Peer, 0, len(r.conns))
+	for id, e := range r.conns {
+		if e.helloOK && id != excludePeerID {
+			out = append(out, e.peer)
+		}
+	}
+	return out
+}
+
 // PeersForUser 返回该 User 的所有已握手连接（跨全部 Device）。
 // 这是 ADR-008 的核心投递路径：**发给一个人 = 发给他的所有在线设备**。
 func (r *Registry) PeersForUser(userID string) []Peer {

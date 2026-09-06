@@ -456,7 +456,8 @@ func TestRouterUnknownKindIgnored(t *testing.T) {
 	}
 }
 
-// TestRouterTypingNotEchoed 验证 Typing 不会回显给发送者。
+// TestRouterTypingNotEchoed 验证 Typing 不回显发送者，且身份以注册表
+// 为准盖戳——客户端伪造的负载身份必须被覆盖（M7.3）。
 func TestRouterTypingNotEchoed(t *testing.T) {
 	ctx := context.Background()
 	r, _ := setupRouter(t)
@@ -464,16 +465,44 @@ func TestRouterTypingNotEchoed(t *testing.T) {
 	p1, id1 := addPeer(t, r, "dev-1", "u-1")
 	p2, _ := addPeer(t, r, "dev-2", "u-2")
 
+	// 客户端故意在负载里伪造他人身份：Hub 必须忽略并盖注册表的权威身份。
+	fake := []byte(`{"u":"intruder","d":"dev-fake"}`)
 	if err := r.HandleFrame(ctx, id1, p1,
-		protocol.Frame{Kind: protocol.FKTyping, Payload: []byte(`{}`)}); err != nil {
+		protocol.Frame{Kind: protocol.FKTyping, Payload: fake}); err != nil {
 		t.Fatalf("typing: %v", err)
 	}
 
 	if got := len(p1.framesOf(protocol.FKTyping)); got != 0 {
 		t.Fatalf("发送者不应收到自己的 Typing，实际 %d", got)
 	}
-	if got := len(p2.framesOf(protocol.FKTyping)); got != 1 {
-		t.Fatalf("对方应收到 1 个 Typing，实际 %d", got)
+	frames := p2.framesOf(protocol.FKTyping)
+	if len(frames) != 1 {
+		t.Fatalf("对方应收到 1 个 Typing，实际 %d", len(frames))
+	}
+	var ty protocol.Typing
+	if err := json.Unmarshal(frames[0].Payload, &ty); err != nil {
+		t.Fatalf("decode typing payload: %v", err)
+	}
+	if ty.UserID != "u-1" || ty.DeviceID != "dev-1" {
+		t.Fatalf("typing 身份应以注册表盖戳， got %+v", ty)
+	}
+}
+
+// TestRouterTypingBeforeHelloDropped 验证未握手连接的 typing 被静默丢弃。
+func TestRouterTypingBeforeHelloDropped(t *testing.T) {
+	ctx := context.Background()
+	r, _ := setupRouter(t)
+
+	p1 := newPipePeer("dev-x")
+	p2, _ := addPeer(t, r, "dev-2", "u-2")
+	id1 := r.Attach(ctx, p1) // 只 Attach，不发 hello
+
+	if err := r.HandleFrame(ctx, id1, p1,
+		protocol.Frame{Kind: protocol.FKTyping, Payload: []byte(`{}`)}); err != nil {
+		t.Fatalf("typing: %v", err)
+	}
+	if got := len(p2.framesOf(protocol.FKTyping)); got != 0 {
+		t.Fatalf("未握手连接的 typing 不应广播，实际 %d 帧", got)
 	}
 }
 

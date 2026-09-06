@@ -5,7 +5,8 @@ package templates
 // 关键点：
 //   - hx-ext="sse" 让 htmx 的 SSE 扩展接管当前容器
 //   - hx-sse="connect:/events" 声明 SSE 源路由
-//   - 两个脚本走 /assets/ 前缀（由 internal/webui/assets.go 的 embed.FS 提供）
+//   - 脚本走 /assets/ 前缀（由 internal/webui/assets.go 的 embed.FS 提供）；
+//     app.js 是 M8.1 已读回执的浏览器逻辑（打勾 + 贴底上发），纯 vanilla JS
 templ base(meta PageMeta) {
 	<!DOCTYPE html>
 	<html lang="zh-CN">
@@ -16,6 +17,7 @@ templ base(meta PageMeta) {
 			<link rel="stylesheet" href="/assets/style.css"/>
 			<script src="/assets/htmx.min.js" defer></script>
 			<script src="/assets/htmx-sse.js" defer></script>
+			<script src="/assets/app.js" defer></script>
 		</head>
 		<body>
 			<div class="app" hx-ext="sse" hx-sse="connect:/events">

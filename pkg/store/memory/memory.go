@@ -17,6 +17,7 @@ package memory
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +57,15 @@ func New() *MemoryStore {
 }
 
 func cursorKey(deviceID, convID string) string { return deviceID + "\x00" + convID }
+
+// parseCursorKey 是 cursorKey 的逆操作；key 不含分隔符时 ok=false。
+func parseCursorKey(key string) (deviceID, convID string, ok bool) {
+	idx := strings.Index(key, "\x00")
+	if idx < 0 {
+		return "", "", false
+	}
+	return key[:idx], key[idx+1:], true
+}
 
 // SaveUser 保存/覆盖一个用户。返回 ErrClosed 当 Store 已 Close。
 func (s *MemoryStore) SaveUser(_ context.Context, u protocol.User) error {
@@ -238,6 +248,34 @@ func (s *MemoryStore) GetCursor(_ context.Context, deviceID, convID string) (uin
 		return 0, errInvalidInput("device id and conv id required")
 	}
 	return s.cursors[cursorKey(deviceID, convID)], nil
+}
+
+// ListCursors 返回全部（设备, 会话）已读游标（M8.1 Hub 给新连接补发
+// 已读快照用）。convID 非空时只返回该会话的条目。结果按 DeviceID 升序。
+func (s *MemoryStore) ListCursors(_ context.Context, convID string) ([]protocol.ReadCursor, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, core.ErrClosed
+	}
+	out := make([]protocol.ReadCursor, 0, len(s.cursors))
+	for key, seq := range s.cursors {
+		device, conv, ok := parseCursorKey(key)
+		if !ok {
+			continue
+		}
+		if convID != "" && conv != convID {
+			continue
+		}
+		out = append(out, protocol.ReadCursor{DeviceID: device, ConversationID: conv, ServerSeq: seq})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].DeviceID != out[j].DeviceID {
+			return out[i].DeviceID < out[j].DeviceID
+		}
+		return out[i].ConversationID < out[j].ConversationID
+	})
+	return out, nil
 }
 
 // Close 释放资源。重复调用安全。

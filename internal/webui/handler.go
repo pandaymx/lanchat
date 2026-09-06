@@ -84,6 +84,13 @@ type Client interface {
 	Typing() []protocol.Typing
 	// SendTyping 上发「正在输入」提示（M7.3）；POST /typing 的出站路径。
 	SendTyping(ctx context.Context) error
+	// ReadCursors 返回当前已知的他人已读游标快照（M8.1）：首屏渲染与
+	// read SSE 帧的数据源。hub 快照/广播都不回显本设备自己的游标，
+	// 所以返回的游标天然只含他人设备。
+	ReadCursors() []protocol.ReadCursor
+	// SendRead 上发「已读到 seq」回执（M8.1）；POST /read 的出站路径。
+	// 身份由 hub 盖戳，convID 由会话绑定。
+	SendRead(ctx context.Context, convID string, serverSeq uint64) error
 	Done() <-chan struct{}
 	// Close 释放底层连接（Manager 回收 Session 时调，顺序先于 store.Close）。
 	Close() error
@@ -124,6 +131,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/", h.handleHome)
 	mux.HandleFunc("/messages", h.handleMessages)
 	mux.HandleFunc("/typing", h.handleTyping)
+	mux.HandleFunc("/read", h.handleRead)
 	mux.HandleFunc("/history", h.handleHistory)
 	mux.HandleFunc("/events", h.handleEvents)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", StaticHandler()))
@@ -171,6 +179,39 @@ func (h *Handler) renderTyping(w http.ResponseWriter, r *http.Request, views []t
 	if err := templates.TypingBar(tr, views).Render(r.Context(), w); err != nil {
 		h.logger.Error("render typing bar failed", "err", err)
 	}
+}
+
+// handleRead 接收浏览器「已读」上报（M8.1）：POST seq=<ServerSeq>，
+// 透传给 client.SendRead（hub 盖戳身份并广播给其它设备）。返回 204。
+// 参数非法回 400；hub 不可达回 503——浏览器静默忽略失败，下次贴底
+// 滚动/新消息会再触发，无需重试退避。
+func (h *Handler) handleRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		h.logger.Warn("read: parse form failed", "err", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	seq, err := strconv.ParseUint(r.PostFormValue("seq"), 10, 64)
+	if err != nil || seq == 0 {
+		http.Error(w, "seq must be a positive integer", http.StatusBadRequest)
+		return
+	}
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		h.logger.Error("read: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := sess.cli.SendRead(r.Context(), sess.convID, seq); err != nil {
+		h.logger.Debug("send read failed", "conv", sess.convID, "seq", seq, "err", err)
+		http.Error(w, "read failed", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ensureSession 取当前请求的 Session：无 cookie 则当场签发并惰性拨号。

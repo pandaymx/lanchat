@@ -125,8 +125,82 @@ body {
 }
 
 .msg-body {
-  white-space: pre-wrap;
+  /* M8.2：消息体改为块级容器（goldmark 输出 <p>/<pre> 等块级元素），
+     换行交给 markdown 的 <br>/<pre> 处理，不再整块 pre-wrap。 */
   word-break: break-word;
+}
+
+.msg-body p {
+  margin: 0.15em 0;
+}
+
+.msg-body p:first-child,
+.msg-body pre:first-child,
+.msg-body ul:first-child,
+.msg-body ol:first-child {
+  margin-top: 0;
+}
+
+.msg-body p:last-child {
+  margin-bottom: 0;
+}
+
+.msg-body pre {
+  background: #1e1e1e;
+  padding: 0.5rem 0.6rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.3em 0;
+  line-height: 1.45;
+}
+
+.msg-body pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: none;
+  padding: 0;
+}
+
+.msg-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 0.05em 0.3em;
+}
+
+.msg-body a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.msg-body blockquote {
+  margin: 0.3em 0;
+  padding: 0.1em 0.75em;
+  border-left: 3px solid var(--border);
+  color: var(--fg-dim);
+}
+
+.msg-body ul,
+.msg-body ol {
+  margin: 0.3em 0;
+  padding-left: 1.5em;
+}
+
+.msg-body table {
+  border-collapse: collapse;
+  margin: 0.3em 0;
+}
+
+.msg-body th,
+.msg-body td {
+  border: 1px solid var(--border);
+  padding: 0.2rem 0.6rem;
+}
+
+.msg-body img {
+  max-width: 100%;
+  border-radius: 6px;
 }
 
 .messages .empty {
@@ -268,4 +342,17 @@ body {
 .peer-you {
   opacity: 0.65;
   font-size: 0.72rem;
+}
+
+/* 已读对勾（M8.1）：自发消息被其它设备读到后显示；与 TUI 端同色。 */
+.msg-read {
+  color: #98c379;
+  font-size: 0.78em;
+  font-weight: 600;
+  margin-left: 0.4rem;
+}
+
+/* 已读自发消息正文轻微弱化（着色区分已读/未读）。 */
+.messages li.read .msg-body {
+  color: var(--fg-dim);
 }

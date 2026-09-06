@@ -77,6 +77,12 @@ type Model struct {
 	// 到 typingTTL 过期；lastTypingAt 是本端上发节流位点。
 	typings      map[string]typingState
 	lastTypingAt time.Time
+
+	// M8.1：「已读回执」。reads 记录其它设备已读到的 ServerSeq（Hub 盖戳
+	// 广播 + 握手快照补发），按 DeviceID 单调合并。与 typings 不同：已读
+	// 是持久语义，设备离线不清除——重连后 Hub 会重发快照，单调合并保证
+	// 不回退。
+	reads map[string]uint64
 }
 
 // typingState 是一条对端「正在输入」记录（M7.3）。
@@ -97,7 +103,7 @@ func New(cfg Config) *Model {
 	if cfg.Translator == nil {
 		cfg.Translator = defaultENTranslator{}
 	}
-	return &Model{
+	m := &Model{
 		user:         cfg.User,
 		device:       cfg.Device,
 		hubURL:       cfg.HubURL,
@@ -109,7 +115,12 @@ func New(cfg Config) *Model {
 		history:      newHistoryView(cfg.Translator),
 		olderHasMore: true,
 		typings:      make(map[string]typingState),
+		reads:        make(map[string]uint64),
 	}
+	// M8.1：historyView 的已读标记判定由 Model 注入（读 m.reads 快照，
+	// 与其它状态一样只在 Update goroutine 内访问，无需加锁）。
+	m.history.SetReadChecker(m.readByOthers)
+	return m
 }
 
 // t 是 Model 内部的文案查表 helper：把 key 转给 Translator，
@@ -308,7 +319,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnd:
 			m.history.GotoBottom()
 			m.MarkRead()
-			return m, nil
+			return m, m.readCmd(m.latestSeq())
 		case tea.KeyPgUp:
 			m.history.PageUp()
 			// M7.1：翻到视口顶部时顺手拉更早的历史（有在途请求/已到头则 no-op）。
@@ -317,6 +328,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.history.PageDown()
 			if m.history.AtBottom() {
 				m.MarkRead()
+				return m, m.readCmd(m.latestSeq())
 			}
 			return m, nil
 		}
@@ -336,6 +348,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// M7.3：typing 事件安排一个过期 Tick（事件已 upsert，到点清条目）。
 		if msg.event.Kind == core.EventTyping {
 			cmds = append(cmds, m.typingExpireCmd())
+		}
+		// M8.1：他人新消息到达且用户正贴底跟随 → 视为已读，上发回执
+		// （hub 盖戳身份广播给其它设备；自己消息回环不重复上发）。
+		if msg.event.Kind == core.EventMessage && msg.event.Message != nil &&
+			msg.event.Message.SenderUserID != m.user && m.history.AtBottom() {
+			cmds = append(cmds, m.readCmd(msg.event.Message.ServerSeq))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -448,6 +466,12 @@ func (m *Model) applyEvent(e core.Event) {
 	case core.EventTyping:
 		if e.Typing != nil {
 			m.upsertTyping(*e.Typing)
+		}
+	case core.EventRead:
+		// M8.1：他人已读回执推进 → 重渲历史，让「✓已读」标记出现/前进。
+		// upsertRead 单调合并，旧帧/乱序帧返回 false 不触发重渲。
+		if e.Read != nil && m.upsertRead(*e.Read) {
+			m.refreshHistory()
 		}
 	}
 }
@@ -658,6 +682,60 @@ func (m *Model) typingNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// upsertRead 单调合并一条他人已读回执（M8.1）：同设备游标只进不退。
+// 自己设备的回执（Hub 广播已排除发送者）与空设备号/零 seq 直接忽略。
+// 返回 true 表示快照有变化，调用方据此重渲历史。
+func (m *Model) upsertRead(rc protocol.ReadCursor) bool {
+	if rc.DeviceID == "" || rc.DeviceID == m.device || rc.ServerSeq == 0 {
+		return false
+	}
+	if cur, ok := m.reads[rc.DeviceID]; ok && cur >= rc.ServerSeq {
+		return false
+	}
+	m.reads[rc.DeviceID] = rc.ServerSeq
+	return true
+}
+
+// readByOthers 报告「我发的某条消息是否已被其它设备读到」（M8.1）：
+// 任一其它设备的已读游标 >= 该消息 seq 即视为已读。非本人消息、seq
+// 无效或没有游标越过时返回 false。historyView 的已读标记判定入口。
+func (m *Model) readByOthers(sender string, seq uint64) bool {
+	if sender == "" || sender != m.user || seq == 0 {
+		return false
+	}
+	for _, s := range m.reads {
+		if s >= seq {
+			return true
+		}
+	}
+	return false
+}
+
+// readCmd 上发「已读到 seq」回执（M8.1）。sender 未实现 Reader 或 seq
+// 无效时返回 nil；fire-and-forget：失败只 Debug 日志，下次贴底会再触发。
+func (m *Model) readCmd(seq uint64) tea.Cmd {
+	r, ok := m.sender.(Reader)
+	if !ok || seq == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if err := r.SendRead(ctx, seq); err != nil {
+			tuiLog.Debug("SendRead failed", "err", err)
+		}
+		return readSentMsg{}
+	}
+}
+
+// latestSeq 返回历史里最新一条消息的 ServerSeq（无消息时 0）。
+func (m *Model) latestSeq() uint64 {
+	if n := len(m.messages); n > 0 {
+		return m.messages[n-1].ServerSeq
+	}
+	return 0
 }
 
 // Publish 把外部事件投递到 inbox。M3.5+ 由 client bus → adapter 调用。

@@ -194,6 +194,19 @@ func (r *Registry) HasDevice(deviceID string) bool {
 	return len(r.byDevice[deviceID]) > 0
 }
 
+// UserOfDevice 返回某台已握手设备当前连接声明的 UserID（M8.1 已读快照
+// 补全身份用）；设备不在线或未握手时 ok=false。
+func (r *Registry) UserOfDevice(deviceID string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for id := range r.byDevice[deviceID] {
+		if e, ok := r.conns[id]; ok && e.helloOK {
+			return e.userID, true
+		}
+	}
+	return "", false
+}
+
 // IdentityOf 返回某连接握手后的权威身份（M7.3 typing 盖戳用）；
 // 连接不存在或尚未握手时 ok=false。
 func (r *Registry) IdentityOf(peerID uint64) (Identity, bool) {

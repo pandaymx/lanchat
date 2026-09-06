@@ -2,6 +2,7 @@ package webui
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -226,8 +227,23 @@ func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
 		}
 		return 0, sseDataFrame("typing", buf.Bytes()), true
 
+	case core.EventRead:
+		// M8.1：他人已读回执。事件到达时 client 已读快照已更新（dispatch
+		// 先 applyRead 后发布事件）。把盖戳后的游标 JSON 推给浏览器，
+		// 由 app.js 给已读的自发消息打勾——不整段重渲消息列表，避免
+		// 滚动位置抖动、首屏外已折叠消息被重复渲染。
+		rc := e.Read
+		if rc == nil || rc.ConversationID != s.convID {
+			return 0, nil, false
+		}
+		payload, err := json.Marshal(rc)
+		if err != nil {
+			s.logger.Error("marshal read cursor failed", "err", err)
+			return 0, nil, false
+		}
+		return 0, sseDataFrame("read", payload), true
+
 	default:
-		// EventRead：M7 仍不渲染。
 		return 0, nil, false
 	}
 }
@@ -252,7 +268,24 @@ func sseDataFrame(event string, html []byte) []byte {
 	return []byte(sb.String())
 }
 
-// newView 把协议消息转成视图模型。Self 以 SenderUser 与 session 身份比对。
+// newView 把协议消息转成视图模型。Self 以 SenderUser 与 session 身份比对；
+// Read 表示「我发的消息已被其它设备读到」（M8.1，首屏/分页/新帧共用）。
 func (s *Session) newView(m *protocol.StoredMessage) templates.MessageView {
-	return templates.NewMessageView(m.ID, int64(m.ServerSeq), m.SenderUserID, m.Body, m.CreatedAt, m.SenderUserID == s.user)
+	return templates.NewMessageView(m.ID, int64(m.ServerSeq), m.SenderUserID, m.Body, m.CreatedAt, m.SenderUserID == s.user, s.isRead(m))
+}
+
+// isRead 报告「我发的消息是否已被其它设备读到」（M8.1）：任一其它设备
+// 的已读游标 >= 该消息 seq 即视为已读。hub 快照/广播不回显本设备
+// 自己的游标，ReadCursors 天然只含他人；过滤 conversation 防止跨会话
+// 游标误标。
+func (s *Session) isRead(m *protocol.StoredMessage) bool {
+	if m.SenderUserID != s.user || m.ServerSeq == 0 {
+		return false
+	}
+	for _, rc := range s.cli.ReadCursors() {
+		if rc.ConversationID == s.convID && rc.ServerSeq >= m.ServerSeq {
+			return true
+		}
+	}
+	return false
 }

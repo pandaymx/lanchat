@@ -369,14 +369,19 @@ func TestHandleHome_PostNotAllowed(t *testing.T) {
 	}
 }
 
-// TestTemplate_EscapesMessageBody 验证消息体里的 HTML 被转义（XSS 防护）。
+// TestTemplate_EscapesMessageBody 验证消息体里的原始 HTML 不会穿透渲染
+// （XSS 防护，提案 R9）。
 //
-// 提案 R9 明确点出这一条：Body 是用户输入，必须走 templ 的自动转义。
+// M8.2 起消息体走 goldmark（templates/markdown.go）。goldmark v1.8.6
+// 未开 html.WithUnsafe 时把原始 HTML 整段剥离为 <!-- raw HTML omitted
+// --> 注释——比转义更彻底（转义后的实体还会被浏览器显示出来，
+// 剥离则完全不进入 DOM），同样满足 R9 的「Body 是用户输入，不得当
+// HTML 输出」。
 func TestTemplate_EscapesMessageBody(t *testing.T) {
 	data := templates.HomeData{
 		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
 		Messages: []templates.MessageView{
-			templates.NewMessageView("1", 1, "bob", "<script>alert(1)</script>", 0, false),
+			templates.NewMessageView("1", 1, "bob", "<script>alert(1)</script>", 0, false, false),
 		},
 	}
 	var sb strings.Builder
@@ -385,10 +390,10 @@ func TestTemplate_EscapesMessageBody(t *testing.T) {
 	}
 	got := sb.String()
 	if strings.Contains(got, "<script>alert(1)</script>") {
-		t.Error("message body was not HTML-escaped (XSS risk)")
+		t.Error("raw <script> leaked into output (XSS risk)")
 	}
-	if !strings.Contains(got, "&lt;script&gt;") {
-		t.Error("expected escaped &lt;script&gt; in output")
+	if !strings.Contains(got, "raw HTML omitted") {
+		t.Error("expected raw HTML to be stripped (goldmark WithUnsafe off)")
 	}
 }
 
@@ -742,9 +747,9 @@ func TestHandleEvents_DeliversMessageFrame(t *testing.T) {
 	for _, want := range []string{
 		"event: message\n",
 		"id: 7\n",
-		`data: <li id="msg-m1">`,
+		`data: <li id="msg-m1" data-seq="7" data-self="false">`,
 		"bob",
-		"hi &lt;b&gt;x&lt;/b&gt;", // templ 自动转义
+		"hi <!-- raw HTML omitted -->x", // goldmark 剥离原始 HTML
 	} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("frame missing %q\ngot: %q", want, frame)
@@ -1390,5 +1395,255 @@ func TestHandleEvents_TypingFrame(t *testing.T) {
 		if !strings.Contains(frame, want) {
 			t.Errorf("typing frame missing %q\ngot: %q", want, frame)
 		}
+	}
+}
+
+// ---- M8.1 已读回执 ----------------------------------------------------------
+
+// TestHandleRead_RecordsSeq 验证 M8.1：POST /read 把 seq 透传给
+// client.SendRead，回 204。
+func TestHandleRead_RecordsSeq(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/read", strings.NewReader("seq=42"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	h.handleRead(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("POST /read status = %d, want 204", rec.Code)
+	}
+	if got := d.client(0).readSeqs(); len(got) != 1 || got[0] != 42 {
+		t.Errorf("SendRead seqs = %v, want [42]", got)
+	}
+}
+
+// TestHandleRead_RejectsBadSeq 验证 seq 非法（0 / 非数字 / 缺参）回 400
+// 且不拨号——校验必须先于会话建立。
+func TestHandleRead_RejectsBadSeq(t *testing.T) {
+	for _, body := range []string{"seq=0", "seq=abc", "seq=", "nope=1"} {
+		h, d := newTestHandler(t, nil)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/read", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		h.handleRead(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("POST /read body %q status = %d, want 400", body, rec.Code)
+		}
+		if d.dialCount() != 0 {
+			t.Errorf("body %q: dial count = %d, want 0 (validation before dial)", body, d.dialCount())
+		}
+	}
+}
+
+// TestHandleRead_RejectsGet 验证非 POST 回 405 且不拨号。
+func TestHandleRead_RejectsGet(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	rec := httptest.NewRecorder()
+	h.handleRead(rec, httptest.NewRequest(http.MethodGet, "/read", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /read status = %d, want 405", rec.Code)
+	}
+	if d.dialCount() != 0 {
+		t.Errorf("dial count = %d, want 0", d.dialCount())
+	}
+}
+
+// TestHandleRead_DialFailure503 验证 hub 拨号失败时回 503。
+func TestHandleRead_DialFailure503(t *testing.T) {
+	h, _ := newTestHandler(t, &stubDialer{err: context.DeadlineExceeded})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/read", strings.NewReader("seq=42"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.handleRead(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("POST /read status = %d, want 503", rec.Code)
+	}
+}
+
+// TestHandleHome_RendersReadMark 验证 M8.1 首屏：已被他人读到的自发消息
+// 渲染 ✓ 对勾与 data-* 属性；他人消息 / 未读到的自发消息不渲染。
+func TestHandleHome_RendersReadMark(t *testing.T) {
+	d := &stubDialer{
+		history: []protocol.StoredMessage{
+			{ID: "m1", ServerSeq: 1, ConversationID: "lobby", SenderUserID: "alice", Body: "self", CreatedAt: 1700000000000},
+			{ID: "m2", ServerSeq: 2, ConversationID: "lobby", SenderUserID: "bob", Body: "other", CreatedAt: 1700000001000},
+			{ID: "m3", ServerSeq: 3, ConversationID: "lobby", SenderUserID: "alice", Body: "self2", CreatedAt: 1700000002000},
+		},
+		reads: []protocol.ReadCursor{
+			{UserID: "bob", DeviceID: "dev-bob", ConversationID: "lobby", ServerSeq: 2},
+		},
+	}
+	h, _ := newTestHandler(t, d)
+	rec := httptest.NewRecorder()
+	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	body := rec.Body.String()
+	for _, want := range []string{
+		`id="msg-m1"`, `data-seq="1"`, `data-self="true"`, "msg-read", "✓", // m1 被 bob 读到 → 对勾
+		`id="msg-m2"`, `data-self="false"`, // 他人消息不标
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+	// m3（自己发、seq=3 > 游标 2）不应有对勾。
+	rest := strings.Split(body, `id="msg-m3"`)
+	if len(rest) < 2 {
+		t.Fatalf("body missing msg-m3")
+	}
+	if strings.Contains(rest[1], "msg-read") {
+		t.Error("m3 must not render read mark (seq 3 > cursor 2)")
+	}
+}
+
+// TestHandleEvents_DeliversReadFrame 验证 M8.1：EventRead 被推成 read
+// SSE 帧（data 是盖戳游标的 JSON，浏览器据此打勾）。
+func TestHandleEvents_DeliversReadFrame(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	reader := startTestSSE(t, h)
+	if _, err := readSSEFrame(reader); err != nil {
+		t.Fatalf("read ready frame: %v", err)
+	}
+
+	d.client(0).events <- core.Event{
+		Kind: core.EventRead,
+		Read: &protocol.ReadCursor{UserID: "bob", DeviceID: "dev-bob", ConversationID: "lobby", ServerSeq: 7},
+	}
+
+	frame, err := readSSEFrame(reader)
+	if err != nil {
+		t.Fatalf("read read-frame: %v", err)
+	}
+	for _, want := range []string{
+		"event: read\n",
+		`"s":7`,
+		`"d":"dev-bob"`,
+		`"c":"lobby"`,
+	} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("read frame missing %q\ngot: %q", want, frame)
+		}
+	}
+}
+
+// TestHandleEvents_ReadFrameSkipsForeignConv 验证其它会话的已读回执不产生帧。
+func TestHandleEvents_ReadFrameSkipsForeignConv(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	reader := startTestSSE(t, h)
+	if _, err := readSSEFrame(reader); err != nil {
+		t.Fatalf("read ready frame: %v", err)
+	}
+
+	d.client(0).events <- core.Event{
+		Kind: core.EventRead,
+		Read: &protocol.ReadCursor{UserID: "bob", DeviceID: "dev-bob", ConversationID: "other-conv", ServerSeq: 1},
+	}
+	// 外会话游标不产生帧；紧跟本会话消息帧，断言流里只有它。
+	d.client(0).events <- core.Event{
+		Kind:           core.EventMessage,
+		ConversationID: "lobby",
+		Message:        &protocol.StoredMessage{ID: "m2", ServerSeq: 2, ConversationID: "lobby", SenderUserID: "bob", Body: "real"},
+	}
+	frame, err := readSSEFrame(reader)
+	if err != nil {
+		t.Fatalf("read frame: %v", err)
+	}
+	if strings.Contains(frame, "event: read") {
+		t.Errorf("foreign-conv read cursor leaked into stream: %q", frame)
+	}
+	if !strings.Contains(frame, "real") {
+		t.Errorf("own-conv message missing: %q", frame)
+	}
+}
+
+// ---- M8.2 Markdown / 代码高亮 ----------------------------------------------
+
+// TestTemplate_RendersMarkdown 验证 M8.2：消息体 Markdown 被服务端渲染
+// （加粗 → <strong>，行内代码 → <code>）。
+func TestTemplate_RendersMarkdown(t *testing.T) {
+	data := templates.HomeData{
+		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
+		Messages: []templates.MessageView{
+			templates.NewMessageView("1", 1, "bob", "**bold** and `code`", 0, false, false),
+		},
+	}
+	var sb strings.Builder
+	if err := templates.Home(data).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	got := sb.String()
+	for _, want := range []string{"<strong>bold</strong>", "<code>code</code>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("markdown output missing %q\ngot: %q", want, got)
+		}
+	}
+}
+
+// TestTemplate_RendersCodeBlock 验证 M8.2：围栏代码块被 chroma 高亮
+// （<pre class="chroma"> + token span 内联样式）。
+func TestTemplate_RendersCodeBlock(t *testing.T) {
+	data := templates.HomeData{
+		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
+		Messages: []templates.MessageView{
+			templates.NewMessageView("1", 1, "bob", "```go\npackage main\n```", 0, false, false),
+		},
+	}
+	var sb strings.Builder
+	if err := templates.Home(data).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	got := sb.String()
+	for _, want := range []string{"<pre", `style="color:#f8f8f2`, "package", "main", "display:flex"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("code block output missing %q\ngot: %q", want, got)
+		}
+	}
+}
+
+// TestTemplate_StripsRawHtml 验证 M8.2：用户输入里的原始 HTML 不会穿透
+// goldmark（WithUnsafe 未开），<img onerror> 注入被转义成实体。
+func TestTemplate_StripsRawHtml(t *testing.T) {
+	data := templates.HomeData{
+		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
+		Messages: []templates.MessageView{
+			templates.NewMessageView("1", 1, "bob", "<img src=x onerror=alert(1)>", 0, false, false),
+		},
+	}
+	var sb strings.Builder
+	if err := templates.Home(data).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	got := sb.String()
+	if strings.Contains(got, "<img") {
+		t.Error("raw <img> leaked into output (XSS)")
+	}
+	if !strings.Contains(got, "raw HTML omitted") {
+		t.Errorf("expected raw HTML stripped in output\ngot: %q", got)
+	}
+}
+
+// TestTemplate_ReadMarkInline 验证 M8.1 渲染细节：已读对勾插在 sender 之后、
+// 正文块（div.msg-body）之前。
+func TestTemplate_ReadMarkInline(t *testing.T) {
+	data := templates.HomeData{
+		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
+		Messages: []templates.MessageView{
+			templates.NewMessageView("1", 1, "alice", "hi", 0, true, true),
+		},
+	}
+	var sb strings.Builder
+	if err := templates.Home(data).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	got := sb.String()
+	idxSender := strings.Index(got, "alice")
+	idxMark := strings.Index(got, "msg-read")
+	idxBody := strings.Index(got, "msg-body")
+	if idxSender < 0 || idxMark < 0 || idxBody < 0 {
+		t.Fatalf("markup parts missing (sender=%d mark=%d body=%d)\ngot: %q", idxSender, idxMark, idxBody, got)
+	}
+	if !(idxSender < idxMark && idxMark < idxBody) {
+		t.Error("read mark must sit between sender and body div")
 	}
 }

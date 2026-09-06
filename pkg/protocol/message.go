@@ -47,7 +47,11 @@ type Device struct {
 //   - 未读数显示
 //   - 离线补发请求的起点（ResumeFrom）
 //   - 多设备独立维护（每个 device 各自一个 cursor）
+//   - 已读回执广播（M8.1）：Hub 把盖戳后的游标广播给其他人
 type ReadCursor struct {
+	// UserID 仅在 Hub→Client 的已读回执帧里由 Hub 盖戳填写；
+	// 客户端上发用 Read（只有 c/s），无权声明身份。
+	UserID         string `json:"u,omitempty"`
 	DeviceID       string `json:"d"`
 	ConversationID string `json:"c"`
 	ServerSeq      uint64 `json:"s"`

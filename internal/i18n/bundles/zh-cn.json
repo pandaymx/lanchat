@@ -16,6 +16,7 @@
   "tui.history.fallback.time": "??:??:??",
   "tui.typing.one": "%s 正在输入…",
   "tui.typing.many": "%s 正在输入…",
+  "tui.history.read": "✓已读",
   "web.composer.placeholder": "输入消息（Enter 发送，Shift+Enter 换行）",
   "web.composer.send": "发送",
   "web.messages.empty": "（暂无消息）",

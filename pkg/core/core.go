@@ -160,5 +160,10 @@ type Store interface {
 	SetCursor(ctx context.Context, deviceID, convID string, seq uint64) error
 	GetCursor(ctx context.Context, deviceID, convID string) (uint64, error)
 
+	// ListCursors 枚举已记录的已读游标（M8.1）：Hub 给新握手连接补发
+	// 「谁已读到哪」的快照，重连后已读回执不用等下一次有人读消息才出现。
+	// convID 非空时只返回该会话的条目；返回值不含 UserID，由调用方补全。
+	ListCursors(ctx context.Context, convID string) ([]protocol.ReadCursor, error)
+
 	Close() error
 }

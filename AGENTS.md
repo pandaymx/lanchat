@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M7 体验打磨（M7.1 TUI 上翻分页 / M7.2 在线成员 / M7.3 正在输入已合入）；**v0.4.0 已发布**（含 M4 Web / M5 libSQL 持久化 / M6 mDNS / M7.1）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M8 消息体验闭环（M8.1 已读回执 / M8.2 Markdown+代码高亮已合入）；**v0.4.0 已发布**（含 M4 Web / M5 libSQL 持久化 / M6 mDNS / M7.1）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -70,6 +70,15 @@
 | M7.1 | TUI 上翻分页 | PgUp 到顶自动 FetchHistory（Before 分页，50 条/页）；Session 实现 HistoryFetcher 窄接口；去重合并 + YOffset 锚点不跳屏；HasMore 到头停止；失败可重试 | ✅ `27b435d` |
 | M7.2 | 在线成员端到端 | hub 握手后发 roster + 广播 FKPresence（下线广播带重连防抖）；Client 维护在线名单快照 Peers()；TUI 侧栏首次有数据；Web 在线成员条（首屏渲染 + presence SSE 帧 swap，自己标「(you)」） | ✅ `7ee980e` → `ac6255d` → `576200f` |
 | M7.3 | 正在输入指示 | FKTyping 帧：客户端发空负载、hub 按注册表盖戳身份广播（防伪造）；Client 维护 typing 快照（6s TTL 惰性过期、按 UserID 去重、消息/下线清除）；TUI 输入 3s 节流上发 + hints 行「X 正在输入…」；Web `/typing` 端点（POST 上发 / GET 自刷新）+ typing SSE 帧，片段 6s 自刷新清除、htmx leading throttle 上发 | ✅ `fb5e281` → `93048e0` → `f2d59ac` → `7487d5f` → `af4a02a` |
+
+**M8 子任务拆解与进度**（消息体验闭环；M8=①已读回执+②Markdown，M9=③文件传输，M10=④桌面端——顺序经用户确认）：
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M8.1 | 已读回执端到端 | 协议 FKRead/ReadCursor（per-device 游标，ADR-008 硬要求）；hub 盖戳广播（防伪造，同 typing 信任模型）+ 握手快照补发；Client ReadCursors/SendRead；Store read_cursors 持久化；TUI 他人已读游标快照 + 「✓已读」标记 + 贴底/新消息自动上发（Reader 接口）；Web `/read` 端点 + `event: read` SSE 帧 + app.js 打勾/上发（首屏标记 + 滚动贴底上发） | ✅ 本 commit |
+| M8.2 | Markdown + 代码高亮 | Web：goldmark（GFM + WithHardWraps）服务端渲染 + chroma monokai 高亮，原始 HTML 剥离（goldmark WithUnsafe 未开，`<!-- raw HTML omitted -->`），`templ.Raw` 注入；TUI：glamour 定制 dark 样式（WordWrap 0 / 去段落填充缩进 / 纯文本不染色，探针验证），按消息 ID 缓存渲染结果；两端零协议改动，依赖纯 Go 无 CGO | ✅ 本 commit |
+
+**M8 验收标准**：A 设备发的消息在 B 设备贴底后，A 端（TUI/Web）出现「✓已读」标记且重连补发不丢；消息体支持 Markdown 渲染与代码高亮，`<script>` 等原始 HTML 在两端均不执行/不显示；纯文本消息渲染与旧版一致。
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 

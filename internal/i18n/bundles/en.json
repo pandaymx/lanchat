@@ -16,6 +16,7 @@
   "tui.history.fallback.time": "??:??:??",
   "tui.typing.one": "%s is typing…",
   "tui.typing.many": "%s are typing…",
+  "tui.history.read": "✓ read",
   "web.composer.placeholder": "Type a message (Enter to send, Shift+Enter for newline)",
   "web.composer.send": "Send",
   "web.messages.empty": "(no messages yet)",

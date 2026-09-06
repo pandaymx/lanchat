@@ -411,6 +411,93 @@ func TestRouterReadCursorPerDevice(t *testing.T) {
 	_ = id2
 }
 
+// TestRouterReadBroadcastStamped 验证 M8.1：FKRead 被 Hub 盖上注册表身份后
+// 广播给其他人，发送者自己不收到回显。
+func TestRouterReadBroadcastStamped(t *testing.T) {
+	ctx := context.Background()
+	r, _ := setupRouter(t)
+
+	p1, id1 := addPeer(t, r, "dev-1", "u-1")
+	p2, _ := addPeer(t, r, "dev-2", "u-2")
+
+	rd := protocol.Read{ConversationID: "lobby", ServerSeq: 7}
+	if err := r.HandleFrame(ctx, id1, p1,
+		protocol.Frame{Kind: protocol.FKRead, Payload: mustPayload(t, rd)}); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	if got := len(p1.framesOf(protocol.FKRead)); got != 0 {
+		t.Fatalf("发送者不应收到自己的 Read 回执，实际 %d", got)
+	}
+	frames := p2.framesOf(protocol.FKRead)
+	if len(frames) != 1 {
+		t.Fatalf("对方应收到 1 个 Read 回执，实际 %d", len(frames))
+	}
+	var rc protocol.ReadCursor
+	if err := json.Unmarshal(frames[0].Payload, &rc); err != nil {
+		t.Fatalf("decode read cursor: %v", err)
+	}
+	if rc.UserID != "u-1" || rc.DeviceID != "dev-1" || rc.ConversationID != "lobby" || rc.ServerSeq != 7 {
+		t.Fatalf("read 回执内容不对， got %+v", rc)
+	}
+}
+
+// TestRouterReadSnapshotOnHello 验证 M8.1：新握手连接会收到 store 里已有
+// 的他人已读游标快照，自己的游标不发。
+func TestRouterReadSnapshotOnHello(t *testing.T) {
+	ctx := context.Background()
+	r, store := setupRouter(t)
+
+	// dev-2 先（真实握手）上线并上报已读 seq=5，落库。
+	p2 := newPipePeer("dev-2")
+	r.Attach(ctx, p2)
+	t.Cleanup(func() { _ = p2.Close() })
+	p2.inject(helloFrame("u-2", "dev-2"))
+	if !p2.waitFor(protocol.FKPresence, 1, time.Second) {
+		t.Fatal("dev-2 握手超时")
+	}
+	p2.inject(protocol.Frame{Kind: protocol.FKRead, Payload: mustPayload(t, protocol.Read{ConversationID: "lobby", ServerSeq: 5})})
+	// 等异步 serveLoop 把游标落库。
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && storeCursor(t, ctx, store, "dev-2", "lobby") != 5 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := storeCursor(t, ctx, store, "dev-2", "lobby"); got != 5 {
+		t.Fatalf("dev-2 游标应落库为 5，实际 %d", got)
+	}
+
+	// dev-3 上线：应收到 dev-2 的游标快照（u-2/dev-2/seq=5）。
+	p3 := newPipePeer("dev-3")
+	r.Attach(ctx, p3)
+	t.Cleanup(func() { _ = p3.Close() })
+	p3.inject(helloFrame("u-3", "dev-3"))
+	if !p3.waitFor(protocol.FKRead, 1, time.Second) {
+		t.Fatalf("新连接应收到 1 个游标快照，实际 %d", len(p3.framesOf(protocol.FKRead)))
+	}
+	frames := p3.framesOf(protocol.FKRead)
+	var rc protocol.ReadCursor
+	if err := json.Unmarshal(frames[0].Payload, &rc); err != nil {
+		t.Fatalf("decode snapshot cursor: %v", err)
+	}
+	if rc.DeviceID != "dev-2" || rc.UserID != "u-2" || rc.ServerSeq != 5 {
+		t.Fatalf("快照游标内容不对， got %+v", rc)
+	}
+
+	if got := storeCursor(t, ctx, store, "dev-3", "lobby"); got != 0 {
+		t.Fatalf("dev-3 游标应为 0，实际 %d", got)
+	}
+}
+
+// storeCursor 是测试 helper：读游标，未设置按 0 处理。
+func storeCursor(t *testing.T, ctx context.Context, store core.Store, device, conv string) uint64 {
+	t.Helper()
+	got, err := store.GetCursor(ctx, device, conv)
+	if err != nil {
+		t.Fatalf("get cursor %s: %v", device, err)
+	}
+	return got
+}
+
 // TestRouterAckWritesGlobalCursor 验证 Ack 写的是跨会话全局游标（conv="*"）。
 func TestRouterAckWritesGlobalCursor(t *testing.T) {
 	ctx := context.Background()

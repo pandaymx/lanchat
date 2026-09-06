@@ -87,7 +87,7 @@ func (f *fakeTranslator) calledCount(key string) int {
 // SetLocale 切换 fake translator 的 locale；用于多 locale 测试。
 func (f *fakeTranslator) SetLocale(locale string) { f.locale = locale }
 
-// enDefaults 是 pkg/tui 内置的 14 个 key 英文文案，与
+// enDefaults 是 pkg/tui 内置 key 的英文文案，与
 // internal/i18n/bundles/en.json 完全一致。这里独立保留一份的理由：
 //
 //   - pkg/tui 不依赖 internal/（Go 模块边界约定）；
@@ -114,6 +114,8 @@ var enDefaults = map[string]string{
 	// M7.3：hints 行让位的「正在输入」指示，%s 是逗号拼接的用户名。
 	"tui.typing.one":  "%s is typing…",
 	"tui.typing.many": "%s are typing…",
+	// M8.1：自己消息被他人读到后的「✓已读」标记（英文同勾号）。
+	"tui.history.read": "✓ read",
 }
 
 // defaultENTranslator 是 Model.New() 默认注入的 translator，

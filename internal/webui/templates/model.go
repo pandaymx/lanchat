@@ -90,15 +90,21 @@ func HistoryHref(before int64) string {
 
 // MessageView 是单条消息的视图模型。
 //
-// 与 protocol.StoredMessage 的区别：这里多了 Self（是否本人所发）与
-// AtText（已格式化的时间串），避免在模板里做逻辑判断。
+// 与 protocol.StoredMessage 的区别：这里多了 Self（是否本人所发）、
+// Read（本人消息是否已被其它设备读到，M8.1）、AtText（已格式化的
+// 时间串）与 HTML（M8.2 服务端渲染的 Markdown 结果），避免在模板里
+// 做逻辑判断。
 type MessageView struct {
 	ID         string
 	Seq        int64
 	SenderUser string
 	Body       string
-	AtText     string
-	Self       bool
+	// HTML 是 renderMarkdown 渲染出的安全 HTML（M8.2），
+	// message.templ 经 templ.Raw 注入，绝不经转义路径。
+	HTML   string
+	AtText string
+	Self   bool
+	Read   bool
 }
 
 // FormatTime 把 Unix 毫秒格式化为 HH:MM:SS（本地时区）。
@@ -115,15 +121,18 @@ func FormatTime(ms int64) string {
 // NewMessageView 从协议消息构造视图模型。
 //
 // self 由调用方（handler）比较 SenderUser 与当前会话 user 得出——
-// 模板层不做身份判断，保持渲染逻辑纯粹。
-func NewMessageView(id string, seq int64, sender, body string, atMs int64, self bool) MessageView {
+// 模板层不做身份判断，保持渲染逻辑纯粹。body 在此处同步渲染成
+// Markdown HTML（M8.2），模板里不再有第二处渲染入口。
+func NewMessageView(id string, seq int64, sender, body string, atMs int64, self, read bool) MessageView {
 	return MessageView{
 		ID:         id,
 		Seq:        seq,
 		SenderUser: sender,
 		Body:       body,
+		HTML:       renderMarkdown(body),
 		AtText:     FormatTime(atMs),
 		Self:       self,
+		Read:       read,
 	}
 }
 

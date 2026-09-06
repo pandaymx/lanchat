@@ -35,6 +35,11 @@ var (
 			Bold(true).
 			Foreground(lipgloss.Color("#ff5f5f"))
 
+	// readStyle 是「✓已读」标记样式（M8.1）：绿色加粗，与 Web 端对勾同色。
+	readStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#98c379"))
+
 	sidebarStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, false, false, true).
 			Padding(0, 1)

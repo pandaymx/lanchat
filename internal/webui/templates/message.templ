@@ -7,17 +7,30 @@ package templates
 //  2. SSE 推送新消息时，服务端直接把这一段的 HTML 放进 SSE data 行，
 //     由 htmx 的 hx-swap 追加到 #messages 末尾（M4.3 接通）
 //
-// templ 对 { } 插值自动做 HTML 转义，Body 里的 < > & 不会被当标签解析
-// （见 docs/proposals/2026-09-05-m4-web-proposal.md R9：XSS 防护）。
+// 渲染安全（见 docs/proposals/2026-09-05-m4-web-proposal.md R9：XSS 防护）：
+//   - templ 对 { } 插值自动做 HTML 转义；
+//   - M8.2 起消息体是服务端 goldmark 渲染出的 m.HTML（原始 HTML 已被
+//     转义成实体，见 templates/markdown.go），经 templ.Raw 注入——
+//     Raw 只豁免"渲染结果"，用户原始输入绝不直接进 Raw。
+//
+// body 容器必须是块级 <div>：goldmark 输出 <p>/<pre>/<ul> 等块级元素，
+// 塞进 <span> 会被浏览器隐式闭合、破坏布局（M8.2 观察到的坑）。
 templ Message(m MessageView) {
-	<li id={ "msg-" + m.ID }>
+	// data-seq / data-self（M8.1）：read SSE 帧到达时 app.js 据此给已读的
+	// 自发消息打勾，无需重渲整条列表。Self 直接渲染成属性值，避免 JS 侧
+	// 重复比对 sender。
+	<li id={ "msg-" + m.ID } data-seq={ m.Seq } data-self={ m.Self }>
 		<span class="msg-meta">{ m.AtText }</span>
 		if m.Self {
 			<span class="msg-sender self">{ m.SenderUser }</span>
 		} else {
 			<span class="msg-sender">{ m.SenderUser }</span>
 		}
-		<span class="msg-body">{ m.Body }</span>
+		if m.Read {
+			<span class="msg-read">✓</span>
+		}
+		<div class="msg-body">@templ.Raw(m.HTML)
+</div>
 	</li>
 }
 

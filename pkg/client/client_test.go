@@ -747,6 +747,104 @@ func TestTyping(t *testing.T) {
 	}
 }
 
+// TestReadReceipt 验证 M8.1 已读回执端到端：
+//   - bob 调 SendRead，alice 收到 EventRead，身份是 Hub 盖戳的 bob；
+//   - bob 自己收不到回显；
+//   - 同设备游标单调不回退（旧 seq 不产生事件、不覆盖快照）；
+//   - 后上线的 carol 经握手快照补到 bob 的已读游标。
+func TestReadReceipt(t *testing.T) {
+	tr, _, store := newTransportWithHub(t, "lanchat-test")
+
+	aliceHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "alice-laptop",
+		UserID:          "alice",
+	}
+	bobHello := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "bob-laptop",
+		UserID:          "bob",
+	}
+
+	alice := newClient(t, tr, store, aliceHello, 0)
+	aliceSub := alice.Subscribe(64)
+	defer aliceSub.Close()
+	bob := newClient(t, tr, store, bobHello, 0)
+
+	drainPresence(t, aliceSub, 500*time.Millisecond)
+
+	if err := bob.SendRead(context.Background(), "lobby", 5); err != nil {
+		t.Fatalf("SendRead: %v", err)
+	}
+
+	// alice 应收到 bob 的已读事件；身份以 Hub 盖戳为准。
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev, ok := <-aliceSub.C():
+			if !ok {
+				t.Fatal("subscription closed")
+			}
+			if ev.Kind != core.EventRead {
+				continue
+			}
+			if ev.Read == nil || ev.Read.DeviceID != "bob-laptop" ||
+				ev.Read.UserID != "bob" || ev.Read.ServerSeq != 5 {
+				t.Fatalf("read 事件内容不符: %+v", ev.Read)
+			}
+			goto gotFirst
+		case <-deadline:
+			t.Fatal("alice 未收到 bob 的 EventRead")
+		}
+	}
+gotFirst:
+
+	// bob 自己不应有任何游标快照（不回显）。
+	if got := bob.ReadCursors(); len(got) != 0 {
+		t.Fatalf("bob 不应收到自己的已读回显，实际 %+v", got)
+	}
+
+	// 旧序号（3 < 5）：alice 不产生事件，快照保持 5。
+	if err := bob.SendRead(context.Background(), "lobby", 3); err != nil {
+		t.Fatalf("SendRead(3): %v", err)
+	}
+	// 新序号 8：alice 快照前进到 8。
+	if err := bob.SendRead(context.Background(), "lobby", 8); err != nil {
+		t.Fatalf("SendRead(8): %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, rc := range alice.ReadCursors() {
+			if rc.DeviceID == "bob-laptop" && rc.ServerSeq == 8 && rc.UserID == "bob" {
+				return true
+			}
+		}
+		return false
+	})
+
+	// 旧序号事件可能混在通道里：排空后确认没有 seq=3 的事件被发布。
+	// （seq=8 事件之后到达的只可能是更晚的帧；这里直接断言快照单调。）
+	for _, rc := range alice.ReadCursors() {
+		if rc.DeviceID == "bob-laptop" && rc.ServerSeq < 8 {
+			t.Fatalf("游标不应回退，实际 %+v", rc)
+		}
+	}
+
+	// 后上线的 carol：握手后经快照补发拿到 bob 的最新游标。
+	carol := newClient(t, tr, store, protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "carol-laptop",
+		UserID:          "carol",
+	}, 0)
+	waitFor(t, 2*time.Second, func() bool {
+		for _, rc := range carol.ReadCursors() {
+			if rc.DeviceID == "bob-laptop" && rc.ServerSeq == 8 {
+				return true
+			}
+		}
+		return false
+	})
+}
+
 // drainPresence 排空订阅通道里截止到 quiet 时间内的事件（上线阶段的
 // presence 噪声），用于让后续断言只面对新事件。
 func drainPresence(t *testing.T, sub core.Subscription, quiet time.Duration) {

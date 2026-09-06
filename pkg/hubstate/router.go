@@ -193,7 +193,7 @@ func (r *Router) HandleFrame(ctx context.Context, peerID uint64, p Peer, f proto
 		return r.handleAck(ctx, p, f)
 
 	case protocol.FKRead:
-		return r.handleRead(ctx, p, f)
+		return r.handleRead(ctx, peerID, f)
 
 	case protocol.FKPing:
 		// 心跳不携带状态，直接回。失败说明连接已死，交给读循环收尾。
@@ -260,9 +260,51 @@ func (r *Router) announceOnline(ctx context.Context, p Peer, hello protocol.Hell
 			return err
 		}
 	}
+	// M8.1：补发已读游标快照，让新连接立刻能渲染「谁已读到哪」，
+	// 不用干等下一次有人读消息。写失败与 presence 名单同语义（连接已坏）。
+	if err := r.sendReadSnapshot(ctx, p, hello.DeviceID); err != nil {
+		return err
+	}
 	r.broadcastPresence(ctx, protocol.Presence{
 		UserID: hello.UserID, DeviceID: hello.DeviceID, Online: true,
 	})
+	return nil
+}
+
+// sendReadSnapshot 把 store 里各设备的已读游标逐个发给新握手的连接。
+//
+// 游标里没有 UserID（read_cursors 表只存 device_id）：在线设备从注册表
+// 补，离线设备从设备表（GetDevice）补；都查不到就发空 UserID（UI 退化
+// 成显示 device 名，不影响功能）。新连接自己的游标不发——自己读没读
+// 自己知道。
+func (r *Router) sendReadSnapshot(ctx context.Context, p Peer, selfDevice string) error {
+	if r.store == nil {
+		return nil
+	}
+	cursors, err := r.store.ListCursors(ctx, "")
+	if err != nil {
+		routerLog.Warn("list read cursors for snapshot failed", "err", err)
+		return nil // 快照是锦上添花，查库失败不阻断握手
+	}
+	for _, rc := range cursors {
+		if rc.DeviceID == "" || rc.DeviceID == selfDevice || rc.ServerSeq == 0 {
+			continue
+		}
+		if rc.UserID == "" {
+			if u, ok := r.reg.UserOfDevice(rc.DeviceID); ok {
+				rc.UserID = u
+			} else if d, err := r.store.GetDevice(ctx, rc.DeviceID); err == nil {
+				rc.UserID = d.UserID
+			}
+		}
+		payload, err := json.Marshal(rc)
+		if err != nil {
+			continue // 单条 marshal 失败跳过
+		}
+		if err := p.Send(ctx, protocol.Frame{Kind: protocol.FKRead, Payload: payload}); err != nil {
+			return fmt.Errorf("send read snapshot: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -391,9 +433,19 @@ func (r *Router) handleAck(ctx context.Context, p Peer, f protocol.Frame) error 
 	return nil
 }
 
-// handleRead 写 per-device 会话游标（ADR-008 的核心）。
-func (r *Router) handleRead(ctx context.Context, p Peer, f protocol.Frame) error {
-	if r.store == nil {
+// handleRead 处理「已读」上报（M8.1）：
+//
+//  1. 身份以注册表为准（客户端只上报 conv+seq，无权声明身份）；
+//  2. seq 钳制到当前已分配的最大序号——序号是 Hub 发的，客户端游标
+//     不可能超过 Hub 已知范围（hub 重启后旧客户端的残留帧尤其要防）；
+//  3. 落 per-device 游标（store 内 UPSERT+MAX 单调不回退）；
+//  4. 把盖戳后的 ReadCursor 广播给除发送者外的所有连接——同用户的
+//     其它设备也收（多设备已读状态同步）。
+//
+// 未握手连接、空会话号静默丢弃；落库失败只 Warn 不阻断广播（best-effort）。
+func (r *Router) handleRead(ctx context.Context, peerID uint64, f protocol.Frame) error {
+	id, ok := r.reg.IdentityOf(peerID)
+	if !ok || id.DeviceID == "" {
 		return nil
 	}
 	var rd protocol.Read
@@ -406,11 +458,34 @@ func (r *Router) handleRead(ctx context.Context, p Peer, f protocol.Frame) error
 	if rd.ConversationID == "" {
 		return nil
 	}
-	deviceID := r.deviceIDOf(p)
-	if deviceID == "" {
-		return nil
+	seq := rd.ServerSeq
+	// 序号是 Hub 发的，游标不应超过已分配的最大 seq（防 hub 重启后
+	// 旧客户端的残留帧把已读状态标到未来）。max==0（本进程还没发过
+	// 任何消息）时不钳制——此时没有消息可被误标。
+	if max := r.seq.Last(); max > 0 && seq > max {
+		seq = max
 	}
-	_ = r.store.SetCursor(ctx, deviceID, rd.ConversationID, rd.ServerSeq)
+	if r.store != nil {
+		if err := r.store.SetCursor(ctx, id.DeviceID, rd.ConversationID, seq); err != nil {
+			routerLog.Warn("persist read cursor failed", "device", id.DeviceID, "conv", rd.ConversationID, "seq", seq, "err", err)
+		}
+	}
+	rc := protocol.ReadCursor{
+		UserID:         id.UserID,
+		DeviceID:       id.DeviceID,
+		ConversationID: rd.ConversationID,
+		ServerSeq:      seq,
+	}
+	payload, err := json.Marshal(rc)
+	if err != nil {
+		return fmt.Errorf("marshal read cursor: %w", err)
+	}
+	out := protocol.Frame{Kind: protocol.FKRead, Payload: payload}
+	peers := r.reg.OthersPeers(peerID)
+	routerLog.Debug("read broadcast", "peer", peerID, "device", id.DeviceID, "conv", rd.ConversationID, "seq", seq, "recipients", len(peers))
+	_ = SendToPeers(ctx, peers, func(ctx context.Context, p Peer) error {
+		return p.Send(ctx, out)
+	})
 	return nil
 }
 

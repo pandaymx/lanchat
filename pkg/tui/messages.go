@@ -69,6 +69,10 @@ type typingSentMsg struct{}
 // 清掉超时条目，若还有未过期的则再 schedule 一个，直到列表清空。
 type typingExpireMsg struct{}
 
+// readSentMsg 是本端已读回执上发的回执（M8.1）。readCmd 是
+// fire-and-forget，本 Msg 没有状态要更新，存在只为让 Cmd 有返回值。
+type readSentMsg struct{}
+
 func newErrExpireMsg() errExpireMsg { return errExpireMsg{} }
 
 func newSentMsg(text string) sentMsg { return sentMsg{text: text} }
@@ -87,4 +91,5 @@ var (
 	_ tea.Msg = quitMsg{}
 	_ tea.Msg = submitMsg{}
 	_ tea.Msg = sentMsg{}
+	_ tea.Msg = readSentMsg{}
 )

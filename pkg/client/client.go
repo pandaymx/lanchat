@@ -106,6 +106,11 @@ type Client struct {
 	// 顺带清掉 typingTTL 前的旧条目，无需后台定时器。
 	typers map[string]typingEntry
 
+	// reads 是他人已读游标的设备表（M8.1），按 DeviceID 索引最新收到的
+	// ReadCursor（Hub 盖戳、单调不回退）。与 peers 不同：已读状态是持久
+	// 语义，设备离线不删除——重连后 Hub 会重发快照，applyRead 单调合并。
+	reads map[string]protocol.ReadCursor
+
 	closed atomic.Bool
 	done   chan struct{}
 }
@@ -130,6 +135,7 @@ func New(hello protocol.Hello, conn core.Conn, store core.Store, bus core.EventB
 		seen:   make(map[string]struct{}),
 		peers:  make(map[string]protocol.Presence),
 		typers: make(map[string]typingEntry),
+		reads:  make(map[string]protocol.ReadCursor),
 		done:   make(chan struct{}),
 	}
 }
@@ -332,6 +338,26 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 			Typing: &ty,
 		})
 
+	case protocol.FKRead:
+		// M8.1：他人已读回执。Hub 盖戳广播（含握手后快照补发）；自己
+		// 上报的游标不回显。先单调合并进快照（ReadCursors() 供 Web SSE
+		// 帧全量重渲），再发布事件让 UI 即时刷新。
+		var rc protocol.ReadCursor
+		if err := json.Unmarshal(f.Payload, &rc); err != nil {
+			cliLog.Error("unmarshal FKRead failed", "err", err)
+			return
+		}
+		if rc.DeviceID == "" {
+			return
+		}
+		applied := c.applyRead(rc)
+		if applied {
+			c.bus.Publish(core.Event{
+				Kind: core.EventRead,
+				Read: &rc,
+			})
+		}
+
 	default:
 		// 其它帧不在 M1 范围内，静默丢弃。
 	}
@@ -403,6 +429,39 @@ func (c *Client) Typing() []protocol.Typing {
 	c.peersMu.Unlock()
 	sort.Slice(out, func(i, j int) bool { return out[i].UserID < out[j].UserID })
 	return out
+}
+
+// applyRead 单调合并一条已读回执（M8.1）：同设备的游标只进不退。
+// 返回 false 表示旧帧/乱序帧（seq 未前进），调用方据此跳过事件发布。
+func (c *Client) applyRead(rc protocol.ReadCursor) bool {
+	c.peersMu.Lock()
+	defer c.peersMu.Unlock()
+	if cur, ok := c.reads[rc.DeviceID]; ok && cur.ServerSeq >= rc.ServerSeq {
+		return false
+	}
+	c.reads[rc.DeviceID] = rc
+	return true
+}
+
+// ReadCursors 返回当前已知的他人已读游标快照（M8.1），按 DeviceID 升序。
+//
+// 数据源是 Hub 广播 + 握手后快照补发；与 Peers() 同理，新订阅者错过事件
+// 后仍能从这里拿到首屏状态。UI 按 UserID 去重展示（一人多设备取最大）。
+func (c *Client) ReadCursors() []protocol.ReadCursor {
+	c.peersMu.RLock()
+	out := make([]protocol.ReadCursor, 0, len(c.reads))
+	for _, rc := range c.reads {
+		out = append(out, rc)
+	}
+	c.peersMu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].DeviceID < out[j].DeviceID })
+	return out
+}
+
+// Identity 返回本连接握手时声明的 UserID / DeviceID（M8.1 UI 标记
+// 「自己发的消息」用；身份在 Dial 时确定，运行期不变，无需加锁）。
+func (c *Client) Identity() (userID, deviceID string) {
+	return c.hello.UserID, c.hello.DeviceID
 }
 
 // publishMessageOnce 防止同一 ID 的消息重复发射到 EventBus。

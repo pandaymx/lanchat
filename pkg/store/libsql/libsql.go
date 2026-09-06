@@ -372,3 +372,45 @@ func (s *Store) GetCursor(ctx context.Context, deviceID, convID string) (uint64,
 	}
 	return uint64(seq.Int64), nil
 }
+
+// ListCursors 枚举已记录的已读游标（M8.1）。convID 非空时只返回该会话。
+func (s *Store) ListCursors(ctx context.Context, convID string) ([]protocol.ReadCursor, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if convID != "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT device_id, conv_id, last_seq FROM read_cursors
+			 WHERE conv_id = ? ORDER BY device_id`, convID)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT device_id, conv_id, last_seq FROM read_cursors
+			 ORDER BY device_id, conv_id`)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("libsql: list cursors: %w", err)
+	}
+	defer rows.Close()
+
+	var out []protocol.ReadCursor
+	for rows.Next() {
+		var device, conv string
+		var seq int64
+		if err := rows.Scan(&device, &conv, &seq); err != nil {
+			return nil, fmt.Errorf("libsql: scan cursor row: %w", err)
+		}
+		if seq < 0 {
+			seq = 0
+		}
+		out = append(out, protocol.ReadCursor{
+			DeviceID:       device,
+			ConversationID: conv,
+			ServerSeq:      uint64(seq),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("libsql: iterate cursors: %w", err)
+	}
+	return out, nil
+}

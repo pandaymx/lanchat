@@ -74,6 +74,12 @@ type stubClient struct {
 	typers          []protocol.Typing
 	sendTypingCalls int
 
+	// reads 是 ReadCursors() 快照的预置返回（M8.1 已读）；
+	// sendReadSeqs 记录 SendRead 调用入参（conv 恒为会话默认值）。
+	reads          []protocol.ReadCursor
+	sendReadSeqs   []uint64
+	sendReadConvID string
+
 	events chan core.Event
 	done   chan struct{}
 
@@ -167,6 +173,30 @@ func (s *stubClient) typingCalls() int {
 	return s.sendTypingCalls
 }
 
+// ReadCursors 返回预置的已读游标快照（M8.1）。
+func (s *stubClient) ReadCursors() []protocol.ReadCursor {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]protocol.ReadCursor, len(s.reads))
+	copy(out, s.reads)
+	return out
+}
+
+// SendRead 记录调用入参（M8.1）。
+func (s *stubClient) SendRead(_ context.Context, convID string, serverSeq uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sendReadSeqs = append(s.sendReadSeqs, serverSeq)
+	s.sendReadConvID = convID
+	return nil
+}
+
+func (s *stubClient) readSeqs() []uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]uint64(nil), s.sendReadSeqs...)
+}
+
 func (s *stubClient) Done() <-chan struct{} { return s.done }
 
 // Close 记录关闭次数并幂等关闭 done（Manager 回收 Session 时调用）。
@@ -225,6 +255,9 @@ type stubDialer struct {
 
 	// typers 复制给每个新 client 的 Typing() 预置返回（M7.3）。
 	typers []protocol.Typing
+
+	// reads 复制给每个新 client 的 ReadCursors() 预置返回（M8.1）。
+	reads []protocol.ReadCursor
 }
 
 func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store, error) {
@@ -242,6 +275,7 @@ func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store,
 	cli.fetchErr = d.fetchErr
 	cli.peers = d.peers
 	cli.typers = d.typers
+	cli.reads = d.reads
 	d.clients = append(d.clients, cli)
 	return cli, memory.New(), nil
 }

@@ -21,6 +21,17 @@ type historyView struct {
 	inner      viewport.Model
 	lines      []string
 	translator Translator // M3.10：本地化接口
+
+	// readMark 是「某条消息是否已被其它设备读到」的判定（M8.1），由
+	// Model 注入（读它的 reads 快照）；nil 时不渲染已读标记。只在
+	// Update goroutine 内被 formatMessage 调用，无需加锁。
+	readMark func(senderUserID string, seq uint64) bool
+
+	// mdCache 是 Markdown 渲染结果缓存（M8.2），按消息 ID 键控。
+	// 消息体不可变，而同一消息会因新消息到达 / 已读标记变化 / 窗口
+	// resize 被反复 formatMessage；glamour 渲染每条约几十 µs，缓存后
+	// 这些路径都是 O(1) 查表。总量受消息上限约束，不会无限增长。
+	mdCache map[string]string
 }
 
 // 历史消息行最大宽度；超过则折叠显示，避免撑爆窄终端。
@@ -39,7 +50,12 @@ func newHistoryView(tr Translator) historyView {
 	if tr == nil {
 		tr = nopTranslator{}
 	}
-	return historyView{inner: vp, lines: make([]string, 0, 256), translator: tr}
+	return historyView{
+		inner:      vp,
+		lines:      make([]string, 0, 256),
+		translator: tr,
+		mdCache:    make(map[string]string),
+	}
 }
 
 // t 是 historyView 内部 helper，转发到 translator；M3.10 加。
@@ -170,10 +186,17 @@ func (h *historyView) AtBottom() bool { return h.inner.AtBottom() }
 // AtTop 报告视口是否已滚到顶部，M7.1 上翻分页的触发条件。
 func (h *historyView) AtTop() bool { return h.inner.AtTop() }
 
+// SetReadChecker 注入「某条消息是否已被他人读到」的判定（M8.1）。
+// fn 为 nil 时 formatMessage 不渲染已读标记（旧测试/无状态场景兼容）。
+func (h *historyView) SetReadChecker(fn func(senderUserID string, seq uint64) bool) {
+	h.readMark = fn
+}
+
 // formatMessage 把 StoredMessage 渲染为单行文本。
 //
-// 格式：`[HH:MM:SS] user: body`；M4+ 计划叠加 Markdown 渲染与发送者颜色。
-// 当前阶段重在排版骨架稳定，色彩/高亮留到 M3.4 之后。
+// 格式：`[HH:MM:SS] user: body`。M8.2 起 body 经 mdBody 走 glamour
+// Markdown 渲染（加粗/行内代码/代码块高亮）；纯文本消息渲染结果与
+// 旧版逐字一致（glamour 对无格式段落不加装饰）。
 //
 // M3.10：fallback 字符（"?"、"??:??:??"）走 Translator；en/zh-CN 都用
 // 同一字面字符（不需要翻译），但留出 hook 以备未来扩展。
@@ -186,11 +209,43 @@ func formatMessage(h *historyView, m protocol.StoredMessage) string {
 		who = h.t("tui.history.fallback.user")
 	}
 	ts := formatUnixMilli(m.CreatedAt, h)
-	body := m.Body
-	if len(body) > messageLineWrap {
-		body = body[:messageLineWrap] + "..."
+	body := h.mdBody(m)
+	line := fmt.Sprintf("[%s] %s: %s", ts, who, body)
+	// M8.1：自己发的消息被其它设备读到后追加「✓已读」标记。
+	if h.readMark != nil && h.readMark(m.SenderUserID, m.ServerSeq) {
+		line += " " + readStyle.Render(h.t("tui.history.read"))
 	}
-	return fmt.Sprintf("[%s] %s: %s", ts, who, body)
+	return line
+}
+
+// mdBody 渲染消息体 Markdown（M8.2），结果按消息 ID 缓存。
+//
+// ID 为空（本地预显消息等场景）不缓存，直接渲染。
+// 渲染前先 truncateBody 截断：截断点不会把 ANSI 码算进长度，
+// 与旧版「先截断再展示」的边界保持一致。
+func (h *historyView) mdBody(m protocol.StoredMessage) string {
+	body := truncateBody(m.Body)
+	if m.ID == "" {
+		return mdRender(body)
+	}
+	if h.mdCache == nil {
+		h.mdCache = make(map[string]string)
+	}
+	if s, ok := h.mdCache[m.ID]; ok {
+		return s
+	}
+	s := mdRender(body)
+	h.mdCache[m.ID] = s
+	return s
+}
+
+// truncateBody 把超长消息体截断到 messageLineWrap（保留旧行为：
+// 先截断再渲染）。
+func truncateBody(body string) string {
+	if len(body) > messageLineWrap {
+		return body[:messageLineWrap] + "..."
+	}
+	return body
 }
 
 // formatUnixMilli 把 Unix 毫秒格式化为 HH:MM:SS；零值（未设置）返回 "??:??:??"。

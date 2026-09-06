@@ -45,6 +45,13 @@ type Typer interface {
 	SendTyping(ctx context.Context) error
 }
 
+// Reader 是 Sender 的可选能力（M8.1）：用户已读时向 hub 上发已读回执。
+// 会话绑定 ConversationID，接口只收 ServerSeq；Session 实现该接口，
+// 测试 fake 不实现时 Model 静默禁用（类型断言失败 no-op）。
+type Reader interface {
+	SendRead(ctx context.Context, serverSeq uint64) error
+}
+
 // Session 是 TUI 与 pkg/client 之间的适配层，负责连接的完整生命周期。
 //
 // 职责边界：
@@ -152,6 +159,12 @@ func (s *Session) SendTyping(ctx context.Context) error {
 	return s.cli.SendTyping(ctx)
 }
 
+// SendRead 实现 Reader：上发「已读到 seq」回执（M8.1）。
+// 会话 ID 由 Session 绑定，调用方无需感知。
+func (s *Session) SendRead(ctx context.Context, serverSeq uint64) error {
+	return s.cli.SendRead(ctx, s.convID, serverSeq)
+}
+
 // ConversationID 返回本 Session 绑定的会话 ID。
 func (s *Session) ConversationID() string { return s.convID }
 
@@ -228,4 +241,5 @@ var (
 	_ Sender         = (*Session)(nil)
 	_ HistoryFetcher = (*Session)(nil)
 	_ Typer          = (*Session)(nil)
+	_ Reader         = (*Session)(nil)
 )

@@ -6,7 +6,8 @@
 //
 // 实现分层：
 //   - flag 取运行参数
-//   - memory.Store 消息落库（M2 用内存；M2.5 起换 SQLite）
+//   - -db 选 Store：默认 libSQL 文件库（M5，ADR-013，纯 Go 零 CGO），
+//     -db memory 退回纯内存
 //   - hubstate.Router 协议状态机（与 fake Hub 共用，验证抽象成立）
 //   - ws.Transport 传输层（coder/websocket）
 //
@@ -22,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +31,7 @@ import (
 	"github.com/pandaymx/lanchat/pkg/hubstate"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
+	"github.com/pandaymx/lanchat/pkg/store/libsql"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
 	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
 )
@@ -55,6 +58,7 @@ func main() {
 	addr := flag.String("addr", ":9000", "监听地址，例如 :9000 或 127.0.0.1:9000")
 	path := flag.String("path", wstransport.DefaultPath, "WebSocket upgrade 路径")
 	maxHistory := flag.Int("max-history", 500, "单次 FKHistoryReq 补发的最大条数")
+	dbPath := flag.String("db", "lanchat.db", "持久化库文件路径（libSQL/SQLite 格式）；填 memory 用纯内存不落盘")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
 	logFile := flag.String("log-file", "", "日志文件路径；空走 stderr")
@@ -79,14 +83,35 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	store := memory.New()
+	store, startSeq, err := openStore(ctx, *dbPath)
+	if err != nil {
+		logger.Error("open store failed", "err", err)
+		fmt.Fprintln(os.Stderr, "hub: open store:", err)
+		os.Exit(1)
+	}
+	defer func() { _ = store.Close() }()
+
 	router := hubstate.NewRouter(&hubstate.RouterConfig{
 		Store:           store,
+		StartSeq:        startSeq,
 		MaxHistoryLimit: *maxHistory,
 	})
+	// 持久化模式下把最近消息灌回内存补发缓冲：hist 有界（每会话 5000 条），
+	// 重启后客户端的离线补发仍由内存路径服务（router.handleHistoryReq）。
+	if ls, ok := store.(*libsql.Store); ok {
+		recent, err := ls.RecentMessages(ctx, hubstate.HistoryRestoreLimit)
+		if err != nil {
+			logger.Error("restore history buffer failed", "err", err)
+		} else {
+			for i := range recent {
+				router.History().Append(recent[i])
+			}
+			logger.Info("restored history buffer", "messages", len(recent), "startSeq", startSeq)
+		}
+	}
 	tr := wstransport.New().WithPath(*path)
 
-	logger.Info("starting hub", "version", version, "commit", commit, "addr", *addr, "path", *path)
+	logger.Info("starting hub", "version", version, "commit", commit, "addr", *addr, "path", *path, "db", *dbPath)
 
 	if err := run(ctx, logger, tr, router, *addr); err != nil &&
 		!errors.Is(err, context.Canceled) {
@@ -150,6 +175,31 @@ func probeableAddr(addr string) string {
 		return "127.0.0.1" + addr
 	}
 	return addr
+}
+
+// openStore 按 -db 参数构造 core.Store：
+//   - "memory" 或空串：纯内存 Store（memory），进程退出数据即丢；
+//   - 其余：libSQL 文件库（ADR-013，纯 Go 驱动零 CGO），Open 时幂等
+//     建表；返回的 startSeq 是已落库最大 ServerSeq，作为 Router 重启后
+//     的序号起点，避免新消息与历史撞号。
+func openStore(ctx context.Context, dbPath string) (core.Store, uint64, error) {
+	if dbPath == "" || dbPath == "memory" {
+		return memory.New(), 0, nil
+	}
+	dsn := dbPath
+	if !strings.HasPrefix(dsn, "file:") {
+		dsn = "file:" + dsn
+	}
+	s, err := libsql.Open(ctx, dsn)
+	if err != nil {
+		return nil, 0, err
+	}
+	startSeq, err := s.MaxSeq(ctx)
+	if err != nil {
+		_ = s.Close()
+		return nil, 0, err
+	}
+	return s, startSeq, nil
 }
 
 // waitForListener 用 TCP Dial 探测端口直到连通或超时。

@@ -36,6 +36,11 @@ type History struct {
 // 这里定 5000 是给压力测试和异常长会话留的余量，正常场景远用不到。
 const maxHistoryPerConv = 5000
 
+// HistoryRestoreLimit 是 Hub 重启后从持久化 Store 灌回内存补发缓冲的
+// 条数上限，与 maxHistoryPerConv（单会话缓冲容量）对齐——恢复量超过
+// 缓冲容量没有意义，超出部分仍在 Store 里，客户端可整页刷新拉全量。
+const HistoryRestoreLimit = maxHistoryPerConv
+
 // NewHistory 构造一个空的补发缓冲。
 func NewHistory() *History {
 	return &History{buckets: make(map[string][]protocol.StoredMessage)}

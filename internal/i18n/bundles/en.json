@@ -19,5 +19,8 @@
   "web.messages.empty": "(no messages yet)",
   "web.history.load_more": "Load earlier messages",
   "web.state.disconnected": "Disconnected — reconnecting automatically…",
-  "web.history.error": "Failed to load history; the view may be incomplete"
+  "web.history.error": "Failed to load history; the view may be incomplete",
+  "web.peers.title": "Online",
+  "web.peers.empty": "(no one online yet)",
+  "web.peers.you": "(you)"
 }

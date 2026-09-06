@@ -76,6 +76,10 @@ type Client interface {
 	// 结果已写入 client 本地 Store，但不发布 EventMessage——分页片段
 	// 由本端点直接渲染返回，避免经 SSE 通道重复追加。
 	FetchHistory(ctx context.Context, convID string, after, before uint64, limit int) (protocol.HistoryResponse, error)
+	// Peers 返回当前在线成员名单快照（M7.2）。presence 不持久化、不随
+	// EventBus 重放，首屏成员列表只能从 Client 的连接级状态取；SSE 推送
+	// 的 presence 帧也以它为数据源渲染全量列表。
+	Peers() []protocol.Presence
 	Done() <-chan struct{}
 	// Close 释放底层连接（Manager 回收 Session 时调，顺序先于 store.Close）。
 	Close() error
@@ -177,6 +181,7 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 			Version: h.cfg.Version,
 		},
 		Messages:  views,
+		Peers:     templates.NewPeerViews(sess.cli.Peers(), sess.device),
 		Connected: sess.alive(),
 		Tr:        h.cfg.Translator,
 		// 首屏拉满 limit 即认为可能还有更早的消息（store 是内存视图，

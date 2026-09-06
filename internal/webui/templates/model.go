@@ -10,6 +10,8 @@ package templates
 import (
 	"strconv"
 	"time"
+
+	"github.com/pandaymx/lanchat/pkg/protocol"
 )
 
 // PageMeta 是 base 模板需要的公共 head 信息。
@@ -56,6 +58,7 @@ func (p PageMeta) Who() string {
 type HomeData struct {
 	Meta      PageMeta
 	Messages  []MessageView
+	Peers     []PeerView
 	Connected bool
 	Error     string
 	HasMore   bool
@@ -110,4 +113,29 @@ func NewMessageView(id string, seq int64, sender, body string, atMs int64, self 
 		AtText:     FormatTime(atMs),
 		Self:       self,
 	}
+}
+
+// PeerView 是在线成员列表中一行的视图模型（M7.2）。
+//
+// 名单只含在线设备（offline 在 client 层已剔除）；Self 标记当前会话
+// 自己的设备，模板据此渲染 "(you)"。
+type PeerView struct {
+	User   string
+	Device string
+	Self   bool
+}
+
+// NewPeerViews 把协议 Presence 名单转成视图模型，按传入顺序渲染
+// （client.Peers() 已按 DeviceID 排序，结果稳定）。
+// selfDevice 非空时匹配到的条目标记 Self。
+func NewPeerViews(peers []protocol.Presence, selfDevice string) []PeerView {
+	out := make([]PeerView, 0, len(peers))
+	for _, p := range peers {
+		out = append(out, PeerView{
+			User:   p.UserID,
+			Device: p.DeviceID,
+			Self:   selfDevice != "" && p.DeviceID == selfDevice,
+		})
+	}
+	return out
 }

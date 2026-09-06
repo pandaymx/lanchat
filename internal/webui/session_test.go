@@ -66,6 +66,9 @@ type stubClient struct {
 	fetchErr    error
 	fetchBefore uint64
 
+	// peers 是 Peers() 快照的预置返回（M7.2 成员列表）。
+	peers []protocol.Presence
+
 	events chan core.Event
 	done   chan struct{}
 
@@ -127,6 +130,15 @@ func (s *stubClient) lastFetchBefore() uint64 {
 	return s.fetchBefore
 }
 
+// Peers 返回预置的在线成员快照（M7.2）。
+func (s *stubClient) Peers() []protocol.Presence {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]protocol.Presence, len(s.peers))
+	copy(out, s.peers)
+	return out
+}
+
 func (s *stubClient) Done() <-chan struct{} { return s.done }
 
 // Close 记录关闭次数并幂等关闭 done（Manager 回收 Session 时调用）。
@@ -179,6 +191,9 @@ type stubDialer struct {
 	// fetchResp/fetchErr 复制给每个新 client 的 FetchHistory 预置返回。
 	fetchResp protocol.HistoryResponse
 	fetchErr  error
+
+	// peers 复制给每个新 client 的 Peers() 预置返回（M7.2）。
+	peers []protocol.Presence
 }
 
 func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store, error) {
@@ -194,6 +209,7 @@ func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store,
 	cli.sendErr = d.sendErr
 	cli.fetchResp = d.fetchResp
 	cli.fetchErr = d.fetchErr
+	cli.peers = d.peers
 	d.clients = append(d.clients, cli)
 	return cli, memory.New(), nil
 }

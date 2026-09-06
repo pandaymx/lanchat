@@ -23,6 +23,12 @@ templ Home(data HomeData) {
 		<div id="conn-state" hx-sse="swap:state" hx-swap="innerHTML">
 			@ConnStatus(data.Tr, data.Connected)
 		</div>
+		// 在线成员条：SSE presence 帧整段 swap（M7.2）。
+		// 名单变化（上线/下线/roster）都由 hub 广播驱动，片段全量重渲，
+		// 浏览器侧不做增量合并；首屏数据来自 client 连接级 presence 状态。
+		<div id="peers" hx-sse="swap:presence" hx-swap="innerHTML">
+			@Peers(data.Tr, data.Peers)
+		</div>
 		if data.Error != "" {
 			<div class="banner">{ data.Error }</div>
 		}
@@ -63,4 +69,26 @@ templ ConnStatus(tr Translator, connected bool) {
 	if !connected {
 		<div class="banner offline">{ T(tr, "web.state.disconnected") }</div>
 	}
+}
+
+// Peers 是在线成员条片段（M7.2）：首屏服务端渲染，SSE presence 帧到达后
+// 整段 innerHTML swap 进 #peers。每次全量重渲——成员列表体量小（局域网
+// 场景个位到几十），全量 swap 比客户端增量合并简单且不易出状态错乱。
+templ Peers(tr Translator, peers []PeerView) {
+	<div class="peers-bar">
+		<span class="peers-title">{ T(tr, "web.peers.title") }</span>
+		if len(peers) == 0 {
+			<span class="peers-empty">{ T(tr, "web.peers.empty") }</span>
+		} else {
+			for _, p := range peers {
+				<span class="peer-chip">
+					<span class="dot online"></span>
+					<span class="peer-name">{ p.User }</span>
+					if p.Self {
+						<span class="peer-you">{ T(tr, "web.peers.you") }</span>
+					}
+				</span>
+			}
+		}
+	</div>
 }

@@ -19,5 +19,8 @@
   "web.messages.empty": "（暂无消息）",
   "web.history.load_more": "加载更早消息",
   "web.state.disconnected": "连接已断开，正在自动重连…",
-  "web.history.error": "历史加载失败，显示可能不完整"
+  "web.history.error": "历史加载失败，显示可能不完整",
+  "web.peers.title": "在线成员",
+  "web.peers.empty": "（暂无在线成员）",
+  "web.peers.you": "（你）"
 }

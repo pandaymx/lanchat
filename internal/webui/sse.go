@@ -200,20 +200,43 @@ func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
 			s.logger.Error("render state frame failed", "err", err)
 			return 0, nil, false
 		}
-		var sb strings.Builder
-		sb.WriteString("event: state\n")
-		for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
-			sb.WriteString("data: ")
-			sb.WriteString(line)
-			sb.WriteString("\n")
+		return 0, sseDataFrame("state", buf.Bytes()), true
+
+	case core.EventPresence:
+		// M7.2：成员上下线。事件到达时 client 内部名单已更新（dispatch
+		// 先 applyPresence 后发布事件），取全量快照整段重渲 #peers。
+		peers := templates.NewPeerViews(s.cli.Peers(), s.device)
+		var buf bytes.Buffer
+		if err := templates.Peers(s.tr, peers).Render(s.ctx, &buf); err != nil {
+			s.logger.Error("render presence frame failed", "err", err)
+			return 0, nil, false
 		}
-		sb.WriteString("\n")
-		return 0, []byte(sb.String()), true
+		return 0, sseDataFrame("presence", buf.Bytes()), true
 
 	default:
-		// EventRead / EventPresence / EventTyping：M4 不渲染。
+		// EventRead / EventTyping：M7 仍不渲染。
 		return 0, nil, false
 	}
+}
+
+// sseDataFrame 把渲染好的 HTML 片段包成具名 SSE 事件帧。
+//
+// templ 产物含换行（消息体/模板缩进都可能产生），整块塞一行会断帧；
+// 按 SSE 规范逐行加 "data: " 前缀，浏览器把多个 data 行用 \n 拼回原文。
+// 不带 id 行——state/presence 是瞬时状态帧，无需重连续传（重连后首屏
+// 服务端渲染 + client 快照自然是最新的）。
+func sseDataFrame(event string, html []byte) []byte {
+	var sb strings.Builder
+	sb.WriteString("event: ")
+	sb.WriteString(event)
+	sb.WriteString("\n")
+	for _, line := range strings.Split(strings.TrimRight(string(html), "\n"), "\n") {
+		sb.WriteString("data: ")
+		sb.WriteString(line)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
+	return []byte(sb.String())
 }
 
 // newView 把协议消息转成视图模型。Self 以 SenderUser 与 session 身份比对。

@@ -443,6 +443,12 @@ func TestWebI18N_AllChromeKeysUsed(t *testing.T) {
 		t.Fatalf("render history page: %v", err)
 	}
 
+	// 3.5) 成员条带自己 → peers.title + peers.you（M7.2）。
+	sb.Reset()
+	if err := templates.Peers(tr, []templates.PeerView{{User: "alice", Device: "d1", Self: true}}).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render peers: %v", err)
+	}
+
 	// 4) 历史错误 banner → web.history.error（走 handler 真实路径）。
 	mgr := newTestManager(t, &stubDialer{histErr: context.DeadlineExceeded})
 	h := NewHandler(Config{Version: "test", Translator: tr}, mgr)
@@ -456,6 +462,9 @@ func TestWebI18N_AllChromeKeysUsed(t *testing.T) {
 		"web.history.load_more":    false,
 		"web.state.disconnected":   false,
 		"web.history.error":        false,
+		"web.peers.title":          false,
+		"web.peers.empty":          false,
+		"web.peers.you":            false,
 	}
 	for _, k := range tr.keys() {
 		if _, ok := want[k]; ok {
@@ -1198,4 +1207,63 @@ func TestEndToEnd_MultipleTabsShareSession(t *testing.T) {
 	waitMessage(chA1, "alice tab1")
 	waitMessage(chA2, "alice tab2")
 	waitMessage(chB, "bob tab1")
+}
+
+// TestHandleHome_RendersPeers 验证首屏服务端渲染在线成员条（M7.2）：
+// stubClient 预置的 peers 快照出现在 #peers 区块里。
+func TestHandleHome_RendersPeers(t *testing.T) {
+	d := &stubDialer{
+		peers: []protocol.Presence{
+			{UserID: "alice", DeviceID: "dev-alice", Online: true},
+			{UserID: "carol", DeviceID: "dev-carol", Online: true},
+		},
+	}
+	h, _ := newTestHandler(t, d)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.handleHome(rec, req)
+
+	body := rec.Body.String()
+	for _, want := range []string{`id="peers"`, "peer-chip", "alice", "carol"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("home page missing %q in peers bar", want)
+		}
+	}
+}
+
+// TestHandleEvents_PresenceFrame 验证 M7.2：EventPresence 被推成 presence
+// SSE 帧，片段以 client.Peers() 快照全量重渲。
+func TestHandleEvents_PresenceFrame(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+
+	reader := startTestSSE(t, h)
+	if _, err := readSSEFrame(reader); err != nil { // 跳过 ready 注释帧
+		t.Fatalf("read ready frame: %v", err)
+	}
+
+	cli := d.client(0)
+	cli.mu.Lock()
+	cli.peers = []protocol.Presence{
+		{UserID: "alice", DeviceID: "dev-alice", Online: true},
+		{UserID: "carol", DeviceID: "dev-carol", Online: true},
+	}
+	cli.mu.Unlock()
+
+	cli.events <- core.Event{
+		Kind:     core.EventPresence,
+		Presence: &protocol.Presence{UserID: "carol", DeviceID: "dev-carol", Online: true},
+	}
+
+	frame := readFrameTimeout(t, reader, 2*time.Second)
+	for _, want := range []string{
+		"event: presence\n",
+		"alice",
+		"carol",
+		"peer-chip",
+	} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("presence frame missing %q\ngot: %q", want, frame)
+		}
+	}
 }

@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/pandaymx/lanchat/internal/webui/templates"
+	"github.com/pandaymx/lanchat/pkg/client"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/protocol"
+	"github.com/pandaymx/lanchat/pkg/store/memory"
+	"github.com/pandaymx/lanchat/pkg/transport/fake"
 )
 
 // ---- 测试替身 -------------------------------------------------------------
@@ -521,4 +524,107 @@ func TestHeartbeatInterval_Sane(t *testing.T) {
 	if heartbeatInterval < 10*time.Second || heartbeatInterval > 60*time.Second {
 		t.Fatalf("heartbeatInterval = %v, want within [10s, 60s]", heartbeatInterval)
 	}
+}
+
+// ---- 端到端（fake hub + 两 web 实例）---------------------------------------
+
+// TestEndToEnd_TwoWebInstancesExchangeMessages 走完整链路验证 M4.3 验收：
+//
+//	fake hub ← DialClient(alice/web-a) + DialClient(bob/web-b)
+//	web-a 的 SSE 流 ↔ web-a 的 EventBus（hub 广播回环含发送方）
+//	POST /messages → Client.SendMessage → hub 广播 → 双方 SSE 都收到
+//
+// hub 用 fake 实现（Router 协议语义与真 WebSocket Hub 同一份代码），
+// 真网络的对应回归由 internal/integration 覆盖。
+func TestEndToEnd_TwoWebInstancesExchangeMessages(t *testing.T) {
+	ftr := fake.New()
+	defer ftr.Close()
+	hub := ftr.NewHub("test")
+	hub.AttachStore(memory.New())
+
+	dial := func(user, device string) (*client.Client, core.Store) {
+		t.Helper()
+		cli, store, err := DialClient(t.Context(), DialOptions{
+			Transport: ftr,
+			HubURL:    "memory://test",
+			User:      user,
+			Device:    device,
+		})
+		if err != nil {
+			t.Fatalf("dial %s: %v", user, err)
+		}
+		t.Cleanup(func() {
+			_ = cli.Close()
+			_ = store.Close()
+		})
+		return cli, store
+	}
+
+	cliA, _ := dial("alice", "web-a")
+	cliB, _ := dial("bob", "web-b")
+
+	newSrv := func(user, device string, cli Client) *httptest.Server {
+		t.Helper()
+		h := NewHandler(Config{User: user, Device: device, ConvID: "lobby", Version: "test"}, cli)
+		mux := http.NewServeMux()
+		h.Routes(mux)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	srvA := newSrv("alice", "web-a", cliA)
+	srvB := newSrv("bob", "web-b", cliB)
+
+	// 双方各开一条 SSE 流，goroutine 把帧送进 channel（主 goroutine 消费）。
+	readLoop := func(reader *bufio.Reader) chan string {
+		ch := make(chan string, 32)
+		go func() {
+			defer close(ch)
+			for {
+				frame, err := readSSEFrame(reader)
+				if err != nil {
+					return
+				}
+				select {
+				case ch <- frame:
+				case <-t.Context().Done():
+					return
+				}
+			}
+		}()
+		return ch
+	}
+	chA := readLoop(startSSE(t, srvA))
+	chB := readLoop(startSSE(t, srvB))
+
+	// alice 发一条消息。
+	resp, err := srvA.Client().Post(srvA.URL+"/messages", "application/x-www-form-urlencoded", strings.NewReader("body=hello from alice"))
+	if err != nil {
+		t.Fatalf("POST /messages: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST /messages status = %d, want 204", resp.StatusCode)
+	}
+
+	// 断言 A、B 的 SSE 流在 3s 内都收到 message 帧（hub 广播含发送方回环）。
+	waitMessage := func(ch chan string, who string) {
+		t.Helper()
+		deadline := time.After(3 * time.Second)
+		for {
+			select {
+			case frame, ok := <-ch:
+				if !ok {
+					t.Fatalf("%s: sse stream ended before message frame", who)
+				}
+				if strings.Contains(frame, "event: message") && strings.Contains(frame, "hello from alice") {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("%s: no message frame within 3s", who)
+			}
+		}
+	}
+	waitMessage(chA, "alice/web-a")
+	waitMessage(chB, "bob/web-b")
 }

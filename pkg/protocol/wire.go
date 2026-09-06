@@ -143,6 +143,16 @@ type Presence struct {
 	Online   bool   `json:"on"`
 }
 
+// Typing 是「正在输入」提示（M7.3）。
+//
+// 客户端上发时负载为空（身份由 Hub 按连接注册表盖戳，客户端无权声明
+// 他人身份）；Hub 广播时填上发送者的 UserID/DeviceID。瞬时状态、
+// 不持久化、不回显发送者；接收方按最后收到时间自行过期（约 4s）。
+type Typing struct {
+	UserID   string `json:"u"`
+	DeviceID string `json:"d,omitempty"`
+}
+
 // ErrorPayload 是 FKError 帧的内容，描述为什么关连接或某次请求失败。
 type ErrorPayload struct {
 	Code    ErrorCode `json:"code"`

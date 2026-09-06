@@ -102,6 +102,7 @@ type Event struct {
 	Message        *protocol.StoredMessage // 当 Kind == EventMessage
 	Read           *protocol.ReadCursor    // 当 Kind == EventRead
 	Presence       *protocol.Presence      // 当 Kind == EventPresence
+	Typing         *protocol.Typing        // 当 Kind == EventTyping
 	State          *StateInfo              // 当 Kind == EventState
 }
 

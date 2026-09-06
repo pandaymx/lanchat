@@ -41,7 +41,7 @@
 | M4.4 | 多 Tab Session | cookie 签发 + Manager.GetOrCreate/Release + Session.fanout 多 SSEWriter 订阅 | ✅ `a792f82` → `e50e221` → `97c7626` |
 | M4.5 | 输入体验 | Enter 提交 / Shift+Enter 换行（输入法组词保护）、断连 banner（SSE state 帧 swap）、历史「加载更多」（proto Before + hub Query + client.FetchHistory 静默分页 + /history 端点） | ✅ `3b1bd56` → `8d8291e` → `1a09ec6` → `a5d1cc9` → `07d4dbe` → `c1c1ff8` |
 | M4.6 | 自动重连 | EventSource 重连 + Last-Event-ID 断线补发（catchUp 补写 + sseChunk 带 seq + writer skipSeq 幂等去重） | ✅ `6c7ae15` |
-| M4.7 | Web i18n | 复用 internal/i18n bundle + Translator 模式 | ⬜ |
+| M4.7 | Web i18n | 复用 internal/i18n bundle：templates.Translator 窄接口 + T() nil 兜底，Config/ManagerConfig 注入，cmd/web -lang/-lang-list flag | ✅ `126f541` |
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 
@@ -333,3 +333,7 @@ log.Info(...)  // 内部走 slog.Default().Log(...)
 - `internal/i18n`：17 个测试覆盖 Load / T / Tf / ForLocale / LocateSet / DetectLocale（BCP 47 简化）
 - `pkg/tui`：`fakeTranslator` + `called/calledCount/SetLocale` 测试 14 key 都被命中文案
 - `cmd/tui`：`TestBundlesEndToEnd_ZHCN` 走完整链路（embedded bundle + DetectLocale → 中文返回）
+- `internal/webui`：`testTranslator`（zh-cn bundle）注入 Config/Manager，现有中文断言不动；
+  `fakeTranslator` 收集渲染期 key，`TestWebI18N_AllChromeKeysUsed` 断言 6 个 `web.*` key 全命中
+- agents-check 钩子（`.agents/tools/check.sh`）：en/zh-cn key 集合一致 + 引用 key 必须存在，
+  引用扫描覆盖 `pkg/tui`（`.t("...")`）与 `internal/webui`（`.go` / `.templ` 里 `"web.*"`）

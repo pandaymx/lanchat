@@ -82,6 +82,10 @@ func Load(fsys fs.FS, locales []string, fallback string) (*Bundle, error) {
 
 	msgs := make(map[string]map[string]string, len(locales))
 	for _, loc := range locales {
+		// locale 统一小写化：DetectLocale / normalizeTag 始终返回小写
+		// （zh_CN.UTF-8 → zh-cn），bundles 文件名也用小写 .json，避免
+		// 出现 b.msgs["zh-CN"] 但调用方拿 "zh-cn" 时静默走 en fallback。
+		key := strings.ToLower(loc)
 		data, err := fs.ReadFile(fsys, joinBundlesPath(loc+".json"))
 		if err != nil {
 			return nil, fmt.Errorf("i18n: load %s.json: %w", loc, err)
@@ -90,7 +94,7 @@ func Load(fsys fs.FS, locales []string, fallback string) (*Bundle, error) {
 		if err := json.Unmarshal(data, &m); err != nil {
 			return nil, fmt.Errorf("i18n: parse %s.json: %w", loc, err)
 		}
-		msgs[loc] = m
+		msgs[key] = m
 	}
 	if _, ok := msgs[fallback]; !ok {
 		return nil, fmt.Errorf("i18n: fallback locale %q not in loaded locales", fallback)
@@ -124,7 +128,8 @@ func (b *Bundle) T(locale, key string) string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
-	if msgs, ok := b.msgs[locale]; ok {
+	loc := strings.ToLower(locale) // 见 Load：bundle 内部统一小写
+	if msgs, ok := b.msgs[loc]; ok {
 		if msg, ok := msgs[key]; ok {
 			return msg
 		}
@@ -151,7 +156,8 @@ func (b *Bundle) Tf(locale, key string, args FormatArgs) string {
 	defer b.mu.RUnlock()
 
 	var msg string
-	if msgs, ok := b.msgs[locale]; ok {
+	loc := strings.ToLower(locale)
+	if msgs, ok := b.msgs[loc]; ok {
 		msg = msgs[key]
 	}
 	if msg == "" {

@@ -65,6 +65,11 @@ type Model struct {
 
 	// M3.6：用户没有跟随底部时新消息的计数；MarkRead 时清零。
 	unread int
+
+	// M7.1：上翻分页状态。loadingOlder 防止重复在途请求；olderHasMore
+	// 由 hub 响应的 HasMore 维护，false 后不再触发（到头）。
+	loadingOlder bool
+	olderHasMore bool
 }
 
 // New 构造一个未连接、待 Init 的 Model。
@@ -80,15 +85,16 @@ func New(cfg Config) *Model {
 		cfg.Translator = defaultENTranslator{}
 	}
 	return &Model{
-		user:       cfg.User,
-		device:     cfg.Device,
-		hubURL:     cfg.HubURL,
-		maxHist:    cfg.MaxHist,
-		inbox:      make(chan tea.Msg, 64),
-		sender:     cfg.Sender,
-		translator: cfg.Translator,
-		input:      newTextInput(cfg.Translator),
-		history:    newHistoryView(cfg.Translator),
+		user:         cfg.User,
+		device:       cfg.Device,
+		hubURL:       cfg.HubURL,
+		maxHist:      cfg.MaxHist,
+		inbox:        make(chan tea.Msg, 64),
+		sender:       cfg.Sender,
+		translator:   cfg.Translator,
+		input:        newTextInput(cfg.Translator),
+		history:      newHistoryView(cfg.Translator),
+		olderHasMore: true,
 	}
 }
 
@@ -125,6 +131,12 @@ func listenCmd(inbox <-chan tea.Msg) tea.Cmd {
 // 这里是 UI 层的兜底，避免 ui 卡住看不到报错。
 const sendTimeout = 5 * time.Second
 
+// fetchOlderTimeout 是上翻分页请求的硬性上限（M7.1）。
+const fetchOlderTimeout = 10 * time.Second
+
+// fetchOlderLimit 是单次上翻拉取的条数，与 web 端「加载更多」同量级。
+const fetchOlderLimit = 50
+
 // sendCmd 调 Sender.Send 把文本发到 hub，并把结果回包成 Msg 继续事件循环。
 //
 // 成功 → 返回 sentMsg（Update 接着再 listenCmd，把循环续上）
@@ -146,6 +158,46 @@ func sendCmd(s Sender, text string, inbox chan<- tea.Msg) tea.Cmd {
 		}
 		return newSentMsg(text)
 	}
+}
+
+// fetchOlderCmd 调 HistoryFetcher 拉取 before 之前的一页历史（M7.1）。
+//
+// 与 sendCmd 不同，结果直接作为 tea.Msg 返回给 Update（不经 inbox）：
+// inbox 的 listenCmd 循环独立续期，分页响应是一次性的，没必要占 inbox 槽位。
+func fetchOlderCmd(f HistoryFetcher, before uint64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), fetchOlderTimeout)
+		defer cancel()
+		msgs, hasMore, err := f.FetchHistory(ctx, before, fetchOlderLimit)
+		if err != nil {
+			tuiLog.Warn("FetchHistory failed", "before", before, "err", err)
+		}
+		return olderMessagesMsg{msgs: msgs, hasMore: hasMore, err: err}
+	}
+}
+
+// maybeFetchOlder 在视口已到顶部且条件满足时发起上翻分页；否则返回 nil。
+//
+// 条件：无在途请求、hub 仍报告 HasMore、本地已有消息且最早一条带 seq、
+// sender 实现 HistoryFetcher。
+func (m *Model) maybeFetchOlder() tea.Cmd {
+	if m.loadingOlder || !m.olderHasMore || len(m.messages) == 0 {
+		return nil
+	}
+	// 只在视口已经贴顶时才拉：用户还在中段翻页时提前请求纯属浪费。
+	if !m.history.AtTop() {
+		return nil
+	}
+	f, ok := m.sender.(HistoryFetcher)
+	if !ok {
+		return nil
+	}
+	before := m.messages[0].ServerSeq
+	if before == 0 {
+		return nil
+	}
+	m.loadingOlder = true
+	return fetchOlderCmd(f, before)
 }
 
 // Update 处理键盘 / WindowSizeMsg / 外部事件 / 错误事件 / 退出事件 / 提交事件。
@@ -204,7 +256,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyPgUp:
 			m.history.PageUp()
-			return m, nil
+			// M7.1：翻到视口顶部时顺手拉更早的历史（有在途请求/已到头则 no-op）。
+			return m, m.maybeFetchOlder()
 		case tea.KeyPgDown:
 			m.history.PageDown()
 			if m.history.AtBottom() {
@@ -257,6 +310,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// sendCmd 成功回执。msg.text 暂不入状态，仅续链 listenCmd。
 		_ = msg.text
 		return m, listenCmd(m.inbox)
+
+	case olderMessagesMsg:
+		// M7.1：上翻分页响应。本 Msg 来自 fetchOlderCmd 而非 inbox，
+		// listenCmd 循环仍挂着，这里不续链。
+		m.loadingOlder = false
+		if msg.err != nil {
+			tuiLog.Warn("fetch older history failed", "err", msg.err)
+			m.lastError = msg.err
+			m.errExpireAt = time.Now().Add(errExpireDur)
+			return m, nil
+		}
+		m.olderHasMore = msg.hasMore
+		if len(msg.msgs) > 0 {
+			m.prependMessages(msg.msgs)
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -416,6 +485,32 @@ func (m *Model) appendMessage(msg protocol.StoredMessage) {
 		}
 		m.messages = append([]protocol.StoredMessage(nil), m.messages[drop:]...)
 	}
+}
+
+// prependMessages 把上翻拉回的更早消息合并到 m.messages 头部（M7.1）。
+//
+// hub 返回升序；按消息 ID 去重（catch-up 与分页窗口可能重叠），新内容
+// 交 historyView.PrependMessages 渲染并做 YOffset 视觉锚点补偿。
+func (m *Model) prependMessages(older []protocol.StoredMessage) {
+	have := make(map[string]struct{}, len(m.messages))
+	for _, msg := range m.messages {
+		have[msg.ID] = struct{}{}
+	}
+	add := make([]protocol.StoredMessage, 0, len(older))
+	for _, msg := range older {
+		if _, dup := have[msg.ID]; dup {
+			continue
+		}
+		add = append(add, msg)
+	}
+	if len(add) == 0 {
+		return
+	}
+	merged := make([]protocol.StoredMessage, 0, len(add)+len(m.messages))
+	merged = append(merged, add...)
+	merged = append(merged, m.messages...)
+	m.messages = merged
+	m.history.PrependMessages(add)
 }
 
 // upsertPresence 按 DeviceID upsert 在线设备。

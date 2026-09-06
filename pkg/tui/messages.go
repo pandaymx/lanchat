@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/protocol"
 )
 
 // eventMsg 把 core.Event 包成 tea.Msg，让 client 的事件总线消息
@@ -50,6 +51,14 @@ type sentMsg struct {
 // 程序内 Cmd 不可取消，schedule 完即 fire——所以是「窗口最迟 5s 内消失」
 // 语义，不会无限延展）。
 type errExpireMsg struct{}
+
+// olderMessagesMsg 是上翻分页（M7.1）的响应：fetchOlderCmd 调
+// HistoryFetcher.FetchHistory 拿回更早的消息后投递给 Update。
+type olderMessagesMsg struct {
+	msgs    []protocol.StoredMessage
+	hasMore bool
+	err     error
+}
 
 func newErrExpireMsg() errExpireMsg { return errExpireMsg{} }
 

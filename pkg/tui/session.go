@@ -32,6 +32,13 @@ type Sender interface {
 	Send(ctx context.Context, body string) error
 }
 
+// HistoryFetcher 是 Sender 的可选能力（M7.1）：用户上翻到顶时向 hub
+// 拉取更早的历史。Session 实现该接口；测试 fake 不实现时 Model 静默
+// 禁用分页（类型断言失败即 no-op）。
+type HistoryFetcher interface {
+	FetchHistory(ctx context.Context, before uint64, limit int) ([]protocol.StoredMessage, bool, error)
+}
+
 // Session 是 TUI 与 pkg/client 之间的适配层，负责连接的完整生命周期。
 //
 // 职责边界：
@@ -119,6 +126,18 @@ func Dial(ctx context.Context, opts DialOptions) (*Session, error) {
 // 消息发出后不等回执 —— Hub 会通过 FKDeliver 回送，届时由 Pump 反映到 UI。
 func (s *Session) Send(ctx context.Context, body string) error {
 	return s.cli.SendMessage(ctx, s.convID, body)
+}
+
+// FetchHistory 向 hub 请求 before 之前的一页历史（M7.1 上翻分页）。
+//
+// 返回消息按 server_seq 升序；hasMore=false 表示更早没有了。
+// 响应消息同时由 client 落本地 Store（与 web 端 /history 同路径）。
+func (s *Session) FetchHistory(ctx context.Context, before uint64, limit int) ([]protocol.StoredMessage, bool, error) {
+	resp, err := s.cli.FetchHistory(ctx, s.convID, 0, before, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	return resp.Messages, resp.HasMore, nil
 }
 
 // ConversationID 返回本 Session 绑定的会话 ID。

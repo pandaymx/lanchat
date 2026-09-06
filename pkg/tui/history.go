@@ -102,6 +102,24 @@ func (h *historyView) AppendMessage(msg protocol.StoredMessage) {
 	h.applyLines()
 }
 
+// PrependMessages 把更早的消息渲染后插到内容最前（M7.1 上翻分页），
+// 并保持视觉锚点：原视口首行在插入后下移 N 行，YOffset 同步补偿 N，
+// 用户不会因为加载而跳屏。返回实际新增的行数。
+func (h *historyView) PrependMessages(msgs []protocol.StoredMessage) int {
+	if len(msgs) == 0 {
+		return 0
+	}
+	prevOffset := h.inner.YOffset()
+	newLines := make([]string, 0, len(msgs))
+	for i := range msgs {
+		newLines = append(newLines, formatMessage(h, msgs[i]))
+	}
+	h.lines = append(newLines, h.lines...)
+	h.applyLines()
+	h.inner.SetYOffset(prevOffset + len(newLines))
+	return len(newLines)
+}
+
 // applyLines 把 h.lines 镜像给底层 viewport，统一 SetContentLines 的入口。
 func (h *historyView) applyLines() {
 	h.inner.SetContentLines(h.lines)
@@ -148,6 +166,9 @@ func (h *historyView) Height() int { return h.inner.Height() }
 // AtBottom 报告视口是否已滚到底部，给 M3.6 的 unread 计数判断用：
 // 新消息到达时若用户在底部就跟着滚下去；否则只累加 unread。
 func (h *historyView) AtBottom() bool { return h.inner.AtBottom() }
+
+// AtTop 报告视口是否已滚到顶部，M7.1 上翻分页的触发条件。
+func (h *historyView) AtTop() bool { return h.inner.AtTop() }
 
 // formatMessage 把 StoredMessage 渲染为单行文本。
 //

@@ -292,7 +292,7 @@ log.Info(...)  // 内部走 slog.Default().Log(...)
 - ❌ log file 滚动（lumberjack） → 部署侧 logrotate
 - ❌ 结构化 trace/span 字段 → 留接口位等 OpenTelemetry
 - ❌ request_id 串联 → 等真有多步调用场景再加
-- ❌ 接 Loki/CloudWatch → M5 部署阶段
+- ❌ 接 Loki/CloudWatch → M6 部署阶段
 
 ## 12. 不确定时
 

@@ -77,7 +77,13 @@ func startSSE(t *testing.T, srv *httptest.Server) *bufio.Reader {
 // 会等活跃连接直到测试超时。因此 srv.Close 必须先注册（最后执行）。
 // cookie jar 保证 GET / 签发的 lanchat_session 在 /events 请求上带上，
 // 两条请求落到同一份 Session（多 tab 共享的测试前提）。
-func startTestSSE(t *testing.T, h *Handler) *bufio.Reader {
+// startTestServer 起挂好 h 路由的 server：配 cookie jar 并先 GET / 种
+// cookie（触发惰性拨号建 session）。后续所有请求（含多条 /events）共用
+// 同一 jar → 同一 cookie → 同一 Session，这是多 tab 测试的前提。
+//
+// 清理顺序坑：t.Cleanup 逆序执行，srv.Close 先注册（最后执行），
+// SSE 的 cancel / body.Close 后注册（先执行），互等死锁见 startSSE 注释。
+func startTestServer(t *testing.T, h *Handler) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 	h.Routes(mux)
@@ -97,8 +103,79 @@ func startTestSSE(t *testing.T, h *Handler) *bufio.Reader {
 		t.Fatalf("seed GET /: %v", err)
 	}
 	_ = resp.Body.Close()
+	return srv
+}
 
-	return startSSE(t, srv)
+// startTestSSE 起 server 并打开一条 /events 流。
+func startTestSSE(t *testing.T, h *Handler) *bufio.Reader {
+	t.Helper()
+	return startSSE(t, startTestServer(t, h))
+}
+
+// openSSEWithCtx 用独立 ctx 打开 /events 流（测试取消 ctx 模拟关 tab）。
+// 返回 reader 与响应体；调用方负责取消 ctx / 关闭 body。
+func openSSEWithCtx(t *testing.T, srv *httptest.Server) (context.CancelFunc, *bufio.Reader) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/events", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Errorf("Content-Type = %q, want text/event-stream", ct)
+	}
+	// 清理顺序：body.Close 先于 srv.Close（Cleanup 逆序，srv.Close 已先注册）。
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return cancel, bufio.NewReader(resp.Body)
+}
+
+// readFrameTimeout 在 timeout 内读一条完整 SSE 帧，超时即失败。
+func readFrameTimeout(t *testing.T, r *bufio.Reader, timeout time.Duration) string {
+	t.Helper()
+	type frameResult struct {
+		frame string
+		err   error
+	}
+	ch := make(chan frameResult, 1)
+	go func() {
+		f, err := readSSEFrame(r)
+		ch <- frameResult{frame: f, err: err}
+	}()
+	select {
+	case res := <-ch:
+		if res.err != nil {
+			t.Fatalf("read sse frame: %v", res.err)
+		}
+		return res.frame
+	case <-time.After(timeout):
+		t.Fatalf("no sse frame within %v", timeout)
+	}
+	return ""
+}
+
+// skipReadyFrame 跳过首帧 `: lanchat sse ready` 注释。
+func skipReadyFrame(t *testing.T, r *bufio.Reader) {
+	t.Helper()
+	frame := readFrameTimeout(t, r, 2*time.Second)
+	if !strings.Contains(frame, "lanchat sse ready") {
+		t.Fatalf("first frame = %q, want ready comment", frame)
+	}
+}
+
+// fanoutMsgEvent 造一条本会话的消息事件供 stub client 注入。
+func fanoutMsgEvent(seq uint64, id, body string) core.Event {
+	return core.Event{
+		Kind:           core.EventMessage,
+		ConversationID: "lobby",
+		Message: &protocol.StoredMessage{
+			ID: id, ServerSeq: seq, ConversationID: "lobby",
+			SenderUserID: "bob", Body: body, CreatedAt: 1700000000000,
+		},
+	}
 }
 
 // ---- handleHome ------------------------------------------------------------
@@ -634,4 +711,151 @@ func TestEndToEnd_TwoWebInstancesExchangeMessages(t *testing.T) {
 	}
 	waitMessage(chA, "alice/web-a")
 	waitMessage(chB, "bob/web-b")
+}
+
+// ---- 多 tab 共享 Session（M4.4 验收）---------------------------------------
+
+// TestFanout_MultipleTabsShareSession 验证同一 cookie 开两条 SSE（两个 tab）
+// 只拨号一次，且一条事件两路都收到——多 tab 共享 Session 的核心验收。
+func TestFanout_MultipleTabsShareSession(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	srv := startTestServer(t, h)
+
+	r1 := startSSE(t, srv)
+	r2 := startSSE(t, srv)
+	skipReadyFrame(t, r1)
+	skipReadyFrame(t, r2)
+
+	if d.dialCount() != 1 {
+		t.Fatalf("dial count = %d, want 1 (two tabs share one session)", d.dialCount())
+	}
+
+	d.client(0).events <- fanoutMsgEvent(1, "m1", "tab broadcast")
+
+	for i, r := range []*bufio.Reader{r1, r2} {
+		frame := readFrameTimeout(t, r, 3*time.Second)
+		if !strings.Contains(frame, "event: message") || !strings.Contains(frame, "tab broadcast") {
+			t.Errorf("tab %d frame = %q, want message frame", i+1, frame)
+		}
+	}
+}
+
+// TestFanout_ClosingOneTabDoesNotAffectOthers 验证关掉一个 tab（SSE 断开）
+// 后注销其 writer，其余 tab 继续收帧，且 session 不重建（dial 仍 1 次）。
+func TestFanout_ClosingOneTabDoesNotAffectOthers(t *testing.T) {
+	h, d := newTestHandler(t, nil)
+	srv := startTestServer(t, h)
+
+	cancel1, r1 := openSSEWithCtx(t, srv)
+	r2 := startSSE(t, srv)
+	skipReadyFrame(t, r1)
+	skipReadyFrame(t, r2)
+
+	// 关掉 tab1：取消请求 ctx（serveSSE 退出并 defer removeWriter）。
+	cancel1()
+	// 等 handler goroutine 完成注销。
+	time.Sleep(200 * time.Millisecond)
+
+	d.client(0).events <- fanoutMsgEvent(1, "m1", "after tab1 closed")
+
+	frame := readFrameTimeout(t, r2, 3*time.Second)
+	if !strings.Contains(frame, "after tab1 closed") {
+		t.Errorf("tab2 frame = %q, want continued delivery", frame)
+	}
+	if d.dialCount() != 1 {
+		t.Errorf("dial count = %d, want 1 (closing a tab must not rebuild session)", d.dialCount())
+	}
+}
+
+// TestEndToEnd_MultipleTabsShareSession 走 fake hub 端到端验证：alice 开两个
+// tab（同 jar 共享 session），bob 一个；alice 发消息后三流都收到回环广播。
+func TestEndToEnd_MultipleTabsShareSession(t *testing.T) {
+	ftr := fake.New()
+	defer ftr.Close()
+	hub := ftr.NewHub("test")
+	hub.AttachStore(memory.New())
+
+	newSrv := func(user string) *httptest.Server {
+		t.Helper()
+		mgr := NewManager(ManagerConfig{
+			HubURL:        "memory://test",
+			User:          user,
+			ConvID:        "lobby",
+			Transport:     ftr,
+			DialTimeout:   5 * time.Second,
+			SweepInterval: time.Hour,
+		}, nil)
+		t.Cleanup(mgr.CloseAll)
+		h := NewHandler(Config{Version: "test"}, mgr)
+		mux := http.NewServeMux()
+		h.Routes(mux)
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatalf("cookie jar: %v", err)
+		}
+		srv.Client().Jar = jar
+		resp, err := srv.Client().Get(srv.URL + "/")
+		if err != nil {
+			t.Fatalf("seed GET /: %v", err)
+		}
+		_ = resp.Body.Close()
+		return srv
+	}
+	srvA := newSrv("alice")
+	srvB := newSrv("bob")
+
+	readLoop := func(reader *bufio.Reader) chan string {
+		ch := make(chan string, 32)
+		go func() {
+			defer close(ch)
+			for {
+				frame, err := readSSEFrame(reader)
+				if err != nil {
+					return
+				}
+				select {
+				case ch <- frame:
+				case <-t.Context().Done():
+					return
+				}
+			}
+		}()
+		return ch
+	}
+	// alice 两个 tab（同 jar）+ bob 一个 tab。
+	chA1 := readLoop(startSSE(t, srvA))
+	chA2 := readLoop(startSSE(t, srvA))
+	chB := readLoop(startSSE(t, srvB))
+
+	resp, err := srvA.Client().Post(srvA.URL+"/messages", "application/x-www-form-urlencoded", strings.NewReader("body=multi tab hello"))
+	if err != nil {
+		t.Fatalf("POST /messages: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST /messages status = %d, want 204", resp.StatusCode)
+	}
+
+	waitMessage := func(ch chan string, who string) {
+		t.Helper()
+		deadline := time.After(3 * time.Second)
+		for {
+			select {
+			case frame, ok := <-ch:
+				if !ok {
+					t.Fatalf("%s: sse stream ended before message frame", who)
+				}
+				if strings.Contains(frame, "event: message") && strings.Contains(frame, "multi tab hello") {
+					return
+				}
+			case <-deadline:
+				t.Fatalf("%s: no message frame within 3s", who)
+			}
+		}
+	}
+	waitMessage(chA1, "alice tab1")
+	waitMessage(chA2, "alice tab2")
+	waitMessage(chB, "bob tab1")
 }

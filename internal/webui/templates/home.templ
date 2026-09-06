@@ -19,6 +19,10 @@ templ Home(data HomeData) {
 				{ data.Meta.Who() }
 			</span>
 		</header>
+		// 连接状态区：SSE state 帧整段 swap（断连出 banner，重连清空）。
+		<div id="conn-state" hx-sse="swap:state" hx-swap="innerHTML">
+			@ConnStatus(data.Connected)
+		</div>
 		if data.Error != "" {
 			<div class="banner">{ data.Error }</div>
 		}
@@ -44,5 +48,16 @@ templ Home(data HomeData) {
 			></textarea>
 			<button type="submit">发送</button>
 		</form>
+	}
+}
+
+// ConnStatus 是连接状态 banner（SSE state 帧的 swap 片段）。
+//
+// 断连时渲染提示条；connected 时渲染空内容——重连后 state=connected
+// 帧整段 innerHTML swap，banner 被清空。EventSource 自带自动重连，
+// 服务端 session 重建（Manager.GetOrCreate 死会话重建）后恢复推流。
+templ ConnStatus(connected bool) {
+	if !connected {
+		<div class="banner offline">连接已断开，正在自动重连…</div>
 	}
 }

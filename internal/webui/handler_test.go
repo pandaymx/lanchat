@@ -208,6 +208,9 @@ func TestHandleHome_RendersShell(t *testing.T) {
 		"event.key==='Enter'",
 		"event.isComposing",
 		"requestSubmit()",
+		// M4.5：连接状态区挂 SSE state swap
+		`id="conn-state"`,
+		`hx-sse="swap:state"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
@@ -346,6 +349,26 @@ func TestTemplate_EscapesMessageBody(t *testing.T) {
 	}
 	if !strings.Contains(got, "&lt;script&gt;") {
 		t.Error("expected escaped &lt;script&gt; in output")
+	}
+}
+
+// TestTemplate_ConnStatus 验证断连渲染 banner、已连接渲染空（state 帧 swap 清屏）。
+func TestTemplate_ConnStatus(t *testing.T) {
+	var sb strings.Builder
+	if err := templates.ConnStatus(false).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render disconnected: %v", err)
+	}
+	got := sb.String()
+	if !strings.Contains(got, "连接已断开") || !strings.Contains(got, `class="banner offline"`) {
+		t.Errorf("disconnected banner missing: %q", got)
+	}
+
+	sb.Reset()
+	if err := templates.ConnStatus(true).Render(t.Context(), &sb); err != nil {
+		t.Fatalf("render connected: %v", err)
+	}
+	if strings.TrimSpace(sb.String()) != "" {
+		t.Errorf("connected must render empty to clear banner, got %q", sb.String())
 	}
 }
 
@@ -521,7 +544,8 @@ func TestHandleEvents_IgnoresForeignConv(t *testing.T) {
 	}
 }
 
-// TestHandleEvents_DeliversStateFrame 验证 EventState → `event: state` 帧。
+// TestHandleEvents_DeliversStateFrame 验证 EventState → `event: state` 帧：
+// 断连帧带 banner HTML（#conn-state swap 目标），重连帧为空内容（清空 banner）。
 func TestHandleEvents_DeliversStateFrame(t *testing.T) {
 	h, d := newTestHandler(t, nil)
 
@@ -533,19 +557,22 @@ func TestHandleEvents_DeliversStateFrame(t *testing.T) {
 	d.client(0).events <- core.Event{Kind: core.EventState, State: &core.StateInfo{Connected: false}}
 	frame, err := readSSEFrame(reader)
 	if err != nil {
-		t.Fatalf("read state frame: %v", err)
+		t.Fatalf("read disconnected frame: %v", err)
 	}
-	if frame != "event: state\ndata: disconnected\n\n" {
-		t.Errorf("state frame = %q", frame)
+	if !strings.Contains(frame, "event: state") || !strings.Contains(frame, "连接已断开") {
+		t.Errorf("disconnected frame = %q, want state frame with reconnect banner", frame)
 	}
 
 	d.client(0).events <- core.Event{Kind: core.EventState, State: &core.StateInfo{Connected: true}}
 	frame, err = readSSEFrame(reader)
 	if err != nil {
-		t.Fatalf("read state frame: %v", err)
+		t.Fatalf("read connected frame: %v", err)
 	}
-	if frame != "event: state\ndata: connected\n\n" {
-		t.Errorf("state frame = %q", frame)
+	if !strings.Contains(frame, "event: state") {
+		t.Errorf("connected frame = %q, want state event", frame)
+	}
+	if strings.Contains(frame, "连接已断开") {
+		t.Errorf("connected frame must clear banner, got %q", frame)
 	}
 }
 

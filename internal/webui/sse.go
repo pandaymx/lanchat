@@ -137,11 +137,22 @@ func (s *Session) sseFrame(e core.Event) ([]byte, bool) {
 		return []byte(sb.String()), true
 
 	case core.EventState:
-		state := "disconnected"
-		if e.State != nil && e.State.Connected {
-			state = "connected"
+		connected := e.State != nil && e.State.Connected
+		// state 帧整段 swap 进 #conn-state：断连出 banner，重连渲染空内容清掉。
+		var buf bytes.Buffer
+		if err := templates.ConnStatus(connected).Render(s.ctx, &buf); err != nil {
+			s.logger.Error("render state frame failed", "err", err)
+			return nil, false
 		}
-		return []byte("event: state\ndata: " + state + "\n\n"), true
+		var sb strings.Builder
+		sb.WriteString("event: state\n")
+		for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
+			sb.WriteString("data: ")
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+		return []byte(sb.String()), true
 
 	default:
 		// EventRead / EventPresence / EventTyping：M4 不渲染。

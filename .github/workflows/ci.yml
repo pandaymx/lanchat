@@ -39,6 +39,11 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
       - name: Install lefthook (prebuilt, 避免与 Go 1.27 不兼容)
         run: bun add -d @evilmartians/lefthook
+      # *_templ.go 被 .gitignore 排除（构建产物不入库），lint 的 typecheck
+      # 同样需要它们：缺了会在 templates 包上报 undefined: templates.Home。
+      # test / build 两个 job 早有此步骤，lint job 此前遗漏（M4.2 起的雷）。
+      - name: Generate templ files
+        run: templ generate
       - name: Run lefthook pre-commit
         run: ./node_modules/.bin/lefthook run pre-commit
       - name: golangci-lint v2

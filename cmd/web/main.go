@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/internal/webui"
 	"github.com/pandaymx/lanchat/pkg/logging"
@@ -46,6 +47,9 @@ var (
 // 超过这个时间还没退完就直接关——SSE 长连接理论上不会主动断，
 // 所以 Shutdown 会一直等；给个上限防止运维时卡住。
 const shutdownTimeout = 5 * time.Second
+
+// discoverTimeout 是 -hub-url 留空时 mDNS 浏览局域网的等待上限。
+const discoverTimeout = 5 * time.Second
 
 func main() {
 	// --version 必须在 flag.Parse 之前识别：
@@ -135,7 +139,15 @@ func run(opts runOptions) error {
 	logger.Info("starting web", "version", version, "commit", commit, "addr", opts.Addr, "user", opts.User)
 
 	if opts.HubURL == "" {
-		return errors.New("-hub-url is required (e.g. ws://127.0.0.1:9000/ws)")
+		// -hub-url 留空：走 mDNS 自动发现局域网内的 hub（M6.1）。
+		discoverCtx, discoverCancel := context.WithTimeout(context.Background(), discoverTimeout)
+		found, err := discovery.DiscoverHubURL(discoverCtx, discoverTimeout)
+		discoverCancel()
+		if err != nil {
+			return fmt.Errorf("未指定 -hub-url 且 mDNS 自动发现失败: %w", err)
+		}
+		opts.HubURL = found
+		logger.Info("mDNS discovered hub", "hub", found)
 	}
 	if opts.ConvID == "" {
 		opts.ConvID = webui.DefaultConversationID

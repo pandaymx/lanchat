@@ -14,7 +14,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -23,6 +22,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/transport/ws"
@@ -45,6 +45,9 @@ const unknownDevice = "unknown"
 // 就错过尺寸事件了；阻塞连接配合短超时是最直白的方案，
 // 让用户在终端里立刻看到「hub 不可达」而不是 UI 傻等。
 const dialTimeout = 5 * time.Second
+
+// discoverTimeout 是 -hub 留空时 mDNS 浏览局域网的等待上限。
+const discoverTimeout = 5 * time.Second
 
 func main() {
 	// --version 必须在 flag.Parse 之前识别：
@@ -199,7 +202,15 @@ func run(opts runOptions) error {
 // 拿着已经 Close 过的 sub.C() 报错。
 func dialSession(opts runOptions) (*tui.Session, context.Context, context.CancelFunc, error) {
 	if opts.HubURL == "" {
-		return nil, nil, nil, errors.New("-hub is required unless -no-connect is set")
+		// -hub 留空：走 mDNS 自动发现局域网内的 hub（M6.1）。
+		discoverCtx, discoverCancel := context.WithTimeout(context.Background(), discoverTimeout)
+		found, err := discovery.DiscoverHubURL(discoverCtx, discoverTimeout)
+		discoverCancel()
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("未指定 -hub 且 mDNS 自动发现失败: %w", err)
+		}
+		opts.HubURL = found
+		fmt.Fprintln(os.Stderr, "lanchat: mDNS 发现 hub:", found)
 	}
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer dialCancel()

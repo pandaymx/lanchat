@@ -23,10 +23,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/hubstate"
 	"github.com/pandaymx/lanchat/pkg/logging"
@@ -59,6 +61,7 @@ func main() {
 	path := flag.String("path", wstransport.DefaultPath, "WebSocket upgrade 路径")
 	maxHistory := flag.Int("max-history", 500, "单次 FKHistoryReq 补发的最大条数")
 	dbPath := flag.String("db", "lanchat.db", "持久化库文件路径（libSQL/SQLite 格式）；填 memory 用纯内存不落盘")
+	mDNS := flag.Bool("mdns", true, "通过 mDNS/DNS-SD 在局域网广播 hub（_lanchat._tcp）；-mdns=false 关闭")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
 	logFile := flag.String("log-file", "", "日志文件路径；空走 stderr")
@@ -110,6 +113,31 @@ func main() {
 		}
 	}
 	tr := wstransport.New().WithPath(*path)
+
+	if *mDNS {
+		_, portStr, err := net.SplitHostPort(*addr)
+		if err != nil {
+			logger.Error("mdns: parse addr failed", "addr", *addr, "err", err)
+			fmt.Fprintln(os.Stderr, "hub: mdns: 解析 -addr 端口失败:", err)
+			os.Exit(1)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "hub: mdns: 端口非法:", err)
+			os.Exit(1)
+		}
+		mdnsShutdown, err := discovery.Broadcast(discovery.InstanceName, port, map[string]string{
+			discovery.MetaPath:    *path,
+			discovery.MetaVersion: version,
+		})
+		if err != nil {
+			logger.Error("mdns broadcast failed", "err", err)
+			fmt.Fprintln(os.Stderr, "hub: mdns:", err)
+			os.Exit(1)
+		}
+		defer mdnsShutdown()
+		logger.Info("mDNS broadcasting", "service", discovery.ServiceType, "port", port)
+	}
 
 	logger.Info("starting hub", "version", version, "commit", commit, "addr", *addr, "path", *path, "db", *dbPath)
 

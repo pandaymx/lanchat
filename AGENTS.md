@@ -38,8 +38,8 @@
 | M4.1 | Web 方案拍板 | SSE（EventSource 原生，反代零配置）+ thin proxy（复用 pkg/client.Client）+ MVP 单会话（ADR-011/012） | ✅ proposal 本地保留（docs/proposals/ 不入库） |
 | M4.2 | Web 骨架 | `cmd/web` -addr :9001 + 三路由占位 + templ 模板 + vendored htmx/sse-ext 内嵌 + CI/Makefile 适配 | ✅ `007a173` → `918fc53` → `004ba51` |
 | M4.3 | handler 接 client | `internal/webui/session.go` DialClient 装配 + SSE 推流 + POST /api/messages Send + fake hub E2E 双 web 互发 | ✅ `3e635a0` → `70f4269` → `32180e1` |
-| M4.4 | 多 Tab Session | cookie 签发 + Manager.GetOrCreate/Release + Session.fanout 多 SSEWriter 订阅 | ⬜ 待起手 |
-| M4.5 | 输入体验 | Enter 提交 / Shift+Enter 换行、错误展示 banner（state.disconnected）、历史「加载更多」 | ⬜ |
+| M4.4 | 多 Tab Session | cookie 签发 + Manager.GetOrCreate/Release + Session.fanout 多 SSEWriter 订阅 | ✅ `a792f82` → `e50e221` → `97c7626` |
+| M4.5 | 输入体验 | Enter 提交 / Shift+Enter 换行（输入法组词保护）、断连 banner（SSE state 帧 swap）、历史「加载更多」（proto Before + hub Query + client.FetchHistory 静默分页 + /history 端点） | ✅ `3b1bd56` → `8d8291e` → `1a09ec6` → `a5d1cc9` → `07d4dbe` → `c1c1ff8` |
 | M4.6 | 自动重连 | EventSource 重连 + Last-Event-ID 断线补发（server 幂等） | ⬜ |
 | M4.7 | Web i18n | 复用 internal/i18n bundle + Translator 模式 | ⬜ |
 

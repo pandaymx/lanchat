@@ -9,17 +9,107 @@ import (
 	"time"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
 )
 
 // ---- 测试替身 ---------------------------------------------------------------
 
+// sendRecord 记录一次 SendMessage 调用入参。
+type sendRecord struct {
+	convID string
+	body   string
+}
+
+// stubClient 是 Client 接口的测试替身：记录 SendMessage 入参，
+// Subscribe 返回共享的注入用 channel，History 返回预置消息。
+type stubClient struct {
+	mu      sync.Mutex
+	sends   []sendRecord
+	sendErr error
+
+	history []protocol.StoredMessage
+	histErr error
+
+	events chan core.Event
+	done   chan struct{}
+
+	closeCount int
+}
+
+func newStubClient() *stubClient {
+	return &stubClient{
+		events: make(chan core.Event, 16),
+		done:   make(chan struct{}),
+	}
+}
+
+func (s *stubClient) SendMessage(_ context.Context, convID, body string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sendErr != nil {
+		return s.sendErr
+	}
+	s.sends = append(s.sends, sendRecord{convID: convID, body: body})
+	return nil
+}
+
+func (s *stubClient) Subscribe(_ int) core.Subscription {
+	return &stubSubscription{c: s.events}
+}
+
+func (s *stubClient) History(_ context.Context, _ string, _ uint64, _ int) ([]protocol.StoredMessage, error) {
+	return s.history, s.histErr
+}
+
+func (s *stubClient) Done() <-chan struct{} { return s.done }
+
+// Close 记录关闭次数并幂等关闭 done（Manager 回收 Session 时调用）。
+func (s *stubClient) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeCount++
+	select {
+	case <-s.done:
+	default:
+		close(s.done)
+	}
+	return nil
+}
+
+func (s *stubClient) closed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closeCount > 0
+}
+
+// sentCount 供断言用（sends 由 handler goroutine 写，加锁读）。
+func (s *stubClient) sentCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sends)
+}
+
+type stubSubscription struct {
+	c <-chan core.Event
+}
+
+func (s *stubSubscription) C() <-chan core.Event { return s.c }
+
+// Close 按 EventBus 契约不关闭 channel（只摘订阅者），stub 里是无操作。
+func (s *stubSubscription) Close() error { return nil }
+
 // stubDialer 是 Dialer 的测试替身：每次拨号 new 一个 stubClient 并计数。
+// history / histErr / sendErr 是模板，拨号时复制给新 client。
 type stubDialer struct {
 	mu      sync.Mutex
 	count   int
 	clients []*stubClient
 	err     error
+
+	history []protocol.StoredMessage
+	histErr error
+	sendErr error
 }
 
 func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store, error) {
@@ -30,6 +120,9 @@ func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store,
 		return nil, nil, d.err
 	}
 	cli := newStubClient()
+	cli.history = d.history
+	cli.histErr = d.histErr
+	cli.sendErr = d.sendErr
 	d.clients = append(d.clients, cli)
 	return cli, memory.New(), nil
 }

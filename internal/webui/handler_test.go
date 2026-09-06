@@ -4,115 +4,31 @@ import (
 	"bufio"
 	"context"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pandaymx/lanchat/internal/webui/templates"
-	"github.com/pandaymx/lanchat/pkg/client"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
 	"github.com/pandaymx/lanchat/pkg/transport/fake"
 )
 
-// ---- 测试替身 -------------------------------------------------------------
+// ---- 测试装配 ---------------------------------------------------------------
 
-// stubClient 是 Client 接口的测试替身：记录 SendMessage 入参，
-// Subscribe 返回共享的注入用 channel，History 返回预置消息。
-type stubClient struct {
-	mu      sync.Mutex
-	sends   []sendRecord
-	sendErr error
-
-	history []protocol.StoredMessage
-	histErr error
-
-	events chan core.Event
-	done   chan struct{}
-
-	closeCount int
-}
-
-type sendRecord struct {
-	convID string
-	body   string
-}
-
-func newStubClient() *stubClient {
-	return &stubClient{
-		events: make(chan core.Event, 16),
-		done:   make(chan struct{}),
+// newTestHandler 造一个 stub dialer 驱动的 Handler（Manager 按 cookie 惰性
+// 拨号，dialer 计数 / 返回的 stubClient 供断言）。
+func newTestHandler(t *testing.T, d *stubDialer) (*Handler, *stubDialer) {
+	t.Helper()
+	if d == nil {
+		d = &stubDialer{}
 	}
-}
-
-func (s *stubClient) SendMessage(_ context.Context, convID, body string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sendErr != nil {
-		return s.sendErr
-	}
-	s.sends = append(s.sends, sendRecord{convID: convID, body: body})
-	return nil
-}
-
-func (s *stubClient) Subscribe(_ int) core.Subscription {
-	return &stubSubscription{c: s.events}
-}
-
-func (s *stubClient) History(_ context.Context, _ string, _ uint64, _ int) ([]protocol.StoredMessage, error) {
-	return s.history, s.histErr
-}
-
-func (s *stubClient) Done() <-chan struct{} { return s.done }
-
-// Close 记录关闭次数并幂等关闭 done（Manager 回收 Session 时调用）。
-func (s *stubClient) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.closeCount++
-	select {
-	case <-s.done:
-	default:
-		close(s.done)
-	}
-	return nil
-}
-
-func (s *stubClient) closed() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.closeCount > 0
-}
-
-// sentCount / lastSend 供断言用（sends 由 handler goroutine 写，加锁读）。
-func (s *stubClient) sentCount() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return len(s.sends)
-}
-
-type stubSubscription struct {
-	c <-chan core.Event
-}
-
-func (s *stubSubscription) C() <-chan core.Event { return s.c }
-
-// Close 按 EventBus 契约不关闭 channel（只摘订阅者），stub 里是无操作。
-func (s *stubSubscription) Close() error { return nil }
-
-// newTestHandler 造一个 stub 驱动的 Handler 供测试用。
-func newTestHandler() (*Handler, *stubClient) {
-	cli := newStubClient()
-	h := NewHandler(Config{
-		User:    "alice",
-		Device:  "web-test",
-		ConvID:  "lobby",
-		Version: "test",
-	}, cli)
-	return h, cli
+	mgr := newTestManager(t, d)
+	h := NewHandler(Config{Version: "test"}, mgr)
+	return h, d
 }
 
 // ---- SSE 流式读取辅助 ------------------------------------------------------
@@ -133,7 +49,7 @@ func readSSEFrame(r *bufio.Reader) (string, error) {
 	}
 }
 
-// startSSE 在已有 server 上打开 /events 流。
+// startSSE 在已有 server 上打开 /events 流（复用 srv.Client 的 cookie jar）。
 func startSSE(t *testing.T, srv *httptest.Server) *bufio.Reader {
 	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -153,19 +69,35 @@ func startSSE(t *testing.T, srv *httptest.Server) *bufio.Reader {
 	return bufio.NewReader(resp.Body)
 }
 
-// startTestSSE 起一个挂好 h 路由的 server 并打开 /events 流，返回帧读取器。
+// startTestSSE 起一个挂好 h 路由的 server，先 GET / 种 cookie（触发惰性
+// 拨号建 session），再打开 /events 流，返回帧读取器。
 //
 // 清理顺序是这里的关键坑：t.Cleanup 逆序执行，必须先关 SSE 响应体 / 取消
-// 请求 ctx（eventLoop 收到断开才返回），再 srv.Close()——反过来 Server.Close
-// 会等活跃连接直到测试超时（10 分钟 default timeout，pre-push 卡 600s 的元凶）。
-// 因此 srv.Close 必须先注册（最后执行），startSSE 的 cancel / body 后注册（先执行）。
-// 调用方千万不要对返回前注册的 server 再 defer srv.Close()。
+// 请求 ctx（serveSSE 收到断开才返回），再 srv.Close()——反过来 Server.Close
+// 会等活跃连接直到测试超时。因此 srv.Close 必须先注册（最后执行）。
+// cookie jar 保证 GET / 签发的 lanchat_session 在 /events 请求上带上，
+// 两条请求落到同一份 Session（多 tab 共享的测试前提）。
 func startTestSSE(t *testing.T, h *Handler) *bufio.Reader {
 	t.Helper()
 	mux := http.NewServeMux()
 	h.Routes(mux)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookie jar: %v", err)
+	}
+	srv.Client().Jar = jar
+
+	// 种 cookie + 建立 session（/events 首请求也会签发，但提前 GET / 让
+	// 测试在连 SSE 前就能拿到 d.client(0) 注入事件）。
+	resp, err := srv.Client().Get(srv.URL + "/")
+	if err != nil {
+		t.Fatalf("seed GET /: %v", err)
+	}
+	_ = resp.Body.Close()
+
 	return startSSE(t, srv)
 }
 
@@ -173,7 +105,7 @@ func startTestSSE(t *testing.T, h *Handler) *bufio.Reader {
 
 // TestHandleHome_RendersShell 验证 GET / 返回 200 且含页面骨架。
 func TestHandleHome_RendersShell(t *testing.T) {
-	h, _ := newTestHandler()
+	h, _ := newTestHandler(t, nil)
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 
@@ -193,11 +125,32 @@ func TestHandleHome_RendersShell(t *testing.T) {
 		`hx-sse="swap:message"`, // M4.3：#messages 挂上 SSE swap 目标
 		"/assets/htmx.min.js",
 		"/assets/style.css",
-		"alice@web-test", // PageMeta.Who() 拼出的身份串
+		"alice@web-", // PageMeta.Who() 拼出的身份串；device 由 Manager 生成 web-<hex>
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}
+	}
+}
+
+// TestHandleHome_IssuesCookie 验证首次访问（无 cookie）会签发会话 cookie。
+func TestHandleHome_IssuesCookie(t *testing.T) {
+	h, _ := newTestHandler(t, nil)
+	rec := httptest.NewRecorder()
+
+	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	var found bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == SessionCookieName && len(c.Value) == 16 {
+			found = true
+			if !c.HttpOnly {
+				t.Error("session cookie must be HttpOnly")
+			}
+		}
+	}
+	if !found {
+		t.Error("GET / did not issue a session cookie")
 	}
 }
 
@@ -206,7 +159,7 @@ func TestHandleHome_RendersShell(t *testing.T) {
 // 少了 charset 会让中文消息在某些浏览器里乱码（meta 里有 charset 兜底，
 // 但 header 更权威，两者都给最稳）。
 func TestHandleHome_ContentType(t *testing.T) {
-	h, _ := newTestHandler()
+	h, _ := newTestHandler(t, nil)
 	rec := httptest.NewRecorder()
 	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
@@ -217,13 +170,15 @@ func TestHandleHome_ContentType(t *testing.T) {
 }
 
 // TestHandleHome_RendersHistory 验证首页用 History 的结果填充消息列表，
-// 且 Self 判定按 SenderUser 与 Config.User 比对。
+// 且 Self 判定按 SenderUser 与 session 身份比对。
 func TestHandleHome_RendersHistory(t *testing.T) {
-	h, cli := newTestHandler()
-	cli.history = []protocol.StoredMessage{
-		{ID: "m1", ServerSeq: 1, ConversationID: "lobby", SenderUserID: "alice", Body: "self msg", CreatedAt: 1700000000000},
-		{ID: "m2", ServerSeq: 2, ConversationID: "lobby", SenderUserID: "bob", Body: "other msg", CreatedAt: 1700000001000},
+	d := &stubDialer{
+		history: []protocol.StoredMessage{
+			{ID: "m1", ServerSeq: 1, ConversationID: "lobby", SenderUserID: "alice", Body: "self msg", CreatedAt: 1700000000000},
+			{ID: "m2", ServerSeq: 2, ConversationID: "lobby", SenderUserID: "bob", Body: "other msg", CreatedAt: 1700000001000},
+		},
 	}
+	h, _ := newTestHandler(t, d)
 	rec := httptest.NewRecorder()
 	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
@@ -241,8 +196,7 @@ func TestHandleHome_RendersHistory(t *testing.T) {
 // TestHandleHome_HistoryErrorShowsBanner 验证 History 失败时渲染错误 banner
 // 而不是 500 —— 历史拉不到不该把整页打死。
 func TestHandleHome_HistoryErrorShowsBanner(t *testing.T) {
-	h, cli := newTestHandler()
-	cli.histErr = context.DeadlineExceeded
+	h, _ := newTestHandler(t, &stubDialer{histErr: context.DeadlineExceeded})
 	rec := httptest.NewRecorder()
 	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
@@ -254,12 +208,23 @@ func TestHandleHome_HistoryErrorShowsBanner(t *testing.T) {
 	}
 }
 
+// TestHandleHome_DialFailure503 验证 hub 拨号失败时回 503 而非 200/500。
+func TestHandleHome_DialFailure503(t *testing.T) {
+	h, _ := newTestHandler(t, &stubDialer{err: context.DeadlineExceeded})
+	rec := httptest.NewRecorder()
+	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("GET / status = %d, want 503", rec.Code)
+	}
+}
+
 // TestHandleHome_UnknownPath404 验证非根路径返回 404。
 //
 // ServeMux 的 "/" 是前缀匹配，会把 /whatever 也交给 handleHome；
 // 不显式判等就会渲染出首页，掩盖 URL 拼写错误。
 func TestHandleHome_UnknownPath404(t *testing.T) {
-	h, _ := newTestHandler()
+	h, _ := newTestHandler(t, nil)
 	rec := httptest.NewRecorder()
 	h.handleHome(rec, httptest.NewRequest(http.MethodGet, "/whatever", nil))
 
@@ -270,7 +235,7 @@ func TestHandleHome_UnknownPath404(t *testing.T) {
 
 // TestHandleHome_PostNotAllowed 验证 GET-only 约束。
 func TestHandleHome_PostNotAllowed(t *testing.T) {
-	h, _ := newTestHandler()
+	h, _ := newTestHandler(t, nil)
 	rec := httptest.NewRecorder()
 	h.handleHome(rec, httptest.NewRequest(http.MethodPost, "/", nil))
 
@@ -313,7 +278,7 @@ func postForm(body string) *http.Request {
 
 // TestHandleMessages_Returns204 验证发消息返回 204（HTMX 不做 DOM 替换）。
 func TestHandleMessages_Returns204(t *testing.T) {
-	h, cli := newTestHandler()
+	h, d := newTestHandler(t, nil)
 	rec := httptest.NewRecorder()
 
 	h.handleMessages(rec, postForm("hello"))
@@ -321,6 +286,7 @@ func TestHandleMessages_Returns204(t *testing.T) {
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("POST /messages status = %d, want 204", rec.Code)
 	}
+	cli := d.client(0)
 	if cli.sentCount() != 1 {
 		t.Fatalf("SendMessage called %d times, want 1", cli.sentCount())
 	}
@@ -333,35 +299,37 @@ func TestHandleMessages_Returns204(t *testing.T) {
 
 // TestHandleMessages_RejectsGet 验证 GET /messages 被拒。
 func TestHandleMessages_RejectsGet(t *testing.T) {
-	h, _ := newTestHandler()
+	h, d := newTestHandler(t, nil)
 	rec := httptest.NewRecorder()
 	h.handleMessages(rec, httptest.NewRequest(http.MethodGet, "/messages", nil))
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("GET /messages status = %d, want 405", rec.Code)
 	}
+	if d.dialCount() != 0 {
+		t.Errorf("dial count = %d, want 0 (method check must come before dial)", d.dialCount())
+	}
 }
 
-// TestHandleMessages_EmptyBody400 验证空白消息被拒且不转发。
+// TestHandleMessages_EmptyBody400 验证空白消息被拒且不拨号、不转发。
 func TestHandleMessages_EmptyBody400(t *testing.T) {
 	for _, body := range []string{"", "%20%20"} {
-		h, cli := newTestHandler()
+		h, d := newTestHandler(t, nil)
 		rec := httptest.NewRecorder()
 		h.handleMessages(rec, postForm(body))
 
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("body=%q status = %d, want 400", body, rec.Code)
 		}
-		if cli.sentCount() != 0 {
-			t.Errorf("body=%q: SendMessage should not be called", body)
+		if d.dialCount() != 0 {
+			t.Errorf("body=%q: dial happened before validation", body)
 		}
 	}
 }
 
 // TestHandleMessages_SendError500 验证转发失败返回 500。
 func TestHandleMessages_SendError500(t *testing.T) {
-	h, cli := newTestHandler()
-	cli.sendErr = context.DeadlineExceeded
+	h, _ := newTestHandler(t, &stubDialer{sendErr: context.DeadlineExceeded})
 	rec := httptest.NewRecorder()
 
 	h.handleMessages(rec, postForm("hello"))
@@ -371,13 +339,25 @@ func TestHandleMessages_SendError500(t *testing.T) {
 	}
 }
 
+// TestHandleMessages_DialFailure503 验证拨号失败回 503。
+func TestHandleMessages_DialFailure503(t *testing.T) {
+	h, _ := newTestHandler(t, &stubDialer{err: context.DeadlineExceeded})
+	rec := httptest.NewRecorder()
+
+	h.handleMessages(rec, postForm("hello"))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
 // ---- handleEvents ----------------------------------------------------------
 
 // TestHandleEvents_StreamsHeartbeat 验证 SSE 端点：
 //  1. 响应头是 text/event-stream / no-cache
 //  2. 立刻收到首帧（`: lanchat sse ready`），不等第一个心跳周期
 func TestHandleEvents_StreamsHeartbeat(t *testing.T) {
-	h, _ := newTestHandler()
+	h, _ := newTestHandler(t, nil)
 
 	reader := startTestSSE(t, h)
 
@@ -393,14 +373,14 @@ func TestHandleEvents_StreamsHeartbeat(t *testing.T) {
 // TestHandleEvents_DeliversMessageFrame 验证 EventMessage 被翻译成
 // `event: message` + `id: <seq>` + `data: <html>` 帧，且消息体被转义。
 func TestHandleEvents_DeliversMessageFrame(t *testing.T) {
-	h, cli := newTestHandler()
+	h, d := newTestHandler(t, nil)
 
 	reader := startTestSSE(t, h)
 	if _, err := readSSEFrame(reader); err != nil { // 跳过 ready 注释帧
 		t.Fatalf("read ready frame: %v", err)
 	}
 
-	cli.events <- core.Event{
+	d.client(0).events <- core.Event{
 		Kind:           core.EventMessage,
 		ConversationID: "lobby",
 		Message: &protocol.StoredMessage{
@@ -428,22 +408,20 @@ func TestHandleEvents_DeliversMessageFrame(t *testing.T) {
 
 // TestHandleEvents_IgnoresForeignConv 验证其它会话的消息不产生帧。
 func TestHandleEvents_IgnoresForeignConv(t *testing.T) {
-	h, cli := newTestHandler()
+	h, d := newTestHandler(t, nil)
 
 	reader := startTestSSE(t, h)
 	if _, err := readSSEFrame(reader); err != nil {
 		t.Fatalf("read ready frame: %v", err)
 	}
 
-	cli.events <- core.Event{
+	d.client(0).events <- core.Event{
 		Kind:           core.EventMessage,
 		ConversationID: "other-conv",
 		Message:        &protocol.StoredMessage{ID: "m9", ServerSeq: 1, ConversationID: "other-conv", SenderUserID: "bob", Body: "spam"},
 	}
-	// 不发会导致下一读阻塞 —— 用短超时证明"没有帧"。这里直接验证
-	// sseFrame 的纯函数路径更直接：走 handler 内部逻辑需真实流,
-	// 所以改为读下一帧前注入一个本会话事件，断言流里只有它。
-	cli.events <- core.Event{
+	// 外会话事件不产生帧；紧跟一个本会话事件，断言流里只有它。
+	d.client(0).events <- core.Event{
 		Kind:           core.EventMessage,
 		ConversationID: "lobby",
 		Message:        &protocol.StoredMessage{ID: "m2", ServerSeq: 2, ConversationID: "lobby", SenderUserID: "bob", Body: "real"},
@@ -463,14 +441,14 @@ func TestHandleEvents_IgnoresForeignConv(t *testing.T) {
 
 // TestHandleEvents_DeliversStateFrame 验证 EventState → `event: state` 帧。
 func TestHandleEvents_DeliversStateFrame(t *testing.T) {
-	h, cli := newTestHandler()
+	h, d := newTestHandler(t, nil)
 
 	reader := startTestSSE(t, h)
 	if _, err := readSSEFrame(reader); err != nil {
 		t.Fatalf("read ready frame: %v", err)
 	}
 
-	cli.events <- core.Event{Kind: core.EventState, State: &core.StateInfo{Connected: false}}
+	d.client(0).events <- core.Event{Kind: core.EventState, State: &core.StateInfo{Connected: false}}
 	frame, err := readSSEFrame(reader)
 	if err != nil {
 		t.Fatalf("read state frame: %v", err)
@@ -479,7 +457,7 @@ func TestHandleEvents_DeliversStateFrame(t *testing.T) {
 		t.Errorf("state frame = %q", frame)
 	}
 
-	cli.events <- core.Event{Kind: core.EventState, State: &core.StateInfo{Connected: true}}
+	d.client(0).events <- core.Event{Kind: core.EventState, State: &core.StateInfo{Connected: true}}
 	frame, err = readSSEFrame(reader)
 	if err != nil {
 		t.Fatalf("read state frame: %v", err)
@@ -490,16 +468,17 @@ func TestHandleEvents_DeliversStateFrame(t *testing.T) {
 }
 
 // TestHandleEvents_EndsOnHubLoss 验证 hub 连接断开（cli.Done 关闭）时
-// SSE 流结束 —— 浏览器 EventSource 收到 EOF 后会自动重连本端点。
+// pump 关闭 fanout channel，SSE 流结束 —— 浏览器 EventSource 收到 EOF
+// 后会自动重连本端点，重连请求重建 session。
 func TestHandleEvents_EndsOnHubLoss(t *testing.T) {
-	h, cli := newTestHandler()
+	h, d := newTestHandler(t, nil)
 
 	reader := startTestSSE(t, h)
 	if _, err := readSSEFrame(reader); err != nil {
 		t.Fatalf("read ready frame: %v", err)
 	}
 
-	close(cli.done)
+	close(d.client(0).done)
 	// 流应当很快结束：读到 EOF / 错误即为通过。
 	if _, err := readSSEFrame(reader); err == nil {
 		t.Error("stream did not end after hub loss")
@@ -509,12 +488,14 @@ func TestHandleEvents_EndsOnHubLoss(t *testing.T) {
 // TestRoutes_MountsAllEndpoints 验证 Routes 把四条路由都挂上了
 // （三条业务 + /assets/ 静态资源）。
 func TestRoutes_MountsAllEndpoints(t *testing.T) {
-	h, _ := newTestHandler()
+	h, _ := newTestHandler(t, nil)
 	mux := http.NewServeMux()
 	h.Routes(mux)
 
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
+	jar, _ := cookiejar.New(nil)
+	srv.Client().Jar = jar
 
 	for _, tc := range []struct {
 		path string
@@ -547,13 +528,13 @@ func TestHeartbeatInterval_Sane(t *testing.T) {
 	}
 }
 
-// ---- 端到端（fake hub + 两 web 实例）---------------------------------------
+// ---- 端到端（fake hub + Manager 惰性拨号）-----------------------------------
 
-// TestEndToEnd_TwoWebInstancesExchangeMessages 走完整链路验证 M4.3 验收：
+// TestEndToEnd_TwoWebInstancesExchangeMessages 走完整链路验证 thin proxy：
 //
-//	fake hub ← DialClient(alice/web-a) + DialClient(bob/web-b)
-//	web-a 的 SSE 流 ↔ web-a 的 EventBus（hub 广播回环含发送方）
-//	POST /messages → Client.SendMessage → hub 广播 → 双方 SSE 都收到
+//	fake hub ← Manager 惰性拨号（alice 实例 + bob 实例）
+//	浏览器 POST /messages → Session.SendMessage → hub 广播
+//	双方 SSE 流（Session pump fanout）都收到回环消息
 //
 // hub 用 fake 实现（Router 协议语义与真 WebSocket Hub 同一份代码），
 // 真网络的对应回归由 internal/integration 覆盖。
@@ -563,38 +544,43 @@ func TestEndToEnd_TwoWebInstancesExchangeMessages(t *testing.T) {
 	hub := ftr.NewHub("test")
 	hub.AttachStore(memory.New())
 
-	dial := func(user, device string) (*client.Client, core.Store) {
+	newSrv := func(user string) *httptest.Server {
 		t.Helper()
-		cli, store, err := DialClient(t.Context(), DialOptions{
-			Transport: ftr,
-			HubURL:    "memory://test",
-			User:      user,
-			Device:    device,
-		})
-		if err != nil {
-			t.Fatalf("dial %s: %v", user, err)
-		}
-		t.Cleanup(func() {
-			_ = cli.Close()
-			_ = store.Close()
-		})
-		return cli, store
-	}
-
-	cliA, _ := dial("alice", "web-a")
-	cliB, _ := dial("bob", "web-b")
-
-	newSrv := func(user, device string, cli Client) *httptest.Server {
-		t.Helper()
-		h := NewHandler(Config{User: user, Device: device, ConvID: "lobby", Version: "test"}, cli)
+		mgr := NewManager(ManagerConfig{
+			HubURL:        "memory://test",
+			User:          user,
+			ConvID:        "lobby",
+			Transport:     ftr,
+			DialTimeout:   5 * time.Second,
+			SweepInterval: time.Hour, // 关掉 janitor，手动 CloseAll
+		}, nil)
+		t.Cleanup(mgr.CloseAll)
+		h := NewHandler(Config{Version: "test"}, mgr)
 		mux := http.NewServeMux()
 		h.Routes(mux)
 		srv := httptest.NewServer(mux)
 		t.Cleanup(srv.Close)
+		jar, err := cookiejar.New(nil)
+		if err != nil {
+			t.Fatalf("cookie jar: %v", err)
+		}
+		srv.Client().Jar = jar
 		return srv
 	}
-	srvA := newSrv("alice", "web-a", cliA)
-	srvB := newSrv("bob", "web-b", cliB)
+	srvA := newSrv("alice")
+	srvB := newSrv("bob")
+
+	// 首次 GET / 触发惰性拨号 + cookie 签发。
+	seed := func(srv *httptest.Server) {
+		t.Helper()
+		resp, err := srv.Client().Get(srv.URL + "/")
+		if err != nil {
+			t.Fatalf("seed GET /: %v", err)
+		}
+		_ = resp.Body.Close()
+	}
+	seed(srvA)
+	seed(srvB)
 
 	// 双方各开一条 SSE 流，goroutine 把帧送进 channel（主 goroutine 消费）。
 	readLoop := func(reader *bufio.Reader) chan string {

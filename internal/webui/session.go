@@ -194,20 +194,52 @@ func (m *Manager) GetOrCreate(ctx context.Context, cookie string) (*Session, err
 }
 
 // create 拨号并登记新 Session。锁外拨号，锁内双检。
+//
+// ctx 语义（两个 transport 的约定不同，这里统一）：
+//   - ws transport：Dial ctx 只用于拨号阶段，连接建立后独立；
+//   - fake transport：Dial ctx 即连接生命周期（Router 读循环 ctx.Done 即注销）。
+//
+// 所以 Session 持有自己的生命周期 ctx（sessCtx），拨号用它；DialTimeout
+// 通过 goroutine + timer 包裹实现，超时才 cancel sessCtx（此时连接尚未建成，
+// cancel 安全；ws 下还能中断挂死的拨号）。
 func (m *Manager) create(ctx context.Context, cookie string) (*Session, error) {
 	device := defaultDeviceName()
-	dialCtx, cancel := context.WithTimeout(ctx, m.cfg.DialTimeout)
-	cli, store, err := m.dial(dialCtx, DialOptions{
-		Transport:    m.cfg.Transport,
-		HubURL:       m.cfg.HubURL,
-		User:         m.cfg.User,
-		Device:       device,
-		HistoryLimit: m.cfg.HistoryLimit,
-	})
-	cancel()
-	if err != nil {
-		m.logger.Error("dial hub failed", "cookie", cookie, "err", err)
-		return nil, fmt.Errorf("dial hub: %w", err)
+	// WithoutCancel：ctx 链路保留（trace 等 value），但 session 脱离
+	// 派生它的 HTTP 请求生命周期——请求结束不能杀连接（fake transport 的
+	// Router 读循环绑定 Dial ctx，见下注释）。
+	sessCtx, sessCancel := context.WithCancel(context.WithoutCancel(ctx))
+
+	type dialResult struct {
+		cli   Client
+		store core.Store
+		err   error
+	}
+	resCh := make(chan dialResult, 1)
+	go func() {
+		cli, store, err := m.dial(sessCtx, DialOptions{
+			Transport:    m.cfg.Transport,
+			HubURL:       m.cfg.HubURL,
+			User:         m.cfg.User,
+			Device:       device,
+			HistoryLimit: m.cfg.HistoryLimit,
+		})
+		resCh <- dialResult{cli: cli, store: store, err: err}
+	}()
+
+	var res dialResult
+	timer := time.NewTimer(m.cfg.DialTimeout)
+	defer timer.Stop()
+	select {
+	case res = <-resCh:
+	case <-timer.C:
+		sessCancel()
+		m.logger.Error("dial hub timeout", "cookie", cookie, "timeout", m.cfg.DialTimeout)
+		return nil, fmt.Errorf("dial hub: timeout after %s", m.cfg.DialTimeout)
+	}
+	if res.err != nil {
+		sessCancel()
+		m.logger.Error("dial hub failed", "cookie", cookie, "err", res.err)
+		return nil, fmt.Errorf("dial hub: %w", res.err)
 	}
 
 	sess := &Session{
@@ -215,12 +247,15 @@ func (m *Manager) create(ctx context.Context, cookie string) (*Session, error) {
 		user:     m.cfg.User,
 		device:   device,
 		convID:   m.cfg.ConvID,
-		cli:      cli,
-		store:    store,
+		cli:      res.cli,
+		store:    res.store,
 		lastSeen: time.Now(),
+		writers:  make(map[*sseWriter]struct{}),
+		ctx:      sessCtx,
+		cancel:   sessCancel,
 		logger:   logging.New("web"),
 	}
-	// startPump 在 fanout 提交里接上（Session 事件泵）。
+	sess.startPump()
 
 	m.mu.Lock()
 	// 双检：拨号期间可能已有另一个请求建好了同 cookie 的活 session。
@@ -316,7 +351,13 @@ type Session struct {
 	mu           sync.Mutex
 	lastSeen     time.Time
 	dead         bool
+	writers      map[*sseWriter]struct{}
 	shutdownOnce sync.Once
+
+	// ctx / cancel 是 Session 级生命周期 ctx：拨号与 pump 都用它
+	// （fake transport 的 Router 读循环绑定 Dial ctx）。shutdown 时 cancel。
+	ctx    context.Context
+	cancel context.CancelFunc
 
 	logger *logging.ComponentLogger
 }
@@ -362,6 +403,10 @@ func (s *Session) markDead() {
 func (s *Session) shutdown() {
 	s.shutdownOnce.Do(func() {
 		s.markDead()
+		s.closeWriters()
+		if s.cancel != nil {
+			s.cancel()
+		}
 		_ = s.cli.Close()
 		_ = s.store.Close()
 	})

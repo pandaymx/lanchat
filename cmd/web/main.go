@@ -1,7 +1,7 @@
 // Command web 是 lanchat 的浏览器端入口：
 //  1. flag 取运行参数
 //  2. logging.Init 接 slog（与 cmd/hub / cmd/tui 同风格）
-//  3. 以 ws transport 拨号 hub，装配 pkg/client.Client（internal/webui.DialClient）
+//  3. 构造 webui.Manager（按 cookie 惰性拨号 hub，多 tab 共享 Session）
 //  4. 构造 internal/webui.Handler 并挂路由
 //  5. http.Server 起在 -addr，signal.NotifyContext 做优雅退出
 //
@@ -10,12 +10,14 @@
 //	./bin/hub -addr :9000
 //	./bin/web -addr :9001 -hub-url ws://127.0.0.1:9000/ws -user alice
 //
+// hub 不在线时 web server 照常启动：首个浏览器请求触发惰性拨号，
+// 拨号失败回 503，hub 恢复后下一个请求自愈（M4.6 补自动重连）。
+//
 // 本文件不持有任何业务逻辑：路由与 SSE / 发消息 / 历史都在 internal/webui。
 package main
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -43,9 +45,6 @@ var (
 // 所以 Shutdown 会一直等；给个上限防止运维时卡住。
 const shutdownTimeout = 5 * time.Second
 
-// dialTimeout 是启动期连 hub 的超时上限。失败直接退出，由运维层重启兜底。
-const dialTimeout = 5 * time.Second
-
 func main() {
 	// --version 必须在 flag.Parse 之前识别：
 	// flag 不认这个 flag，会先报"flag provided but not defined"再退出。
@@ -57,7 +56,6 @@ func main() {
 	addr := flag.String("addr", ":9001", "HTTP 监听地址（:9001 或 127.0.0.1:9001）")
 	hubURL := flag.String("hub-url", "", "hub 的 ws 地址，必填（如 ws://127.0.0.1:9000/ws）")
 	user := flag.String("user", "anonymous", "显示名（昵称即用）")
-	device := flag.String("device", "", "设备标识；留空自动生成 web-<random>")
 	convID := flag.String("conv", "lobby", "会话 ID；默认 lobby")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
@@ -81,7 +79,6 @@ func main() {
 		Addr:    *addr,
 		HubURL:  *hubURL,
 		User:    *user,
-		Device:  *device,
 		ConvID:  *convID,
 		Version: version,
 	}); err != nil {
@@ -95,7 +92,6 @@ type runOptions struct {
 	Addr    string
 	HubURL  string // hub 的 ws 地址，必填
 	User    string
-	Device  string
 	ConvID  string
 	Version string
 }
@@ -105,41 +101,26 @@ func run(opts runOptions) error {
 	logger := logging.New("web")
 	logger.Info("starting web", "version", version, "commit", commit, "addr", opts.Addr, "user", opts.User)
 
-	if opts.Device == "" {
-		opts.Device = defaultDeviceName()
-	}
 	if opts.HubURL == "" {
 		return errors.New("-hub-url is required (e.g. ws://127.0.0.1:9000/ws)")
 	}
+	if opts.ConvID == "" {
+		opts.ConvID = webui.DefaultConversationID
+	}
 
-	// 拨号 + 握手（Hello + 历史补发）。hub 不在线时直接退出，让
-	// shell / 运维层做重启兜底；hub 自动重连是 M4.6 的活（提案 §M4.5）。
-	dialCtx, dialCancel := context.WithTimeout(context.Background(), dialTimeout)
-	cli, store, err := webui.DialClient(dialCtx, webui.DialOptions{
-		Transport: wstransport.New(),
+	// Manager 按 cookie 惰性拨号：首个请求才建立到 hub 的 client 连接，
+	// 多 tab 共享同一份 Session；退出时 CloseAll 按 cli.Close → store.Close
+	// 顺序释放全部 Session（顺序铁律见 webui.DialClient 注释）。
+	mgr := webui.NewManager(webui.ManagerConfig{
 		HubURL:    opts.HubURL,
 		User:      opts.User,
-		Device:    opts.Device,
-	})
-	dialCancel()
-	if err != nil {
-		return fmt.Errorf("connect hub: %w", err)
-	}
-	// 释放顺序有讲究：先 cli.Close()（停 readPump），再 store.Close()，
-	// 反过来的话 readPump 可能还在往已关闭的 store 里写（见 session.go 注释）。
-	defer func() {
-		_ = cli.Close()
-		_ = store.Close()
-	}()
-	logger.Info("hub connected", "hub", opts.HubURL, "device", opts.Device)
+		ConvID:    opts.ConvID,
+		Transport: wstransport.New(),
+	}, nil)
+	defer mgr.CloseAll()
 
 	mux := http.NewServeMux()
-	h := webui.NewHandler(webui.Config{
-		User:    opts.User,
-		Device:  opts.Device,
-		ConvID:  opts.ConvID,
-		Version: opts.Version,
-	}, cli)
+	h := webui.NewHandler(webui.Config{Version: opts.Version}, mgr)
 	h.Routes(mux)
 
 	srv := &http.Server{
@@ -154,7 +135,7 @@ func run(opts runOptions) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("http server listening", "addr", opts.Addr)
+		logger.Info("http server listening", "addr", opts.Addr, "hub", opts.HubURL)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -176,18 +157,4 @@ func run(opts runOptions) error {
 	}
 	logger.Info("web stopped")
 	return nil
-}
-
-// defaultDeviceName 生成 web 端默认设备标识。
-//
-// 格式 web-<8 位随机十六进制>：每次进程启动都不同，符合 ADR-008
-// （同 user 多设备各自独立 ReadCursor）。M4.4 起会改成按 cookie 稳定下来。
-func defaultDeviceName() string {
-	var b [4]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand 读失败意味着系统熵源不可用，属于严重环境问题；
-		// 这里不 panic 而是退回固定串，避免 web server 起不来。
-		return "web-unknown"
-	}
-	return fmt.Sprintf("web-%x", b)
 }

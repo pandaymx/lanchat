@@ -10,8 +10,12 @@
 // 三条 HTTP 流（详见提案 §6.1）：
 //
 //	GET  /           渲染首页（拉历史 + SSE 挂载点）
-//	POST /messages   发消息（表单 body 字段）→ Client.SendMessage
-//	GET  /events     SSE 长连接：订阅 Client 的 EventBus 并翻译成 SSE 帧
+//	POST /messages   发消息（表单 body 字段）→ Session.SendMessage
+//	GET  /events     SSE 长连接：注册到 Session fanout，读帧推浏览器
+//
+// 会话模型（M4.4）：一枚 lanchat_session cookie 对应一份 Session（一条
+// 到 hub 的 client 连接），多 tab 共享 cookie 即共享 Session；Session 的
+// pump goroutine 把 EventBus 事件渲染一次、fanout 给所有 SSE 连接。
 //
 // 强约束（AGENTS.md §2）：前端只用 templ + HTMX，不引入 React/Vue
 // 等框架，也不引入前端构建工具。htmx.min.js 与 SSE 扩展是 vendored
@@ -19,10 +23,8 @@
 package webui
 
 import (
-	"bytes"
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -43,9 +45,9 @@ import (
 // 仍建议把 proxy_read_timeout 调大（提案 R2）。
 const heartbeatInterval = 15 * time.Second
 
-// eventBuf 是 SSE 订阅的 EventBus 缓冲。
+// eventBuf 是 Session pump 订阅 EventBus 的缓冲。
 //
-// EventBus 的契约是"满了就丢、发送端不阻塞"（见 core.EventBus），
+// EventBus 的契约是"满了就丢、发送端不阻塞"（见 pkg/event），
 // 给足缓冲降低高吞吐时丢消息的概率；取值与 pkg/tui 的 eventBuf 一致。
 const eventBuf = 128
 
@@ -58,9 +60,9 @@ const DefaultConversationID = "lobby"
 // 只影响 GET / 的首屏；翻页 / 加载更多是 M4.5 的活（提案 §M4.5）。
 const historyLimit = 50
 
-// Client 是 Handler 依赖的出站/入站窄接口。
+// Client 是 webui 依赖的出站/入站窄接口。
 //
-// 直接依赖 *client.Client 也能跑，但收窄到四个方法后：
+// 直接依赖 *client.Client 也能跑，但收窄到五个方法后：
 //   - 单元测试塞一个 stub 即可，不必起 hub；
 //   - 将来 hub 自动重连（M4.6）包一层装饰器时，Handler 零修改。
 //
@@ -76,29 +78,24 @@ type Client interface {
 
 var _ Client = (*client.Client)(nil)
 
-// Config 是 Handler 的构造入参。
+// Config 是 Handler 的构造入参。身份字段（User/Device/ConvID）在
+// Manager / Session 上——多 session 场景下 Handler 不持有单一身份。
 type Config struct {
-	User    string // 显示名（M4 临时：由 -user flag 给，M6 换成登录）
-	Device  string // 设备标识（web-<random>，见提案 §7.1）
-	ConvID  string // 会话 ID，空则回落 DefaultConversationID
 	Version string // ldflags 注入，仅展示用
 }
 
 // Handler 持有 web 端所有 HTTP 路由与其依赖。
 type Handler struct {
 	cfg    Config
-	cli    Client
+	mgr    *Manager
 	logger *logging.ComponentLogger
 }
 
-// NewHandler 构造 Handler。cli 必须已完成 Connect（见 session.go 的 DialClient）。
-func NewHandler(cfg Config, cli Client) *Handler {
-	if cfg.ConvID == "" {
-		cfg.ConvID = DefaultConversationID
-	}
+// NewHandler 构造 Handler。Session 由 mgr 按 cookie 惰性拨号创建。
+func NewHandler(cfg Config, mgr *Manager) *Handler {
 	return &Handler{
 		cfg:    cfg,
-		cli:    cli,
+		mgr:    mgr,
 		logger: logging.New("web"),
 	}
 }
@@ -112,6 +109,24 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/messages", h.handleMessages)
 	mux.HandleFunc("/events", h.handleEvents)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", StaticHandler()))
+}
+
+// ensureSession 取当前请求的 Session：无 cookie 则当场签发并惰性拨号。
+//
+// 拨号失败（hub 不在线）返回错误，调用方回 503——浏览器重试 / EventSource
+// 自动重连即可，web server 本身照常跑（hub 恢复后下一个请求自愈）。
+func (h *Handler) ensureSession(w http.ResponseWriter, r *http.Request) (*Session, error) {
+	id := readSessionID(r)
+	if id == "" {
+		id = newSessionID()
+		issueSessionCookie(w, id)
+	}
+	sess, err := h.mgr.GetOrCreate(r.Context(), id)
+	if err != nil {
+		return nil, err
+	}
+	sess.touch()
+	return sess, nil
 }
 
 // handleHome 渲染首页：拉最近 historyLimit 条历史填充消息列表。
@@ -129,44 +144,36 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msgs, err := h.cli.History(r.Context(), h.cfg.ConvID, 0, historyLimit)
+	sess, err := h.ensureSession(w, r)
 	if err != nil {
-		h.logger.Error("load history failed", "conv", h.cfg.ConvID, "err", err)
+		h.logger.Error("home: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	msgs, histErr := sess.cli.History(r.Context(), sess.convID, 0, historyLimit)
+	if histErr != nil {
+		h.logger.Error("load history failed", "conv", sess.convID, "err", histErr)
 	}
 	views := make([]templates.MessageView, 0, len(msgs))
 	for i := range msgs {
-		views = append(views, h.newView(&msgs[i]))
+		views = append(views, sess.newView(&msgs[i]))
 	}
 
 	data := templates.HomeData{
 		Meta: templates.PageMeta{
 			Title:   "lanchat web",
-			User:    h.cfg.User,
-			Device:  h.cfg.Device,
+			User:    sess.user,
+			Device:  sess.device,
 			Version: h.cfg.Version,
 		},
 		Messages:  views,
-		Connected: h.connected(),
+		Connected: sess.alive(),
 	}
-	if err != nil {
+	if histErr != nil {
 		data.Error = "历史加载失败，显示可能不完整"
 	}
 	h.renderHome(w, r, data)
-}
-
-// newView 把协议消息转成视图模型。Self 以 SenderUser 与当前会话身份比对得出。
-func (h *Handler) newView(m *protocol.StoredMessage) templates.MessageView {
-	return templates.NewMessageView(m.ID, int64(m.ServerSeq), m.SenderUserID, m.Body, m.CreatedAt, m.SenderUserID == h.cfg.User)
-}
-
-// connected 非阻塞判断与 hub 的连接是否存活。
-func (h *Handler) connected() bool {
-	select {
-	case <-h.cli.Done():
-		return false
-	default:
-		return true
-	}
 }
 
 // renderHome 统一渲染入口，供 handleHome 与将来可能的错误渲染复用。
@@ -179,7 +186,7 @@ func (h *Handler) renderHome(w http.ResponseWriter, r *http.Request, data templa
 
 // handleMessages 接收浏览器发来的消息并转发给 hub。
 //
-// 校验 → Client.SendMessage → 204。消息的回显不在这里做：hub 广播
+// 校验 → Session.SendMessage → 204。消息的回显不在这里做：hub 广播
 // FKDeliver 回环给发送方自己，SSE 流（/events）会把它推回 DOM。
 func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -196,8 +203,15 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "body is required", http.StatusBadRequest)
 		return
 	}
-	if err := h.cli.SendMessage(r.Context(), h.cfg.ConvID, body); err != nil {
-		h.logger.Error("send message failed", "conv", h.cfg.ConvID, "err", err)
+
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		h.logger.Error("messages: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := sess.cli.SendMessage(r.Context(), sess.convID, body); err != nil {
+		h.logger.Error("send message failed", "conv", sess.convID, "err", err)
 		http.Error(w, "send failed", http.StatusInternalServerError)
 		return
 	}
@@ -209,9 +223,11 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 
 // handleEvents 是 SSE 长连接端点。
 //
-// 订阅 Client 的 EventBus，把 core.Event 翻译成 SSE 帧推给浏览器：
-//   - EventMessage → `event: message`，data 是渲染好的 <li> HTML（htmx 追加进 #messages）
-//   - EventState   → `event: state`，data 是 connected / disconnected
+// 连接注册到 Session 的 fanout（多 tab 共享同一条 client 连接）；
+// pump goroutine 已把 core.Event 翻译成 SSE 帧，这里只负责：
+//   - 写响应头与首帧注释（让浏览器立刻拿到响应头）
+//   - 循环把 fanout 帧写给本连接、15s 心跳
+//   - 退出时 defer 注销 writer
 //
 // SSE 帧格式要点（提案附录 B）：
 //   - 每条 event 以空行结束
@@ -225,111 +241,69 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		h.logger.Error("events: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	// 告诉中间代理这是长连接，别缓冲
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	h.logger.Info("sse client connected", "remote", r.RemoteAddr)
+	h.logger.Info("sse client connected", "remote", r.RemoteAddr, "cookie", sess.id)
 
-	// 先订阅、再写首帧：两步之间 bus 上不会有漏掉事件的窗口。
-	sub := h.cli.Subscribe(eventBuf)
-	defer func() { _ = sub.Close() }()
+	// 注册 writer 后立即写首帧：两步之间 pump 已在跑，事件不会丢
+	// （writer ch 有 128 缓冲）。
+	wr := sess.addWriter()
+	defer sess.removeWriter(wr)
+	sess.touch()
 
-	// 先写一个注释行让浏览器立刻拿到响应头（否则要等第一个 ticker）
 	if _, err := w.Write([]byte(": lanchat sse ready\n\n")); err != nil {
 		h.logger.Warn("sse initial write failed", "err", err)
 		return
 	}
 	flusher.Flush()
 
-	h.eventLoop(r.Context(), w, flusher, sub)
+	h.serveSSE(r.Context(), w, flusher, sess, wr)
 }
 
-// eventLoop 把 EventBus 事件翻译成 SSE 帧推给浏览器。
+// serveSSE 是单条 SSE 连接的写循环。
 //
 // 退出条件三选一：
 //  1. ctx 取消（浏览器关页面 / EventSource.close()）
-//  2. cli.Done() 关闭（与 hub 的连接断了）——EventSource 会自动重连本端点，
-//     重连后 handleHome 重新拉历史兜住断线期间的消息；hub 侧自动重连
-//     是 M4.6 的活（提案 §M4.5）
+//  2. wr.ch 关闭（session 死亡：hub 断开或被 Manager 回收）——EventSource
+//     会自动重连本端点，重连后 ensureSession 重建 session 并补历史
 //  3. 写失败（连接已断）——这时继续循环没意义
-func (h *Handler) eventLoop(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sub core.Subscription) {
+func (h *Handler) serveSSE(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, sess *Session, wr *sseWriter) {
 	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			h.logger.Info("sse client disconnected", "reason", ctx.Err())
-			return
-		case <-h.cli.Done():
-			h.logger.Info("hub connection lost, closing sse stream")
+			h.logger.Info("sse client disconnected", "cookie", sess.id, "reason", ctx.Err())
 			return
 		case <-ticker.C:
 			if _, err := w.Write([]byte(": ping\n\n")); err != nil {
-				h.logger.Info("sse write failed, dropping client", "err", err)
+				h.logger.Info("sse write failed, dropping client", "cookie", sess.id, "err", err)
 				return
 			}
 			flusher.Flush()
-		case e := <-sub.C():
-			frame, ok := h.sseFrame(ctx, e)
+		case frame, ok := <-wr.ch:
 			if !ok {
-				continue
+				// session 没了：结束流，浏览器自动重连。
+				h.logger.Info("sse stream closed: session gone", "cookie", sess.id)
+				return
 			}
 			if _, err := w.Write(frame); err != nil {
-				h.logger.Info("sse write failed, dropping client", "err", err)
+				h.logger.Info("sse write failed, dropping client", "cookie", sess.id, "err", err)
 				return
 			}
 			flusher.Flush()
 		}
-	}
-}
-
-// sseFrame 把一条 core.Event 翻译成完整 SSE 帧；ok=false 表示该事件不产生帧。
-//
-// message 帧的 data 是渲染好的 <li> HTML 片段（templates.Message），按 SSE
-// 规范逐行加 "data: " 前缀——templ 产物含换行（用户消息体可含换行），
-// 整块塞一行会断帧；浏览器会把多个 data 行用 \n 拼回原文。
-// id 行只在 ServerSeq > 0 时输出：EventSource 重连会带 Last-Event-ID 头，
-// M4.6 可用它做断线补发。
-func (h *Handler) sseFrame(ctx context.Context, e core.Event) ([]byte, bool) {
-	switch e.Kind {
-	case core.EventMessage:
-		m := e.Message
-		if m == nil || m.ConversationID != h.cfg.ConvID {
-			return nil, false
-		}
-		var buf bytes.Buffer
-		if err := templates.Message(h.newView(m)).Render(ctx, &buf); err != nil {
-			h.logger.Error("render message frame failed", "err", err)
-			return nil, false
-		}
-		var sb strings.Builder
-		sb.WriteString("event: message\n")
-		if m.ServerSeq > 0 {
-			sb.WriteString("id: ")
-			sb.WriteString(strconv.FormatUint(m.ServerSeq, 10))
-			sb.WriteString("\n")
-		}
-		for _, line := range strings.Split(strings.TrimRight(buf.String(), "\n"), "\n") {
-			sb.WriteString("data: ")
-			sb.WriteString(line)
-			sb.WriteString("\n")
-		}
-		sb.WriteString("\n")
-		return []byte(sb.String()), true
-
-	case core.EventState:
-		state := "disconnected"
-		if e.State != nil && e.State.Connected {
-			state = "connected"
-		}
-		return []byte("event: state\ndata: " + state + "\n\n"), true
-
-	default:
-		// EventRead / EventPresence / EventTyping：M4.3 不渲染。
-		return nil, false
 	}
 }

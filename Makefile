@@ -37,7 +37,7 @@ lint:
 ## fmt: 格式化全部（Go + templ）
 fmt:
 	gofumpt -l -w .
-	gci write .
+	gci write --no-lex-order -s standard -s default -s "prefix(github.com/pandaymx/lanchat)" .
 	@templ fmt . 2>/dev/null || true
 
 ## tidy: 整理依赖

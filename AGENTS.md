@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M4 Web 端（M4.1–M4.3 已合入，下一步 M4.4 多 Tab Session）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M4 Web 端（M4.1–M4.6 已合入，下一步 M4.7 Web i18n）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -40,7 +40,7 @@
 | M4.3 | handler 接 client | `internal/webui/session.go` DialClient 装配 + SSE 推流 + POST /api/messages Send + fake hub E2E 双 web 互发 | ✅ `3e635a0` → `70f4269` → `32180e1` |
 | M4.4 | 多 Tab Session | cookie 签发 + Manager.GetOrCreate/Release + Session.fanout 多 SSEWriter 订阅 | ✅ `a792f82` → `e50e221` → `97c7626` |
 | M4.5 | 输入体验 | Enter 提交 / Shift+Enter 换行（输入法组词保护）、断连 banner（SSE state 帧 swap）、历史「加载更多」（proto Before + hub Query + client.FetchHistory 静默分页 + /history 端点） | ✅ `3b1bd56` → `8d8291e` → `1a09ec6` → `a5d1cc9` → `07d4dbe` → `c1c1ff8` |
-| M4.6 | 自动重连 | EventSource 重连 + Last-Event-ID 断线补发（server 幂等） | ⬜ |
+| M4.6 | 自动重连 | EventSource 重连 + Last-Event-ID 断线补发（catchUp 补写 + sseChunk 带 seq + writer skipSeq 幂等去重） | ✅ `6c7ae15` |
 | M4.7 | Web i18n | 复用 internal/i18n bundle + Translator 模式 | ⬜ |
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。

@@ -40,3 +40,11 @@ desktop.ini
 .env
 .env.local
 .env.*.local
+
+# ---------- 动态与私有数据（不入库）----------
+# AI 协作动态数据与会话记录：仅本地留存，不进 git 历史
+/.agents/cache/
+/.agents/history/
+/.agents/scratchpad/
+/.dumate/
+/.tmp/

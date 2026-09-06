@@ -1,0 +1,39 @@
+package templates
+
+// home 是主页面：header（标题 + 身份 + 连接状态）+ 消息列表 + 输入区。
+//
+// HTMX 集成点：
+//   - <ul id="messages"> 是 SSE 推送的 swap 目标（M4.3 由 sse-swap 属性挂上）
+//   - <form hx-post="/messages"> 提交后由 HTMX 发 AJAX POST，不整页刷新
+//   - hx-swap="none" + 提交后手动清空：M4.2 骨架阶段先不接真实发送
+templ Home(data HomeData) {
+	@base(data.Meta) {
+		<header class="header">
+			<h1>lanchat</h1>
+			<span class="who">
+				if data.Connected {
+					<span class="dot online"></span>
+				} else {
+					<span class="dot offline"></span>
+				}
+				{ data.Meta.Who() }
+			</span>
+		</header>
+		if data.Error != "" {
+			<div class="banner">{ data.Error }</div>
+		}
+		<ul id="messages" class="messages">
+			if len(data.Messages) == 0 {
+				<li class="empty">（暂无消息）</li>
+			} else {
+				for _, m := range data.Messages {
+					@message(m)
+				}
+			}
+		</ul>
+		<form class="composer" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
+			<textarea name="body" placeholder="输入消息（Enter 发送，Shift+Enter 换行）" rows="1"></textarea>
+			<button type="submit">发送</button>
+		</form>
+	}
+}

@@ -1,0 +1,77 @@
+// Package templates 存放 lanchat web 端的 templ 模板与视图模型。
+//
+// 产物说明：`*_templ.go` 由 `make templ`（templ generate）生成，
+// 且被 .gitignore 排除（不入库）。clone 后必须先跑 `make templ` 才能构建。
+//
+// 静态资源（htmx / css）不走 CDN，而由 internal/webui/assets.go 用
+// embed.FS 嵌入二进制——局域网自托管场景下不依赖外网。
+package templates
+
+import "time"
+
+// PageMeta 是 base 模板需要的公共 head 信息。
+type PageMeta struct {
+	Title   string
+	User    string
+	Device  string
+	Version string
+}
+
+// Who 返回 "user@device" 形式的身份串。
+//
+// 为什么不在 templ 里写 `{ meta.User }@{ meta.Device }`：templ 把 `@` 当作
+// 组件调用前缀（`@base(...)` 那种语法），裸 `@` 会导致 "expected operand,
+// found '{'" 解析错误。放进 Go 侧拼串最省事，也让模板保持纯渲染。
+func (p PageMeta) Who() string {
+	return p.User + "@" + p.Device
+}
+
+// HomeData 是 home 模板的渲染入参。
+//
+// M4.2 骨架阶段只有 Meta/Messages/Connected/Error；M4.3 接通真 hub 后
+// 补 HasMore 等字段（见 docs/proposals/2026-09-05-m4-web-proposal.md §5.5）。
+type HomeData struct {
+	Meta      PageMeta
+	Messages  []MessageView
+	Connected bool
+	Error     string
+}
+
+// MessageView 是单条消息的视图模型。
+//
+// 与 protocol.StoredMessage 的区别：这里多了 Self（是否本人所发）与
+// AtText（已格式化的时间串），避免在模板里做逻辑判断。
+type MessageView struct {
+	ID         string
+	Seq        int64
+	SenderUser string
+	Body       string
+	AtText     string
+	Self       bool
+}
+
+// FormatTime 把 Unix 毫秒格式化为 HH:MM:SS（本地时区）。
+//
+// TUI 端（pkg/tui/history.go 的 formatUnixMilli）用的是同样格式，
+// 两端观感保持一致。ms<=0 视为"无时间"，返回占位串。
+func FormatTime(ms int64) string {
+	if ms <= 0 {
+		return "??:??:??"
+	}
+	return time.UnixMilli(ms).Local().Format("15:04:05")
+}
+
+// NewMessageView 从协议消息构造视图模型。
+//
+// self 由调用方（handler）比较 SenderUser 与当前会话 user 得出——
+// 模板层不做身份判断，保持渲染逻辑纯粹。
+func NewMessageView(id string, seq int64, sender, body string, atMs int64, self bool) MessageView {
+	return MessageView{
+		ID:         id,
+		Seq:        seq,
+		SenderUser: sender,
+		Body:       body,
+		AtText:     FormatTime(atMs),
+		Self:       self,
+	}
+}

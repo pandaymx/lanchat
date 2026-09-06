@@ -1,0 +1,22 @@
+package templates
+
+// message 渲染单条消息（<li>）。
+//
+// 用途有二：
+//  1. 首页首次渲染时被 home 循环调用
+//  2. SSE 推送新消息时，服务端直接把这一段的 HTML 放进 SSE data 行，
+//     由 htmx 的 hx-swap 追加到 #messages 末尾（M4.3 接通）
+//
+// templ 对 { } 插值自动做 HTML 转义，Body 里的 < > & 不会被当标签解析
+// （见 docs/proposals/2026-09-05-m4-web-proposal.md R9：XSS 防护）。
+templ message(m MessageView) {
+	<li id={ "msg-" + m.ID }>
+		<span class="msg-meta">{ m.AtText }</span>
+		if m.Self {
+			<span class="msg-sender self">{ m.SenderUser }</span>
+		} else {
+			<span class="msg-sender">{ m.SenderUser }</span>
+		}
+		<span class="msg-body">{ m.Body }</span>
+	</li>
+}

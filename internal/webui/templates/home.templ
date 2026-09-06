@@ -31,8 +31,17 @@ templ Home(data HomeData) {
 				}
 			}
 		</ul>
+		// Enter 发送、Shift+Enter 换行；isComposing 保护中文输入法组词期间的 Enter。
+		// requestSubmit() 触发原生 submit 事件，htmx 照常拦截成 AJAX POST；
+		// input 事件做高度自适应（上限 200px），发送后 after-request reset 复原。
 		<form class="composer" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
-			<textarea name="body" placeholder="输入消息（Enter 发送，Shift+Enter 换行）" rows="1"></textarea>
+			<textarea
+				name="body"
+				placeholder="输入消息（Enter 发送，Shift+Enter 换行）"
+				rows="1"
+				hx-on:keydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();this.closest('form').requestSubmit()}"
+				hx-on:input="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,200)+'px'"
+			></textarea>
 			<button type="submit">发送</button>
 		</form>
 	}

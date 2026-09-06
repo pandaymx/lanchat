@@ -203,6 +203,11 @@ func TestHandleHome_RendersShell(t *testing.T) {
 		"/assets/htmx.min.js",
 		"/assets/style.css",
 		"alice@web-", // PageMeta.Who() 拼出的身份串；device 由 Manager 生成 web-<hex>
+		// M4.5：Enter 发送 / Shift+Enter 换行 / 输入法组词保护
+		"hx-on:keydown=",
+		"event.key==='Enter'",
+		"event.isComposing",
+		"requestSubmit()",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)

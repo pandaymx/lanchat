@@ -12,6 +12,7 @@
 | ADR-010 | i18n 用 Translator interface 注入 + flat key + lowercase locale + JSON embed.FS | ✅ 已采纳 | [ADR-010.md](./ADR-010.md) |
 | ADR-011 | Web 端用 SSE + POST /api/messages，不用 WebSocket | ✅ 已采纳 | [ADR-011.md](./ADR-011.md) |
 | ADR-012 | Web 端 thin proxy：只做 HTTP ↔ pkg/client 桥接，不重复 hub 调度 | ✅ 已采纳 | [ADR-012.md](./ADR-012.md) |
+| ADR-013 | 持久化存储选 libSQL 纯 Go 驱动（M5 落地），禁 CGO 绑定 | ✅ 已采纳 | [ADR-013.md](./ADR-013.md) |
 
 ## 新增 ADR 模板
 

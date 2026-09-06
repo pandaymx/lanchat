@@ -18,10 +18,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/transport/ws"
 	"github.com/pandaymx/lanchat/pkg/tui"
@@ -61,6 +63,8 @@ func main() {
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
 	logFile := flag.String("log-file", defaultLogFile(), "日志文件路径；默认走 $TMPDIR/lanchat-tui-$$.log（TUI AltScreen 占用 stderr）")
+	lang := flag.String("lang", "", "界面语言（en / zh-CN ...）；留空自动探测 $LC_ALL / $LANG / $LANGUAGE")
+	langList := flag.Bool("lang-list", false, "列出已加载的 locale 并退出")
 	flag.Parse()
 
 	lvl, lvlErr := logging.ParseLevel(*logLevel)
@@ -78,13 +82,27 @@ func main() {
 	logger := logging.New("tui")
 	logger.Info("starting tui", "version", version, "commit", commit, "user", *user, "device", *device, "hub", *hubURL, "log_file", *logFile)
 
+	// 启动期加载 i18n bundle。命令行先于 env 探测，让用户在 CI / 容器
+	// 里能用 -lang 强制覆盖 $LANG。
+	bundle := i18n.MustLoadEmbedded([]string{"en", "zh-cn"}, "en")
+	if *langList {
+		locales := bundle.Locales()
+		sort.Strings(locales)
+		fmt.Printf("available locales: %v\n", locales)
+		fmt.Printf("active fallback  : %s\n", "en")
+		return
+	}
+	resolvedLocale := resolveLocale(*lang)
+	logger.Info("i18n resolved", "locale", resolvedLocale)
+
 	if err := run(runOptions{
-		User:      *user,
-		Device:    *device,
-		HubURL:    *hubURL,
-		ConvID:    *convID,
-		MaxHist:   *maxHist,
-		NoConnect: *noConnect,
+		User:       *user,
+		Device:     *device,
+		HubURL:     *hubURL,
+		ConvID:     *convID,
+		MaxHist:    *maxHist,
+		NoConnect:  *noConnect,
+		Translator: bundle.ForLocale(resolvedLocale),
 	}); err != nil {
 		logger.Error("tui exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "lanchat-tui:", err)
@@ -112,6 +130,22 @@ type runOptions struct {
 	User, Device, HubURL, ConvID string
 	MaxHist                      int
 	NoConnect                    bool
+	Translator                   tui.Translator
+}
+
+// resolveLocale 在 -lang 与 env 之间做优先级排序：flag > env > fallback。
+//
+// env 部分直接走 i18n.DetectLocale（处理 $LC_ALL / $LANG / $LANGUAGE
+// + BCP 47 简化的同名变体）。flag 显式给了空串就视为"未指定"，走 env。
+//
+// 注意：我们不在这里校验 flagValue 是否在已加载集合里——
+// Bundle.T 对未知 locale 会自动走 fallback 链到 "en"，
+// 保留用户输入的字面值便于日志排错。
+func resolveLocale(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return i18n.DetectLocale(os.Environ(), "en")
 }
 
 // run 构造 Model、可选地建 Session、起 bubbletea Program。
@@ -121,10 +155,11 @@ func run(opts runOptions) error {
 	}
 
 	cfg := tui.Config{
-		User:    opts.User,
-		Device:  opts.Device,
-		HubURL:  opts.HubURL,
-		MaxHist: opts.MaxHist,
+		User:       opts.User,
+		Device:     opts.Device,
+		HubURL:     opts.HubURL,
+		MaxHist:    opts.MaxHist,
+		Translator: opts.Translator,
 	}
 	m := tui.New(cfg)
 

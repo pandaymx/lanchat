@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -70,6 +72,17 @@ type Model struct {
 	// 由 hub 响应的 HasMore 维护，false 后不再触发（到头）。
 	loadingOlder bool
 	olderHasMore bool
+
+	// M7.3：「正在输入」。typings 记录对端设备最后一次 typing 时间，
+	// 到 typingTTL 过期；lastTypingAt 是本端上发节流位点。
+	typings      map[string]typingState
+	lastTypingAt time.Time
+}
+
+// typingState 是一条对端「正在输入」记录（M7.3）。
+type typingState struct {
+	user string
+	at   time.Time
 }
 
 // New 构造一个未连接、待 Init 的 Model。
@@ -95,6 +108,7 @@ func New(cfg Config) *Model {
 		input:        newTextInput(cfg.Translator),
 		history:      newHistoryView(cfg.Translator),
 		olderHasMore: true,
+		typings:      make(map[string]typingState),
 	}
 }
 
@@ -137,6 +151,15 @@ const fetchOlderTimeout = 10 * time.Second
 // fetchOlderLimit 是单次上翻拉取的条数，与 web 端「加载更多」同量级。
 const fetchOlderLimit = 50
 
+// typingThrottle 是本端「正在输入」上发节流间隔（M7.3）：持续输入时
+// 最多每 typingThrottle 打一帧，避免每个按键都发包。
+const typingThrottle = 3 * time.Second
+
+// typingTTL 是对端 typing 状态的展示有效期（M7.3）：对端持续输入会
+// 不断刷新，停止输入（或断连）后最迟 typingTTL 内指示消失。取节流
+// 间隔的 2 倍，容忍丢一帧。
+const typingTTL = 2 * typingThrottle
+
 // sendCmd 调 Sender.Send 把文本发到 hub，并把结果回包成 Msg 继续事件循环。
 //
 // 成功 → 返回 sentMsg（Update 接着再 listenCmd，把循环续上）
@@ -174,6 +197,38 @@ func fetchOlderCmd(f HistoryFetcher, before uint64) tea.Cmd {
 		}
 		return olderMessagesMsg{msgs: msgs, hasMore: hasMore, err: err}
 	}
+}
+
+// typingCmd 调 Typer.SendTyping 上发「正在输入」（M7.3）。
+// fire-and-forget：失败只 Debug 日志，返回 typingSentMsg 占位续事件循环。
+func typingCmd(t Typer) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if err := t.SendTyping(ctx); err != nil {
+			tuiLog.Debug("SendTyping failed", "err", err)
+		}
+		return typingSentMsg{}
+	}
+}
+
+// maybeNotifyTyping 在用户持续输入时节流上发 typing 帧（M7.3）。
+//
+// 条件：输入框非空、距上次上发 ≥ typingThrottle、sender 实现 Typer。
+// 导航键（PgUp/End 等）在更外层已被截走，到这里的都是输入类按键。
+func (m *Model) maybeNotifyTyping() tea.Cmd {
+	if m.input.Value() == "" {
+		return nil
+	}
+	if !m.lastTypingAt.IsZero() && time.Since(m.lastTypingAt) < typingThrottle {
+		return nil
+	}
+	t, ok := m.sender.(Typer)
+	if !ok {
+		return nil
+	}
+	m.lastTypingAt = time.Now()
+	return typingCmd(t)
 }
 
 // maybeFetchOlder 在视口已到顶部且条件满足时发起上翻分页；否则返回 nil。
@@ -271,11 +326,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, m.input.Focus())
 		}
 		cmds = append(cmds, m.input.Update(msg))
+		// M7.3：输入时节流通知「正在输入」（输入框为空 / 节流窗口内 no-op）。
+		cmds = append(cmds, m.maybeNotifyTyping())
 		return m, tea.Batch(cmds...)
 
 	case eventMsg:
 		m.applyEvent(msg.event)
-		return m, listenCmd(m.inbox)
+		cmds := []tea.Cmd{listenCmd(m.inbox)}
+		// M7.3：typing 事件安排一个过期 Tick（事件已 upsert，到点清条目）。
+		if msg.event.Kind == core.EventTyping {
+			cmds = append(cmds, m.typingExpireCmd())
+		}
+		return m, tea.Batch(cmds...)
 
 	case errMsg:
 		m.lastError = msg.err
@@ -326,6 +388,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prependMessages(msg.msgs)
 		}
 		return m, nil
+
+	case typingSentMsg:
+		// M7.3：本端 typing 上发回执，无状态要更新。
+		return m, nil
+
+	case typingExpireMsg:
+		// M7.3：清掉过期的对端 typing 条目；还有未过期的就再 schedule
+		// 一个 Tick（每个事件一个 Tick 的模型下，最新事件的 Tick 到点时
+		// 其余条目必然也已过期或同样被覆盖）。
+		if m.pruneTyping() > 0 {
+			return m, m.typingExpireCmd()
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -358,6 +433,8 @@ func (m *Model) applyEvent(e core.Event) {
 		if e.Message != nil {
 			wasAtBottom := m.history.AtBottom()
 			m.appendMessage(*e.Message)
+			// 对方消息到达即说明输入结束，立刻撤掉该设备的 typing 指示。
+			delete(m.typings, e.Message.SenderDeviceID)
 			m.refreshHistory()
 			if !wasAtBottom {
 				m.unread++
@@ -367,6 +444,10 @@ func (m *Model) applyEvent(e core.Event) {
 	case core.EventPresence:
 		if e.Presence != nil {
 			m.upsertPresence(*e.Presence)
+		}
+	case core.EventTyping:
+		if e.Typing != nil {
+			m.upsertTyping(*e.Typing)
 		}
 	}
 }
@@ -411,6 +492,8 @@ func (m *Model) trySubmitInput() tea.Cmd {
 		return nil
 	}
 	m.input.Reset()
+	// M7.3：消息发出后下一段输入应能立刻触发 typing，重置节流位点。
+	m.lastTypingAt = time.Time{}
 	if strings.HasPrefix(text, "/") {
 		return m.tryCommand(text)
 	}
@@ -515,6 +598,10 @@ func (m *Model) prependMessages(older []protocol.StoredMessage) {
 
 // upsertPresence 按 DeviceID upsert 在线设备。
 func (m *Model) upsertPresence(p protocol.Presence) {
+	// 设备离线 → 其「正在输入」指示一并撤掉（无论 peers 列表里是否已有它）。
+	if !p.Online {
+		delete(m.typings, p.DeviceID)
+	}
 	for i := range m.peers {
 		if m.peers[i].DeviceID == p.DeviceID {
 			m.peers[i] = p
@@ -522,6 +609,55 @@ func (m *Model) upsertPresence(p protocol.Presence) {
 		}
 	}
 	m.peers = append(m.peers, p)
+}
+
+// upsertTyping 记录/刷新一条对端「正在输入」（M7.3）。同一设备连续
+// typing 只刷新时间；过期 Tick 由 Update 的 eventMsg 分支统一 schedule，
+// typingTTL 后无新事件则指示消失。
+func (m *Model) upsertTyping(ty protocol.Typing) {
+	if ty.DeviceID == "" {
+		return
+	}
+	m.typings[ty.DeviceID] = typingState{user: ty.UserID, at: time.Now()}
+}
+
+// pruneTyping 清掉超过 typingTTL 的 typing 条目，返回剩余条数。
+func (m *Model) pruneTyping() int {
+	now := time.Now()
+	for dev, st := range m.typings {
+		if now.Sub(st.at) >= typingTTL {
+			delete(m.typings, dev)
+		}
+	}
+	return len(m.typings)
+}
+
+// typingExpireCmd schedule 一个 typingTTL 后的过期检查 Tick。
+func (m *Model) typingExpireCmd() tea.Cmd {
+	return tea.Tick(typingTTL, func(time.Time) tea.Msg {
+		return typingExpireMsg{}
+	})
+}
+
+// typingNames 返回当前正在输入的用户名列表（去重、字典序，渲染稳定）。
+// 顺带清掉已过期条目，让 View 读到的就是最新状态。
+func (m *Model) typingNames() []string {
+	m.pruneTyping()
+	seen := make(map[string]struct{}, len(m.typings))
+	names := make([]string, 0, len(m.typings))
+	for _, st := range m.typings {
+		name := st.user
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Publish 把外部事件投递到 inbox。M3.5+ 由 client bus → adapter 调用。
@@ -615,7 +751,17 @@ func (m *Model) renderStatus() string {
 //
 // M3.10：文案走 Translator；fallback en 行宽约 80 字符，窄终端会被
 // lipgloss 截断（详见 layout_test.go 的 widthConsistent）。
+//
+// M7.3：有人正在输入时，hints 行让位给 typing 指示——键位提示是
+// 学一次的东西，typing 是此刻该看的东西；停止输入 typingTTL 后自动恢复。
 func (m *Model) renderHints() string {
+	if names := m.typingNames(); len(names) > 0 {
+		key := "tui.typing.many"
+		if len(names) == 1 {
+			key = "tui.typing.one"
+		}
+		return fmt.Sprintf(m.t(key), strings.Join(names, ", "))
+	}
 	return m.t("tui.hints.row")
 }
 

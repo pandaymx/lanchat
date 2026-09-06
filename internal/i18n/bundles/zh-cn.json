@@ -14,6 +14,8 @@
   "tui.sidebar.prefix": "peers:",
   "tui.history.fallback.user": "?",
   "tui.history.fallback.time": "??:??:??",
+  "tui.typing.one": "%s 正在输入…",
+  "tui.typing.many": "%s 正在输入…",
   "web.composer.placeholder": "输入消息（Enter 发送，Shift+Enter 换行）",
   "web.composer.send": "发送",
   "web.messages.empty": "（暂无消息）",
@@ -22,5 +24,7 @@
   "web.history.error": "历史加载失败，显示可能不完整",
   "web.peers.title": "在线成员",
   "web.peers.empty": "（暂无在线成员）",
-  "web.peers.you": "（你）"
+  "web.peers.you": "（你）",
+  "web.typing.one": "%s 正在输入…",
+  "web.typing.many": "%s 正在输入…"
 }

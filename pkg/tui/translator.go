@@ -111,6 +111,9 @@ var enDefaults = map[string]string{
 	"tui.sidebar.prefix":        "peers:",
 	"tui.history.fallback.user": "?",
 	"tui.history.fallback.time": "??:??:??",
+	// M7.3：hints 行让位的「正在输入」指示，%s 是逗号拼接的用户名。
+	"tui.typing.one":  "%s is typing…",
+	"tui.typing.many": "%s are typing…",
 }
 
 // defaultENTranslator 是 Model.New() 默认注入的 translator，

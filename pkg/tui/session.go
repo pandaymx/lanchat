@@ -39,6 +39,12 @@ type HistoryFetcher interface {
 	FetchHistory(ctx context.Context, before uint64, limit int) ([]protocol.StoredMessage, bool, error)
 }
 
+// Typer 是 Sender 的可选能力（M7.3）：用户输入时向 hub 上发「正在输入」。
+// Session 实现该接口；测试 fake 不实现时 Model 静默禁用（类型断言失败 no-op）。
+type Typer interface {
+	SendTyping(ctx context.Context) error
+}
+
 // Session 是 TUI 与 pkg/client 之间的适配层，负责连接的完整生命周期。
 //
 // 职责边界：
@@ -140,6 +146,12 @@ func (s *Session) FetchHistory(ctx context.Context, before uint64, limit int) ([
 	return resp.Messages, resp.HasMore, nil
 }
 
+// SendTyping 实现 Typer：上发「正在输入」提示（M7.3）。
+// 负载为空，身份由 hub 盖戳；节流由 Model 负责。
+func (s *Session) SendTyping(ctx context.Context) error {
+	return s.cli.SendTyping(ctx)
+}
+
 // ConversationID 返回本 Session 绑定的会话 ID。
 func (s *Session) ConversationID() string { return s.convID }
 
@@ -212,4 +224,8 @@ func (s *Session) Close() error {
 }
 
 // 编译期断言：Session 可作为 Model 的出站实现。
-var _ Sender = (*Session)(nil)
+var (
+	_ Sender         = (*Session)(nil)
+	_ HistoryFetcher = (*Session)(nil)
+	_ Typer          = (*Session)(nil)
+)

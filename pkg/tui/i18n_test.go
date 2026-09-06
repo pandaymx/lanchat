@@ -230,6 +230,8 @@ func TestDefaultENTranslator_AllKeysResolve(t *testing.T) {
 		"tui.sidebar.prefix",
 		"tui.history.fallback.user",
 		"tui.history.fallback.time",
+		"tui.typing.one",
+		"tui.typing.many",
 	} {
 		v := tr.T(k)
 		if v == k {

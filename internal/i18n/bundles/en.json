@@ -14,6 +14,8 @@
   "tui.sidebar.prefix": "peers:",
   "tui.history.fallback.user": "?",
   "tui.history.fallback.time": "??:??:??",
+  "tui.typing.one": "%s is typing…",
+  "tui.typing.many": "%s are typing…",
   "web.composer.placeholder": "Type a message (Enter to send, Shift+Enter for newline)",
   "web.composer.send": "Send",
   "web.messages.empty": "(no messages yet)",
@@ -22,5 +24,7 @@
   "web.history.error": "Failed to load history; the view may be incomplete",
   "web.peers.title": "Online",
   "web.peers.empty": "(no one online yet)",
-  "web.peers.you": "(you)"
+  "web.peers.you": "(you)",
+  "web.typing.one": "%s is typing…",
+  "web.typing.many": "%s are typing…"
 }

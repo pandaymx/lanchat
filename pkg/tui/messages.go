@@ -60,6 +60,15 @@ type olderMessagesMsg struct {
 	err     error
 }
 
+// typingSentMsg 是本端「正在输入」上发的回执（M7.3）。typingCmd 是
+// fire-and-forget，本 Msg 没有状态要更新，存在只为让 Cmd 有返回值。
+type typingSentMsg struct{}
+
+// typingExpireMsg 是对端 typing 状态过期检查的 Tick（M7.3）。
+// 每次收到 EventTyping 都 schedule 一个 typingTTL 后的 Tick；到点
+// 清掉超时条目，若还有未过期的则再 schedule 一个，直到列表清空。
+type typingExpireMsg struct{}
+
 func newErrExpireMsg() errExpireMsg { return errExpireMsg{} }
 
 func newSentMsg(text string) sentMsg { return sentMsg{text: text} }

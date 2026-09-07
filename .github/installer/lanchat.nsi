@@ -1,12 +1,10 @@
 ; LAN Chat Windows 安装器（NSIS，desktop + CLI 通用，M11.1）
-; CI 用法（在 dist/raw 下执行）：
-;   makensis /DVERSION=0.9.0 /DAPPNAME="LAN Chat" /DEXE=lanchat-desktop.exe /DOUTFILE=../../dist/x.exe ../../.github/installer/lanchat.nsi
+; CI 用法（由 pkg-windows-nsis.sh 在 dist/raw 下调用）：
+;   makensis -DVERSION=0.9.0 -DAPPNAME="LAN Chat" -DEXE=lanchat-desktop.exe -DOUTFILE=../../dist/x.exe ../../.github/installer/lanchat.nsi
 ; 功能：安装到 Program Files、开始菜单快捷方式、注册卸载项（控制面板可卸载）。
 
 Unicode true
 !include "MUI2.nsh"
-
-!cd "..\..\dist\raw"
 
 !ifndef APPNAME
   !define APPNAME "LAN Chat"

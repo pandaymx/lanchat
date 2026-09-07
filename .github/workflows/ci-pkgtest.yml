@@ -44,28 +44,28 @@ jobs:
         run: |
           set -euo pipefail
           for b in hub tui web; do
-            ./.github/installer/pkg-linux-deb.sh 0.0.0-test amd64 "$b" cli
+            ./.github/installer/pkg-linux-deb.sh 0.0.0 amd64 "$b" cli
           done
       - name: Package rpm
         run: |
           set -euo pipefail
           for b in hub tui web; do
-            ./.github/installer/pkg-linux-rpm.sh 0.0.0-test amd64 "$b" cli
+            ./.github/installer/pkg-linux-rpm.sh 0.0.0 amd64 "$b" cli
           done
       - name: Package nsis (linux makensis)
         run: |
           set -euo pipefail
           for b in hub tui web; do
-            ./.github/installer/pkg-windows-nsis.sh 0.0.0-test amd64 "$b"
+            ./.github/installer/pkg-windows-nsis.sh 0.0.0 amd64 "$b"
           done
       - name: Verify
         run: |
           set -euo pipefail
           ls -1 dist/
           for b in hub tui web; do
-            [ -f "dist/lanchat-${b}-0.0.0-test-linux-amd64.deb" ]
-            [ -f "dist/lanchat-${b}-0.0.0-test-linux-amd64.rpm" ]
-            [ -f "dist/lanchat-${b}-0.0.0-test-windows-amd64-setup.exe" ]
+            [ -f "dist/lanchat-${b}-0.0.0-linux-amd64.deb" ]
+            [ -f "dist/lanchat-${b}-0.0.0-linux-amd64.rpm" ]
+            [ -f "dist/lanchat-${b}-0.0.0-windows-amd64-setup.exe" ]
           done
           echo "ALL_LINUX_PKGS_OK"
 
@@ -97,7 +97,7 @@ jobs:
           mkdir -p dist/raw
           go build -tags desktop -o dist/raw/lanchat-desktop.exe ./apps/desktop
       - name: Package nsis
-        run: ./.github/installer/pkg-windows-nsis.sh 0.0.0-test arm64 desktop
+        run: ./.github/installer/pkg-windows-nsis.sh 0.0.0 arm64 desktop
       - name: Verify
         run: |
-          [ -f "dist/lanchat-desktop-0.0.0-test-windows-arm64-setup.exe" ] && echo WOA_NSIS_OK
+          [ -f "dist/lanchat-desktop-0.0.0-windows-arm64-setup.exe" ] && echo WOA_NSIS_OK

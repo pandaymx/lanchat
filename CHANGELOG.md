@@ -1,3 +1,17 @@
+## [0.13.0](https://github.com/pandaymx/lanchat/compare/v0.12.0...v0.13.0) (2026-09-07)
+
+### Features
+
+* **release:** 安装包矩阵扩展到全平台全架构 ([0d678cb](https://github.com/pandaymx/lanchat/commit/0d678cbac33447e9874438a7677a2d1d13815594))
+
+### Bug Fixes
+
+* **release:** nsis wrapper 提前捕获仓库根路径（子 shell cd 后 pwd 失效） ([6863ba4](https://github.com/pandaymx/lanchat/commit/6863ba4156c88705561e26ff4d26b6e8fa81b310))
+* **release:** rpm %install 建 buildroot/usr/bin；nsis File/OutFile 传绝对路径 ([5df4f13](https://github.com/pandaymx/lanchat/commit/5df4f130cc95d877ceb75acd6d64d502456cdc4c))
+* **release:** 安装包脚本三处修复（deb 空依赖空行 / nsis -D 前缀 / rpm spec 生成与架构映射） ([6132085](https://github.com/pandaymx/lanchat/commit/61320853758931b12804898fbb6546850e0cb904))
+* **release:** 安装包脚本补可执行位（Windows 写入丢 mode） ([7968351](https://github.com/pandaymx/lanchat/commit/7968351d1b0f94aa7813a2c76a29f54149d538d8))
+* **release:** 移除 nsi 冗余 !cd；验证版本号去 - 兼容 rpm ([5356fec](https://github.com/pandaymx/lanchat/commit/5356fec47936a817f852163ea339516c7feb0850))
+
 ## [0.12.0](https://github.com/pandaymx/lanchat/compare/v0.11.0...v0.12.0) (2026-09-07)
 
 ### Features

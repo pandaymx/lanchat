@@ -30,10 +30,11 @@ MAKENSIS="${MAKENSIS:-makensis}"
 # 前缀（/D 会被当成脚本路径），Windows 的 makensis 两种都认，统一用 -D。
 # EXE/OUTFILE 传绝对路径：NSIS 的 File/OutFile 相对脚本文件所在目录解析，
 # 与 makensis 的 cwd 无关。
-RAW="$(pwd)/dist/raw"
+ROOT="$(pwd)"
+RAW="${ROOT}/dist/raw"
 ABS_EXE="${RAW}/${EXE}"
-ABS_OUT="$(pwd)/dist/${NAME}"
+ABS_OUT="${ROOT}/dist/${NAME}"
 ( cd "$RAW" && MSYS_NO_PATHCONV=1 "$MAKENSIS" \
     -DVERSION="${VERSION}" -DAPPNAME="${APPNAME}" -DEXE="${ABS_EXE}" \
-    -DOUTFILE="${ABS_OUT}" "$(pwd)/.github/installer/lanchat.nsi" )
+    -DOUTFILE="${ABS_OUT}" "${ROOT}/.github/installer/lanchat.nsi" )
 echo "built dist/${NAME}"

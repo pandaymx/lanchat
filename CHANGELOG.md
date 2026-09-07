@@ -1,3 +1,9 @@
+## [0.9.1](https://github.com/pandaymx/lanchat/compare/v0.9.0...v0.9.1) (2026-09-07)
+
+### Bug Fixes
+
+* **ci:** windows NSIS 全路径调用 ([fd913c0](https://github.com/pandaymx/lanchat/commit/fd913c0738f37f73532a1f392c37cd7d833e8570))
+
 ## [0.9.0](https://github.com/pandaymx/lanchat/compare/v0.8.4...v0.9.0) (2026-09-07)
 
 ### Features

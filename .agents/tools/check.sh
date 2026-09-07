@@ -23,11 +23,12 @@ bad() { FAIL=$((FAIL + 1)); echo "  ❌ $1"; }
 # ---------- 1. templ 版本 pin 一致性 ----------
 echo "== 1. templ 版本 pin 一致性 =="
 go_mod_ver="$(sed -n 's/.*github.com\/a-h\/templ v\([0-9][0-9.]*\).*/\1/p' go.mod | head -1)"
-ci_vers="$(sed -n 's/.*templ\/cmd\/templ@v\([0-9][0-9.]*\).*/\1/p' .github/workflows/ci.yml | sort -u)"
+# release.yml 的打包 job 也有同款 templ install（M8 收尾新增），一并纳入 pin 守护
+ci_vers="$(sed -n 's/.*templ\/cmd\/templ@v\([0-9][0-9.]*\).*/\1/p' .github/workflows/ci.yml .github/workflows/release.yml | sort -u)"
 if [ -n "$go_mod_ver" ] && [ "$(printf '%s\n' "$ci_vers" | wc -l)" -eq 1 ] && [ "$go_mod_ver" = "$ci_vers" ]; then
   ok "templ go.mod($go_mod_ver) == CI 全部 pin($ci_vers)"
 else
-  bad "templ pin 不一致：go.mod=$go_mod_ver，CI pin=[$(echo "$ci_vers" | tr '\n' ' ')]（AGENTS.md：三处必须一致）"
+  bad "templ pin 不一致：go.mod=$go_mod_ver，CI pin=[$(echo "$ci_vers" | tr '\n' ' ')]（go.mod / ci.yml / release.yml 必须一致）"
 fi
 
 # ---------- 2. gci sections 参数 ----------

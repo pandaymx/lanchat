@@ -46,3 +46,84 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bunx semantic-release
+
+  # M8 收尾（2026-09-07）：给 Release 页附上可下载的二进制。
+  # 之前 ci.yml 的 build job 只传 Actions artifact（30 天过期、不对外），
+  # Release 页只有 changelog notes；此处补上原生二进制矩阵。
+  package:
+    name: package (${{ matrix.goos }}-${{ matrix.goarch }})
+    # 只在 tag push 的 run 里打包：tag 名即版本号（github.ref_name），
+    # semantic-release 幂等复跑保证此时 Release 页面已存在。
+    # workflow_dispatch 手动 publish（ref=main）这次不打包——它 push 的
+    # 新 tag 会再触发一次 run 完成打包。
+    if: github.event_name == 'push'
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            ext: .exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+      # *_templ.go 被 .gitignore 排除（构建产物不入库），交叉编译前必须
+      # 先 templ generate，否则 internal/webui/templates 缺文件编译失败。
+      # 版本与 go.mod / ci.yml / check.sh 的 pin 保持一致（0.3.1020）。
+      - name: Install templ CLI
+        env:
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: go install github.com/a-h/templ/cmd/templ@v0.3.1020
+      - name: Generate templ files
+        run: templ generate
+      # 纯 Go + 零 CGO（AGENTS.md §2）：CGO_ENABLED=0 交叉编译无坑。
+      # 版本注入与 Makefile LDFLAGS 同款（main.version/commit/date）。
+      - name: Cross-compile
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+          LDFLAGS: -s -w -X main.version=${{ github.ref_name }} -X main.commit=${{ github.sha }} -X main.date=${{ github.event.head_commit.timestamp }}
+        run: |
+          mkdir -p dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}
+          go build -ldflags "$LDFLAGS" -o dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}/ ./cmd/...
+      - name: Package
+        run: |
+          set -euo pipefail
+          name=lanchat-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          cd dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip -q -r ../../$name.zip hub${{ matrix.ext }} tui${{ matrix.ext }} web${{ matrix.ext }}
+          else
+            tar -czf ../../$name.tar.gz hub tui web
+          fi
+          cd ../..
+          sha256sum $name.* > $name.sha256
+      # gh 上传幂等：--clobber 覆盖同名 asset（复跑不报错）；Release 页面
+      # 若意外缺失则 create 兜底（permissions.contents: write 已够）。
+      - name: Upload release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_name }}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
+          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber

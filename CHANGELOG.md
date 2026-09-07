@@ -1,3 +1,9 @@
+## [0.11.0](https://github.com/pandaymx/lanchat/compare/v0.10.1...v0.11.0) (2026-09-07)
+
+### Features
+
+* **web:** M11 三栏 IM 布局重构 + 浅深双主题 ([5169a7a](https://github.com/pandaymx/lanchat/commit/5169a7aa99a3b05be2f85fb91407451b4501441e))
+
 ## [0.10.1](https://github.com/pandaymx/lanchat/compare/v0.10.0...v0.10.1) (2026-09-07)
 
 ### Bug Fixes

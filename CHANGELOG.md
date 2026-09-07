@@ -1,3 +1,9 @@
+## [0.13.1](https://github.com/pandaymx/lanchat/compare/v0.13.0...v0.13.1) (2026-09-07)
+
+### Bug Fixes
+
+* **release:** Windows NSIS 路径转 cygpath；package job cd 回仓库根；deb/rpm 修 desktop 产物名 ([fbe17f0](https://github.com/pandaymx/lanchat/commit/fbe17f0c229473e4f77004849d679191908c347c))
+
 ## [0.13.0](https://github.com/pandaymx/lanchat/compare/v0.12.0...v0.13.0) (2026-09-07)
 
 ### Features

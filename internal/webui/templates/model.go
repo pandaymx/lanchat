@@ -105,6 +105,36 @@ type MessageView struct {
 	AtText string
 	Self   bool
 	Read   bool
+	// File 是附件引用（M9）；nil 表示纯文本消息。模板据此渲染
+	// 文件卡片 / 图片内联预览，下载链接指向 web 自身的代理端点。
+	File *protocol.FileRef
+}
+
+// HasFile 报告本消息是否带附件（模板可读性 helper）。
+func (m MessageView) HasFile() bool { return m.File != nil }
+
+// FileSizeText 把附件字节数格式化成人读尺寸（与 TUI formatSize 同口径）。
+func (m MessageView) FileSizeText() string {
+	return formatBytes(m.File.Size)
+}
+
+// IsImage 报告附件是否为可内联预览的图片（image/*）。
+func (m MessageView) IsImage() bool {
+	return m.File != nil && strings.HasPrefix(m.File.Mime, "image/")
+}
+
+// formatBytes 1024 进制人读尺寸。
+func formatBytes(n int64) string {
+	switch {
+	case n < 1024:
+		return strconv.FormatInt(n, 10) + " B"
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1f KB", float64(n)/1024)
+	case n < 1024*1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1024*1024*1024))
+	}
 }
 
 // FormatTime 把 Unix 毫秒格式化为 HH:MM:SS（本地时区）。
@@ -123,7 +153,7 @@ func FormatTime(ms int64) string {
 // self 由调用方（handler）比较 SenderUser 与当前会话 user 得出——
 // 模板层不做身份判断，保持渲染逻辑纯粹。body 在此处同步渲染成
 // Markdown HTML（M8.2），模板里不再有第二处渲染入口。
-func NewMessageView(id string, seq int64, sender, body string, atMs int64, self, read bool) MessageView {
+func NewMessageView(id string, seq int64, sender, body string, atMs int64, self, read bool, file *protocol.FileRef) MessageView {
 	return MessageView{
 		ID:         id,
 		Seq:        seq,
@@ -133,6 +163,7 @@ func NewMessageView(id string, seq int64, sender, body string, atMs int64, self,
 		AtText:     FormatTime(atMs),
 		Self:       self,
 		Read:       read,
+		File:       file,
 	}
 }
 

@@ -60,6 +60,10 @@ func DialClient(ctx context.Context, opts DialOptions) (*client.Client, core.Sto
 	bus := event.New()
 	cli := client.New(hello, conn, store, bus)
 
+	// M9：文件传输的数据面挂在 hub 的 HTTP 端口（与 WS 同端口），
+	// 从 ws URL 推导 http 基址注入 client；不额外要求第二个地址。
+	cli.SetFileBase(client.HTTPBaseFromWS(opts.HubURL))
+
 	if err := cli.Connect(ctx, client.ConnectOptions{
 		RequestHistory: true,
 		HistoryLimit:   opts.HistoryLimit,
@@ -91,6 +95,12 @@ func defaultDeviceName() string {
 // 生产用 DefaultDialer（包 DialClient）；测试注入返回 stubClient 的假 dialer，
 // 不必起 hub。这是 Manager 层的 ADR-002 开关点。
 type Dialer func(ctx context.Context, opts DialOptions) (Client, core.Store, error)
+
+// HubHTTPBase 返回 hub 的 HTTP 基址（M9 文件端点挂在与 WS 同端口）。
+// Handler 的文件上传/下载代理端点据此转发请求，不要求用户配第二个地址。
+func (m *Manager) HubHTTPBase() string {
+	return client.HTTPBaseFromWS(m.cfg.HubURL)
+}
 
 // DefaultDialer 把 DialClient 的具体返回类型适配成 Dialer 窄签名。
 func DefaultDialer(ctx context.Context, opts DialOptions) (Client, core.Store, error) {

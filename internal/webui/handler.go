@@ -24,6 +24,8 @@ package webui
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -91,6 +93,10 @@ type Client interface {
 	// SendRead 上发「已读到 seq」回执（M8.1）；POST /read 的出站路径。
 	// 身份由 hub 盖戳，convID 由会话绑定。
 	SendRead(ctx context.Context, convID string, serverSeq uint64) error
+	// SendFileMessage 发送一条携带文件附件引用的消息（M9）。
+	// FileRef 由 hub 文件端点返回（FileID 由 hub 生成），本方法只负责
+	// 把引用挂到消息上走既有消息管线；文件二进制不经过 WS。
+	SendFileMessage(ctx context.Context, convID string, ref protocol.FileRef) error
 	Done() <-chan struct{}
 	// Close 释放底层连接（Manager 回收 Session 时调，顺序先于 store.Close）。
 	Close() error
@@ -134,6 +140,9 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/read", h.handleRead)
 	mux.HandleFunc("/history", h.handleHistory)
 	mux.HandleFunc("/events", h.handleEvents)
+	// M9 文件传输代理：与 hub 同路径形态，浏览器经自身同源访问。
+	mux.HandleFunc("POST /api/files", h.handleFileUpload)
+	mux.HandleFunc("GET /api/files/{fileID}", h.handleFileDownload)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", StaticHandler()))
 }
 
@@ -339,6 +348,101 @@ func (h *Handler) renderHome(w http.ResponseWriter, r *http.Request, data templa
 	if err := templates.Home(data).Render(r.Context(), w); err != nil {
 		h.logger.Error("render home failed", "err", err)
 	}
+}
+
+// handleFileUpload 代理浏览器 → hub 的文件上传（M9）。
+//
+// 浏览器 multipart 请求体原样透传到 hub /api/files（不落 web 进程内存、
+// 不做二次解码）；hub 返回 FileRef JSON 后，再经 client 发一条带附件
+// 引用的消息（走既有消息管线：seq 分配、历史、已读、去重、SSE 回显）。
+func (h *Handler) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		h.logger.Error("file upload: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	hub := h.mgr.HubHTTPBase()
+	if hub == "" {
+		http.Error(w, "hub base unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, hub+"/api/files", r.Body)
+	if err != nil {
+		h.logger.Error("file upload: build proxy request", "err", err)
+		http.Error(w, "proxy error", http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.logger.Error("file upload: hub refused", "err", err)
+		http.Error(w, "hub unreachable", http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		// 透传 hub 的状态与错误体（413 超限等），浏览器据此提示。
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+		return
+	}
+	var ref protocol.FileRef
+	if err := json.NewDecoder(resp.Body).Decode(&ref); err != nil {
+		h.logger.Error("file upload: decode hub response", "err", err)
+		http.Error(w, "bad hub response", http.StatusBadGateway)
+		return
+	}
+	if err := sess.cli.SendFileMessage(r.Context(), sess.convID, ref); err != nil {
+		h.logger.Error("file upload: send file message failed", "file", ref.FileID, "err", err)
+		http.Error(w, "send failed", http.StatusInternalServerError)
+		return
+	}
+	// 200 + FileRef JSON：前端可即时展示（消息随后经 SSE 回显，幂等）。
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(ref)
+}
+
+// handleFileDownload 代理 hub → 浏览器的文件下载/内联预览（M9）。
+//
+// 透传 Range（断点续传/视频拖拽）、Content-Type 与 RFC 2231
+// Content-Disposition（attachment → 下载；浏览器对 <img> 忽略该头 →
+// 内联预览）。文件 ID 是 32 位 hex、hub 侧已防遍历，这里不额外鉴权
+// （与 hub 文件端点同信任模型）。
+func (h *Handler) handleFileDownload(w http.ResponseWriter, r *http.Request) {
+	fileID := r.PathValue("fileID")
+	hub := h.mgr.HubHTTPBase()
+	if hub == "" {
+		http.Error(w, "hub base unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, hub+"/api/files/"+fileID, nil)
+	if err != nil {
+		h.logger.Error("file download: build proxy request", "err", err)
+		http.Error(w, "proxy error", http.StatusBadGateway)
+		return
+	}
+	if rg := r.Header.Get("Range"); rg != "" {
+		req.Header.Set("Range", rg)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.logger.Error("file download: hub refused", "file", fileID, "err", err)
+		http.Error(w, "hub unreachable", http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	for _, hk := range []string{"Content-Type", "Content-Disposition", "Content-Length", "Accept-Ranges", "Content-Range"} {
+		if v := resp.Header.Get(hk); v != "" {
+			w.Header().Set(hk, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // handleMessages 接收浏览器发来的消息并转发给 hub。

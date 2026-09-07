@@ -36,6 +36,83 @@
     return max;
   }
 
+  // uploadFile 把浏览器本地文件传到 hub（M9）：
+  // web 的 POST /api/files 代理端点 → hub blob 存储，返回 FileRef 后发一条
+  // 附件消息；消息回显走 SSE（与文本消息同一管线），这里不做 DOM 插入。
+  // 失败时把错误写进状态行（.status-err 由 htmx 渲的样式复用）。
+  function uploadFile(file) {
+    if (!file) return;
+    var fd = new FormData();
+    fd.append("file", file);
+    var btn = document.getElementById("file-btn");
+    if (btn) btn.disabled = true;
+    fetch("/api/files", {
+      method: "POST",
+      body: fd,
+      credentials: "same-origin"
+    }).then(function (resp) {
+      if (!resp.ok) {
+        return resp.text().then(function (t) {
+          throw new Error("upload failed (" + resp.status + ")" + (t ? ": " + t : ""));
+        });
+      }
+    }).catch(function (err) {
+      var el = document.getElementById("conn-state");
+      if (el) el.textContent = "✗ " + err.message;
+    }).finally(function () {
+      if (btn) btn.disabled = false;
+    });
+  }
+
+  // uploadFileFromInput 处理隐藏 input 的文件选择（点击后清空，允许重复选同一文件）。
+  function uploadFileFromInput(input) {
+    uploadFile(input.files && input.files[0]);
+    input.value = "";
+  }
+
+  // bindFileComposer 挂上传交互：按钮、粘贴、拖拽（M9）。
+  function bindFileComposer() {
+    var btn = document.getElementById("file-btn");
+    var input = document.getElementById("file-input");
+    if (!btn || !input) return;
+
+    btn.addEventListener("click", function () { input.click(); });
+    input.addEventListener("change", function () { uploadFileFromInput(input); });
+
+    // 粘贴（截图工具 / 剪贴板图片）。
+    document.addEventListener("paste", function (e) {
+      var files = e.clipboardData && e.clipboardData.files;
+      if (files && files.length) {
+        e.preventDefault();
+        uploadFile(files[0]);
+      }
+    });
+
+    // 拖拽文件到窗口任意处即上传（enter/over 阻止默认让 drop 可触发）。
+    var dragDepth = 0;
+    document.addEventListener("dragenter", function (e) {
+      e.preventDefault();
+      if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.indexOf("Files") >= 0) {
+        dragDepth++;
+        document.body.classList.add("drag-over");
+      }
+    });
+    document.addEventListener("dragover", function (e) { e.preventDefault(); });
+    document.addEventListener("dragleave", function (e) {
+      e.preventDefault();
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) document.body.classList.remove("drag-over");
+    });
+    document.addEventListener("drop", function (e) {
+      e.preventDefault();
+      dragDepth = 0;
+      document.body.classList.remove("drag-over");
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        uploadFile(e.dataTransfer.files[0]);
+      }
+    });
+  }
+
   // sendRead 把「已读到 seq」上发到 hub（hub 盖戳身份并广播给其它设备）。
   // 失败静默忽略：下次贴底滚动/新消息会再触发，无需重试退避。
   function sendRead(seq) {
@@ -116,6 +193,9 @@
     },
     true
   );
+
+  // 文件上传交互（按钮 / 粘贴 / 拖拽），M9。
+  bindFileComposer();
 
   // 首屏：列表短到无需滚动或已在底部 → 立即上发已读。
   if (document.readyState === "loading") {

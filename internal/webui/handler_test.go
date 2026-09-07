@@ -381,7 +381,7 @@ func TestTemplate_EscapesMessageBody(t *testing.T) {
 	data := templates.HomeData{
 		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
 		Messages: []templates.MessageView{
-			templates.NewMessageView("1", 1, "bob", "<script>alert(1)</script>", 0, false, false),
+			templates.NewMessageView("1", 1, "bob", "<script>alert(1)</script>", 0, false, false, nil),
 		},
 	}
 	var sb strings.Builder
@@ -1565,7 +1565,7 @@ func TestTemplate_RendersMarkdown(t *testing.T) {
 	data := templates.HomeData{
 		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
 		Messages: []templates.MessageView{
-			templates.NewMessageView("1", 1, "bob", "**bold** and `code`", 0, false, false),
+			templates.NewMessageView("1", 1, "bob", "**bold** and `code`", 0, false, false, nil),
 		},
 	}
 	var sb strings.Builder
@@ -1586,7 +1586,7 @@ func TestTemplate_RendersCodeBlock(t *testing.T) {
 	data := templates.HomeData{
 		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
 		Messages: []templates.MessageView{
-			templates.NewMessageView("1", 1, "bob", "```go\npackage main\n```", 0, false, false),
+			templates.NewMessageView("1", 1, "bob", "```go\npackage main\n```", 0, false, false, nil),
 		},
 	}
 	var sb strings.Builder
@@ -1607,7 +1607,7 @@ func TestTemplate_StripsRawHtml(t *testing.T) {
 	data := templates.HomeData{
 		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
 		Messages: []templates.MessageView{
-			templates.NewMessageView("1", 1, "bob", "<img src=x onerror=alert(1)>", 0, false, false),
+			templates.NewMessageView("1", 1, "bob", "<img src=x onerror=alert(1)>", 0, false, false, nil),
 		},
 	}
 	var sb strings.Builder
@@ -1629,7 +1629,7 @@ func TestTemplate_ReadMarkInline(t *testing.T) {
 	data := templates.HomeData{
 		Meta: templates.PageMeta{Title: "t", User: "alice", Device: "web"},
 		Messages: []templates.MessageView{
-			templates.NewMessageView("1", 1, "alice", "hi", 0, true, true),
+			templates.NewMessageView("1", 1, "alice", "hi", 0, true, true, nil),
 		},
 	}
 	var sb strings.Builder

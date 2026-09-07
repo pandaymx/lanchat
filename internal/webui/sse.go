@@ -271,7 +271,7 @@ func sseDataFrame(event string, html []byte) []byte {
 // newView 把协议消息转成视图模型。Self 以 SenderUser 与 session 身份比对；
 // Read 表示「我发的消息已被其它设备读到」（M8.1，首屏/分页/新帧共用）。
 func (s *Session) newView(m *protocol.StoredMessage) templates.MessageView {
-	return templates.NewMessageView(m.ID, int64(m.ServerSeq), m.SenderUserID, m.Body, m.CreatedAt, m.SenderUserID == s.user, s.isRead(m))
+	return templates.NewMessageView(m.ID, int64(m.ServerSeq), m.SenderUserID, m.Body, m.CreatedAt, m.SenderUserID == s.user, s.isRead(m), m.File)
 }
 
 // isRead 报告「我发的消息是否已被其它设备读到」（M8.1）：任一其它设备

@@ -56,6 +56,8 @@ type stubClient struct {
 	mu      sync.Mutex
 	sends   []sendRecord
 	sendErr error
+	// fileRefs 记录 SendFileMessage 收到的附件引用（M9）。
+	fileRefs []protocol.FileRef
 
 	history []protocol.StoredMessage
 	histErr error
@@ -200,6 +202,14 @@ func (s *stubClient) readSeqs() []uint64 {
 func (s *stubClient) Done() <-chan struct{} { return s.done }
 
 // Close 记录关闭次数并幂等关闭 done（Manager 回收 Session 时调用）。
+// SendFileMessage 记录被调用的附件引用（M9）。
+func (s *stubClient) SendFileMessage(_ context.Context, _ string, ref protocol.FileRef) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fileRefs = append(s.fileRefs, ref)
+	return s.sendErr
+}
+
 func (s *stubClient) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

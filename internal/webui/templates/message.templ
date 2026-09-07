@@ -31,6 +31,23 @@ templ Message(m MessageView) {
 		}
 		<div class="msg-body">@templ.Raw(m.HTML)
 </div>
+		if m.HasFile() {
+			if m.IsImage() {
+				<div class="msg-file image">
+					<a href={ "/api/files/" + m.File.FileID } target="_blank" rel="noopener">
+						<img src={ "/api/files/" + m.File.FileID } alt={ m.File.Name } loading="lazy" />
+					</a>
+					<span class="msg-file-name">{ m.File.Name }</span>
+				</div>
+			} else {
+				<div class="msg-file">
+					<a class="msg-file-link" href={ "/api/files/" + m.File.FileID } download={ m.File.Name }>
+						📎 { m.File.Name }
+					</a>
+					<span class="msg-file-size">{ m.FileSizeText() }</span>
+				</div>
+			}
+		}
 	</li>
 }
 

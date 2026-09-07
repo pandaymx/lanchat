@@ -53,6 +53,9 @@ templ Home(data HomeData) {
 		// input 事件做高度自适应（上限 200px），发送后 after-request reset 复原。
 		// M7.3：textarea 上挂 typing 上发——leading throttle，首个 input 立即
 		// 发，之后 3s 最多一次；空 body 不触发；停止输入后靠对端 TTL 消失。
+		<!-- M9：上传按钮 + 隐藏文件选择框；粘贴/拖拽由 app.js 处理。 -->
+		<button id="file-btn" type="button" class="composer-file" title={ T(data.Tr, "web.file.upload") }>📎</button>
+		<input id="file-input" type="file" style="display:none"/>
 		<form class="composer" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
 			<textarea
 				name="body"

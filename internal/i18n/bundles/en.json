@@ -31,5 +31,6 @@
   "tui.file.tag": "[file]",
   "tui.file.saved": "saved %s",
   "tui.file.usage": "usage: /file <path>",
-  "tui.file.unsupported": "file transfer not available"
+  "tui.file.unsupported": "file transfer not available",
+  "web.file.upload": "Upload file (or paste / drag)"
 }

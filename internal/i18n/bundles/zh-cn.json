@@ -31,5 +31,6 @@
   "tui.file.tag": "[文件]",
   "tui.file.saved": "已保存 %s",
   "tui.file.usage": "用法：/file <路径>",
-  "tui.file.unsupported": "文件传输不可用"
+  "tui.file.unsupported": "文件传输不可用",
+  "web.file.upload": "上传文件（或粘贴 / 拖拽）"
 }

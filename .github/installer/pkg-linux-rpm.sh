@@ -18,7 +18,12 @@ esac
 topdir="$(pwd)/dist/rpm-root"
 rm -rf "$topdir"
 mkdir -p "$topdir"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-install -m 0755 "dist/raw/${BIN}" "$topdir/SOURCES/${BIN}"
+# desktop 构建产物名带前缀（lanchat-desktop），CLI 为裸名（cp 后）
+case "$BIN" in
+  desktop) SRC="dist/raw/lanchat-desktop" ;;
+  *)       SRC="dist/raw/${BIN}" ;;
+esac
+install -m 0755 "$SRC" "$topdir/SOURCES/${BIN}"
 if [ "$KIND" = "desktop" ]; then
   REQUIRES="gtk4, webkitgtk6.0, libsoup3"
   cat > "$topdir/SOURCES/lanchat.desktop" <<'DEOF'

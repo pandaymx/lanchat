@@ -20,7 +20,12 @@ stage="dist/deb-root"
 rm -rf "$stage"
 mkdir -p "$stage/DEBIAN" "$stage/usr/bin"
 
-install -m 0755 "dist/raw/${BIN}" "$stage/usr/bin/${BIN}"
+# desktop 构建产物名带前缀（lanchat-desktop），CLI 为裸名（cp 后）
+case "$BIN" in
+  desktop) SRC="dist/raw/lanchat-desktop" ;;
+  *)       SRC="dist/raw/${BIN}" ;;
+esac
+install -m 0755 "$SRC" "$stage/usr/bin/${BIN}"
 
 # control：desktop 的 Depends 覆盖 Wails v3 运行时（gtk4 + webkitgtk-6.0 +
 # libsoup3），apt 安装时自动拉依赖；CLI 纯 Go 静态二进制零依赖。

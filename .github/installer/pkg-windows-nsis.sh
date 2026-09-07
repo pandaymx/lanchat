@@ -34,7 +34,15 @@ ROOT="$(pwd)"
 RAW="${ROOT}/dist/raw"
 ABS_EXE="${RAW}/${EXE}"
 ABS_OUT="${ROOT}/dist/${NAME}"
+SCRIPT="${ROOT}/.github/installer/lanchat.nsi"
+# Windows runner（Git Bash）里 $(pwd) 是 /d/a/... 风格，makensis.exe 是
+# 原生 Windows 程序不认 POSIX 路径；cygpath -m 转成 D:/a/...（正斜杠）。
+if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* ]]; then
+  ABS_EXE="$(cygpath -m "$ABS_EXE")"
+  ABS_OUT="$(cygpath -m "$ABS_OUT")"
+  SCRIPT="$(cygpath -m "$SCRIPT")"
+fi
 ( cd "$RAW" && MSYS_NO_PATHCONV=1 "$MAKENSIS" \
     -DVERSION="${VERSION}" -DAPPNAME="${APPNAME}" -DEXE="${ABS_EXE}" \
-    -DOUTFILE="${ABS_OUT}" "${ROOT}/.github/installer/lanchat.nsi" )
+    -DOUTFILE="${ABS_OUT}" "$SCRIPT" )
 echo "built dist/${NAME}"

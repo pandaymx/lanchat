@@ -324,6 +324,7 @@ jobs:
           osarch="${{ matrix.goos }}-${{ matrix.goarch }}"
           ext=""
           [ "${{ matrix.goos }}" = "windows" ] && ext=".exe"
+          ROOT="$PWD"
           cd "$raw"
           for bin in hub tui web; do
             name="lanchat-${bin}-${ver}-${osarch}"
@@ -336,7 +337,9 @@ jobs:
           # M11.1：压缩包之外，每个 CLI 二进制再产安装包——
           #   linux: deb + rpm（amd64/arm64）
           #   windows: NSIS 安装器（amd64/arm64，含 WOA）
-          cd ../..
+          # 注意：dist/raw/<goos>-<goarch> 向上两级只到 dist，必须用
+          # 绝对路径回仓库根（此前 cd ../.. 导致后续相对路径全部错位）。
+          cd "$ROOT"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             for bin in hub tui web; do
               cp "$raw/${bin}${ext}" "dist/raw/${bin}${ext}"

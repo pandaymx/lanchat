@@ -158,18 +158,30 @@ jobs:
           mkdir -p dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}
           go build -ldflags "-s -w -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE" \
             -o dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}/ ./cmd/...
+      # M9 收尾（2026-09-07）：hub/tui/web 拆成各自独立的压缩包（仍为
+      # 压缩包非安装包）。产物命名 lanchat-<bin>-<ver>-<os>-<arch>，每
+      # 个二进制一个压缩包 + 一个 .sha256；Windows 端同样三份 .zip。
+      # 好处：下载端只拿自己需要的二进制（LAN 聊天场景 hub 端常驻服务器、
+      # 客户端按平台取 tui/web 单独包），Release 页 18 个压缩资产一一对应。
       - name: Package
         run: |
           set -euo pipefail
-          name=lanchat-$LANCHAT_VERSION-${{ matrix.goos }}-${{ matrix.goarch }}
-          cd dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip -q -r ../../$name.zip hub${{ matrix.ext }} tui${{ matrix.ext }} web${{ matrix.ext }}
-          else
-            tar -czf ../../$name.tar.gz hub tui web
-          fi
-          cd ../..
-          sha256sum $name.* > $name.sha256
+          raw=dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}
+          ver="$LANCHAT_VERSION"
+          osarch="${{ matrix.goos }}-${{ matrix.goarch }}"
+          ext=""
+          [ "${{ matrix.goos }}" = "windows" ] && ext=".exe"
+          cd "$raw"
+          for bin in hub tui web; do
+            name="lanchat-${bin}-${ver}-${osarch}"
+            if [ -n "$ext" ]; then
+              zip -q -r "../../${name}.zip" "${bin}${ext}"
+              ( cd ../.. && sha256sum "${name}.zip" > "${name}.sha256" )
+            else
+              tar -czf "../../${name}.tar.gz" "${bin}"
+              ( cd ../.. && sha256sum "${name}.tar.gz" > "${name}.sha256" )
+            fi
+          done
       # gh 上传幂等：--clobber 覆盖同名 asset（复跑不报错）；Release 页面
       # 若意外缺失则 create 兜底（permissions.contents: write 已够）。
       - name: Upload release assets

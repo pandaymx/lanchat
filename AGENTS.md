@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M9 文件传输已合入（协议/存储 → hub blob 服务 → client API → TUI /file → Web 上传下载 → 打包按端拆分）；**v0.7.0 已发布**，Release 页 36 资产 = 6 平台 × 3 端 ×（压缩包+sha256），按端拆独立压缩包（抽验 windows 端 tui.exe/web.exe 各居其包）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M10 桌面端已合入（apps/desktop Wails v3 窗口壳 + webapp 本地装配 + CI 原生 runner 桌面 job）；**v0.8.0 由 CI 发布中**，Release 页 36 资产（6 平台 × 3 端纯 Go 矩阵）+ 桌面端 3 资产（linux/windows/darwin，各带 sha256）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -97,9 +97,9 @@
 
 | # | 主题 | 交付物 | 状态 |
 |---|---|---|---|
-| M10.1 | 窗口化客户端 | `apps/desktop`：本地 127.0.0.1 随机端口起 webui（复用 internal/webui 全部能力），webview_go 窗口 Navigate 加载；hub 地址 mDNS 自动发现 / `-hub-url` 指定；`//go:build desktop` tag 隔离 CGO 壳，server 装配逻辑可单测 | ✅ 本 commit |
+| M10.1 | 窗口化客户端 | `apps/desktop/main.go`（`//go:build desktop`）：Wails v3 窗口 Navigate 到本地 webui；`apps/desktop/webapp` 纯 Go 装配（127.0.0.1 随机端口，Start/Close 生命周期，可单测）；hub 地址 mDNS 自动发现 / `-hub-url` 指定；`main_stub.go`（`!desktop`）保默认构建全绿 | ✅ 本 commit |
 | M10.2 | 托盘与通知 | 系统托盘（systray）+ 新消息系统通知；独立 CGO 依赖，随壳单列构建 | ⬜ 待做 |
-| M10.3 | 打包 | release.yml 桌面 job（原生 runner × 平台）：`lanchat-desktop-<ver>-<os>-<arch>` 压缩包 + sha256，与纯 Go 三端矩阵并列 | ⬜ 待做 |
+| M10.3 | 打包 | release.yml `desktop` job（原生 runner × 平台）：`lanchat-desktop-<ver>-<os>-<arch>` 压缩包 + sha256，与纯 Go 三端矩阵并列 | ✅ 本 commit |
 
 **M10 验收标准**：桌面窗口打开即连 hub（自动发现或手动指定），Web UI 全部功能可用（消息/已读/Markdown/文件）；关闭窗口进程退出、本地 server 随之释放端口；`go build ./...`（无 tag）与 CI 纯 Go 矩阵不含桌面端且全绿；release 产物 `lanchat-desktop-*` 压缩包可下载运行。
 
@@ -239,7 +239,7 @@ release 阶段只提交 `CHANGELOG.md`，**不要顺手改任何 .go 文件**。
    无循环）→ 创建 GitHub Release → 同一 run 内 package job 交叉编译
    6 平台（linux/darwin/windows × amd64/arm64），并按端拆独立压缩包：
    `lanchat-<hub|tui|web>-<ver>-<os>-<arch>.tar.gz|zip`（各带 .sha256），
-   共 18 个压缩资产 + 18 个校验文件。
+   共 18 个压缩资产 + 18 个校验文件。桌面端（ADR-015 CGO 例外）由同一 run 的 `desktop` job 在原生 runner 构建：`lanchat-desktop-<ver>-<os>-<arch>.tar.gz|zip` + sha256（linux/windows/darwin 各一，架构取 runner 原生 GOARCH）。
 2. 手动兜底：`bun run release:dry` 本地预检算出的版本号与 notes
    （需 `export GH_TOKEN=<PAT，repo scope>`；gh CLI 的 OAuth token 过不了
    @semantic-release/github 的权限校验）。零配置的 dry-run 路径是 Actions

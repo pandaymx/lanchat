@@ -41,6 +41,19 @@ type FileRef struct {
 	Mime   string `json:"m,omitempty"`
 }
 
+// FileMeta 是 hub 持久化的文件元信息（M9）。
+//
+// 与 FileRef 的差异：FileMeta 是存储层记录（含上传时间，供未来清理与
+// 审计），FileRef 是消息里携带的展示快照（不含时间）。hub 重启后凭
+// FileID 从 store 读回 FileMeta，下载服务与消息渲染都不依赖内存状态。
+type FileMeta struct {
+	FileID    string `json:"fid"`
+	Name      string `json:"n"`
+	Size      int64  `json:"sz"`
+	Mime      string `json:"m,omitempty"`
+	CreatedAt int64  `json:"at,omitzero"`
+}
+
 // Conversation 是一个聊天会话，kind 决定它是 DM、群聊还是频道。
 type Conversation struct {
 	ID    string `json:"id"`

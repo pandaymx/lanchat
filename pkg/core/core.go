@@ -165,5 +165,14 @@ type Store interface {
 	// convID 非空时只返回该会话的条目；返回值不含 UserID，由调用方补全。
 	ListCursors(ctx context.Context, convID string) ([]protocol.ReadCursor, error)
 
+	// SaveFileMeta 记录一次文件上传的元信息（M9）。FileID 由 hub 文件
+	// 服务生成（crypto/rand 32 hex）；同 FileID 重复保存为幂等覆盖。
+	// 文件二进制本身落在 hub 的文件目录（files/<FileID>），不要求 Store
+	// 管理 blob——Store 只保证「重启后按 ID 能查到元信息」。
+	SaveFileMeta(ctx context.Context, m protocol.FileMeta) error
+
+	// GetFileMeta 按 FileID 读取文件元信息。未命中返回 ErrNotFound。
+	GetFileMeta(ctx context.Context, fileID string) (protocol.FileMeta, error)
+
 	Close() error
 }

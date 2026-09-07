@@ -42,6 +42,9 @@ type MemoryStore struct {
 	// cursors[deviceID+"\x00"+convID] = ServerSeq
 	cursors map[string]uint64
 
+	// files[fileID] = FileMeta（M9）
+	files map[string]protocol.FileMeta
+
 	closed bool
 }
 
@@ -53,6 +56,7 @@ func New() *MemoryStore {
 		conversations: make(map[string]protocol.Conversation),
 		messages:      make(map[string][]protocol.StoredMessage),
 		cursors:       make(map[string]uint64),
+		files:         make(map[string]protocol.FileMeta),
 	}
 }
 
@@ -276,6 +280,37 @@ func (s *MemoryStore) ListCursors(_ context.Context, convID string) ([]protocol.
 		return out[i].ConversationID < out[j].ConversationID
 	})
 	return out, nil
+}
+
+// SaveFileMeta 记录文件元信息（M9），幂等覆盖。
+func (s *MemoryStore) SaveFileMeta(_ context.Context, m protocol.FileMeta) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return core.ErrClosed
+	}
+	if m.FileID == "" {
+		return errInvalidInput("file id required")
+	}
+	if m.CreatedAt == 0 {
+		m.CreatedAt = time.Now().UnixMilli()
+	}
+	s.files[m.FileID] = m
+	return nil
+}
+
+// GetFileMeta 按 FileID 读取文件元信息；未命中返回 core.ErrNotFound。
+func (s *MemoryStore) GetFileMeta(_ context.Context, fileID string) (protocol.FileMeta, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return protocol.FileMeta{}, core.ErrClosed
+	}
+	m, ok := s.files[fileID]
+	if !ok {
+		return protocol.FileMeta{}, core.ErrNotFound
+	}
+	return m, nil
 }
 
 // Close 释放资源。重复调用安全。

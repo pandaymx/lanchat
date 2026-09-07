@@ -38,6 +38,7 @@ import (
 var (
 	errMissingConv   = errors.New("libsql: conversation id required")
 	errInvalidCursor = errors.New("libsql: device id and conv id required")
+	errMissingFileID = errors.New("libsql: file id required")
 )
 
 // nowMillis 抽成函数是为了和 memory 实现保持同一时间口径（Unix 毫秒）。
@@ -117,13 +118,62 @@ func (s *Store) migrate(ctx context.Context) error {
 			last_seq  INTEGER NOT NULL,
 			PRIMARY KEY (device_id, conv_id)
 		)`,
+		// M9 文件元信息：blob 本体在 hub 文件目录（files/<FileID>），
+		// 这里只保证「重启后按 ID 能查到」；CreatedAt 供未来清理/审计。
+		`CREATE TABLE IF NOT EXISTS file_meta (
+			file_id    TEXT PRIMARY KEY,
+			name       TEXT NOT NULL,
+			size       INTEGER NOT NULL,
+			mime       TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL
+		)`,
 	}
 	for i, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("libsql: migrate stmt %d: %w", i, err)
 		}
 	}
+	// messages 附件列（M9）：老库（M8 及以前）的 messages 表没有这些列，
+	// CREATE TABLE IF NOT EXISTS 不会补列；PRAGMA table_info 幂等补加。
+	// 列名来自内部常量表，不拼接任何外部输入，无注入面。
+	for _, col := range []string{"file_id", "file_name", "file_size", "file_mime"} {
+		has, err := s.hasColumn(ctx, "messages", col)
+		if err != nil {
+			return err
+		}
+		if !has {
+			if _, err := s.db.ExecContext(ctx,
+				`ALTER TABLE messages ADD COLUMN `+col+` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("libsql: migrate add column %s: %w", col, err)
+			}
+		}
+	}
 	return nil
+}
+
+// hasColumn 用 PRAGMA table_info 判断列是否存在（幂等迁移用）。
+func (s *Store) hasColumn(ctx context.Context, table, column string) (bool, error) {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return false, fmt.Errorf("libsql: table_info %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return false, fmt.Errorf("libsql: scan table_info: %w", err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("libsql: iterate table_info: %w", err)
+	}
+	return false, nil
 }
 
 // Close 关闭连接池。重复调用由 database/sql 兜底（返回 ErrConnDone 类错误，忽略）。
@@ -230,19 +280,30 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) err
 	if m.CreatedAt == 0 {
 		m.CreatedAt = nowMillis()
 	}
+	var fileID, fileName, fileMime string
+	var fileSize int64
+	if m.File != nil {
+		fileID, fileName, fileSize, fileMime = m.File.FileID, m.File.Name, m.File.Size, m.File.Mime
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO messages
-		   (conv_id, id, server_seq, client_nonce, sender_user, sender_device, body, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		   (conv_id, id, server_seq, client_nonce, sender_user, sender_device, body, created_at,
+		    file_id, file_name, file_size, file_mime)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(conv_id, id) DO UPDATE SET
 		   server_seq    = excluded.server_seq,
 		   client_nonce  = excluded.client_nonce,
 		   sender_user   = excluded.sender_user,
 		   sender_device = excluded.sender_device,
 		   body          = excluded.body,
-		   created_at    = excluded.created_at`,
+		   created_at    = excluded.created_at,
+		   file_id       = excluded.file_id,
+		   file_name     = excluded.file_name,
+		   file_size     = excluded.file_size,
+		   file_mime     = excluded.file_mime`,
 		m.ConversationID, m.ID, int64(m.ServerSeq), m.ClientNonce,
-		m.SenderUserID, m.SenderDeviceID, m.Body, m.CreatedAt)
+		m.SenderUserID, m.SenderDeviceID, m.Body, m.CreatedAt,
+		fileID, fileName, fileSize, fileMime)
 	if err != nil {
 		return fmt.Errorf("libsql: append message %q/%q: %w", m.ConversationID, m.ID, err)
 	}
@@ -256,7 +317,8 @@ func (s *Store) History(ctx context.Context, convID string, after uint64, limit 
 		limit = maxHistoryLimit
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		        file_id, file_name, file_size, file_mime
 		 FROM messages
 		 WHERE conv_id = ? AND server_seq > ?
 		 ORDER BY server_seq ASC
@@ -293,7 +355,8 @@ func (s *Store) RecentMessages(ctx context.Context, limit int) ([]protocol.Store
 	}
 	// 先 DESC 取最近 N 条，再在 Go 侧反转成升序——补发缓冲要求升序追加。
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		        file_id, file_name, file_size, file_mime
 		 FROM messages
 		 ORDER BY server_seq DESC
 		 LIMIT ?`,
@@ -313,25 +376,70 @@ func (s *Store) RecentMessages(ctx context.Context, limit int) ([]protocol.Store
 }
 
 // scanMessages 消费 rows 到 StoredMessage 切片（升序由 SQL 保证）。
+// M9：读取附件四列，file_id 非空时组装 FileRef（老库该列默认空串）。
 func scanMessages(rows *sql.Rows) ([]protocol.StoredMessage, error) {
 	var out []protocol.StoredMessage
 	for rows.Next() {
 		var m protocol.StoredMessage
 		var seq int64
+		var fileID, fileName, fileMime string
+		var fileSize int64
 		if err := rows.Scan(
 			&m.ID, &m.ClientNonce, &m.ConversationID,
 			&m.SenderUserID, &m.SenderDeviceID, &m.Body,
 			&seq, &m.CreatedAt,
+			&fileID, &fileName, &fileSize, &fileMime,
 		); err != nil {
 			return nil, fmt.Errorf("libsql: scan message: %w", err)
 		}
 		m.ServerSeq = uint64(seq)
+		if fileID != "" {
+			m.File = &protocol.FileRef{FileID: fileID, Name: fileName, Size: fileSize, Mime: fileMime}
+		}
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("libsql: iterate messages: %w", err)
 	}
 	return out, nil
+}
+
+// ---- file meta (M9) ----------------------------------------------------------
+
+// SaveFileMeta 记录文件元信息，幂等覆盖（同 FileID 重复上传会换 ID，正常路径不会撞）。
+func (s *Store) SaveFileMeta(ctx context.Context, m protocol.FileMeta) error {
+	if m.FileID == "" {
+		return errMissingFileID
+	}
+	if m.CreatedAt == 0 {
+		m.CreatedAt = nowMillis()
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO file_meta (file_id, name, size, mime, created_at)
+		 VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(file_id) DO UPDATE SET
+		   name = excluded.name, size = excluded.size,
+		   mime = excluded.mime, created_at = excluded.created_at`,
+		m.FileID, m.Name, m.Size, m.Mime, m.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("libsql: save file meta %q: %w", m.FileID, err)
+	}
+	return nil
+}
+
+// GetFileMeta 按 FileID 读取文件元信息；未命中返回 core.ErrNotFound。
+func (s *Store) GetFileMeta(ctx context.Context, fileID string) (protocol.FileMeta, error) {
+	var m protocol.FileMeta
+	err := s.db.QueryRowContext(ctx,
+		`SELECT file_id, name, size, mime, created_at FROM file_meta WHERE file_id = ?`, fileID).
+		Scan(&m.FileID, &m.Name, &m.Size, &m.Mime, &m.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return protocol.FileMeta{}, core.ErrNotFound
+	}
+	if err != nil {
+		return protocol.FileMeta{}, fmt.Errorf("libsql: get file meta %q: %w", fileID, err)
+	}
+	return m, nil
 }
 
 // ---- read cursors -----------------------------------------------------------

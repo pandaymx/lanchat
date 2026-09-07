@@ -330,3 +330,76 @@ func seqs(ms []protocol.StoredMessage) []uint64 {
 	}
 	return out
 }
+
+func TestStore_FileMeta_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if _, err := s.GetFileMeta(ctx, "nope"); !errors.Is(err, core.ErrNotFound) {
+		t.Fatalf("GetFileMeta(missing) = %v, want ErrNotFound", err)
+	}
+
+	m := protocol.FileMeta{FileID: "f1", Name: "code.go", Size: 1234, Mime: "text/plain"}
+	if err := s.SaveFileMeta(ctx, m); err != nil {
+		t.Fatalf("SaveFileMeta: %v", err)
+	}
+	got, err := s.GetFileMeta(ctx, "f1")
+	if err != nil {
+		t.Fatalf("GetFileMeta: %v", err)
+	}
+	if got.FileID != "f1" || got.Name != "code.go" || got.Size != 1234 || got.Mime != "text/plain" || got.CreatedAt == 0 {
+		t.Errorf("file meta round-trip = %+v", got)
+	}
+
+	// 幂等覆盖：同 ID 再存一次不报错，且元信息被更新。
+	if err := s.SaveFileMeta(ctx, protocol.FileMeta{FileID: "f1", Name: "code-v2.go", Size: 99, Mime: "text/x-go"}); err != nil {
+		t.Fatalf("SaveFileMeta overwrite: %v", err)
+	}
+	got2, _ := s.GetFileMeta(ctx, "f1")
+	if got2.Name != "code-v2.go" || got2.Size != 99 {
+		t.Errorf("file meta overwrite = %+v", got2)
+	}
+
+	if err := s.SaveFileMeta(ctx, protocol.FileMeta{FileID: ""}); err == nil {
+		t.Fatal("SaveFileMeta(empty id) = nil, want error")
+	}
+}
+
+func TestStore_MessageWithFileRef_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	m := protocol.StoredMessage{
+		ID: "m1", ConversationID: "lobby", Body: "",
+		ServerSeq: 1, CreatedAt: 1000,
+		File: &protocol.FileRef{FileID: "f9", Name: "shot.png", Size: 8888, Mime: "image/png"},
+	}
+	if err := s.AppendMessage(ctx, m); err != nil {
+		t.Fatalf("AppendMessage(with file): %v", err)
+	}
+	msgs, err := s.History(ctx, "lobby", 0, 0)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("messages = %d, want 1", len(msgs))
+	}
+	got := msgs[0]
+	if got.File == nil {
+		t.Fatal("File == nil after round-trip, want FileRef")
+	}
+	if *got.File != *m.File {
+		t.Errorf("File = %+v, want %+v", *got.File, *m.File)
+	}
+
+	// 纯文本消息：File 保持 nil（老数据兼容）。
+	if err := s.AppendMessage(ctx, protocol.StoredMessage{
+		ID: "m2", ConversationID: "lobby", Body: "hello", ServerSeq: 2, CreatedAt: 1001,
+	}); err != nil {
+		t.Fatalf("AppendMessage(text): %v", err)
+	}
+	msgs2, _ := s.History(ctx, "lobby", 0, 0)
+	if msgs2[1].File != nil {
+		t.Errorf("text message File = %+v, want nil", msgs2[1].File)
+	}
+}

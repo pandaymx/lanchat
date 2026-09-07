@@ -130,6 +130,11 @@ type ManagerConfig struct {
 	// Translator 是 UI chrome 文案翻译器（M4.7），透传给每个 Session；
 	// SSE state 帧渲染 ConnStatus 时用。nil 时模板兜底返回 key 字面值。
 	Translator templates.Translator
+	// OnMessage 是每条实时新消息（core.EventMessage，不含历史回放与
+	// 自己 catchUp 补发）的可选回调；桌面端用它弹系统通知，web 端保持
+	// nil。回调在事件泵 goroutine 上同步调用，必须快速返回（内部投递
+	// channel，不要做 IO/加锁重活）。
+	OnMessage func(*protocol.StoredMessage)
 }
 
 const (
@@ -257,18 +262,19 @@ func (m *Manager) create(ctx context.Context, cookie string) (*Session, error) {
 	}
 
 	sess := &Session{
-		id:       cookie,
-		user:     m.cfg.User,
-		device:   device,
-		convID:   m.cfg.ConvID,
-		cli:      res.cli,
-		store:    res.store,
-		lastSeen: time.Now(),
-		writers:  make(map[*sseWriter]struct{}),
-		ctx:      sessCtx,
-		cancel:   sessCancel,
-		tr:       m.cfg.Translator,
-		logger:   logging.New("web"),
+		id:        cookie,
+		user:      m.cfg.User,
+		device:    device,
+		convID:    m.cfg.ConvID,
+		cli:       res.cli,
+		store:     res.store,
+		lastSeen:  time.Now(),
+		writers:   make(map[*sseWriter]struct{}),
+		ctx:       sessCtx,
+		cancel:    sessCancel,
+		onMessage: m.cfg.OnMessage,
+		tr:        m.cfg.Translator,
+		logger:    logging.New("web"),
 	}
 	sess.startPump()
 
@@ -373,6 +379,9 @@ type Session struct {
 	// （fake transport 的 Router 读循环绑定 Dial ctx）。shutdown 时 cancel。
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// onMessage 见 ManagerConfig.OnMessage；nil 时 startPump 跳过。
+	onMessage func(*protocol.StoredMessage)
 
 	// tr 是 UI chrome 文案翻译器（M4.7），SSE state 帧渲染 ConnStatus 用；
 	// 装配遗漏时为 nil，templates.T 兜底返回 key 字面值。

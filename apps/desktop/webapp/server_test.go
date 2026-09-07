@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pandaymx/lanchat/pkg/client"
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/event"
 	"github.com/pandaymx/lanchat/pkg/hubstate"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
@@ -152,5 +154,56 @@ func TestServer_Restart(t *testing.T) {
 	status, _ := getStatus(t, s2.URL()+"/")
 	if status != http.StatusServiceUnavailable {
 		t.Errorf("home status = %d, want 503 (hub unreachable)", status)
+	}
+}
+
+// TestServer_OnMessage 验证 M10.2 通知钩子：真实 hub + peer 实时发消息，
+// OnMessage 应收到新消息（历史回放不触发）。这是桌面端系统通知的数据源。
+func TestServer_OnMessage(t *testing.T) {
+	hubURL := newTestHub(t)
+
+	got := make(chan *protocol.StoredMessage, 4)
+	s, err := Start(Options{
+		HubURL:  hubURL,
+		User:    "tester",
+		Version: "test",
+		OnMessage: func(m *protocol.StoredMessage) {
+			select {
+			case got <- m:
+			default: // 队列满丢弃：回调必须非阻塞
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	// 先让一个浏览器会话出现：GET / 触发 webui 惰性拨号 → Session 创建 →
+	// startPump 订阅事件总线（OnMessage 的挂载点）。
+	status, _ := getStatus(t, s.URL()+"/")
+	if status != http.StatusOK {
+		t.Fatalf("home status = %d, want 200 (hub online)", status)
+	}
+
+	// peer 用真实 ws 连接发消息到 lobby（与桌面端同一会话）。
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := wstransport.New().Dial(ctx, hubURL, protocol.Hello{ProtocolVersion: protocol.ProtocolVersion, DeviceID: "peer-dev", UserID: "peer"})
+	if err != nil {
+		t.Fatalf("peer dial: %v", err)
+	}
+	cli := client.New(protocol.Hello{ProtocolVersion: protocol.ProtocolVersion, DeviceID: "peer-dev", UserID: "peer"}, conn, memory.New(), event.New())
+	if err := cli.SendMessage(ctx, "lobby", "hello from peer"); err != nil {
+		t.Fatalf("peer send: %v", err)
+	}
+
+	select {
+	case m := <-got:
+		if m.SenderUserID != "peer" || m.Body != "hello from peer" {
+			t.Errorf("OnMessage = %+v, want peer/hello from peer", m)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("OnMessage not called within 3s")
 	}
 }

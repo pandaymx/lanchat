@@ -21,6 +21,7 @@ import (
 	"github.com/pandaymx/lanchat/internal/webui"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/logging"
+	"github.com/pandaymx/lanchat/pkg/protocol"
 	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
 )
 
@@ -44,6 +45,9 @@ type Options struct {
 	Translator i18n.Translator
 	// Transport 是到 hub 的传输实现；nil 用 pkg/transport/ws 默认。
 	Transport core.Transport
+	// OnMessage 是实时新消息回调（M10.2 桌面端通知用）；nil 忽略。
+	// 回调在事件泵 goroutine 同步调用，必须快速返回。
+	OnMessage func(*protocol.StoredMessage)
 	// DialTimeout 是单次拨号（含握手）上限；<=0 用 webui 默认（5s）。
 	// 测试里给短值避免慢超时；桌面端一般不用改。
 	DialTimeout time.Duration
@@ -92,6 +96,7 @@ func Start(opts Options) (*Server, error) {
 		Transport:   opts.Transport,
 		Translator:  opts.Translator,
 		DialTimeout: opts.DialTimeout,
+		OnMessage:   opts.OnMessage,
 	}, nil)
 
 	mux := http.NewServeMux()

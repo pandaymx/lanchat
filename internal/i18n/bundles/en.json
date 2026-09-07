@@ -32,5 +32,7 @@
   "tui.file.saved": "saved %s",
   "tui.file.usage": "usage: /file <path>",
   "tui.file.unsupported": "file transfer not available",
-  "web.file.upload": "Upload file (or paste / drag)"
+  "web.file.upload": "Upload file (or paste / drag)",
+  "desktop.tray.show": "Open LAN Chat",
+  "desktop.tray.quit": "Quit"
 }

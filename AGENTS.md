@@ -98,7 +98,7 @@
 | # | 主题 | 交付物 | 状态 |
 |---|---|---|---|
 | M10.1 | 窗口化客户端 | `apps/desktop/main.go`（`//go:build desktop`）：Wails v3 窗口 Navigate 到本地 webui；`apps/desktop/webapp` 纯 Go 装配（127.0.0.1 随机端口，Start/Close 生命周期，可单测）；hub 地址 mDNS 自动发现 / `-hub-url` 指定；`main_stub.go`（`!desktop`）保默认构建全绿 | ✅ 本 commit |
-| M10.2 | 托盘与通知 | 系统托盘（systray）+ 新消息系统通知；独立 CGO 依赖，随壳单列构建 | ⬜ 待做 |
+| M10.2 | 托盘与通知 | 系统托盘（app.SystemTray：图标+菜单 打开/退出）+ 新消息系统通知（webui.Manager.OnMessage 钩子 → 平台命令：linux notify-send / darwin osascript / windows PowerShell balloon；自己发的过滤、同发送者 1s 限流；托盘图标程序化生成 32x32 PNG）；无 Wails 桌面通知 API，走平台命令（见 ADR-015 M10.2 小节） | ✅ 本 commit |
 | M10.3 | 打包 | release.yml `desktop` job（原生 runner × 平台）产「安装包」：windows NSIS 向导安装器（.github/installer/desktop.nsi，Program Files + 开始菜单 + 卸载注册表）、darwin .dmg（.app bundle + ad-hoc 签名 + /Applications 软链）、linux .deb（Depends 声明 gtk4/webkitgtk 运行时，apt 自动装依赖）；脚本在 .github/installer/ | ✅ 本 commit |
 
 **M10 验收标准**：桌面窗口打开即连 hub（自动发现或手动指定），Web UI 全部功能可用（消息/已读/Markdown/文件）；关闭窗口进程退出、本地 server 随之释放端口；`go build ./...`（无 tag）与 CI 纯 Go 矩阵不含桌面端且全绿；release 产物 `lanchat-desktop-*` 压缩包可下载运行。
@@ -394,15 +394,27 @@ log.Info(...)  // 内部走 slog.Default().Log(...)
 - **推翻 Wails 的事实**：Wails v2 不支持窗口加载外部 URL（需 redirect hack）；其核心机制
   （embedded Assets + Go/JS binding）对本项目无用；v2 托盘/通知也不内置；构建需 wails CLI +
   frontend 目录。Wails v3 支持外部 URL 但仍 alpha。
-- **选型**：`github.com/webview/webview_go`（MIT，系统 WebView 绑定，API 极简
-  `New/Navigate/SetTitle/Run`，`Navigate("http://127.0.0.1:<port>")` 直接加载本地服务）。
-  已排除 `modernc.org/webview`（零 CGO 但自研玩具渲染引擎，渲染不了 htmx+SSE 应用）。
+- **选型（实施版）**：`github.com/wailsapp/wails/v3`（beta.17，用户 2026-09-07 拍板
+  「直接使用 v3」推翻 webview_go 初选——v2 不支持外部 URL / v3 支持且托盘内置）。
+  初选方案 webview_go（`New/Navigate/SetTitle/Run` 加载 `http://127.0.0.1:<port>`）
+  仅作备选记录；已排除 `modernc.org/webview`（零 CGO 但自研玩具渲染引擎）。
+- **beta.17 API 事实（踩坑）**：窗口创建是包级函数 `application.NewWindow(...)`
+  （App 上无 `NewWebviewWindow*` 方法）；托盘 = `app.SystemTray.New()` +
+  `SetIcon([]byte)` + `SetMenu(*Menu)` + `Run()`，菜单 = `application.NewMenu()`
+  + `menu.Add(label).OnClick(...)`；**桌面端没有系统通知 API**（仅 android/ios
+  有 Notify/PostNotification），通知走平台命令自实现。
 - **CGO 例外**：webview_go 需要 CGO（webkit2gtk / WebView2 / WKWebView），是全仓唯一 CGO 例外。
   隔离机制：`apps/desktop` 下 CGO 文件带 `//go:build desktop`，默认构建不含桌面端；
   桌面 job 在 CI 原生 runner 单列（§6）。
 - **窗口形态**：桌面进程内起 webui handler（127.0.0.1 随机端口），窗口加载该地址；
   关闭窗口 → 进程退出 → 端口释放。hub 连接复用 mDNS 自动发现 / `-hub-url`。
-- **首版范围**：M10.1 窗口化客户端；M10.2 托盘/通知（systray，又一层 CGO）后续再做。
+- **首版范围**：M10.1 窗口化客户端（✅）；M10.2 托盘/通知（✅ 本 commit，见下）。
+- **M10.2 托盘与通知（2026-09-07）**：托盘用 Wails v3 内置 SystemTray（菜单：打开窗口/退出，
+  图标程序化生成 32x32 PNG，零资产依赖）；通知因 v3 无桌面通知 API，采用「平台命令」方案：
+  linux `notify-send` / darwin `osascript display notification` / windows PowerShell
+  NotifyIcon 气泡——消息来源挂在 `webui.Manager.OnMessage` 可选回调（webui 事件泵同步
+  调用、回调内仅非阻塞投递 channel，通知 goroutine 负责过滤（自己发的跳过、同发送者 1s
+  限流）与平台命令；历史回放/catchUp 补发不触发。通知尽力而为，命令缺失只记 debug 日志。
 - **打包**：`lanchat-desktop-<ver>-<os>-<arch>.{tar.gz,zip}` + sha256，沿用 M9 拆包模式。
 
 ---

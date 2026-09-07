@@ -108,6 +108,9 @@ func (s *Session) startPump() {
 				s.logger.Info("event pump stopped: hub connection lost", "cookie", s.id)
 				return
 			case e := <-sub.C():
+				if e.Kind == core.EventMessage && s.onMessage != nil && e.Message != nil {
+					s.onMessage(e.Message)
+				}
 				seq, frame, ok := s.sseFrame(e)
 				if !ok {
 					continue

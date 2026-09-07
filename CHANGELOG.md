@@ -1,3 +1,9 @@
+## [0.9.0](https://github.com/pandaymx/lanchat/compare/v0.8.4...v0.9.0) (2026-09-07)
+
+### Features
+
+* **desktop:** 桌面端三平台安装包（NSIS / dmg / deb） ([8bbff35](https://github.com/pandaymx/lanchat/commit/8bbff3580aa6d4cd578315cc74b4bd86ab829925))
+
 ## [0.8.4](https://github.com/pandaymx/lanchat/compare/v0.8.3...v0.8.4) (2026-09-07)
 
 ### Bug Fixes

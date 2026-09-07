@@ -1,10 +1,16 @@
 name: Release
 
 on:
-  # 自动：tag push 时跑 publish，兜底确保 GitHub Release 页面创建成功。
-  # 配合 .releaserc.json 里的 @semantic-release/github，本地先 publish
-  # 一次，Actions 复跑时若无新 release 会自动跳过（idempotent）。
+  # 主触发链（2026-09-07 起全自动）：
+  #   push main（含 feat/fix 语义化 commit）→ semantic-release 算版本号 →
+  #   CHANGELOG commit（[skip ci]，不触发新 run）→ 打 tag（GITHUB_TOKEN
+  #   push 不触发新 run）→ 创建 GitHub Release → 同 run 内 package job
+  #   交叉编译打包上传。无循环：GITHUB_TOKEN 产生的事件不触发 workflow。
   push:
+    branches: [main]
+    # 兜底：本地/手动 publish 产生的 tag push 复跑一次（幂等），确保
+    # Release 页与打包资产最终一致（@semantic-release/github failOnError
+    # 为 false，无新 release 时幂等跳过）。
     tags:
       - 'v*'
   # 手动：用于复跑验证 / 临时 dry-run。默认 dryRun=true。
@@ -29,20 +35,27 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # 走 SSH 推到 .releaserc.json 的 repositoryUrl；Actions runner 没有 SSH key 时
-          # 这个 workflow 反正只用 secrets.GITHUB_TOKEN 做 GitHub API 调用，不调 git push。
+          # 完整历史：semantic-release 分析 commits 需要；
+          # 打包版本号也依赖 git describe（package job 同样 fetch-depth 0）。
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      # .releaserc.json 的 repositoryUrl 是 HTTPS（2026-09-07 起），runner
+      # 无 SSH key；@semantic-release/git 的 CHANGELOG commit + tag push
+      # 走这里换成的带 token HTTPS remote。GITHUB_TOKEN 有 contents: write。
+      - name: Configure git credentials
+        run: git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/pandaymx/lanchat.git"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # workflow_dispatch + dryRun=true → 仅分析，不发布
       - name: Dry run
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dryRun }}
         run: bunx semantic-release --dry-run
-      # 其它路径（push tag 或 workflow_dispatch dryRun=false）→ 真实 publish
+      # 其它路径（push main / push tag / workflow_dispatch dryRun=false）→ 真实 publish
       - name: Publish
-        if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dryRun) }}
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.dryRun }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bunx semantic-release
@@ -52,11 +65,9 @@ jobs:
   # Release 页只有 changelog notes；此处补上原生二进制矩阵。
   package:
     name: package (${{ matrix.goos }}-${{ matrix.goarch }})
-    # 只在 tag push 的 run 里打包：tag 名即版本号（github.ref_name），
-    # semantic-release 幂等复跑保证此时 Release 页面已存在。
-    # workflow_dispatch 手动 publish（ref=main）这次不打包——它 push 的
-    # 新 tag 会再触发一次 run 完成打包。
-    if: github.event_name == 'push'
+    # main push（自动发版）与 tag push（兜底复跑）都打包；版本号统一取
+    # git describe（跨触发方式一致）。只有 dryRun 不打包。
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) }}
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -80,6 +91,9 @@ jobs:
             ext: .exe
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-go@v7
         with:
           go-version: '1.27'
@@ -95,20 +109,26 @@ jobs:
       - name: Generate templ files
         run: templ generate
       # 纯 Go + 零 CGO（AGENTS.md §2）：CGO_ENABLED=0 交叉编译无坑。
-      # 版本注入与 Makefile LDFLAGS 同款（main.version/commit/date）。
+      # 版本注入与 Makefile LDFLAGS 同款（main.version/commit/date），
+      # 值取自 git（describe / rev-parse），与触发方式无关。
       - name: Cross-compile
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
-          LDFLAGS: -s -w -X main.version=${{ github.ref_name }} -X main.commit=${{ github.sha }} -X main.date=${{ github.event.head_commit.timestamp }}
         run: |
+          set -euo pipefail
+          VERSION=$(git describe --tags --abbrev=0)
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "LANCHAT_VERSION=$VERSION" >> "$GITHUB_ENV"
           mkdir -p dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}
-          go build -ldflags "$LDFLAGS" -o dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}/ ./cmd/...
+          go build -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE" \
+            -o dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}/ ./cmd/...
       - name: Package
         run: |
           set -euo pipefail
-          name=lanchat-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          name=lanchat-$LANCHAT_VERSION-${{ matrix.goos }}-${{ matrix.goarch }}
           cd dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
             zip -q -r ../../$name.zip hub${{ matrix.ext }} tui${{ matrix.ext }} web${{ matrix.ext }}
@@ -124,6 +144,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ github.ref_name }}"
+          tag="$LANCHAT_VERSION"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
           gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber

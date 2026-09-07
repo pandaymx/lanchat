@@ -201,12 +201,18 @@ LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.dat
 所以 `lanchat --version` 输出的版本来自 git tag，源码里搜不到版本号字符串。
 release 阶段只提交 `CHANGELOG.md`，**不要顺手改任何 .go 文件**。
 
-发布命令（手动触发，不接 CI 自动发布）：
+发布流程（2026-09-07 起 main 分支语义化 commit 全自动发版）：
 
-```bash
-bun run release:dry     # 先 dry-run 确认算出的版本号与 notes
-bun run release         # 正式发版
-```
+1. push 到 main 且含 `feat`/`fix` 等语义化 commit → CI（release.yml）自动：
+   semantic-release 算版本号 → 更新 CHANGELOG → 提交 `chore(release): x.y.z
+   [skip ci]`（不触发新 run）→ 打 tag（GITHUB_TOKEN push 不触发新 run，
+   无循环）→ 创建 GitHub Release → 同一 run 内 package job 交叉编译
+   6 平台（linux/darwin/windows × amd64/arm64）并上传 tar.gz/zip + sha256。
+2. 手动兜底：`bun run release:dry` 本地预检算出的版本号与 notes；
+   需要手动补跑发布时，在 Actions 的 Release workflow 用 workflow_dispatch
+   （dryRun=false），打包随之在同一次 run 内完成。
+3. 不发版时不要手动改版本号 / 打 tag——版本由 commit 类型决定，
+   打包版本号在 CI 里统一取 `git describe`（与 Makefile LDFLAGS 同语义）。
 
 **两个已踩过的坑（不要重复踩）**：
 

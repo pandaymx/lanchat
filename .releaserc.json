@@ -1,6 +1,8 @@
 {
-  "branches": ["main"],
-  "repositoryUrl": "git@github.com:pandaymx/lanchat.git",
+  "branches": [
+    "main"
+  ],
+  "repositoryUrl": "https://github.com/pandaymx/lanchat.git",
   "plugins": [
     [
       "@semantic-release/commit-analyzer",
@@ -23,7 +25,9 @@
     [
       "@semantic-release/git",
       {
-        "assets": ["CHANGELOG.md"],
+        "assets": [
+          "CHANGELOG.md"
+        ],
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
     ],

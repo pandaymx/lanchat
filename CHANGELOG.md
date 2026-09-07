@@ -1,3 +1,9 @@
+## [0.8.1](https://github.com/pandaymx/lanchat/compare/v0.8.0...v0.8.1) (2026-09-07)
+
+### Bug Fixes
+
+* **desktop:** Wails v3 beta.17 窗口 API 改为包级 NewWindow ([47c43d7](https://github.com/pandaymx/lanchat/commit/47c43d7a2bc96bc8e3be8cb8ae85de476b68d528))
+
 ## [0.8.0](https://github.com/pandaymx/lanchat/compare/v0.7.0...v0.8.0) (2026-09-07)
 
 ### Features

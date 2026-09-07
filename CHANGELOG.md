@@ -1,3 +1,9 @@
+## [0.9.2](https://github.com/pandaymx/lanchat/compare/v0.9.1...v0.9.2) (2026-09-07)
+
+### Bug Fixes
+
+* **ci:** NSIS 参数禁用 MSYS 路径转换 ([b861b95](https://github.com/pandaymx/lanchat/commit/b861b95fd5fcf26a009762e4ca6ca4a58ddd8804))
+
 ## [0.9.1](https://github.com/pandaymx/lanchat/compare/v0.9.0...v0.9.1) (2026-09-07)
 
 ### Bug Fixes

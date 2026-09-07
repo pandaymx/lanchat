@@ -110,10 +110,19 @@ jobs:
         include:
           - runner: ubuntu-24.04
             goos: linux
+            goarch: amd64
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
           - runner: windows-latest
             goos: windows
+            goarch: amd64
           - runner: macos-latest
             goos: darwin
+            goarch: arm64
+          - runner: macos-13
+            goos: darwin
+            goarch: amd64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -128,7 +137,8 @@ jobs:
       # 预装）；macOS xcode CLT 预装无需动作。
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev
+        # rpm 供 rpmbuild 产 .rpm；arm64 runner（ubuntu-24.04-arm）原生 apt 装 arm64 依赖
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev rpm
       - name: Install Windows toolchain
         if: runner.os == 'Windows'
         run: choco install mingw nsis -y
@@ -149,6 +159,7 @@ jobs:
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
         run: |
           set -euo pipefail
@@ -164,31 +175,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # M10.3（2026-09-07）：桌面端三平台均产「安装包」而非压缩包——
-          #   windows: NSIS 向导安装器（安装到 Program Files + 开始菜单 +
-          #            注册卸载项，makensis 在 dist/raw 下编译，File 指令
-          #            相对 cwd，OutFile 写回 dist/）
-          #   darwin : .dmg（.app bundle + ad-hoc 签名 + /Applications 软链）
-          #   linux  : .deb（Depends 声明 gtk4/webkitgtk 运行时，apt 自动装）
-          # 脚本在 .github/installer/，本地语法已验；dpkg-deb/hdiutil/makensis
-          # 均为各平台 runner 自带（choco nsis 除外，已装）。
+          # M11.1（2026-09-07）：桌面端安装包矩阵扩到 5 平台组合——
+          #   windows: NSIS 向导安装器（amd64，arm64 见 package job）
+          #   darwin : .dmg（arm64 = macos-latest 原生 / amd64 = macos-13 原生）
+          #   linux  : .deb + .rpm（amd64 = ubuntu-24.04 / arm64 = ubuntu-24.04-arm）
+          # 打包逻辑收敛到 .github/installer/ 通用脚本（desktop + CLI 复用）。
+          arch=${{ steps.arch.outputs.arch }}
           case "${{ matrix.goos }}" in
             windows)
-              arch=${{ steps.arch.outputs.arch }}
-              exe="lanchat-desktop-$LANCHAT_VERSION-windows-$arch.exe"
               # choco 装的 NSIS 不进当前 step 的 PATH（PATH 在 runner 启动时
-              # 固化，choco 的 PATH 修改对后续 step 不生效），显式全路径调用。
-              makensis="/c/Program Files (x86)/NSIS/makensis.exe"
-              # NSIS 参数以 / 开头（/DNAME=value），会被 git bash 的 MSYS
-              # 路径转换误改（DVERSION 变 C:/Program Files/Git/DVERSION），
-              # MSYS_NO_PATHCONV=1 关闭转换；脚本路径是相对路径不受影响。
-              ( cd dist/raw && MSYS_NO_PATHCONV=1 "$makensis" /DVERSION="${LANCHAT_VERSION#v}" /DOUTFILE="../../dist/$exe" ../../.github/installer/desktop.nsi )
+              # 固化，choco 的 PATH 修改对后续 step 不生效），显式全路径。
+              MAKENSIS="/c/Program Files (x86)/NSIS/makensis.exe" \
+                ./.github/installer/pkg-windows-nsis.sh "${LANCHAT_VERSION#v}" "$arch" desktop
               ;;
             darwin)
-              bash .github/installer/pkg-macos-dmg.sh "${LANCHAT_VERSION#v}" "${{ steps.arch.outputs.arch }}"
+              bash .github/installer/pkg-macos-dmg.sh "${LANCHAT_VERSION#v}" "$arch"
               ;;
             linux)
-              bash .github/installer/pkg-linux-deb.sh "${LANCHAT_VERSION#v}" "${{ steps.arch.outputs.arch }}"
+              ./.github/installer/pkg-linux-deb.sh "${LANCHAT_VERSION#v}" "$arch" desktop
+              ./.github/installer/pkg-linux-rpm.sh "${LANCHAT_VERSION#v}" "$arch" desktop
               ;;
           esac
       - name: Upload release assets
@@ -200,7 +205,7 @@ jobs:
           tag="$LANCHAT_VERSION"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
           shopt -s nullglob
-          gh release upload "$tag" dist/*.exe dist/*.dmg dist/*.deb --clobber
+          gh release upload "$tag" dist/*.exe dist/*.dmg dist/*.deb dist/*.rpm --clobber
 
   # 哈希汇总（2026-09-07）：逐文件 .sha256 太多（每资产一个），改为
   # 全部资产一个 checksums.txt。package / desktop 各 job 不再产 .sha256，
@@ -286,6 +291,11 @@ jobs:
         run: go install github.com/a-h/templ/cmd/templ@v0.3.1020
       - name: Generate templ files
         run: templ generate
+      # M11.1：安装包需要 rpmbuild / makensis（linux runner 上交叉打
+      # windows NSIS + linux deb/rpm；darwin 只产压缩包不需要）。
+      - name: Install packaging tools
+        if: matrix.goos != 'darwin'
+        run: sudo apt-get update && sudo apt-get install -y rpm nsis
       # 纯 Go + 零 CGO（AGENTS.md §2）：CGO_ENABLED=0 交叉编译无坑。
       # 版本注入与 Makefile LDFLAGS 同款（main.version/commit/date），
       # 值取自 git（describe / rev-parse），与触发方式无关。
@@ -323,6 +333,22 @@ jobs:
               tar -czf "../../${name}.tar.gz" "${bin}"
             fi
           done
+          # M11.1：压缩包之外，每个 CLI 二进制再产安装包——
+          #   linux: deb + rpm（amd64/arm64）
+          #   windows: NSIS 安装器（amd64/arm64，含 WOA）
+          cd ../..
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            for bin in hub tui web; do
+              cp "$raw/${bin}${ext}" "dist/raw/${bin}${ext}"
+              ./.github/installer/pkg-windows-nsis.sh "${ver#v}" "${{ matrix.goarch }}" "$bin"
+            done
+          elif [ "${{ matrix.goos }}" = "linux" ]; then
+            for bin in hub tui web; do
+              cp "$raw/${bin}" "dist/raw/${bin}"
+              ./.github/installer/pkg-linux-deb.sh "${ver#v}" "${{ matrix.goarch }}" "$bin" cli
+              ./.github/installer/pkg-linux-rpm.sh "${ver#v}" "${{ matrix.goarch }}" "$bin" cli
+            done
+          fi
       # gh 上传幂等：--clobber 覆盖同名 asset（复跑不报错）；Release 页面
       # 若意外缺失则 create 兜底（permissions.contents: write 已够）。
       - name: Upload release assets
@@ -336,4 +362,4 @@ jobs:
           # 精确匹配三类产物，缺一类时展开为空不报错（linux/darwin 只有
           # tar.gz、windows 只有 zip）
           shopt -s nullglob
-          gh release upload "$tag" dist/*.tar.gz dist/*.zip --clobber
+          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/*.exe --clobber

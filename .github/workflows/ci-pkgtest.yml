@@ -1,0 +1,136 @@
+name: Package Test
+# M11.1 临时验证 workflow：安装包矩阵新技术（rpm / linux nsis / macos-13
+# amd64 dmg / WOA desktop CGO=0 交叉）在分支上验证，合入 main 前删除，
+# 避免污染 release.yml 触发链。
+on:
+  push:
+    branches-ignore: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-linux-pkgs:
+    name: linux pkgs (deb+rpm+nsis for hub/tui/web)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+      - name: Install templ CLI
+        env:
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: go install github.com/a-h/templ/cmd/templ@v0.3.1020
+      - name: Generate templ files
+        run: templ generate
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y rpm nsis zip
+      - name: Build linux amd64
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/raw/linux-amd64
+          go build -o dist/raw/linux-amd64/ ./cmd/...
+          # deb/rpm/nsis 脚本期望 dist/raw/<bin>
+          for b in hub tui web; do cp "dist/raw/linux-amd64/$b" "dist/raw/$b"; done
+      - name: Package deb
+        run: |
+          set -euo pipefail
+          for b in hub tui web; do
+            ./.github/installer/pkg-linux-deb.sh 0.0.0-test amd64 "$b" cli
+          done
+      - name: Package rpm
+        run: |
+          set -euo pipefail
+          for b in hub tui web; do
+            ./.github/installer/pkg-linux-rpm.sh 0.0.0-test amd64 "$b" cli
+          done
+      - name: Package nsis (linux makensis)
+        run: |
+          set -euo pipefail
+          for b in hub tui web; do
+            ./.github/installer/pkg-windows-nsis.sh 0.0.0-test amd64 "$b"
+          done
+      - name: Verify
+        run: |
+          set -euo pipefail
+          ls -1 dist/
+          for b in hub tui web; do
+            [ -f "dist/lanchat-${b}-0.0.0-test-linux-amd64.deb" ]
+            [ -f "dist/lanchat-${b}-0.0.0-test-linux-amd64.rpm" ]
+            [ -f "dist/lanchat-${b}-0.0.0-test-windows-amd64-setup.exe" ]
+          done
+          echo "ALL_LINUX_PKGS_OK"
+
+  validate-mac-amd64:
+    name: macos-13 amd64 dmg
+    runs-on: macos-13
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+      - name: Install templ CLI
+        env:
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: go install github.com/a-h/templ/cmd/templ@v0.3.1020
+      - name: Generate templ files
+        run: templ generate
+      - name: Build desktop darwin amd64
+        env:
+          GOOS: darwin
+          GOARCH: amd64
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/raw
+          go build -tags desktop -o dist/raw/lanchat-desktop ./apps/desktop
+      - name: Package dmg
+        run: ./.github/installer/pkg-macos-dmg.sh 0.0.0-test amd64
+      - name: Verify
+        run: |
+          [ -f "dist/lanchat-desktop-0.0.0-test-darwin-amd64.dmg" ] && echo MAC_DMG_OK
+
+  validate-woa:
+    name: WOA desktop (win arm64 CGO=0 + nsis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+      - name: Install templ CLI
+        env:
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: go install github.com/a-h/templ/cmd/templ@v0.3.1020
+      - name: Generate templ files
+        run: templ generate
+      - name: Install nsis
+        run: sudo apt-get update && sudo apt-get install -y nsis
+      - name: Build desktop windows arm64 (CGO=0)
+        env:
+          GOOS: windows
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/raw
+          go build -tags desktop -o dist/raw/lanchat-desktop.exe ./apps/desktop
+      - name: Package nsis
+        run: ./.github/installer/pkg-windows-nsis.sh 0.0.0-test arm64 desktop
+      - name: Verify
+        run: |
+          [ -f "dist/lanchat-desktop-0.0.0-test-windows-arm64-setup.exe" ] && echo WOA_NSIS_OK

@@ -131,7 +131,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev
       - name: Install Windows toolchain
         if: runner.os == 'Windows'
-        run: choco install mingw -y
+        run: choco install mingw nsis -y
       # *_templ.go 被 .gitignore 排除，desktop 依赖 internal/webui 模板，
       # 构建前必须 templ generate（与 package job 同款 pin）。
       - name: Install templ CLI
@@ -164,19 +164,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          name=lanchat-desktop-$LANCHAT_VERSION-${{ matrix.goos }}-${{ steps.arch.outputs.arch }}
-          # tar -C 进 dist/raw 打包，产物落 dist/（cd 子 shell + ../../ 会把
-          # 压缩包写到 repo root，导致 Upload 的 dist/* glob 匹配不到）。
-          # windows 用 PowerShell Compress-Archive：git bash 无 zip 命令，
-          # 系统 tar（bsdtar/GNU tar）对 -a + zip 的自动格式检测不稳
-          # （Cannot stat 成员文件）。
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            pwsh -NoProfile -Command "Compress-Archive -Path dist/raw/lanchat-desktop.exe -DestinationPath dist/$name.zip -Force"
-            sha256sum dist/$name.zip > dist/$name.sha256
-          else
-            tar -czf dist/$name.tar.gz -C dist/raw lanchat-desktop
-            sha256sum dist/$name.tar.gz > dist/$name.sha256
-          fi
+          # M10.3（2026-09-07）：桌面端三平台均产「安装包」而非压缩包——
+          #   windows: NSIS 向导安装器（安装到 Program Files + 开始菜单 +
+          #            注册卸载项，makensis 在 dist/raw 下编译，File 指令
+          #            相对 cwd，OutFile 写回 dist/）
+          #   darwin : .dmg（.app bundle + ad-hoc 签名 + /Applications 软链）
+          #   linux  : .deb（Depends 声明 gtk4/webkitgtk 运行时，apt 自动装）
+          # 脚本在 .github/installer/，本地语法已验；dpkg-deb/hdiutil/makensis
+          # 均为各平台 runner 自带（choco nsis 除外，已装）。
+          case "${{ matrix.goos }}" in
+            windows)
+              arch=${{ steps.arch.outputs.arch }}
+              exe="lanchat-desktop-$LANCHAT_VERSION-windows-$arch.exe"
+              ( cd dist/raw && makensis /DVERSION="${LANCHAT_VERSION#v}" /DOUTFILE="../../dist/$exe" ../../.github/installer/desktop.nsi )
+              sha256sum "dist/$exe" > "dist/$exe.sha256"
+              ;;
+            darwin)
+              bash .github/installer/pkg-macos-dmg.sh "${LANCHAT_VERSION#v}" "${{ steps.arch.outputs.arch }}"
+              ;;
+            linux)
+              bash .github/installer/pkg-linux-deb.sh "${LANCHAT_VERSION#v}" "${{ steps.arch.outputs.arch }}"
+              ;;
+          esac
       - name: Upload release assets
         shell: bash
         env:
@@ -186,7 +195,7 @@ jobs:
           tag="$LANCHAT_VERSION"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
           shopt -s nullglob
-          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
+          gh release upload "$tag" dist/*.exe dist/*.dmg dist/*.deb dist/*.sha256 --clobber
 
   # M8 收尾（2026-09-07）：给 Release 页附上可下载的二进制。
   # 之前 ci.yml 的 build job 只传 Actions artifact（30 天过期、不对外），

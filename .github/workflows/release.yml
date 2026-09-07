@@ -179,7 +179,10 @@ jobs:
               # choco 装的 NSIS 不进当前 step 的 PATH（PATH 在 runner 启动时
               # 固化，choco 的 PATH 修改对后续 step 不生效），显式全路径调用。
               makensis="/c/Program Files (x86)/NSIS/makensis.exe"
-              ( cd dist/raw && "$makensis" /DVERSION="${LANCHAT_VERSION#v}" /DOUTFILE="../../dist/$exe" ../../.github/installer/desktop.nsi )
+              # NSIS 参数以 / 开头（/DNAME=value），会被 git bash 的 MSYS
+              # 路径转换误改（DVERSION 变 C:/Program Files/Git/DVERSION），
+              # MSYS_NO_PATHCONV=1 关闭转换；脚本路径是相对路径不受影响。
+              ( cd dist/raw && MSYS_NO_PATHCONV=1 "$makensis" /DVERSION="${LANCHAT_VERSION#v}" /DOUTFILE="../../dist/$exe" ../../.github/installer/desktop.nsi )
               sha256sum "dist/$exe" > "dist/$exe.sha256"
               ;;
             darwin)

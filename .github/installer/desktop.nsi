@@ -6,6 +6,11 @@
 Unicode true
 !include "MUI2.nsh"
 
+; File 指令的路径相对「脚本所在目录」而非 makensis 的 cwd；CI 在
+; dist/raw 下调用本脚本，二进制在 dist/raw，这里先把编译 cwd 切过去。
+; !cd 路径相对脚本目录（.github/installer -> ../../dist/raw = repo/dist/raw）。
+!cd "..\..\dist\raw"
+
 Name "LAN Chat"
 !ifndef OUTFILE
   !define OUTFILE "lanchat-desktop-setup.exe"

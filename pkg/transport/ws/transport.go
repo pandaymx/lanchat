@@ -31,6 +31,14 @@ const DefaultPath = "/ws"
 type Transport struct {
 	// path 是 Listen 接受 upgrade 的路径，为空时取 DefaultPath。
 	path string
+	// handlers 是 WithHandler 注册的额外 HTTP 路由（M9 文件传输用）。
+	handlers []handler
+}
+
+// handler 是 WithHandler 注册的一条额外 HTTP 路由。
+type handler struct {
+	pattern string
+	h       http.Handler
 }
 
 // New 创建一个 WebSocket Transport。零值也可用（走默认路径）。
@@ -41,6 +49,20 @@ func New() *Transport { return &Transport{} }
 func (t *Transport) WithPath(path string) *Transport {
 	cp := *t
 	cp.path = path
+	return &cp
+}
+
+// WithHandler 追加一条 HTTP 路由，与 WebSocket upgrade 同端口同 mux。
+//
+// pattern 支持 Go 1.22 起的 "METHOD /path" 与 {param} 通配语法
+// （如 "GET /api/files/{fileID}"）。返回新的 Transport（原实例不变），
+// 可链式调用。
+//
+// M9 文件传输用：hub 在同一个监听端口上提供 POST/GET /api/files，
+// 客户端（TUI/Web）不用记第二个地址，浏览器也能直接下载。
+func (t *Transport) WithHandler(pattern string, h http.Handler) *Transport {
+	cp := *t
+	cp.handlers = append(append([]handler{}, t.handlers...), handler{pattern: pattern, h: h})
 	return &cp
 }
 
@@ -129,6 +151,9 @@ func (t *Transport) Listen(ctx context.Context, addr string, onConn func(core.Co
 
 	transLog.Info("listen start", "addr", addr, "path", path)
 	mux := http.NewServeMux()
+	for _, h := range t.handlers {
+		mux.Handle(h.pattern, h.h)
+	}
 	mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		wsConn, err := websocket.Accept(w, r, nil)
 		if err != nil {

@@ -29,7 +29,9 @@ import (
 	"time"
 
 	"github.com/pandaymx/lanchat/internal/discovery"
+	"github.com/pandaymx/lanchat/internal/hubapi"
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/hubfile"
 	"github.com/pandaymx/lanchat/pkg/hubstate"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
@@ -61,6 +63,8 @@ func main() {
 	path := flag.String("path", wstransport.DefaultPath, "WebSocket upgrade 路径")
 	maxHistory := flag.Int("max-history", 500, "单次 FKHistoryReq 补发的最大条数")
 	dbPath := flag.String("db", "lanchat.db", "持久化库文件路径（libSQL/SQLite 格式）；填 memory 用纯内存不落盘")
+	filesDir := flag.String("files", "lanchat-files", "文件传输（M9）的 blob 存储目录；文件存 <dir>/<FileID>")
+	maxFileSize := flag.Int64("max-file-size", 512<<20, "单文件上传上限（字节，默认 512MiB）；<=0 不限制")
 	mDNS := flag.Bool("mdns", true, "通过 mDNS/DNS-SD 在局域网广播 hub（_lanchat._tcp）；-mdns=false 关闭")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
@@ -112,7 +116,19 @@ func main() {
 			logger.Info("restored history buffer", "messages", len(recent), "startSeq", startSeq)
 		}
 	}
+	// M9 文件传输：blob 服务 + HTTP 端点（与 WS 同端口，客户端无需记第二个地址）。
+	fileSvc, err := hubfile.New(*filesDir, store, *maxFileSize)
+	if err != nil {
+		logger.Error("file service init failed", "dir", *filesDir, "err", err)
+		fmt.Fprintln(os.Stderr, "hub: files:", err)
+		os.Exit(1)
+	}
+	filesAPI := hubapi.NewFilesAPI(fileSvc)
 	tr := wstransport.New().WithPath(*path)
+	tr = tr.
+		WithHandler("POST /api/files", filesAPI).
+		WithHandler("GET /api/files/{fileID}", filesAPI)
+	logger.Info("file service ready", "dir", *filesDir, "maxFileSize", *maxFileSize)
 
 	if *mDNS {
 		_, portStr, err := net.SplitHostPort(*addr)
@@ -139,7 +155,7 @@ func main() {
 		logger.Info("mDNS broadcasting", "service", discovery.ServiceType, "port", port)
 	}
 
-	logger.Info("starting hub", "version", version, "commit", commit, "addr", *addr, "path", *path, "db", *dbPath)
+	logger.Info("starting hub", "version", version, "commit", commit, "addr", *addr, "path", *path, "db", *dbPath, "files", *filesDir)
 
 	if err := run(ctx, logger, tr, router, *addr); err != nil &&
 		!errors.Is(err, context.Canceled) {

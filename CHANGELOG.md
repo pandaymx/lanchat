@@ -1,3 +1,10 @@
+## [0.8.0](https://github.com/pandaymx/lanchat/compare/v0.7.0...v0.8.0) (2026-09-07)
+
+### Features
+
+* **desktop:** Wails v3 窗口壳（//go:build desktop CGO 隔离） ([c9e7489](https://github.com/pandaymx/lanchat/commit/c9e7489e3931a15677d27cc0511a14dfcde23e2c))
+* **desktop:** 本地 webui 装配（回环随机端口 + 可编程生命周期） ([49f1ef3](https://github.com/pandaymx/lanchat/commit/49f1ef3742838f34e9b4c477e14526843ce0b2a3))
+
 ## [0.7.0](https://github.com/pandaymx/lanchat/compare/v0.6.1...v0.7.0) (2026-09-07)
 
 ### Features

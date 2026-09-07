@@ -155,7 +155,11 @@ jobs:
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           mkdir -p dist/raw
-          go build -tags desktop -ldflags "-s -w -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE"             -o dist/raw/lanchat-desktop ./apps/desktop
+          # go build -o 指定完整路径时不自动加 .exe（windows 产物无扩展名），
+          # 显式带上，后续 Package/Upload 按 .exe 名找。
+          out=dist/raw/lanchat-desktop
+          if [ "${{ matrix.goos }}" = "windows" ]; then out="$out.exe"; fi
+          go build -tags desktop -ldflags "-s -w -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE" -o "$out" ./apps/desktop
       - name: Package
         shell: bash
         run: |

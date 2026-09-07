@@ -89,7 +89,8 @@ func main() {
 	app := application.New(application.Options{
 		Name: "LAN Chat",
 	})
-	app.NewWebviewWindowWithOptions(application.WebviewWindowOptions{
+	// beta.17：窗口创建是包级函数 NewWindow（App 上无 NewWebviewWindow* 方法）。
+	application.NewWindow(application.WebviewWindowOptions{
 		Title:  "LAN Chat",
 		Width:  1024,
 		Height: 700,

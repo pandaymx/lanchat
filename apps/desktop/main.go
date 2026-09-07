@@ -158,7 +158,7 @@ func notificationLoop(self string) {
 		last[msg.SenderUserID] = time.Now()
 		title := msg.SenderUserID + " \u00b7 LAN Chat"
 		body := preview(msg.Body, 80)
-		logging.New("desktop").Debug("new message notification", "from", msg.User)
+		logging.New("desktop").Debug("new message notification", "from", msg.SenderUserID)
 		go platformNotify(title, body)
 	}
 }
@@ -222,7 +222,7 @@ func trayIconPNG() []byte {
 	none := color.RGBA{}
 	for y := 0; y < size; y++ {
 		for x := 0; x < size; x++ {
-			dx, dy := float64(x-15.5), float64(y-15.5)
+			dx, dy := float64(x)-15.5, float64(y)-15.5
 			if dx*dx+dy*dy <= 14.5*14.5 {
 				img.SetRGBA(x, y, blue)
 			} else {
@@ -252,7 +252,7 @@ func roundRect(img *image.RGBA, x0, y0, x1, y1, r int, c color.RGBA) {
 			in := true
 			for _, c2 := range [][2]int{{x0, y0}, {x1, y0}, {x0, y1}, {x1, y1}} {
 				if x < c2[0]+r && x > c2[0]-r && y < c2[1]+r && y > c2[1]-r {
-					dx, dy := float64(x-c2[0]), float64(y-c2[1])
+					dx, dy := float64(x)-float64(c2[0]), float64(y)-float64(c2[1])
 					if dx*dx+dy*dy > float64(r*r) {
 						in = false
 					}
@@ -268,7 +268,7 @@ func roundRect(img *image.RGBA, x0, y0, x1, y1, r int, c color.RGBA) {
 func dot(img *image.RGBA, cx, cy int, r float64, c color.RGBA) {
 	for y := cy - 2; y <= cy+2; y++ {
 		for x := cx - 2; x <= cx+2; x++ {
-			dx, dy := float64(x-cx), float64(y-cy)
+			dx, dy := float64(x)-float64(cx), float64(y)-float64(cy)
 			if dx*dx+dy*dy <= r*r {
 				img.SetRGBA(x, y, c)
 			}

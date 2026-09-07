@@ -1,4 +1,4 @@
-package desktop
+package webapp
 
 import (
 	"context"

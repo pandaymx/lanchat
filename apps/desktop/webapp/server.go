@@ -1,11 +1,12 @@
-// Package desktop 是 lanchat 桌面端：进程内起 webui（127.0.0.1 随机端口），
-// 由 webview 窗口加载。本文件是纯 Go 装配逻辑（无 CGO），可本地编译与单测；
-// CGO 壳（webview 窗口）在 main.go，带 //go:build desktop tag 隔离（ADR-015）。
+// Package webapp 是 lanchat 桌面端的本地 Web 装配：进程内起 webui
+// （127.0.0.1 随机端口），由 Wails 窗口加载。纯 Go 无 CGO，可本地编译与
+// 单测；CGO 壳（Wails 窗口）在 apps/desktop/main.go，带 //go:build desktop
+// tag 隔离（ADR-015）。
 //
 // 与 cmd/web 的关系：复用同一套 webui.Manager + Handler 组装，差别只在
 //  1. 监听 127.0.0.1 随机端口（窗口专用，不暴露局域网）；
 //  2. Start/Close 可编程生命周期（窗口开/关驱动），不做 signal 处理。
-package desktop
+package webapp
 
 import (
 	"context"

@@ -40,17 +40,17 @@ else
   DEPENDS=""
 fi
 
-cat > "$stage/DEBIAN/control" <<EOF
-Package: lanchat-${BIN}
-Version: ${VERSION}
-Section: net
-Priority: optional
-Architecture: ${ARCH}
-Maintainer: pandaymx <dev@pandaymx>
-${DEPENDS:+Depends: ${DEPENDS}}
-Description: LAN Chat ${BIN}
- Chat over LAN without internet.
-EOF
+{
+  echo "Package: lanchat-${BIN}"
+  echo "Version: ${VERSION}"
+  echo "Section: net"
+  echo "Priority: optional"
+  echo "Architecture: ${ARCH}"
+  echo "Maintainer: pandaymx <dev@pandaymx>"
+  [ -z "$DEPENDS" ] || echo "Depends: ${DEPENDS}"
+  echo "Description: LAN Chat ${BIN}"
+  echo " Chat over LAN without internet."
+} > "$stage/DEBIAN/control"
 
 dpkg-deb --build --root-owner-group "$stage" "dist/$NAME"
 echo "built dist/$NAME"

@@ -9,6 +9,12 @@ KIND="${4:-desktop}"
 [ "$BIN" = "desktop" ] && KIND="desktop" || KIND="${4:-cli}"
 NAME="lanchat-${BIN}-${VERSION}-linux-${ARCH}.rpm"
 PACKAGE="lanchat-${BIN}"
+# rpm 架构名与 Go 不同：amd64 -> x86_64，arm64 -> aarch64
+case "$ARCH" in
+  amd64) RPMARCH="x86_64" ;;
+  arm64) RPMARCH="aarch64" ;;
+  *)     echo "unsupported arch: $ARCH" >&2; exit 1 ;;
+esac
 topdir="$(pwd)/dist/rpm-root"
 rm -rf "$topdir"
 mkdir -p "$topdir"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -27,39 +33,40 @@ DEOF
 else
   REQUIRES=""
 fi
-cat > "$topdir/SPECS/lanchat.spec" <<EOF
-Name: ${PACKAGE}
-Version: ${VERSION}
-Release: 1%{?dist}
-Summary: LAN Chat ${BIN}
-License: MIT
-URL: https://github.com/pandaymx/lanchat
-BuildArch: ${ARCH}
-${REQUIRES:+Requires: ${REQUIRES}}
-
-%description
-LAN Chat ${BIN}. Chat over LAN without internet.
-
-%prep
-
-%build
-
-%install
-install -m 0755 %{_sourcedir}/${BIN} %{buildroot}/usr/bin/${BIN}
-%if [ "$KIND" = "desktop" ]
-install -d %{buildroot}%{_datadir}/applications
-install -m 0644 %{_sourcedir}/lanchat.desktop %{buildroot}%{_datadir}/applications/
-%endif
-
-%files
-/usr/bin/${BIN}
-%if [ "$KIND" = "desktop" ]
-%{_datadir}/applications/lanchat.desktop
-%endif
-
-%changelog
-EOF
-rpmbuild -bb --define "_topdir $topdir" --target "${ARCH}-linux" "$topdir/SPECS/lanchat.spec" >/dev/null
+# spec 由脚本按 KIND 直接生成（rpm %if 不支持 shell 条件，不能内嵌判断）
+{
+  echo "Name: ${PACKAGE}"
+  echo "Version: ${VERSION}"
+  echo "Release: 1%{?dist}"
+  echo "Summary: LAN Chat ${BIN}"
+  echo "License: MIT"
+  echo "URL: https://github.com/pandaymx/lanchat"
+  echo "BuildArch: ${RPMARCH}"
+  [ -z "$REQUIRES" ] || echo "Requires: ${REQUIRES}"
+  echo ""
+  echo "%description"
+  echo "LAN Chat ${BIN}. Chat over LAN without internet."
+  echo ""
+  echo "%prep"
+  echo ""
+  echo "%build"
+  echo ""
+  echo "%install"
+  echo "install -m 0755 %{_sourcedir}/${BIN} %{buildroot}/usr/bin/${BIN}"
+  if [ "$KIND" = "desktop" ]; then
+    echo "install -d %{buildroot}%{_datadir}/applications"
+    echo "install -m 0644 %{_sourcedir}/lanchat.desktop %{buildroot}%{_datadir}/applications/"
+  fi
+  echo ""
+  echo "%files"
+  echo "/usr/bin/${BIN}"
+  if [ "$KIND" = "desktop" ]; then
+    echo "%{_datadir}/applications/lanchat.desktop"
+  fi
+  echo ""
+  echo "%changelog"
+} > "$topdir/SPECS/lanchat.spec"
+rpmbuild -bb --define "_topdir $topdir" --target "${RPMARCH}-linux" "$topdir/SPECS/lanchat.spec" >/dev/null
 found=$(find "$topdir/RPMS" -name '*.rpm' | head -1)
 [ -n "$found" ] || { echo "rpmbuild produced no rpm" >&2; exit 1; }
 install -m 0644 "$found" "dist/$NAME"

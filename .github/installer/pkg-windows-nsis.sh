@@ -26,8 +26,9 @@ NAME="lanchat-${BIN}-${VERSION}-windows-${ARCH}-setup.exe"
 MAKENSIS="${MAKENSIS:-makensis}"
 
 # Windows 的 MSYS 会把 /Dxxx=value 参数做路径转换（DNAME 变 C:/Program
-# Files/Git/DNAME），必须关掉；Linux 无此问题。脚本路径相对 cwd 不受影响。
+# Files/Git/DNAME），必须关掉；Linux 无此问题。Linux 的 makensis 只认 -D
+# 前缀（/D 会被当成脚本路径），Windows 的 makensis 两种都认，统一用 -D。
 ( cd dist/raw && MSYS_NO_PATHCONV=1 "$MAKENSIS" \
-    /DVERSION="${VERSION}" /DAPPNAME="${APPNAME}" /DEXE="${EXE}" \
-    /DOUTFILE="../../dist/${NAME}" ../../.github/installer/lanchat.nsi )
+    -DVERSION="${VERSION}" -DAPPNAME="${APPNAME}" -DEXE="${EXE}" \
+    -DOUTFILE="../../dist/${NAME}" ../../.github/installer/lanchat.nsi )
 echo "built dist/${NAME}"

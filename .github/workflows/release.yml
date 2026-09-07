@@ -179,6 +179,8 @@ jobs:
           set -euo pipefail
           tag="$LANCHAT_VERSION"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
-          # dist/* 全量上传（linux/darwin 只有 tar.gz、windows 只有 zip，
-          # 按扩展名 glob 会在缺失一侧直接 nomatch 退出）
-          gh release upload "$tag" dist/* --clobber
+          # dist/* 会匹配到 dist/raw 目录（gh 上传目录报错）；nullglob
+          # 精确匹配三类产物，缺一类时展开为空不报错（linux/darwin 只有
+          # tar.gz、windows 只有 zip）
+          shopt -s nullglob
+          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber

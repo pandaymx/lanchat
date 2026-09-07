@@ -162,11 +162,12 @@ jobs:
           set -euo pipefail
           name=lanchat-desktop-$LANCHAT_VERSION-${{ matrix.goos }}-${{ steps.arch.outputs.arch }}
           # tar -C 进 dist/raw 打包，产物落 dist/（cd 子 shell + ../../ 会把
-          # 压缩包写到 repo root，导致 Upload 的 dist/* glob 匹配不到）；
-          # windows runner 的 tar.exe 是 bsdtar，-a 按扩展名自动选 zip 格式
-          # （git bash 无 zip 命令）。
+          # 压缩包写到 repo root，导致 Upload 的 dist/* glob 匹配不到）。
+          # windows 用 PowerShell Compress-Archive：git bash 无 zip 命令，
+          # 系统 tar（bsdtar/GNU tar）对 -a + zip 的自动格式检测不稳
+          # （Cannot stat 成员文件）。
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            tar -a -cf dist/$name.zip -C dist/raw lanchat-desktop.exe
+            pwsh -NoProfile -Command "Compress-Archive -Path dist/raw/lanchat-desktop.exe -DestinationPath dist/$name.zip -Force"
             sha256sum dist/$name.zip > dist/$name.sha256
           else
             tar -czf dist/$name.tar.gz -C dist/raw lanchat-desktop

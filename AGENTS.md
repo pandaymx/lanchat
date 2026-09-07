@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M8 消息体验闭环（M8.1 已读回执 / M8.2 Markdown+代码高亮已合入）；**v0.4.0 已发布**（含 M4 Web / M5 libSQL 持久化 / M6 mDNS / M7.1）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M9 文件传输已合入（协议/存储 → hub blob 服务 → client API → TUI /file → Web 上传下载 → 打包按端拆分），发布随 push main 自动进行。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -79,6 +79,19 @@
 | M8.2 | Markdown + 代码高亮 | Web：goldmark（GFM + WithHardWraps）服务端渲染 + chroma monokai 高亮，原始 HTML 剥离（goldmark WithUnsafe 未开，`<!-- raw HTML omitted -->`），`templ.Raw` 注入；TUI：glamour 定制 dark 样式（WordWrap 0 / 去段落填充缩进 / 纯文本不染色，探针验证），按消息 ID 缓存渲染结果；两端零协议改动，依赖纯 Go 无 CGO | ✅ 本 commit |
 
 **M8 验收标准**：A 设备发的消息在 B 设备贴底后，A 端（TUI/Web）出现「✓已读」标记且重连补发不丢；消息体支持 Markdown 渲染与代码高亮，`<script>` 等原始 HTML 在两端均不执行/不显示；纯文本消息渲染与旧版一致。
+
+**M9 子任务拆解与进度**（文件传输；M9=文件传输，M10=桌面端——顺序经用户确认；打包仍为压缩包非安装包，hub/tui/web 拆独立压缩包）：
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M9.1 | 协议与存储 | `StoredMessage.File *FileRef`（json `f,omitempty`）；FileMeta 表 + messages 附件四列幂等迁移；Store `SaveFileMeta/GetFileMeta` | ✅ 本 commit |
+| M9.2 | hub blob 服务 | `pkg/hubfile`（crypto/rand 32hex FileID 防遍历、文件名 sanitize 绝不入路径、超限清理）；`POST/GET /api/files` 与 WS 同端口同 mux（`ws.Transport.WithHandler`）；cmd/hub `-files`/`-max-file-size`（默认 512MiB） | ✅ 本 commit |
+| M9.3 | client 文件 API | `HTTPBaseFromWS`（ws→http，裸地址补 ws://）、`SetFileBase`、`UploadFile`（流式 multipart 不整缓冲）、`SendFileMessage`、`DownloadFile`（404→ErrNotFound）；未配置返回 `ErrFileUnconfigured` | ✅ 本 commit |
+| M9.4 | TUI 文件收发 | `/file <path>` 命令；附件卡片 `[文件] name (size)` + 「已保存」标记；他人附件实时到达自动下载到 `lanchat-files/`（自己回环跳过）；i18n `tui.file.*` | ✅ 本 commit |
+| M9.5 | Web 文件收发 | `/api/files` 代理端点（上传 multipart 透传 + 下载 Range/Content-Type/Content-Disposition 透传）；附件卡片 / 图片内联预览；📎 按钮 + 剪贴板粘贴 + 拖拽上传 | ✅ 本 commit |
+| M9.6 | 打包拆分 | release.yml：每个二进制独立压缩包 `lanchat-<bin>-<ver>-<os>-<arch>.{tar.gz,zip}` + 独立 sha256；Windows 同样三份 zip | ✅ 本 commit |
+
+**M9 验收标准**：TUI `/file` 或 Web 📎/粘贴/拖拽上传后，对端 TUI 自动下载到 `lanchat-files/` 并显示「已保存」，Web 端渲染附件卡片（图片内联预览、其余可下载）；hub 重启后文件仍可下载（blob 落盘 + 元信息入 store）；文件名带路径穿越字符时不越权读写；release 产物为按端拆分的压缩包（非安装包）。
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 
@@ -207,15 +220,21 @@ release 阶段只提交 `CHANGELOG.md`，**不要顺手改任何 .go 文件**。
    semantic-release 算版本号 → 更新 CHANGELOG → 提交 `chore(release): x.y.z
    [skip ci]`（不触发新 run）→ 打 tag（GITHUB_TOKEN push 不触发新 run，
    无循环）→ 创建 GitHub Release → 同一 run 内 package job 交叉编译
-   6 平台（linux/darwin/windows × amd64/arm64）并上传 tar.gz/zip + sha256。
+   6 平台（linux/darwin/windows × amd64/arm64），并按端拆独立压缩包：
+   `lanchat-<hub|tui|web>-<ver>-<os>-<arch>.tar.gz|zip`（各带 .sha256），
+   共 18 个压缩资产 + 18 个校验文件。
 2. 手动兜底：`bun run release:dry` 本地预检算出的版本号与 notes
    （需 `export GH_TOKEN=<PAT，repo scope>`；gh CLI 的 OAuth token 过不了
    @semantic-release/github 的权限校验）。零配置的 dry-run 路径是 Actions
    里 Release workflow 的 workflow_dispatch（dryRun=true）。需要手动补跑
    发布时同样用 workflow_dispatch（dryRun=false），打包随之在同一次 run
    内完成。
-3. 不发版时不要手动改版本号 / 打 tag——版本由 commit 类型决定，
-   打包版本号在 CI 里统一取 `git describe`（与 Makefile LDFLAGS 同语义）。
+3. 不发版时不要手动改版本号 / 打 tag——版本由 commit 类型决定。
+   **打包版本号不能取 `git describe`**：HEAD 停在 push 的 commit，新 tag
+   指向 semantic-release 的 chore commit（HEAD 的子提交），describe 只会
+   回溯到旧 tag（2026-09-07 实测拿到 v0.5.0）。CI 用 release job 的
+   Detect step（git tag 前后对比）输出实际版本，经 `LANCHAT_VERSION`
+   传给 package job。
 
 **两个已踩过的坑（不要重复踩）**：
 

@@ -459,10 +459,10 @@ func TestRouterReadSnapshotOnHello(t *testing.T) {
 	p2.inject(protocol.Frame{Kind: protocol.FKRead, Payload: mustPayload(t, protocol.Read{ConversationID: "lobby", ServerSeq: 5})})
 	// 等异步 serveLoop 把游标落库。
 	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && storeCursor(t, ctx, store, "dev-2", "lobby") != 5 {
+	for time.Now().Before(deadline) && storeCursor(ctx, t, store, "dev-2", "lobby") != 5 {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if got := storeCursor(t, ctx, store, "dev-2", "lobby"); got != 5 {
+	if got := storeCursor(ctx, t, store, "dev-2", "lobby"); got != 5 {
 		t.Fatalf("dev-2 游标应落库为 5，实际 %d", got)
 	}
 
@@ -483,13 +483,13 @@ func TestRouterReadSnapshotOnHello(t *testing.T) {
 		t.Fatalf("快照游标内容不对， got %+v", rc)
 	}
 
-	if got := storeCursor(t, ctx, store, "dev-3", "lobby"); got != 0 {
+	if got := storeCursor(ctx, t, store, "dev-3", "lobby"); got != 0 {
 		t.Fatalf("dev-3 游标应为 0，实际 %d", got)
 	}
 }
 
 // storeCursor 是测试 helper：读游标，未设置按 0 处理。
-func storeCursor(t *testing.T, ctx context.Context, store core.Store, device, conv string) uint64 {
+func storeCursor(ctx context.Context, t *testing.T, store core.Store, device, conv string) uint64 {
 	t.Helper()
 	got, err := store.GetCursor(ctx, device, conv)
 	if err != nil {

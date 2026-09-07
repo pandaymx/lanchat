@@ -462,8 +462,8 @@ func (r *Router) handleRead(ctx context.Context, peerID uint64, f protocol.Frame
 	// 序号是 Hub 发的，游标不应超过已分配的最大 seq（防 hub 重启后
 	// 旧客户端的残留帧把已读状态标到未来）。max==0（本进程还没发过
 	// 任何消息）时不钳制——此时没有消息可被误标。
-	if max := r.seq.Last(); max > 0 && seq > max {
-		seq = max
+	if last := r.seq.Last(); last > 0 && seq > last {
+		seq = last
 	}
 	if r.store != nil {
 		if err := r.store.SetCursor(ctx, id.DeviceID, rd.ConversationID, seq); err != nil {

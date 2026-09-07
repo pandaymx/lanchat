@@ -1643,7 +1643,7 @@ func TestTemplate_ReadMarkInline(t *testing.T) {
 	if idxSender < 0 || idxMark < 0 || idxBody < 0 {
 		t.Fatalf("markup parts missing (sender=%d mark=%d body=%d)\ngot: %q", idxSender, idxMark, idxBody, got)
 	}
-	if !(idxSender < idxMark && idxMark < idxBody) {
+	if idxSender >= idxMark || idxMark >= idxBody {
 		t.Error("read mark must sit between sender and body div")
 	}
 }

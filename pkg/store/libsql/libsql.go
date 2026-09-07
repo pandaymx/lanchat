@@ -391,7 +391,7 @@ func (s *Store) ListCursors(ctx context.Context, convID string) ([]protocol.Read
 	if err != nil {
 		return nil, fmt.Errorf("libsql: list cursors: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []protocol.ReadCursor
 	for rows.Next() {

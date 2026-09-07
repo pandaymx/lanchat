@@ -43,13 +43,13 @@ func newMDRenderer() *glamour.TermRenderer {
 	cfg.Document.Indent = zero(0)
 	cfg.Document.BlockPrefix = ""
 	cfg.Document.BlockSuffix = ""
-	cfg.Document.StylePrimitive.Color = nil
+	cfg.Document.Color = nil
 
 	cfg.Paragraph.Margin = zero(0)
 	cfg.Paragraph.Indent = zero(0)
 	cfg.Paragraph.BlockPrefix = ""
 	cfg.Paragraph.BlockSuffix = ""
-	cfg.Paragraph.StylePrimitive.Color = nil
+	cfg.Paragraph.Color = nil
 
 	cfg.CodeBlock.Margin = zero(0)
 

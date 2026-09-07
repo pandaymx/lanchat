@@ -1,3 +1,10 @@
+## [0.10.1](https://github.com/pandaymx/lanchat/compare/v0.10.0...v0.10.1) (2026-09-07)
+
+### Bug Fixes
+
+* **desktop:** M10.2 编译错误（msg.User → SenderUserID、float64 截断） ([8b9fc63](https://github.com/pandaymx/lanchat/commit/8b9fc63039a7d93a08520a2332505d29d244555f))
+* **repo:** mDNS 失败时回退探测本机回环 hub（同机开箱即用） ([eecc939](https://github.com/pandaymx/lanchat/commit/eecc93902abccb52c5ff3a2d5bc20a1cb6376c0b))
+
 ## [0.10.0](https://github.com/pandaymx/lanchat/compare/v0.9.3...v0.10.0) (2026-09-07)
 
 ### Features

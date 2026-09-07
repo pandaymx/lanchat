@@ -1,3 +1,9 @@
+## [0.8.2](https://github.com/pandaymx/lanchat/compare/v0.8.1...v0.8.2) (2026-09-07)
+
+### Bug Fixes
+
+* **ci:** 桌面 job 打包路径与 windows zip 命令 ([d0ec631](https://github.com/pandaymx/lanchat/commit/d0ec631f10c8211079a2239c42c701c3b52da52f))
+
 ## [0.8.1](https://github.com/pandaymx/lanchat/compare/v0.8.0...v0.8.1) (2026-09-07)
 
 ### Bug Fixes

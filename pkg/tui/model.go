@@ -83,6 +83,14 @@ type Model struct {
 	// 是持久语义，设备离线不清除——重连后 Hub 会重发快照，单调合并保证
 	// 不回退。
 	reads map[string]uint64
+
+	// M9：文件传输。fileSender/fileReceiver 由 SetFileTransfer 注入
+	//（Session 实现；测试可注入 fake 或保持 nil——nil 时 /file 报错、
+	// 不自动下载）。fileSaved 记录已下载成功的消息 ID → 本地路径，
+	// historyView 据此在附件卡片上追加 saved 标记。
+	fileSender   FileSender
+	fileReceiver FileReceiver
+	fileSaved    map[string]string
 }
 
 // typingState 是一条对端「正在输入」记录（M7.3）。
@@ -116,11 +124,28 @@ func New(cfg Config) *Model {
 		olderHasMore: true,
 		typings:      make(map[string]typingState),
 		reads:        make(map[string]uint64),
+		fileSaved:    make(map[string]string),
 	}
 	// M8.1：historyView 的已读标记判定由 Model 注入（读 m.reads 快照，
 	// 与其它状态一样只在 Update goroutine 内访问，无需加锁）。
 	m.history.SetReadChecker(m.readByOthers)
+	// M9：附件卡片的 saved 状态同样由 Model 注入（读 m.fileSaved 快照）。
+	m.history.SetSavedPathChecker(m.savedFile)
 	return m
+}
+
+// SetFileTransfer 注入文件收发能力（M9）。Session 实现两个接口；
+// 不注入时 /file 报「未支持」、到达的文件消息不自动下载（仅展示卡片）。
+func (m *Model) SetFileTransfer(sender FileSender, receiver FileReceiver) {
+	m.fileSender = sender
+	m.fileReceiver = receiver
+}
+
+// savedFile 返回已下载文件消息的本地路径（historyView 的 savedPath
+// 查询；只在 Update goroutine 内调用）。
+func (m *Model) savedFile(id string) (string, bool) {
+	p, ok := m.fileSaved[id]
+	return p, ok
 }
 
 // t 是 Model 内部的文案查表 helper：把 key 转给 Translator，
@@ -155,6 +180,11 @@ func listenCmd(inbox <-chan tea.Msg) tea.Cmd {
 // 与 Session.Send 的内部行为无关——Client.SendMessage 本身也会再设一次 ctx，
 // 这里是 UI 层的兜底，避免 ui 卡住看不到报错。
 const sendTimeout = 5 * time.Second
+
+// fileDownloadTimeout 是单条附件下载的硬性上限（M9）。
+// 下载走 HTTP 流式；512MiB 上限下 30s 足够覆盖常见局域网/公网慢链路，
+// 超时由 client 层 ctx 取消，不阻塞 Update。
+const fileDownloadTimeout = 30 * time.Second
 
 // fetchOlderTimeout 是上翻分页请求的硬性上限（M7.1）。
 const fetchOlderTimeout = 10 * time.Second
@@ -355,7 +385,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			msg.event.Message.SenderUserID != m.user && m.history.AtBottom() {
 			cmds = append(cmds, m.readCmd(msg.event.Message.ServerSeq))
 		}
+		// M9：他人附件消息实时到达 → 异步下载到本地（自己的上传回环
+		// 本地已有原文件；历史补发只展示卡片不下载，见 downloadFileCmd）。
+		if msg.event.Kind == core.EventMessage && msg.event.Message != nil &&
+			msg.event.Message.File != nil {
+			cmds = append(cmds, m.downloadFileCmd(*msg.event.Message))
+		}
 		return m, tea.Batch(cmds...)
+
+	case fileSavedMsg:
+		// M9：附件已保存 → 记录路径并重渲（附件卡片追加 saved 标记）。
+		m.fileSaved[msg.id] = msg.path
+		m.refreshHistory()
+		return m, listenCmd(m.inbox)
 
 	case errMsg:
 		m.lastError = msg.err
@@ -553,6 +595,8 @@ func (m *Model) tryCommand(text string) tea.Cmd {
 		m.unread = 0
 	case "/quit":
 		return tea.Cmd(tea.Quit)
+	case "/file":
+		return m.fileCmd(fields[1:])
 	}
 	return listenCmd(m.inbox)
 }
@@ -566,6 +610,60 @@ var errInboxFull = errors.New("tui: inbox is full, submit dropped")
 // 与 M3.4 sendTimeout 无关：sendTimeout 是出站 Send 的同步阻塞上限，
 // errExpireDur 是 UI 层「最后一次错误」的红字显示时长。
 const errExpireDur = 5 * time.Second
+
+// fileCmd 处理 `/file <path>`：上传并发送一条附件消息。
+//
+// 与 sendCmd 同一模式：异步 goroutine 里调用注入的 FileSender，成功投递
+// sentMsg（续 listenCmd），失败投递 errMsg（走统一错误渲染）。无参数或
+// 未注入 sender 时本地报错（PublishError），不发消息。
+func (m *Model) fileCmd(args []string) tea.Cmd {
+	if len(args) == 0 {
+		m.PublishError(errors.New(m.t("tui.file.usage")))
+		return listenCmd(m.inbox)
+	}
+	if m.fileSender == nil {
+		m.PublishError(errors.New(m.t("tui.file.unsupported")))
+		return listenCmd(m.inbox)
+	}
+	path := strings.Join(args, " ")
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if err := m.fileSender.SendFile(ctx, path); err != nil {
+			tuiLog.Error("send file failed", "path", path, "err", err)
+			return newErrMsg(fmt.Errorf("send %s: %w", path, err))
+		}
+		return newSentMsg(path)
+	}
+}
+
+// downloadFileCmd 异步保存一条附件消息到本地。
+//
+// 触发条件（避免重复下载）：
+//   - 未注入 FileReceiver → nil（不下载，仅展示卡片）；
+//   - 自己设备发的消息回环 → 跳过（本地已有原文件）；
+//   - 历史补发 / 翻页消息不走本路径（只有实时 eventMsg 分支调用）。
+//
+// 成功投递 fileSavedMsg（Update 写 fileSaved 快照并重渲），失败投递
+// errMsg（卡片保留、无 saved 标记，错误可见 5s）。
+func (m *Model) downloadFileCmd(msg protocol.StoredMessage) tea.Cmd {
+	if m.fileReceiver == nil || msg.File == nil {
+		return nil
+	}
+	if msg.SenderDeviceID == m.device {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), fileDownloadTimeout)
+		defer cancel()
+		path, err := m.fileReceiver.SaveFile(ctx, msg)
+		if err != nil {
+			tuiLog.Error("save file failed", "file", msg.File.FileID, "name", msg.File.Name, "err", err)
+			return newErrMsg(fmt.Errorf("save %s: %w", msg.File.Name, err))
+		}
+		return newFileSavedMsg(msg.ID, path)
+	}
+}
 
 // errExpireCmd schedule 一个 5s 后到点的 Tick，到点投递 errExpireMsg。
 //

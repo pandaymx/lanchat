@@ -43,6 +43,14 @@ type sentMsg struct {
 	text string
 }
 
+// fileSavedMsg 是一条附件消息下载成功的回执（M9），由 downloadFileCmd
+// 在底层 SaveFile 返回 nil 时投递；Update 据此写入 fileSaved 快照并重渲
+// 附件卡片（追加「已保存」标记）。
+type fileSavedMsg struct {
+	id   string
+	path string
+}
+
 // errExpireMsg 表示 5 秒错误显示窗口到点。
 //
 // M3.9.3：错误展示改为「5s 后自动清」，由 errMsg 触发时 schedule 一个
@@ -77,6 +85,8 @@ func newErrExpireMsg() errExpireMsg { return errExpireMsg{} }
 
 func newSentMsg(text string) sentMsg { return sentMsg{text: text} }
 
+func newFileSavedMsg(id, path string) fileSavedMsg { return fileSavedMsg{id: id, path: path} }
+
 func newEventMsg(e core.Event) eventMsg { return eventMsg{event: e} }
 func newErrMsg(err error) errMsg        { return errMsg{err: err} }
 func newQuitMsg(reason string) quitMsg  { return quitMsg{reason: reason} }
@@ -91,5 +101,6 @@ var (
 	_ tea.Msg = quitMsg{}
 	_ tea.Msg = submitMsg{}
 	_ tea.Msg = sentMsg{}
+	_ tea.Msg = fileSavedMsg{}
 	_ tea.Msg = readSentMsg{}
 )

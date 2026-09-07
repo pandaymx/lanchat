@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"github.com/pandaymx/lanchat/pkg/client"
@@ -114,6 +115,10 @@ func Dial(ctx context.Context, opts DialOptions) (*Session, error) {
 	bus := event.New()
 	cli := client.New(hello, conn, store, bus)
 
+	// M9：文件传输的数据面挂在 hub 的 HTTP 端口（与 WS 同端口），
+	// 从 ws URL 推导 http 基址注入 client；不额外要求第二个地址。
+	cli.SetFileBase(client.HTTPBaseFromWS(opts.HubURL))
+
 	// Dial 成功但 Connect 失败时，conn 与 store 都得回收，否则 fd / 内存泄漏。
 	if err := cli.Connect(ctx, client.ConnectOptions{
 		RequestHistory: true,
@@ -167,6 +172,39 @@ func (s *Session) SendRead(ctx context.Context, serverSeq uint64) error {
 
 // ConversationID 返回本 Session 绑定的会话 ID。
 func (s *Session) ConversationID() string { return s.convID }
+
+// FileSender / FileReceiver 是 Model 可选注入的文件收发能力（M9）。
+// 与 Sender/Typer/Reader 同一模式：Session 实现，测试可注入 fake。
+type FileSender interface {
+	// SendFile 上传本地文件并发送一条带附件引用的消息。
+	SendFile(ctx context.Context, path string) error
+}
+
+type FileReceiver interface {
+	// SaveFile 把消息附件下载到本地（lanchat-files/ 目录），返回保存路径。
+	SaveFile(ctx context.Context, m protocol.StoredMessage) (string, error)
+}
+
+// SendFile 实现 FileSender：上传 + 发消息（hub 回环后事件流自会
+// 出现该文件消息，Model 据此渲染附件卡片）。
+func (s *Session) SendFile(ctx context.Context, path string) error {
+	return s.cli.UploadFile(ctx, s.convID, path, "")
+}
+
+// SaveFile 实现 FileReceiver：把消息附件保存到本地 lanchat-files/<name>。
+//
+// 文件名来自 hub 的 FileRef.Name（hubfile 已 Base+255 截断清洗），
+// 这里再用 filepath.Base 兜一层，绝不入目录路径。
+func (s *Session) SaveFile(ctx context.Context, m protocol.StoredMessage) (string, error) {
+	if m.File == nil {
+		return "", errors.New("tui: save file: message has no file ref")
+	}
+	dest := filepath.Join("lanchat-files", filepath.Base(m.File.Name))
+	if err := s.cli.DownloadFile(ctx, m.File.FileID, dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
 
 // Events 暴露底层订阅通道，供需要自建循环的调用方使用。
 // 常规路径应直接用 Pump。

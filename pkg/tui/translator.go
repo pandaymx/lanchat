@@ -106,7 +106,7 @@ var enDefaults = map[string]string{
 	"tui.status.label.unread":   "unread",
 	"tui.status.label.err":      "err",
 	"tui.hints.row":             "[Enter] send · [Shift+Enter] newline · [End] tail · [PgUp/PgDn] scroll · [/help] commands · [Ctrl+C] quit",
-	"tui.help.row":              "help: Enter send · Shift+Enter newline · End tail · PgUp/PgDn scroll · /help · /clear · /quit · Ctrl+C quit",
+	"tui.help.row":              "help: Enter send · Shift+Enter newline · End tail · PgUp/PgDn scroll · /help · /file <path> · /clear · /quit · Ctrl+C quit",
 	"tui.sidebar.empty":         "peers: (none yet)",
 	"tui.sidebar.prefix":        "peers:",
 	"tui.history.fallback.user": "?",
@@ -116,6 +116,11 @@ var enDefaults = map[string]string{
 	"tui.typing.many": "%s are typing…",
 	// M8.1：自己消息被他人读到后的「✓已读」标记（英文同勾号）。
 	"tui.history.read": "✓ read",
+	// M9：附件消息。
+	"tui.file.tag":         "[file]",
+	"tui.file.saved":       "saved %s",
+	"tui.file.usage":       "usage: /file <path>",
+	"tui.file.unsupported": "file transfer not available",
 }
 
 // defaultENTranslator 是 Model.New() 默认注入的 translator，

@@ -176,6 +176,9 @@ func run(opts runOptions) error {
 		defer func() { _ = session.Close() }()
 
 		m.AttachSender(session)
+		// M9：文件收发能力。Session 同时实现 FileSender/FileReceiver；
+		// 不注入时 /file 报「不可用」、他人附件不自动下载。
+		m.SetFileTransfer(session, session)
 		go func() {
 			session.Pump(pumpCtx, m.Publish)
 		}()

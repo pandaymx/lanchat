@@ -9,7 +9,7 @@
   "tui.status.label.unread": "unread",
   "tui.status.label.err": "err",
   "tui.hints.row": "[Enter] send · [Shift+Enter] newline · [End] tail · [PgUp/PgDn] scroll · [/help] commands · [Ctrl+C] quit",
-  "tui.help.row": "help: Enter send · Shift+Enter newline · End tail · PgUp/PgDn scroll · /help · /clear · /quit · Ctrl+C quit",
+  "tui.help.row": "help: Enter send · Shift+Enter newline · End tail · PgUp/PgDn scroll · /help · /file <path> · /clear · /quit · Ctrl+C quit",
   "tui.sidebar.empty": "peers: (none yet)",
   "tui.sidebar.prefix": "peers:",
   "tui.history.fallback.user": "?",
@@ -27,5 +27,9 @@
   "web.peers.empty": "(no one online yet)",
   "web.peers.you": "(you)",
   "web.typing.one": "%s is typing…",
-  "web.typing.many": "%s are typing…"
+  "web.typing.many": "%s are typing…",
+  "tui.file.tag": "[file]",
+  "tui.file.saved": "saved %s",
+  "tui.file.usage": "usage: /file <path>",
+  "tui.file.unsupported": "file transfer not available"
 }

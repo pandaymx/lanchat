@@ -9,7 +9,7 @@
   "tui.status.label.unread": "未读",
   "tui.status.label.err": "错误",
   "tui.hints.row": "[Enter] 发送 · [Shift+Enter] 换行 · [End] 跳到底部 · [PgUp/PgDn] 滚动 · [/help] 命令 · [Ctrl+C] 退出",
-  "tui.help.row": "help: Enter 发送 · Shift+Enter 换行 · End 跳到底部 · PgUp/PgDn 滚动 · /help · /clear · /quit · Ctrl+C 退出",
+  "tui.help.row": "help: Enter 发送 · Shift+Enter 换行 · End 跳到底部 · PgUp/PgDn 滚动 · /help · /file <路径> · /clear · /quit · Ctrl+C 退出",
   "tui.sidebar.empty": "peers：（暂无）",
   "tui.sidebar.prefix": "peers:",
   "tui.history.fallback.user": "?",
@@ -27,5 +27,9 @@
   "web.peers.empty": "（暂无在线成员）",
   "web.peers.you": "（你）",
   "web.typing.one": "%s 正在输入…",
-  "web.typing.many": "%s 正在输入…"
+  "web.typing.many": "%s 正在输入…",
+  "tui.file.tag": "[文件]",
+  "tui.file.saved": "已保存 %s",
+  "tui.file.usage": "用法：/file <路径>",
+  "tui.file.unsupported": "文件传输不可用"
 }

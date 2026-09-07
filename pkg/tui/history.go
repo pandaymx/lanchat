@@ -27,6 +27,11 @@ type historyView struct {
 	// Update goroutine 内被 formatMessage 调用，无需加锁。
 	readMark func(senderUserID string, seq uint64) bool
 
+	// savedPath 返回「已下载到本地」的文件消息路径（M9），由 Model 注入
+	// （读它的 fileSaved 快照）；nil 时附件卡片不带 saved 标记。与
+	// readMark 同一模式，只在 Update goroutine 内被 formatMessage 调用。
+	savedPath func(id string) (string, bool)
+
 	// mdCache 是 Markdown 渲染结果缓存（M8.2），按消息 ID 键控。
 	// 消息体不可变，而同一消息会因新消息到达 / 已读标记变化 / 窗口
 	// resize 被反复 formatMessage；glamour 渲染每条约几十 µs，缓存后
@@ -192,6 +197,12 @@ func (h *historyView) SetReadChecker(fn func(senderUserID string, seq uint64) bo
 	h.readMark = fn
 }
 
+// SetSavedPathChecker 注入「消息已下载到本地路径」查询（M9）。
+// 渲染附件卡片时据此追加 saved 状态；nil（未注入）则只显示文件行。
+func (h *historyView) SetSavedPathChecker(fn func(id string) (string, bool)) {
+	h.savedPath = fn
+}
+
 // formatMessage 把 StoredMessage 渲染为单行文本。
 //
 // 格式：`[HH:MM:SS] user: body`。M8.2 起 body 经 mdBody 走 glamour
@@ -209,13 +220,38 @@ func formatMessage(h *historyView, m protocol.StoredMessage) string {
 		who = h.t("tui.history.fallback.user")
 	}
 	ts := formatUnixMilli(m.CreatedAt, h)
-	body := h.mdBody(m)
-	line := fmt.Sprintf("[%s] %s: %s", ts, who, body)
+	var line string
+	// M9：附件消息——正文让位给文件卡片行（TUI /file 发的消息 body 恒空；
+	// web 端带 caption 时正文在卡片下方，这里以文件行为准）。
+	if m.File != nil {
+		card := fmt.Sprintf("%s %s (%s)",
+			h.t("tui.file.tag"), m.File.Name, formatSize(m.File.Size))
+		if p, ok := h.savedPath(m.ID); ok {
+			card += " " + savedStyle.Render(fmt.Sprintf(h.t("tui.file.saved"), p))
+		}
+		line = fmt.Sprintf("[%s] %s: %s", ts, who, card)
+	} else {
+		line = fmt.Sprintf("[%s] %s: %s", ts, who, h.mdBody(m))
+	}
 	// M8.1：自己发的消息被其它设备读到后追加「✓已读」标记。
 	if h.readMark != nil && h.readMark(m.SenderUserID, m.ServerSeq) {
 		line += " " + readStyle.Render(h.t("tui.history.read"))
 	}
 	return line
+}
+
+// formatSize 把字节数格式化成人读尺寸（B/KB/MB/GB，1024 进制）。
+func formatSize(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%d B", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1f KB", float64(n)/1024)
+	case n < 1024*1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.1f GB", float64(n)/(1024*1024*1024))
+	}
 }
 
 // mdBody 渲染消息体 Markdown（M8.2），结果按消息 ID 缓存。

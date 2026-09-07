@@ -40,6 +40,11 @@ var (
 			Bold(true).
 			Foreground(lipgloss.Color("#98c379"))
 
+	// savedStyle 是 M9 附件卡片「已保存」标记样式：青色，与 readStyle 同级。
+	savedStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("36"))
+
 	sidebarStyle = lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), false, false, false, true).
 			Padding(0, 1)

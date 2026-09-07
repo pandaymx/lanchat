@@ -55,6 +55,10 @@ type Client struct {
 	store core.Store
 	bus   core.EventBus
 
+	// fileBase 是 hub 的 HTTP 基址（M9 文件传输数据面）；由 SetFileBase
+	// 设置（TUI/Web 的 Dial 层从 ws URL 推导），空表示文件 API 未配置。
+	fileBase string
+
 	// pumpCtx / pumpCancel 是 readPump 自己的生命周期。
 	//
 	// 与 Connect 传入的 ctx 解耦：调用方传入的 ctx 只用于 hello/history req send

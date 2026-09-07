@@ -1,3 +1,14 @@
+## [0.6.0](https://github.com/pandaymx/lanchat/compare/v0.5.0...v0.6.0) (2026-09-07)
+
+### Features
+
+* **repo:** M8.1 已读回执端到端 + M8.2 Markdown/代码高亮 ([7323a65](https://github.com/pandaymx/lanchat/commit/7323a65780674c7031bd3caecf040834778948b6))
+
+### Bug Fixes
+
+* **deps:** 修复 CI 发版链路（锁定 conventionalcommits ^8 + git 凭据 insteadOf） ([13f7fb3](https://github.com/pandaymx/lanchat/commit/13f7fb3539034b0dc72aa60f8d98d068bcf8cc2d))
+* **repo:** 修复 golangci-lint 告警（M8 引入，pre-push 拦截） ([afe29d8](https://github.com/pandaymx/lanchat/commit/afe29d8445686e7ffa61df3cb9e6e918c95f48c5))
+
 ## [0.5.0](https://github.com/pandaymx/lanchat/compare/v0.4.0...v0.5.0) (2026-09-06)
 
 ### Features

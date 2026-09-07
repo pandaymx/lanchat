@@ -1,3 +1,9 @@
+## [0.6.1](https://github.com/pandaymx/lanchat/compare/v0.6.0...v0.6.1) (2026-09-07)
+
+### Bug Fixes
+
+* **tui:** markdown 测试时间串断言不依赖本地时区 ([1dfed85](https://github.com/pandaymx/lanchat/commit/1dfed851bad22d75952c4efd17b83ec62a3578ca))
+
 ## [0.6.0](https://github.com/pandaymx/lanchat/compare/v0.5.0...v0.6.0) (2026-09-07)
 
 ### Features

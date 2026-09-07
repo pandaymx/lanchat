@@ -93,6 +93,16 @@
 
 **M9 验收标准**：TUI `/file` 或 Web 📎/粘贴/拖拽上传后，对端 TUI 自动下载到 `lanchat-files/` 并显示「已保存」，Web 端渲染附件卡片（图片内联预览、其余可下载）；hub 重启后文件仍可下载（blob 落盘 + 元信息入 store）；文件名带路径穿越字符时不越权读写；release 产物为按端拆分的压缩包（非安装包）。
 
+**M10 子任务拆解与进度**（桌面端；M10=桌面端——顺序经用户确认，技术选型见 ADR-015）：
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M10.1 | 窗口化客户端 | `apps/desktop`：本地 127.0.0.1 随机端口起 webui（复用 internal/webui 全部能力），webview_go 窗口 Navigate 加载；hub 地址 mDNS 自动发现 / `-hub-url` 指定；`//go:build desktop` tag 隔离 CGO 壳，server 装配逻辑可单测 | ✅ 本 commit |
+| M10.2 | 托盘与通知 | 系统托盘（systray）+ 新消息系统通知；独立 CGO 依赖，随壳单列构建 | ⬜ 待做 |
+| M10.3 | 打包 | release.yml 桌面 job（原生 runner × 平台）：`lanchat-desktop-<ver>-<os>-<arch>` 压缩包 + sha256，与纯 Go 三端矩阵并列 | ⬜ 待做 |
+
+**M10 验收标准**：桌面窗口打开即连 hub（自动发现或手动指定），Web UI 全部功能可用（消息/已读/Markdown/文件）；关闭窗口进程退出、本地 server 随之释放端口；`go build ./...`（无 tag）与 CI 纯 Go 矩阵不含桌面端且全绿；release 产物 `lanchat-desktop-*` 压缩包可下载运行。
+
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 
 ---
@@ -109,6 +119,13 @@
 | Node 运行时 | bun 1.3.14 | **只用于 commitlint 与 semantic-release** |
 
 **禁止引入**：任何需要 CGO 的依赖、JS 前端框架、ORM（手写 SQL）、除标准库 `log/slog` 外的日志库。
+
+**唯一 CGO 例外（ADR-015）**：`apps/desktop`（桌面壳）允许 CGO（系统 WebView：
+Linux webkit2gtk / Windows WebView2 / macOS WKWebView），这是全仓唯一的
+例外。约束：桌面端代码只允许出现在 `apps/desktop`，且 CGO 相关文件一律带
+`//go:build desktop` tag——默认 `go build ./...` / `go test ./...` 不编译
+桌面端，`CGO_ENABLED=0` 交叉编译矩阵不受影响；桌面端单独由 CI 原生 runner
+job 构建（见 §6 发布流程）。`pkg/` 保持纯 Go（gomobile 可复用）。
 
 **关键库的选型理由**：WebSocket 用 `coder/websocket`（gorilla 已归档）；存储用 libSQL 纯 Go 驱动（ADR-013）：`libsql-client-go` 走标准 `database/sql`，本地 `file:` DSN 自身不带引擎，必须 blank import `modernc.org/sqlite`（注册名 "sqlite"）——禁用 CGO 版 `mattn/go-sqlite3`（会毁掉交叉编译与 gomobile），也不引 CGO 版 go-libsql。
 
@@ -364,6 +381,29 @@ log.Info(...)  // 内部走 slog.Default().Log(...)
 - 架构层面的取舍 → 先用文字讨论，得到共识再写代码；讨论结果记录在 `git commit` / PR 描述
 - 本文件有歧义或过时 → 直接改本文件，并在 commit message 里说明
 - 用户没明确要求的重构/优化 → 不做（偏好最小改动）
+
+---
+
+## 14. ADR 摘要
+
+按时间倒序。完整讨论见对应 commit / PR。
+
+### ADR-015：桌面端技术选型（2026-09-07，M10）
+
+- **背景**：Web UI 已完整（M4–M9 全能力），M10 需要原生窗口壳。规划时预设 Wails。
+- **推翻 Wails 的事实**：Wails v2 不支持窗口加载外部 URL（需 redirect hack）；其核心机制
+  （embedded Assets + Go/JS binding）对本项目无用；v2 托盘/通知也不内置；构建需 wails CLI +
+  frontend 目录。Wails v3 支持外部 URL 但仍 alpha。
+- **选型**：`github.com/webview/webview_go`（MIT，系统 WebView 绑定，API 极简
+  `New/Navigate/SetTitle/Run`，`Navigate("http://127.0.0.1:<port>")` 直接加载本地服务）。
+  已排除 `modernc.org/webview`（零 CGO 但自研玩具渲染引擎，渲染不了 htmx+SSE 应用）。
+- **CGO 例外**：webview_go 需要 CGO（webkit2gtk / WebView2 / WKWebView），是全仓唯一 CGO 例外。
+  隔离机制：`apps/desktop` 下 CGO 文件带 `//go:build desktop`，默认构建不含桌面端；
+  桌面 job 在 CI 原生 runner 单列（§6）。
+- **窗口形态**：桌面进程内起 webui handler（127.0.0.1 随机端口），窗口加载该地址；
+  关闭窗口 → 进程退出 → 端口释放。hub 连接复用 mDNS 自动发现 / `-hub-url`。
+- **首版范围**：M10.1 窗口化客户端；M10.2 托盘/通知（systray，又一层 CGO）后续再做。
+- **打包**：`lanchat-desktop-<ver>-<os>-<arch>.{tar.gz,zip}` + sha256，沿用 M9 拆包模式。
 
 ---
 

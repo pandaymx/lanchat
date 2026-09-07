@@ -43,6 +43,11 @@ type ConnectOptions struct {
 	// 超过则放弃「先把 history 排到 deliver 之前」的有序保证，按 FKDeliver 到达顺序直接 publish。
 	// <=0 时默认 5s；0 不应被理解为立即放弃——它会把 FKDeliver 当成主线，是常规下不应选的语义。
 	HistoryWaitTimeout time.Duration
+	// WaitHistory 让 Connect 在返回前同步等待第一次 FKHistoryReq 的响应
+	// 落完 Store（historyDone 关闭）。web 端首屏渲染直接读本地 Store，
+	// 不等的话会撞上竞态窗口：历史异步到达、首页已渲染成空列表。
+	// TUI 依赖「已同步」事件自行刷新，不需要同步等，保持默认 false。
+	WaitHistory bool
 }
 
 // defaultHistoryWaitTimeout 是 HistoryWaitTimeout 的兜底值。
@@ -85,6 +90,9 @@ type Client struct {
 	// 重复追加到界面底部。nil 时（Connect 的 catch-up 补发）走原发布路径。
 	histMu   sync.Mutex
 	histWait chan protocol.HistoryResponse
+	// historyDone 在 WaitHistory 连接里由 FKHistoryResp 落完 Store 后关闭，
+	// Connect 用它同步等待首屏历史就绪。受 histMu 保护。
+	historyDone chan struct{}
 
 	// awaitingHistory 为 true 表示「FKHistoryReq 已发出、还没拿到响应」期间，
 	// 用来在 race window 里为 FKDeliver 排队——详见 deliverMessage / flushPendingDeliver。
@@ -199,6 +207,22 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 	}
 
 	go c.readPump(c.pumpCtx) //nolint:contextcheck // pumpCtx 由 Client 自身管理，Client 没有父 ctx
+
+	// WaitHistory：同步等 FKHistoryResp 落完 Store 再返回，保证调用方
+	// 紧接着读 Store 时首屏历史已就绪（web 端首页渲染的依赖）。
+	// 必须放在 go readPump 之后：history 响应靠 readPump 读取分发，
+	// 先 select 阻塞会导致没人读 WS、响应积压在 TCP 缓冲里死等超时。
+	if opts.WaitHistory {
+		c.histMu.Lock()
+		c.historyDone = make(chan struct{})
+		done := c.historyDone
+		c.histMu.Unlock()
+		select {
+		case <-done:
+		case <-time.After(opts.HistoryWaitTimeout):
+			cliLog.Warn("wait history timeout, first screen may be empty")
+		}
+	}
 	return nil
 }
 
@@ -265,6 +289,12 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 			for i := range resp.Messages {
 				_ = c.store.AppendMessage(ctx, resp.Messages[i])
 			}
+			c.histMu.Lock()
+			if c.historyDone != nil {
+				close(c.historyDone)
+				c.historyDone = nil
+			}
+			c.histMu.Unlock()
 			wait <- resp
 			return
 		}
@@ -285,6 +315,13 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 			c.setLastHistorySeq(m.ServerSeq)
 		}
 		c.flushPendingDeliver()
+		// 首屏历史已落 Store：通知同步等待的 Connect（若有）。
+		c.histMu.Lock()
+		if c.historyDone != nil {
+			close(c.historyDone)
+			c.historyDone = nil
+		}
+		c.histMu.Unlock()
 		// 末尾通知"已同步"，调用方可挂回调触发 UI 刷新
 		c.bus.Publish(core.Event{
 			Kind:  core.EventState,

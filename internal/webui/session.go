@@ -67,6 +67,9 @@ func DialClient(ctx context.Context, opts DialOptions) (*client.Client, core.Sto
 	if err := cli.Connect(ctx, client.ConnectOptions{
 		RequestHistory: true,
 		HistoryLimit:   opts.HistoryLimit,
+		// 首页渲染直接读本地 Store；同步等连接时历史落库，
+		// 避免竞态窗口导致首屏永远空历史（见 client.go ConnectOptions.WaitHistory）。
+		WaitHistory: true,
 	}); err != nil {
 		_ = conn.Close()
 		_ = store.Close()

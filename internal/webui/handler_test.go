@@ -309,7 +309,7 @@ func TestHandleHome_RendersHistory(t *testing.T) {
 
 	body := rec.Body.String()
 	for _, want := range []string{
-		`id="msg-m1"`, "self msg", `msg-sender self`, // 本人消息带 self 样式
+		`id="msg-m1"`, "self msg", `class="msg-row self"`, // 本人消息带 self 样式
 		`id="msg-m2"`, "other msg", // 他人消息不带
 	} {
 		if !strings.Contains(body, want) {
@@ -747,7 +747,7 @@ func TestHandleEvents_DeliversMessageFrame(t *testing.T) {
 	for _, want := range []string{
 		"event: message\n",
 		"id: 7\n",
-		`data: <li id="msg-m1" data-seq="7" data-self="false">`,
+		`data: <li id="msg-m1" class="msg-row" data-seq="7" data-self="false">`,
 		"bob",
 		"hi <!-- raw HTML omitted -->x", // goldmark 剥离原始 HTML
 	} {
@@ -1242,7 +1242,7 @@ func TestHandleHome_RendersPeers(t *testing.T) {
 	h.handleHome(rec, req)
 
 	body := rec.Body.String()
-	for _, want := range []string{`id="peers"`, "peer-chip", "alice", "carol"} {
+	for _, want := range []string{`id="peers"`, "peer-item", "alice", "carol"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("home page missing %q in peers bar", want)
 		}
@@ -1277,7 +1277,7 @@ func TestHandleEvents_PresenceFrame(t *testing.T) {
 		"event: presence\n",
 		"alice",
 		"carol",
-		"peer-chip",
+		"peer-item",
 	} {
 		if !strings.Contains(frame, want) {
 			t.Errorf("presence frame missing %q\ngot: %q", want, frame)
@@ -1637,13 +1637,14 @@ func TestTemplate_ReadMarkInline(t *testing.T) {
 		t.Fatalf("render: %v", err)
 	}
 	got := sb.String()
-	idxSender := strings.Index(got, "alice")
-	idxMark := strings.Index(got, "msg-read")
 	idxBody := strings.Index(got, "msg-body")
-	if idxSender < 0 || idxMark < 0 || idxBody < 0 {
-		t.Fatalf("markup parts missing (sender=%d mark=%d body=%d)\ngot: %q", idxSender, idxMark, idxBody, got)
+	idxMark := strings.Index(got, "msg-read")
+	idxMeta := strings.Index(got, "msg-meta")
+	if idxMark < 0 || idxBody < 0 || idxMeta < 0 {
+		t.Fatalf("markup parts missing (mark=%d body=%d meta=%d)\ngot: %q", idxMark, idxBody, idxMeta, got)
 	}
-	if idxSender >= idxMark || idxMark >= idxBody {
-		t.Error("read mark must sit between sender and body div")
+	// M11 起气泡结构：已读双勾在 msg-meta（时间旁）内，位于 body 之后。
+	if idxMark < idxBody || idxMark < idxMeta {
+		t.Error("read mark must sit inside msg-meta after body div")
 	}
 }

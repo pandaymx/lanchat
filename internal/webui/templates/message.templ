@@ -1,13 +1,14 @@
-package templates
-
-// message 渲染单条消息（<li>）。
+// message 渲染单条消息（<li class="msg-row">），新版 IM 气泡样式。
+//
+// 布局：头像 + 消息主体（sender 行 / 气泡 / meta 行）。self 消息由 CSS
+// row-reverse 排到头像右侧（自己右蓝、他人左白）。
 //
 // 用途有二：
 //  1. 首页首次渲染时被 home 循环调用
 //  2. SSE 推送新消息时，服务端直接把这一段的 HTML 放进 SSE data 行，
 //     由 htmx 的 hx-swap 追加到 #messages 末尾（M4.3 接通）
 //
-// 渲染安全（见 docs/proposals/2026-09-05-m4-web-proposal.md R9：XSS 防护）：
+// 渲染安全（docs/proposals/2026-09-05-m4-web-proposal.md R9：XSS 防护）：
 //   - templ 对 { } 插值自动做 HTML 转义；
 //   - M8.2 起消息体是服务端 goldmark 渲染出的 m.HTML（原始 HTML 已被
 //     转义成实体，见 templates/markdown.go），经 templ.Raw 注入——
@@ -15,39 +16,48 @@ package templates
 //
 // body 容器必须是块级 <div>：goldmark 输出 <p>/<pre>/<ul> 等块级元素，
 // 塞进 <span> 会被浏览器隐式闭合、破坏布局（M8.2 观察到的坑）。
+package templates
+
+import "strconv"
+
 templ Message(m MessageView) {
 	// data-seq / data-self（M8.1）：read SSE 帧到达时 app.js 据此给已读的
-	// 自发消息打勾，无需重渲整条列表。Self 直接渲染成属性值，避免 JS 侧
-	// 重复比对 sender。
-	<li id={ "msg-" + m.ID } data-seq={ m.Seq } data-self={ m.Self }>
-		<span class="msg-meta">{ m.AtText }</span>
-		if m.Self {
-			<span class="msg-sender self">{ m.SenderUser }</span>
-		} else {
-			<span class="msg-sender">{ m.SenderUser }</span>
-		}
-		if m.Read {
-			<span class="msg-read">✓</span>
-		}
-		<div class="msg-body">@templ.Raw(m.HTML)
-</div>
-		if m.HasFile() {
-			if m.IsImage() {
-				<div class="msg-file image">
-					<a href={ "/api/files/" + m.File.FileID } target="_blank" rel="noopener">
-						<img src={ "/api/files/" + m.File.FileID } alt={ m.File.Name } loading="lazy" />
-					</a>
-					<span class="msg-file-name">{ m.File.Name }</span>
-				</div>
-			} else {
-				<div class="msg-file">
-					<a class="msg-file-link" href={ "/api/files/" + m.File.FileID } download={ m.File.Name }>
-						📎 { m.File.Name }
-					</a>
-					<span class="msg-file-size">{ m.FileSizeText() }</span>
-				</div>
+	// 自发消息打勾，无需重渲整条列表。
+	<li id={ "msg-" + m.ID } class={ msgRowClass(m.Self) } data-seq={ m.Seq } data-self={ m.Self }>
+		<span class="avatar" style={ avatarBG(m.SenderUser) }>{ AvatarChar(m.SenderUser) }</span>
+		<div class="msg-main">
+			if !m.Self {
+				<div class="msg-sender">{ m.SenderUser }</div>
 			}
-		}
+			<div class="msg-bubble">
+				<div class="msg-body">@templ.Raw(m.HTML)
+</div>
+				if m.HasFile() {
+					if m.IsImage() {
+						<div class="msg-file image">
+							<a href={ "/api/files/" + m.File.FileID } target="_blank" rel="noopener">
+								<img src={ "/api/files/" + m.File.FileID } alt={ m.File.Name } loading="lazy" />
+							</a>
+							<span class="msg-file-name">{ m.File.Name }</span>
+						</div>
+					} else {
+						<div class="msg-file">
+							<a class="msg-file-link" href={ "/api/files/" + m.File.FileID } download={ m.File.Name }>
+								📎 { m.File.Name }
+							</a>
+							<span class="msg-file-size">{ m.FileSizeText() }</span>
+						</div>
+					}
+				}
+			</div>
+			// meta 行：时间 + 已读双勾（M8.1，self 且已被其它设备读到）。
+			<div class="msg-meta">
+				{ m.AtText }
+				if m.Self && m.Read {
+					<span class="msg-read">✓✓</span>
+				}
+			</div>
+		</div>
 	</li>
 }
 
@@ -76,4 +86,17 @@ templ HistoryPage(tr Translator, msgs []MessageView, more bool, nextBefore int64
 	for _, m := range msgs {
 		@Message(m)
 	}
+}
+
+// msgRowClass 是消息行根类：self 时附加 " self"（CSS 控制头像/气泡侧向）。
+func msgRowClass(self bool) string {
+	if self {
+		return "msg-row self"
+	}
+	return "msg-row"
+}
+
+// avatarBG 是头像色块的内联背景（名字哈希色相，浅深主题通用的中间亮度）。
+func avatarBG(name string) string {
+	return "background:hsl(" + strconv.Itoa(AvatarHue(name)) + " 72% 52%)"
 }

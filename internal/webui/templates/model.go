@@ -80,6 +80,33 @@ type HomeData struct {
 	Tr Translator
 }
 
+// OnlineCount 是在线成员数（含自己），左侧会话列表与顶栏展示用。
+func (d HomeData) OnlineCount() int { return len(d.Peers) }
+
+// AvatarHue 由名字哈希出 0-359 的色相，头像色块背景用。
+//
+// 无头像系统的轻量替代：同一名字稳定同色，不同名字大概率不同色。
+// 哈希用 FNV-1a（纯标准库，无依赖）。
+func AvatarHue(name string) int {
+	if name == "" {
+		return 210 // 匿名兜底色：品牌蓝
+	}
+	h := uint32(2166136261)
+	for _, b := range []byte(name) {
+		h ^= uint32(b)
+		h *= 16777619
+	}
+	return int(h % 360)
+}
+
+// AvatarChar 返回名字首个可见字符（用于头像块上的字母/汉字）。
+func AvatarChar(name string) string {
+	for _, r := range name {
+		return string(r)
+	}
+	return "?"
+}
+
 // HistoryHref 构造「加载更早消息」按钮的 hx-get URL。
 //
 // 放在 Go 侧拼串：templ 模板里不引 strconv，保持模板纯渲染

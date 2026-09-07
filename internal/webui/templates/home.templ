@@ -1,74 +1,115 @@
+// home 是主页面：三栏 IM 布局（功能栏 / 会话列表 / 聊天区）。
+//
+// 布局（仿新版 QQ / 豆包客户端）：
+//   - 左 44px 功能栏（rail）：会话 / 联系人占位 / 主题切换
+//   - 中 220px 会话列表（sidebar）：默认会话 + 在线成员（presence 帧整段 swap）
+//   - 右聊天区（chat）：顶栏（会话名 + 在线数 + 连接状态）→ 消息流 → 输入区
+//
+// HTMX 集成点（与 M4 一致）：
+//   - <ul id="messages"> 是 SSE 推送的 swap 目标
+//   - <form class="composer-form" hx-post="/messages"> 由 HTMX 发 AJAX POST
+//   - <div id="peers"> 在 sidebar 内，presence 帧整段 innerHTML swap
 package templates
 
-// home 是主页面：header（标题 + 身份 + 连接状态）+ 消息列表 + 输入区。
-//
-// HTMX 集成点：
-//   - <ul id="messages"> 是 SSE 推送的 swap 目标（M4.3 由 sse-swap 属性挂上）
-//   - <form hx-post="/messages"> 提交后由 HTMX 发 AJAX POST，不整页刷新
-//   - hx-swap="none" + 提交后手动清空：M4.2 骨架阶段先不接真实发送
+import "strconv"
+
 templ Home(data HomeData) {
 	@base(data.Meta) {
-		<header class="header">
-			<h1>lanchat</h1>
-			<span class="who">
-				if data.Connected {
-					<span class="dot online"></span>
+		// ---- 左功能栏 ----
+		<nav class="rail">
+			<button class="rail-btn active" title={ T(data.Tr, "web.nav.chats") }>💬</button>
+			<button class="rail-btn" title={ T(data.Tr, "web.nav.contacts") }>👥</button>
+			<div class="rail-spacer"></div>
+			<button id="theme-toggle" class="rail-btn" title={ T(data.Tr, "web.theme.toggle") }>🌙</button>
+		</nav>
+
+		// ---- 会话列表 ----
+		<aside class="sidebar">
+			<div class="sidebar-title">{ T(data.Tr, "web.nav.chats") }</div>
+			<ul class="conv-list">
+				<li class="conv-item active">
+					<span class="avatar conv-avatar" style={ avatarBG(T(data.Tr, "web.conv.default")) }>{ AvatarChar(T(data.Tr, "web.conv.default")) }</span>
+					<div class="conv-info">
+						<div class="conv-name">{ T(data.Tr, "web.conv.default") }</div>
+						<div class="conv-meta">{ onlineText(data.Tr, data.OnlineCount()) }</div>
+					</div>
+				</li>
+			</ul>
+			<div class="sidebar-title">{ T(data.Tr, "web.peers.title") }</div>
+			// 在线成员：SSE presence 帧整段 swap（M7.2 语义不变，容器换到侧栏）。
+			<div id="peers" hx-sse="swap:presence" hx-swap="innerHTML">
+				@Peers(data.Tr, data.Peers)
+			</div>
+			// 当前账号：user@device（多个设备同时在线时能分辨自己是哪台）。
+			<div class="sidebar-foot">{ data.Meta.Who() }</div>
+		</aside>
+
+		// ---- 聊天主区 ----
+		<main class="chat">
+			<header class="chat-head">
+				<div class="chat-head-left">
+					<span class="avatar chat-avatar" style={ avatarBG(T(data.Tr, "web.conv.default")) }>{ AvatarChar(T(data.Tr, "web.conv.default")) }</span>
+					<div>
+						<div class="chat-title">{ T(data.Tr, "web.conv.default") }</div>
+						<div class="chat-sub">
+							if data.Connected {
+								<span class="dot online"></span>
+							} else {
+								<span class="dot offline"></span>
+							}
+							{ onlineText(data.Tr, data.OnlineCount()) }
+						</div>
+					</div>
+				</div>
+				// 连接状态区：SSE state 帧整段 swap（断连出 banner，重连清空）。
+				<div id="conn-state" hx-sse="swap:state" hx-swap="innerHTML">
+					@ConnStatus(data.Tr, data.Connected)
+				</div>
+			</header>
+
+			// 正在输入指示条：SSE typing 帧 innerHTML swap（M7.3）。
+			<div id="typing" hx-sse="swap:typing" hx-swap="innerHTML"></div>
+
+			if data.Error != "" {
+				<div class="banner">{ data.Error }</div>
+			}
+
+			<ul id="messages" class="messages" hx-sse="swap:message" hx-swap="beforeend">
+				if data.HasMore {
+					@LoadMore(data.Tr, HistoryHref(data.OldestSeq))
+				}
+				if len(data.Messages) == 0 {
+					<li class="empty">{ T(data.Tr, "web.messages.empty") }</li>
 				} else {
-					<span class="dot offline"></span>
+					for _, m := range data.Messages {
+						@Message(m)
+					}
 				}
-				{ data.Meta.Who() }
-			</span>
-		</header>
-		// 连接状态区：SSE state 帧整段 swap（断连出 banner，重连清空）。
-		<div id="conn-state" hx-sse="swap:state" hx-swap="innerHTML">
-			@ConnStatus(data.Tr, data.Connected)
-		</div>
-		// 在线成员条：SSE presence 帧整段 swap（M7.2）。
-		// 名单变化（上线/下线/roster）都由 hub 广播驱动，片段全量重渲，
-		// 浏览器侧不做增量合并；首屏数据来自 client 连接级 presence 状态。
-		<div id="peers" hx-sse="swap:presence" hx-swap="innerHTML">
-			@Peers(data.Tr, data.Peers)
-		</div>
-		// 正在输入指示条：SSE typing 帧整段 swap（M7.3）。首屏为空。
-		// 非空片段自带 6s 后 GET /typing 自刷新（outerHTML）：持续输入时
-		// 新 SSE 帧不断续期；停止输入后快照过期，自刷新取到空片段自行清除。
-		<div id="typing" hx-sse="swap:typing" hx-swap="innerHTML"></div>
-		if data.Error != "" {
-			<div class="banner">{ data.Error }</div>
-		}
-		<ul id="messages" class="messages" hx-sse="swap:message" hx-swap="beforeend">
-			if data.HasMore {
-				@LoadMore(data.Tr, HistoryHref(data.OldestSeq))
-			}
-			if len(data.Messages) == 0 {
-				<li class="empty">{ T(data.Tr, "web.messages.empty") }</li>
-			} else {
-				for _, m := range data.Messages {
-					@Message(m)
-				}
-			}
-		</ul>
-		// Enter 发送、Shift+Enter 换行；isComposing 保护中文输入法组词期间的 Enter。
-		// requestSubmit() 触发原生 submit 事件，htmx 照常拦截成 AJAX POST；
-		// input 事件做高度自适应（上限 200px），发送后 after-request reset 复原。
-		// M7.3：textarea 上挂 typing 上发——leading throttle，首个 input 立即
-		// 发，之后 3s 最多一次；空 body 不触发；停止输入后靠对端 TTL 消失。
-		<!-- M9：上传按钮 + 隐藏文件选择框；粘贴/拖拽由 app.js 处理。 -->
-		<button id="file-btn" type="button" class="composer-file" title={ T(data.Tr, "web.file.upload") }>📎</button>
-		<input id="file-input" type="file" style="display:none"/>
-		<form class="composer" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
-			<textarea
-				name="body"
-				placeholder={ T(data.Tr, "web.composer.placeholder") }
-				rows="1"
-				hx-on:keydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();this.closest('form').requestSubmit()}"
-				hx-on:input="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,200)+'px'"
-				hx-post="/typing"
-				hx-trigger="input[value.trim()!=''] throttle:3s"
-				hx-swap="none"
-			></textarea>
-			<button type="submit">{ T(data.Tr, "web.composer.send") }</button>
-		</form>
+			</ul>
+
+			// Enter 发送、Shift+Enter 换行；isComposing 保护中文输入法组词期间的 Enter。
+			// requestSubmit() 触发原生 submit 事件，htmx 照常拦截成 AJAX POST；
+			// input 事件做高度自适应（上限 200px），发送后 after-request reset 复原。
+			// M7.3：textarea 上挂 typing 上发——leading throttle，首个 input 立即
+			// 发，之后 3s 最多一次；空 body 不触发；停止输入后靠对端 TTL 消失。
+			<footer class="composer">
+				<button id="file-btn" type="button" class="composer-file" title={ T(data.Tr, "web.file.upload") }>📎</button>
+				<input id="file-input" type="file" style="display:none"/>
+				<form class="composer-form" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
+					<textarea
+						name="body"
+						placeholder={ T(data.Tr, "web.composer.placeholder") }
+						rows="1"
+						hx-on:keydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();this.closest('form').requestSubmit()}"
+						hx-on:input="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,200)+'px'"
+						hx-post="/typing"
+						hx-trigger="input[value.trim()!=''] throttle:3s"
+						hx-swap="none"
+					></textarea>
+					<button type="submit" class="send-btn">{ T(data.Tr, "web.composer.send") }</button>
+				</form>
+			</footer>
+		</main>
 	}
 }
 
@@ -83,26 +124,28 @@ templ ConnStatus(tr Translator, connected bool) {
 	}
 }
 
-// Peers 是在线成员条片段（M7.2）：首屏服务端渲染，SSE presence 帧到达后
-// 整段 innerHTML swap 进 #peers。每次全量重渲——成员列表体量小（局域网
-// 场景个位到几十），全量 swap 比客户端增量合并简单且不易出状态错乱。
+// Peers 是侧栏在线成员列表片段（M7.2）：首屏服务端渲染，SSE presence
+// 帧到达后整段 innerHTML swap 进 #peers。每次全量重渲——成员列表体量小
+// （局域网场景个位到几十），全量 swap 比客户端增量合并简单且不易错乱。
 templ Peers(tr Translator, peers []PeerView) {
-	<div class="peers-bar">
-		<span class="peers-title">{ T(tr, "web.peers.title") }</span>
+	<ul class="peer-list">
 		if len(peers) == 0 {
-			<span class="peers-empty">{ T(tr, "web.peers.empty") }</span>
+			<li class="peer-empty">{ T(tr, "web.peers.empty") }</li>
 		} else {
 			for _, p := range peers {
-				<span class="peer-chip">
+				<li class="peer-item">
+					<span class="avatar" style={ avatarBG(p.User) }>{ AvatarChar(p.User) }</span>
+					<div class="peer-info">
+						<div class="peer-name">{ p.User }</div>
+						if p.Self {
+							<span class="peer-you">{ T(tr, "web.peers.you") }</span>
+						}
+					</div>
 					<span class="dot online"></span>
-					<span class="peer-name">{ p.User }</span>
-					if p.Self {
-						<span class="peer-you">{ T(tr, "web.peers.you") }</span>
-					}
-				</span>
+				</li>
 			}
 		}
-	</div>
+	</ul>
 }
 
 // TypingBar 是「正在输入」指示片段（M7.3）：SSE typing 帧 innerHTML swap
@@ -110,8 +153,7 @@ templ Peers(tr Translator, peers []PeerView) {
 //
 // 非空片段带 hx-get=/typing + load delay 6s：渲染后 6s 自动再拉一次
 // 快照——对方持续输入时新 SSE 帧会先到（片段整体被替换、定时器续期）；
-// 对方停止输入后 client 快照惰性过期为空，自刷新拿到空片段把指示清掉。
-// 空片段渲染为空字符串，outerHTML swap 后节点消失、不再轮询。
+// 对方停止输入后 client 快照惰性过期为空，自刷新拿到空片段自行清除。
 templ TypingBar(tr Translator, typing []TypingView) {
 	if len(typing) > 0 {
 		<div class="typing-bar" hx-get="/typing" hx-trigger="load delay:6s" hx-swap="outerHTML">
@@ -119,4 +161,9 @@ templ TypingBar(tr Translator, typing []TypingView) {
 			<span class="typing-text">{ TypingText(tr, typing) }</span>
 		</div>
 	}
+}
+
+// onlineText 是「N 人在线」文案（Tf 单参数注入）。
+func onlineText(tr Translator, n int) string {
+	return Tf(tr, "web.conv.online", strconv.Itoa(n))
 }

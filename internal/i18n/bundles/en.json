@@ -34,5 +34,10 @@
   "tui.file.unsupported": "file transfer not available",
   "web.file.upload": "Upload file (or paste / drag)",
   "desktop.tray.show": "Open LAN Chat",
-  "desktop.tray.quit": "Quit"
+  "desktop.tray.quit": "Quit",
+  "web.nav.chats": "Chats",
+  "web.nav.contacts": "Contacts",
+  "web.conv.default": "Default room",
+  "web.conv.online": "%s online",
+  "web.theme.toggle": "Toggle theme"
 }

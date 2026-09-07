@@ -34,5 +34,10 @@
   "tui.file.unsupported": "文件传输不可用",
   "web.file.upload": "上传文件（或粘贴 / 拖拽）",
   "desktop.tray.show": "打开 LAN Chat",
-  "desktop.tray.quit": "退出"
+  "desktop.tray.quit": "退出",
+  "web.nav.chats": "会话",
+  "web.nav.contacts": "联系人",
+  "web.conv.default": "默认会话",
+  "web.conv.online": "%s 人在线",
+  "web.theme.toggle": "切换主题"
 }

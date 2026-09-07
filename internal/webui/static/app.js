@@ -125,7 +125,7 @@
     }).catch(function () {});
   }
 
-  // applyRead 给 seq 之前的所有自发消息打已读勾（幂等）。
+  // applyRead 给 seq 之前的所有自发消息打已读双勾（幂等）。
   function applyRead(seq) {
     var el = messagesEl();
     if (!el) return;
@@ -135,13 +135,13 @@
       if (parseInt(li.getAttribute("data-seq"), 10) > seq) continue;
       if (li.classList.contains("read")) continue;
       li.classList.add("read");
+      // 新结构：双勾插进 .msg-meta（时间旁），与服务端渲染位置一致。
+      var meta = li.querySelector(".msg-meta");
       var mark = document.createElement("span");
       mark.className = "msg-read";
-      mark.textContent = "\u2713";
-      // 与服务端渲染位置一致：插到正文块之前（meta/sender 之后）。
-      var body = li.querySelector(".msg-body");
-      if (body) {
-        li.insertBefore(mark, body);
+      mark.textContent = "\u2713\u2713";
+      if (meta) {
+        meta.appendChild(mark);
       } else {
         li.appendChild(mark);
       }
@@ -196,6 +196,27 @@
 
   // 文件上传交互（按钮 / 粘贴 / 拖拽），M9。
   bindFileComposer();
+
+  // ---- 主题切换（M11）：data-theme 持久化到 localStorage ----
+  function currentTheme() {
+    return document.documentElement.getAttribute("data-theme") || "dark";
+  }
+  function setThemeIcon() {
+    var btn = document.getElementById("theme-toggle");
+    if (!btn) return;
+    btn.textContent = currentTheme() === "dark" ? "\u2600\uFE0F" : "\uD83C\uDF19";
+  }
+  function toggleTheme() {
+    var next = currentTheme() === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("lanchat-theme", next); } catch (e) {}
+    setThemeIcon();
+  }
+  var themeBtn = document.getElementById("theme-toggle");
+  if (themeBtn) {
+    themeBtn.addEventListener("click", toggleTheme);
+  }
+  setThemeIcon();
 
   // 首屏：列表短到无需滚动或已在底部 → 立即上发已读。
   if (document.readyState === "loading") {

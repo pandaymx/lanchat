@@ -1,19 +1,26 @@
-package templates
-
-// base 是整个页面的 HTML shell：head（含 htmx / CSS）+ 主体容器。
+// base 是整个页面的 HTML shell：head（含 htmx / CSS / 主题初始化）+ 主体。
 //
 // 关键点：
 //   - hx-ext="sse" 让 htmx 的 SSE 扩展接管当前容器
 //   - hx-sse="connect:/events" 声明 SSE 源路由
-//   - 脚本走 /assets/ 前缀（由 internal/webui/assets.go 的 embed.FS 提供）；
-//     app.js 是 M8.1 已读回执的浏览器逻辑（打勾 + 贴底上发），纯 vanilla JS
+//   - 主题：<html data-theme> 由 themeInitJS 在 CSS 加载前从 localStorage /
+//     系统偏好恢复，避免浅色用户首屏闪深色；app.js 负责切换按钮与持久化
+//   - 脚本走 /assets/ 前缀（由 internal/webui/assets.go 的 embed.FS 提供）
+package templates
+
+// themeInitJS 是 <head> 里最先执行的主题恢复脚本（一行，无换行）。
+// 用 templ.Raw 注入绕开 templ 对 <script> 内容的花括号解析；内容固定
+// 无用户输入，不存在注入面。默认深色（与 TUI 端观感一致）。
+const themeInitJS = "try{var t=localStorage.getItem(\"lanchat-theme\");if(!t){t=matchMedia(\"(prefers-color-scheme: light)\").matches?\"light\":\"dark\"}document.documentElement.setAttribute(\"data-theme\",t)}catch(e){document.documentElement.setAttribute(\"data-theme\",\"dark\")}"
+
 templ base(meta PageMeta) {
 	<!DOCTYPE html>
-	<html lang="zh-CN">
+	<html lang="zh-CN" data-theme="dark">
 		<head>
 			<meta charset="utf-8"/>
 			<meta name="viewport" content="width=device-width, initial-scale=1"/>
 			<title>{ meta.Title }</title>
+			@templ.Raw("<script>" + themeInitJS + "</script>")
 			<link rel="stylesheet" href="/assets/style.css"/>
 			<script src="/assets/htmx.min.js" defer></script>
 			<script src="/assets/htmx-sse.js" defer></script>

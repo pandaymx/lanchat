@@ -161,12 +161,16 @@ jobs:
         run: |
           set -euo pipefail
           name=lanchat-desktop-$LANCHAT_VERSION-${{ matrix.goos }}-${{ steps.arch.outputs.arch }}
+          # tar -C 进 dist/raw 打包，产物落 dist/（cd 子 shell + ../../ 会把
+          # 压缩包写到 repo root，导致 Upload 的 dist/* glob 匹配不到）；
+          # windows runner 的 tar.exe 是 bsdtar，-a 按扩展名自动选 zip 格式
+          # （git bash 无 zip 命令）。
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            ( cd dist/raw && zip -q -r ../../$name.zip lanchat-desktop.exe )
-            sha256sum $name.zip > $name.sha256
+            tar -a -cf dist/$name.zip -C dist/raw lanchat-desktop.exe
+            sha256sum dist/$name.zip > dist/$name.sha256
           else
-            ( cd dist/raw && tar -czf ../../$name.tar.gz lanchat-desktop )
-            sha256sum $name.tar.gz > $name.sha256
+            tar -czf dist/$name.tar.gz -C dist/raw lanchat-desktop
+            sha256sum dist/$name.tar.gz > dist/$name.sha256
           fi
       - name: Upload release assets
         shell: bash

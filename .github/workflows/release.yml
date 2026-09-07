@@ -92,6 +92,93 @@ jobs:
             echo "released=false" >> "$GITHUB_OUTPUT"
           fi
 
+  # M10（2026-09-07）：桌面端（Wails v3 窗口壳，ADR-015）。CGO 唯一例外：
+  # 必须原生 runner（Linux webkitgtk-6.0 / Windows WebView2+mingw / macOS
+  # WKWebView），与 package job 的 CGO_ENABLED=0 纯 Go 矩阵分开。产物
+  # lanchat-desktop-<ver>-<os>-<arch> 压缩包 + sha256，上传到同一 Release。
+  desktop:
+    name: desktop (${{ matrix.runner }})
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) && needs.release.outputs.released == 'true' }}
+    needs: release
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      LANCHAT_VERSION: ${{ needs.release.outputs.version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            goos: linux
+          - runner: windows-latest
+            goos: windows
+          - runner: macos-latest
+            goos: darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+      # Wails v3 系统依赖：Linux 需要 gtk4 + webkitgtk-6.0（pkg-config 还查
+      # libsoup-3.0 / gio-unix）；Windows 需要 mingw gcc（WebView2 runtime
+      # 预装）；macOS xcode CLT 预装无需动作。
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev
+      - name: Install Windows toolchain
+        if: runner.os == 'Windows'
+        run: choco install mingw -y
+      # *_templ.go 被 .gitignore 排除，desktop 依赖 internal/webui 模板，
+      # 构建前必须 templ generate（与 package job 同款 pin）。
+      - name: Install templ CLI
+        env:
+          GOPROXY: https://goproxy.cn,direct
+          GOSUMDB: sum.golang.google.cn
+        run: go install github.com/a-h/templ/cmd/templ@v0.3.1020
+      - name: Generate templ files
+        run: templ generate
+      - name: Detect arch
+        id: arch
+        shell: bash
+        run: echo "arch=$(go env GOARCH)" >> "$GITHUB_OUTPUT"
+      - name: Build desktop
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          CGO_ENABLED: '1'
+        run: |
+          set -euo pipefail
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          mkdir -p dist/raw
+          go build -tags desktop -ldflags "-s -w -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE"             -o dist/raw/lanchat-desktop ./apps/desktop
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          name=lanchat-desktop-$LANCHAT_VERSION-${{ matrix.goos }}-${{ steps.arch.outputs.arch }}
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            ( cd dist/raw && zip -q -r ../../$name.zip lanchat-desktop.exe )
+            sha256sum $name.zip > $name.sha256
+          else
+            ( cd dist/raw && tar -czf ../../$name.tar.gz lanchat-desktop )
+            sha256sum $name.tar.gz > $name.sha256
+          fi
+      - name: Upload release assets
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$LANCHAT_VERSION"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
+          shopt -s nullglob
+          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
+
   # M8 收尾（2026-09-07）：给 Release 页附上可下载的二进制。
   # 之前 ci.yml 的 build job 只传 Actions artifact（30 天过期、不对外），
   # Release 页只有 changelog notes；此处补上原生二进制矩阵。

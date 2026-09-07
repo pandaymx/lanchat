@@ -105,7 +105,9 @@ func TestServer_ServeAndClose(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if _, err := http.Get(s.URL()); err == nil {
+	resp, err := http.Get(s.URL())
+	if err == nil {
+		_ = resp.Body.Close()
 		t.Error("GET after Close succeeded, want connection error")
 	}
 }

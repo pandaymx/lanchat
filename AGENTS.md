@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M10 桌面端已合入（apps/desktop Wails v3 窗口壳 + webapp 本地装配 + CI 原生 runner 桌面 job）；**v0.8.0 由 CI 发布中**，Release 页 36 资产（6 平台 × 3 端纯 Go 矩阵）+ 桌面端 3 资产（linux/windows/darwin，各带 sha256）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：M10 桌面端已发布（apps/desktop Wails v3 窗口壳 + webapp 本地装配 + CI 原生 runner 桌面 job）；**v0.8.4 已发布**，Release 页 36 资产（6 平台 × 3 端纯 Go 矩阵）+ 桌面端 3 平台资产（linux-amd64/windows-amd64/darwin-arm64，压缩包+sha256）。架构决策摘要内嵌于本文档 §12。桌面窗口真机运行验证待做（CI 无图形环境，见 M10 验收标准）。
 
 ### 1.1 M3 子任务拆解与进度
 

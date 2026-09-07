@@ -28,7 +28,12 @@ MAKENSIS="${MAKENSIS:-makensis}"
 # Windows 的 MSYS 会把 /Dxxx=value 参数做路径转换（DNAME 变 C:/Program
 # Files/Git/DNAME），必须关掉；Linux 无此问题。Linux 的 makensis 只认 -D
 # 前缀（/D 会被当成脚本路径），Windows 的 makensis 两种都认，统一用 -D。
-( cd dist/raw && MSYS_NO_PATHCONV=1 "$MAKENSIS" \
-    -DVERSION="${VERSION}" -DAPPNAME="${APPNAME}" -DEXE="${EXE}" \
-    -DOUTFILE="../../dist/${NAME}" ../../.github/installer/lanchat.nsi )
+# EXE/OUTFILE 传绝对路径：NSIS 的 File/OutFile 相对脚本文件所在目录解析，
+# 与 makensis 的 cwd 无关。
+RAW="$(pwd)/dist/raw"
+ABS_EXE="${RAW}/${EXE}"
+ABS_OUT="$(pwd)/dist/${NAME}"
+( cd "$RAW" && MSYS_NO_PATHCONV=1 "$MAKENSIS" \
+    -DVERSION="${VERSION}" -DAPPNAME="${APPNAME}" -DEXE="${ABS_EXE}" \
+    -DOUTFILE="${ABS_OUT}" "$(pwd)/.github/installer/lanchat.nsi" )
 echo "built dist/${NAME}"

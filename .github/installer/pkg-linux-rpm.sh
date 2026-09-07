@@ -52,6 +52,7 @@ fi
   echo "%build"
   echo ""
   echo "%install"
+  echo "install -d %{buildroot}/usr/bin"
   echo "install -m 0755 %{_sourcedir}/${BIN} %{buildroot}/usr/bin/${BIN}"
   if [ "$KIND" = "desktop" ]; then
     echo "install -d %{buildroot}%{_datadir}/applications"

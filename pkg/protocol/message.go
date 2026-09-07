@@ -16,6 +16,29 @@ type StoredMessage struct {
 	Body           string `json:"body"`        // 纯文本（M4 可扩展到 MIME）
 	ServerSeq      uint64 `json:"seq"`         // Hub 单调递增
 	CreatedAt      int64  `json:"at,omitzero"` // Unix 毫秒；零值省略便于显示
+	// File 非空表示该消息携带一个文件附件（M9）。附件数据面走 hub 的
+	// HTTP 端点（POST/GET /api/files），FileID 由 hub 生成、消息里只带
+	// 引用与展示用元信息；历史补发 / 已读 / 去重全走消息原有管线。
+	File *FileRef `json:"f,omitempty"`
+}
+
+// FileRef 是消息携带的文件附件引用（M9）。
+//
+// 传输流程：
+//   - 发送方先把文件上传到 hub（HTTP multipart，POST /api/files），
+//     拿到 hub 分配的 FileID，再发一条带 FileRef 的普通消息；
+//   - 接收方用 FileID 从 hub 拉取（GET /api/files/{fileID}）。
+//
+// 安全边界：
+//   - FileID 由 hub 用 crypto/rand 生成（32 hex），不接受客户端指定——
+//     存储路径永远是 files/<FileID>，文件名/路径穿越无从谈起；
+//   - Name 仅用于展示，绝不拼进文件系统路径；Mime 用于 Web 端渲染
+//     决策（image/* 内联预览）。
+type FileRef struct {
+	FileID string `json:"fid"`
+	Name   string `json:"n"`
+	Size   int64  `json:"sz"`
+	Mime   string `json:"m,omitempty"`
 }
 
 // Conversation 是一个聊天会话，kind 决定它是 DM、群聊还是频道。

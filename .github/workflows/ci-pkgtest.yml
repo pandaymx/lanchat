@@ -40,6 +40,16 @@ jobs:
           go build -o dist/raw/linux-amd64/ ./cmd/...
           # deb/rpm/nsis 脚本期望 dist/raw/<bin>
           for b in hub tui web; do cp "dist/raw/linux-amd64/$b" "dist/raw/$b"; done
+      - name: Build windows amd64 (for nsis)
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          mkdir -p dist/raw/windows-amd64
+          go build -o dist/raw/windows-amd64/ ./cmd/...
+          for b in hub tui web; do cp "dist/raw/windows-amd64/$b.exe" "dist/raw/$b.exe"; done
       - name: Package deb
         run: |
           set -euo pipefail

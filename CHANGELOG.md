@@ -1,3 +1,9 @@
+## [0.12.0](https://github.com/pandaymx/lanchat/compare/v0.11.0...v0.12.0) (2026-09-07)
+
+### Features
+
+* **release:** Windows 各端嵌入应用图标与 asInvoker manifest ([22649dd](https://github.com/pandaymx/lanchat/commit/22649dde6170eeabe63cbc98c6d8e31c4bf902a0))
+
 ## [0.11.0](https://github.com/pandaymx/lanchat/compare/v0.10.1...v0.11.0) (2026-09-07)
 
 ### Features

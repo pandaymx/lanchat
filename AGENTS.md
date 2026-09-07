@@ -208,9 +208,12 @@ release 阶段只提交 `CHANGELOG.md`，**不要顺手改任何 .go 文件**。
    [skip ci]`（不触发新 run）→ 打 tag（GITHUB_TOKEN push 不触发新 run，
    无循环）→ 创建 GitHub Release → 同一 run 内 package job 交叉编译
    6 平台（linux/darwin/windows × amd64/arm64）并上传 tar.gz/zip + sha256。
-2. 手动兜底：`bun run release:dry` 本地预检算出的版本号与 notes；
-   需要手动补跑发布时，在 Actions 的 Release workflow 用 workflow_dispatch
-   （dryRun=false），打包随之在同一次 run 内完成。
+2. 手动兜底：`bun run release:dry` 本地预检算出的版本号与 notes
+   （需 `export GH_TOKEN=<PAT，repo scope>`；gh CLI 的 OAuth token 过不了
+   @semantic-release/github 的权限校验）。零配置的 dry-run 路径是 Actions
+   里 Release workflow 的 workflow_dispatch（dryRun=true）。需要手动补跑
+   发布时同样用 workflow_dispatch（dryRun=false），打包随之在同一次 run
+   内完成。
 3. 不发版时不要手动改版本号 / 打 tag——版本由 commit 类型决定，
    打包版本号在 CI 里统一取 `git describe`（与 Makefile LDFLAGS 同语义）。
 

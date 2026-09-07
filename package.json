@@ -9,7 +9,7 @@
   "scripts": {
     "commitlint": "commitlint --edit",
     "release": "semantic-release",
-    "release:dry": "semantic-release --dry-run",
+    "release:dry": "semantic-release --dry-run --repository-url git@github.com:pandaymx/lanchat.git",
     "hooks:install": "lefthook install"
   },
   "devDependencies": {
@@ -19,7 +19,7 @@
     "@semantic-release/changelog": "^7.0.0",
     "@semantic-release/git": "^11.0.1",
     "@semantic-release/github": "^12.0.9",
-    "conventional-changelog-conventionalcommits": "^10",
+    "conventional-changelog-conventionalcommits": "^8",
     "semantic-release": "^25.0.9"
   }
 }

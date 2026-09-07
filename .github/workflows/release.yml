@@ -43,10 +43,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
       # .releaserc.json 的 repositoryUrl 是 HTTPS（2026-09-07 起），runner
-      # 无 SSH key；@semantic-release/git 的 CHANGELOG commit + tag push
-      # 走这里换成的带 token HTTPS remote。GITHUB_TOKEN 有 contents: write。
+      # 无 SSH key。insteadOf 全局改写：git 对任何 https://github.com/ 访问
+      # （semantic-release 按 repositoryUrl push、@semantic-release/git 的
+      # commit+tag push）自动带 GITHUB_TOKEN，GITHUB_TOKEN 有 contents: write。
       - name: Configure git credentials
-        run: git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/pandaymx/lanchat.git"
+        run: git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # workflow_dispatch + dryRun=true → 仅分析，不发布

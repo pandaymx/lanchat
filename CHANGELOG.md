@@ -1,3 +1,9 @@
+## [0.9.3](https://github.com/pandaymx/lanchat/compare/v0.9.2...v0.9.3) (2026-09-07)
+
+### Bug Fixes
+
+* **ci:** NSIS File 指令先 !cd 到二进制目录 ([b69a0d0](https://github.com/pandaymx/lanchat/commit/b69a0d01f59ece17ea6efdc244ab71b4655f0974))
+
 ## [0.9.2](https://github.com/pandaymx/lanchat/compare/v0.9.1...v0.9.2) (2026-09-07)
 
 ### Bug Fixes

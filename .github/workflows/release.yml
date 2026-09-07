@@ -183,7 +183,6 @@ jobs:
               # 路径转换误改（DVERSION 变 C:/Program Files/Git/DVERSION），
               # MSYS_NO_PATHCONV=1 关闭转换；脚本路径是相对路径不受影响。
               ( cd dist/raw && MSYS_NO_PATHCONV=1 "$makensis" /DVERSION="${LANCHAT_VERSION#v}" /DOUTFILE="../../dist/$exe" ../../.github/installer/desktop.nsi )
-              sha256sum "dist/$exe" > "dist/$exe.sha256"
               ;;
             darwin)
               bash .github/installer/pkg-macos-dmg.sh "${LANCHAT_VERSION#v}" "${{ steps.arch.outputs.arch }}"
@@ -201,7 +200,40 @@ jobs:
           tag="$LANCHAT_VERSION"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
           shopt -s nullglob
-          gh release upload "$tag" dist/*.exe dist/*.dmg dist/*.deb dist/*.sha256 --clobber
+          gh release upload "$tag" dist/*.exe dist/*.dmg dist/*.deb --clobber
+
+  # 哈希汇总（2026-09-07）：逐文件 .sha256 太多（每资产一个），改为
+  # 全部资产一个 checksums.txt。package / desktop 各 job 不再产 .sha256，
+  # 本 job 等两批上传完成后下载全量资产、聚合写入一个文件再上传。
+  checksums:
+    name: checksums
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) && needs.release.outputs.released == 'true' }}
+    needs: [release, package, desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LANCHAT_VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - name: Download release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist && cd dist
+          gh release download "$LANCHAT_VERSION" --pattern 'lanchat-*' --clobber
+          ls -1
+      - name: Write aggregated checksums.txt
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum lanchat-* > checksums.txt
+          cat checksums.txt
+      - name: Upload checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$LANCHAT_VERSION" dist/checksums.txt --clobber
 
   # M8 收尾（2026-09-07）：给 Release 页附上可下载的二进制。
   # 之前 ci.yml 的 build job 只传 Actions artifact（30 天过期、不对外），
@@ -287,10 +319,8 @@ jobs:
             name="lanchat-${bin}-${ver}-${osarch}"
             if [ -n "$ext" ]; then
               zip -q -r "../../${name}.zip" "${bin}${ext}"
-              ( cd ../.. && sha256sum "${name}.zip" > "${name}.sha256" )
             else
               tar -czf "../../${name}.tar.gz" "${bin}"
-              ( cd ../.. && sha256sum "${name}.tar.gz" > "${name}.sha256" )
             fi
           done
       # gh 上传幂等：--clobber 覆盖同名 asset（复跑不报错）；Release 页面
@@ -306,4 +336,4 @@ jobs:
           # 精确匹配三类产物，缺一类时展开为空不报错（linux/darwin 只有
           # tar.gz、windows 只有 zip）
           shopt -s nullglob
-          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
+          gh release upload "$tag" dist/*.tar.gz dist/*.zip --clobber

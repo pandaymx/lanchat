@@ -3,7 +3,7 @@
 # 用法（cwd = repo root）：pkg-linux-deb.sh <version> <arch>
 #   version 形如 0.9.0（无 v 前缀，dpkg 版本格式）
 #   arch    形如 amd64 / arm64
-# 产物：dist/lanchat-desktop-<version>-linux-<arch>.deb + .sha256
+# 产物：dist/lanchat-desktop-<version>-linux-<arch>.deb（哈希由 checksums job 汇总）
 set -euo pipefail
 
 VERSION="${1:?usage: pkg-linux-deb.sh <version> <arch>}"
@@ -42,5 +42,4 @@ Categories=Network;InstantMessaging;
 EOF
 
 dpkg-deb --build --root-owner-group "$stage" "dist/$NAME"
-sha256sum "dist/$NAME" > "dist/$NAME.sha256"
 echo "built dist/$NAME"

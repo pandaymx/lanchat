@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M10 桌面端已发布（apps/desktop Wails v3 窗口壳 + webapp 本地装配 + CI 原生 runner 桌面 job）；**v0.9.3 已发布**，Release 页 36 资产（6 平台 × 3 端纯 Go 矩阵）+ 桌面端 3 平台「安装包」资产（windows NSIS .exe / darwin .dmg / linux .deb，各带 sha256；按用户要求桌面端不再出 zip）。架构决策摘要内嵌于本文档 §12。桌面窗口真机运行验证待做（CI 无图形环境，见 M10 验收标准）。
+**当前阶段**：M10 桌面端已发布（apps/desktop Wails v3 窗口壳 + webapp 本地装配 + CI 原生 runner 桌面 job）；**v0.9.3 已发布**，Release 页 36 资产（6 平台 × 3 端纯 Go 矩阵）+ 桌面端 3 平台「安装包」资产（windows NSIS .exe / darwin .dmg / linux .deb，哈希由 checksums job 聚合为单个 checksums.txt；按用户要求桌面端不再出 zip）。架构决策摘要内嵌于本文档 §12。桌面窗口真机运行验证待做（CI 无图形环境，见 M10 验收标准）。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -238,8 +238,7 @@ release 阶段只提交 `CHANGELOG.md`，**不要顺手改任何 .go 文件**。
    [skip ci]`（不触发新 run）→ 打 tag（GITHUB_TOKEN push 不触发新 run，
    无循环）→ 创建 GitHub Release → 同一 run 内 package job 交叉编译
    6 平台（linux/darwin/windows × amd64/arm64），并按端拆独立压缩包：
-   `lanchat-<hub|tui|web>-<ver>-<os>-<arch>.tar.gz|zip`（各带 .sha256），
-   共 18 个压缩资产 + 18 个校验文件。桌面端（ADR-015 CGO 例外）由同一 run 的 `desktop` job 在原生 runner 构建「安装包」：`lanchat-desktop-<ver>-<os>-<arch>.{exe,dmg,deb}` + sha256（windows NSIS 安装器 / darwin dmg / linux deb，架构取 runner 原生 GOARCH；按用户要求桌面端不再出 zip）。
+   `lanchat-<hub|tui|web>-<ver>-<os>-<arch>.tar.gz|zip`，共 18 个压缩资产。桌面端（ADR-015 CGO 例外）由同一 run 的 `desktop` job 在原生 runner 构建「安装包」：`lanchat-desktop-<ver>-<os>-<arch>.{exe,dmg,deb}`（windows NSIS 安装器 / darwin dmg / linux deb，架构取 runner 原生 GOARCH；按用户要求桌面端不再出 zip）。
 2. 手动兜底：`bun run release:dry` 本地预检算出的版本号与 notes
    （需 `export GH_TOKEN=<PAT，repo scope>`；gh CLI 的 OAuth token 过不了
    @semantic-release/github 的权限校验）。零配置的 dry-run 路径是 Actions
@@ -415,7 +414,8 @@ log.Info(...)  // 内部走 slog.Default().Log(...)
   NotifyIcon 气泡——消息来源挂在 `webui.Manager.OnMessage` 可选回调（webui 事件泵同步
   调用、回调内仅非阻塞投递 channel，通知 goroutine 负责过滤（自己发的跳过、同发送者 1s
   限流）与平台命令；历史回放/catchUp 补发不触发。通知尽力而为，命令缺失只记 debug 日志。
-- **打包**：`lanchat-desktop-<ver>-<os>-<arch>.{tar.gz,zip}` + sha256，沿用 M9 拆包模式。
+- **打包**：`lanchat-desktop-<ver>-<os>-<arch>.{exe,dmg,deb}` 安装包；全量资产哈希由
+  checksums job 聚合为单个 `checksums.txt`（2026-09-07 起替代逐文件 .sha256）。
 
 ---
 

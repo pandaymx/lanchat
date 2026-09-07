@@ -3,7 +3,7 @@
 # 用法（cwd = repo root）：pkg-macos-dmg.sh <version> <arch>
 #   version 形如 0.9.0
 #   arch    形如 arm64 / amd64（macos-latest 原生 GOARCH）
-# 产物：dist/lanchat-desktop-<version>-darwin-<arch>.dmg + .sha256
+# 产物：dist/lanchat-desktop-<version>-darwin-<arch>.dmg（哈希由 checksums job 汇总）
 # 说明：ad-hoc 签名（codesign -s -）保证本机可直接运行；无开发者证书，
 # 不做 Apple 公证（Gatekeeper 首次打开右键->打开）。
 set -euo pipefail
@@ -44,5 +44,4 @@ codesign --force --deep -s - "$stage/LAN Chat.app"
 ln -s /Applications "$stage/Applications"
 
 hdiutil create -volname "LAN Chat" -srcfolder "$stage" -ov -format UDZO "dist/$NAME"
-sha256sum "dist/$NAME" > "dist/$NAME.sha256"
 echo "built dist/$NAME"

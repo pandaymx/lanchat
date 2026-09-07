@@ -207,13 +207,13 @@ func dialSession(opts runOptions) (*tui.Session, context.Context, context.Cancel
 	if opts.HubURL == "" {
 		// -hub 留空：走 mDNS 自动发现局域网内的 hub（M6.1）。
 		discoverCtx, discoverCancel := context.WithTimeout(context.Background(), discoverTimeout)
-		found, err := discovery.DiscoverHubURL(discoverCtx, discoverTimeout)
+		found, err := discovery.ResolveHubURL(discoverCtx, discoverTimeout)
 		discoverCancel()
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("未指定 -hub 且 mDNS 自动发现失败: %w", err)
+			return nil, nil, nil, fmt.Errorf("未指定 -hub 且自动发现失败: %w", err)
 		}
 		opts.HubURL = found
-		fmt.Fprintln(os.Stderr, "lanchat: mDNS 发现 hub:", found)
+		fmt.Fprintln(os.Stderr, "lanchat: 自动发现 hub:", found)
 	}
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer dialCancel()

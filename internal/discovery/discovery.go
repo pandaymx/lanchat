@@ -195,3 +195,37 @@ func pickAddr(e *zeroconf.ServiceEntry) string {
 	}
 	return ""
 }
+
+// LocalFallbackPorts 是 mDNS 发现失败后在本机回环探测的 hub 端口列表
+// （hub 默认监听 9000，探几个常见改端口；见 cmd/hub 的 -addr 默认）。
+var LocalFallbackPorts = []int{9000, 9001, 9002}
+
+// ResolveHubURL 是客户端获取 hub 地址的统一入口：先 mDNS 自动发现，
+// 失败时回退探测本机回环的常见端口（同机 hub 场景——WSL / 容器等
+// 环境 UDP 多播常不通，mDNS 收不到；回退让「hub 和客户端在同一台机器」
+// 开箱即用）。仍失败时返回原始 mDNS 错误（提示 -hub 显式指定）。
+func ResolveHubURL(ctx context.Context, timeout time.Duration) (string, error) {
+	found, err := DiscoverHubURL(ctx, timeout)
+	if err == nil {
+		return found, nil
+	}
+	if u := probeLocalHub(); u != "" {
+		return u, nil
+	}
+	return "", err
+}
+
+// probeLocalHub 依次 TCP 探测本机回环的常见 hub 端口，命中返回 ws URL。
+// TCP 探测就够：端口开着但不是 lanchat 时，后续握手会报错并带地址提示。
+func probeLocalHub() string {
+	for _, port := range LocalFallbackPorts {
+		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		conn, err := net.DialTimeout("tcp", addr, 800*time.Millisecond)
+		if err != nil {
+			continue
+		}
+		_ = conn.Close()
+		return "ws://" + addr + DefaultWSPath
+	}
+	return ""
+}

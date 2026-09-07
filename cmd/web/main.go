@@ -141,10 +141,10 @@ func run(opts runOptions) error {
 	if opts.HubURL == "" {
 		// -hub-url 留空：走 mDNS 自动发现局域网内的 hub（M6.1）。
 		discoverCtx, discoverCancel := context.WithTimeout(context.Background(), discoverTimeout)
-		found, err := discovery.DiscoverHubURL(discoverCtx, discoverTimeout)
+		found, err := discovery.ResolveHubURL(discoverCtx, discoverTimeout)
 		discoverCancel()
 		if err != nil {
-			return fmt.Errorf("未指定 -hub-url 且 mDNS 自动发现失败: %w", err)
+			return fmt.Errorf("未指定 -hub-url 且自动发现失败: %w", err)
 		}
 		opts.HubURL = found
 		logger.Info("mDNS discovered hub", "hub", found)

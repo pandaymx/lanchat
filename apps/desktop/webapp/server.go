@@ -70,10 +70,10 @@ func Start(opts Options) (*Server, error) {
 
 	if opts.HubURL == "" {
 		discoverCtx, cancel := context.WithTimeout(context.Background(), discoverTimeout)
-		found, err := discovery.DiscoverHubURL(discoverCtx, discoverTimeout)
+		found, err := discovery.ResolveHubURL(discoverCtx, discoverTimeout)
 		cancel()
 		if err != nil {
-			return nil, fmt.Errorf("未指定 -hub-url 且 mDNS 自动发现失败: %w", err)
+			return nil, fmt.Errorf("未指定 -hub-url 且自动发现失败: %w", err)
 		}
 		opts.HubURL = found
 		logger.Info("mDNS discovered hub", "hub", found)

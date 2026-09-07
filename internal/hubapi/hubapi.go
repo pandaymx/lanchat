@@ -68,11 +68,11 @@ type uploadResponse struct {
 // handleUpload 接收 multipart 上传：字段名 file，可选携带文件名与
 // Content-Type；返回 FileRef JSON，客户端随后发一条带该引用的消息。
 func (a *FilesAPI) handleUpload(w http.ResponseWriter, r *http.Request) {
-	max := a.svc.MaxSize()
-	if max > 0 {
+	maxSize := a.svc.MaxSize()
+	if maxSize > 0 {
 		// 请求体级保护：超过上限直接截断（与 hubfile.LimitReader 双保险，
 		// 超限统一映射 413）。
-		r.Body = http.MaxBytesReader(w, r.Body, max)
+		r.Body = http.MaxBytesReader(w, r.Body, maxSize)
 	}
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		var mbe *http.MaxBytesError

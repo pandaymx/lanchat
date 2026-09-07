@@ -72,6 +72,7 @@ func TestFilesAPI_UploadDownload_RoundTrip(t *testing.T) {
 
 	content := []byte("#!/bin/bash\necho hello\n")
 	resp, out := upload(t, ts.URL+"/api/files", "script.sh", "text/x-sh", content)
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("upload status = %d, body=%v", resp.StatusCode, out)
 	}
@@ -105,6 +106,7 @@ func TestFilesAPI_Download_Range(t *testing.T) {
 	ts, _ := newTestServer(t, 0)
 	content := []byte("0123456789abcdef")
 	resp, out := upload(t, ts.URL+"/api/files", "r.bin", "", content)
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("upload status = %d", resp.StatusCode)
 	}
@@ -129,6 +131,7 @@ func TestFilesAPI_Download_Range(t *testing.T) {
 func TestFilesAPI_Upload_TooLarge(t *testing.T) {
 	ts, _ := newTestServer(t, 4)
 	resp, out := upload(t, ts.URL+"/api/files", "big.bin", "", []byte("12345"))
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusRequestEntityTooLarge {
 		t.Fatalf("oversize upload status = %d (body=%v), want 413", resp.StatusCode, out)
 	}

@@ -95,8 +95,10 @@ func TestFileUpload_ProxyAndSendMessage(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	// 先访问首页触发 cookie session 建立（ensureSession 依赖 cookie）。
-	if _, err := srv.Client().Get(srv.URL + "/"); err != nil {
+	if resp, err := srv.Client().Get(srv.URL + "/"); err != nil {
 		t.Fatalf("home: %v", err)
+	} else {
+		_ = resp.Body.Close()
 	}
 
 	var buf bytes.Buffer

@@ -180,6 +180,7 @@ type FileSender interface {
 	SendFile(ctx context.Context, path string) error
 }
 
+// FileReceiver 接收端能力：把消息附件下载到本地。
 type FileReceiver interface {
 	// SaveFile 把消息附件下载到本地（lanchat-files/ 目录），返回保存路径。
 	SaveFile(ctx context.Context, m protocol.StoredMessage) (string, error)

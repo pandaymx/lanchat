@@ -88,8 +88,11 @@ func TestService_Save_SanitizesName(t *testing.T) {
 	if ref.Mime != "application/octet-stream" {
 		t.Errorf("mime = %q, want octet-stream fallback", ref.Mime)
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(filepath.Dir(svc.Dir())))); err == nil {
-		// 仅防御性检查：临时目录外不应凭空出现 evil.sh
+	// 逃逸检查：展示名带路径穿越时，files 目录之外不得出现 evil.sh
+	// （files 目录本身是 TempDir 的子目录，必然存在；要断的是目录外
+	// 没有按原名落盘的文件）。
+	if _, err := os.Stat(filepath.Join(filepath.Dir(svc.Dir()), "evil.sh")); err == nil {
+		t.Error("evil.sh escaped the files dir")
 	}
 }
 

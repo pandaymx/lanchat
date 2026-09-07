@@ -1,3 +1,9 @@
+## [0.8.4](https://github.com/pandaymx/lanchat/compare/v0.8.3...v0.8.4) (2026-09-07)
+
+### Bug Fixes
+
+* **ci:** windows 桌面产物显式加 .exe ([c72fff9](https://github.com/pandaymx/lanchat/commit/c72fff9bbbbd9d913135bedaffa4c389e6fba456))
+
 ## [0.8.3](https://github.com/pandaymx/lanchat/compare/v0.8.2...v0.8.3) (2026-09-07)
 
 ### Bug Fixes

@@ -1,3 +1,18 @@
+## [0.7.0](https://github.com/pandaymx/lanchat/compare/v0.6.1...v0.7.0) (2026-09-07)
+
+### Features
+
+* **core:** client 文件上传/下载 API ([bd62f54](https://github.com/pandaymx/lanchat/commit/bd62f543dd383ba5e49942f07be2901825da79db))
+* **hub:** 文件上传/下载端点 + blob 存储服务 ([ce80ec7](https://github.com/pandaymx/lanchat/commit/ce80ec7c93fc99e1da3c4c86a2027314f8815c5d))
+* **proto:** StoredMessage 增加 FileRef 附件字段 ([1ef9ad3](https://github.com/pandaymx/lanchat/commit/1ef9ad3960048fcc2b265ba08590a3c0e78cf8c9))
+* **store:** 文件元信息存取 + messages 附件列迁移 ([dfad170](https://github.com/pandaymx/lanchat/commit/dfad170fd8318abdbb0e34fb8481520b009ad8f4))
+* **tui:** /file 命令 + 附件卡片 + 自动下载 ([3fa8f77](https://github.com/pandaymx/lanchat/commit/3fa8f77de25bf5495a14b10042396927f42bcfc3))
+* **web:** 文件上传/下载代理 + 附件卡片 + 图片内联预览 ([609015c](https://github.com/pandaymx/lanchat/commit/609015c7164d1b5db320f72e671104ace7117858))
+
+### Bug Fixes
+
+* **hub:** golangci-lint 0 issues（bodyclose/revive/staticcheck） ([e4c9685](https://github.com/pandaymx/lanchat/commit/e4c9685ebdec6fb16ac07d19fba39378066af194))
+
 ## [0.6.1](https://github.com/pandaymx/lanchat/compare/v0.6.0...v0.6.1) (2026-09-07)
 
 ### Bug Fixes

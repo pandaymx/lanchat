@@ -31,12 +31,16 @@ jobs:
     name: semantic-release
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      released: ${{ steps.det.outputs.released }}
+      version: ${{ steps.det.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
           # 完整历史：semantic-release 分析 commits 需要；
-          # 打包版本号也依赖 git describe（package job 同样 fetch-depth 0）。
+          # 打包版本号也依赖 tag 前后对比（package job 同样 fetch-depth 0）。
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -50,6 +54,12 @@ jobs:
         run: git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # semantic-release 执行前的最新 tag（Detect new release 的基线）
+      - name: Snapshot latest tag
+        id: snap
+        run: |
+          before=$(git tag --list 'v*' | sort -V | tail -1 || true)
+          echo "before=$before" >> "$GITHUB_OUTPUT"
       # workflow_dispatch + dryRun=true → 仅分析，不发布
       - name: Dry run
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dryRun }}
@@ -60,18 +70,42 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bunx semantic-release
+      # 本次 run 是否真的发布了版本（git tag 前后对比）：
+      #  - push tag：强制视为已发布（兜底复跑），版本取 ref_name；
+      #  - 其余：semantic-release 创建了新 tag → released=true；
+      #  - dryRun / no new release → released=false，package job 跳过。
+      # 不能从 HEAD 用 git describe 拿版本：HEAD 停在 push 的 commit，
+      # 新 tag 指向 semantic-release 的 chore commit（HEAD 的子提交），
+      # describe 只会回溯到旧 tag（2026-09-07 实测拿到 v0.5.0）。
+      - name: Detect new release
+        id: det
+        run: |
+          before="${{ steps.snap.outputs.before }}"
+          after=$(git tag --list 'v*' | sort -V | tail -1 || true)
+          if [ "${{ github.event_name == 'push' && github.ref_type == 'tag' }}" = "true" ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "$after" ] && [ "$before" != "$after" ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=$after" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # M8 收尾（2026-09-07）：给 Release 页附上可下载的二进制。
   # 之前 ci.yml 的 build job 只传 Actions artifact（30 天过期、不对外），
   # Release 页只有 changelog notes；此处补上原生二进制矩阵。
   package:
     name: package (${{ matrix.goos }}-${{ matrix.goarch }})
-    # main push（自动发版）与 tag push（兜底复跑）都打包；版本号统一取
-    # git describe（跨触发方式一致）。只有 dryRun 不打包。
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) }}
+    # 只有 release job 确认本次发出了新版本才打包（main push 自动发版 /
+    # tag push 兜底复跑）；dryRun 与 no new release 都跳过。版本号直接
+    # 用 release job 算出的实际版本（git describe 拿不到，见 Detect step）。
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) && needs.release.outputs.released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      LANCHAT_VERSION: ${{ needs.release.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -119,12 +153,10 @@ jobs:
           CGO_ENABLED: '0'
         run: |
           set -euo pipefail
-          VERSION=$(git describe --tags --abbrev=0)
           COMMIT=$(git rev-parse --short HEAD)
           DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "LANCHAT_VERSION=$VERSION" >> "$GITHUB_ENV"
           mkdir -p dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}
-          go build -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE" \
+          go build -ldflags "-s -w -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE" \
             -o dist/raw/${{ matrix.goos }}-${{ matrix.goarch }}/ ./cmd/...
       - name: Package
         run: |
@@ -147,4 +179,6 @@ jobs:
           set -euo pipefail
           tag="$LANCHAT_VERSION"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
-          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.sha256 --clobber
+          # dist/* 全量上传（linux/darwin 只有 tar.gz、windows 只有 zip，
+          # 按扩展名 glob 会在缺失一侧直接 nomatch 退出）
+          gh release upload "$tag" dist/* --clobber

@@ -1,3 +1,9 @@
+## [0.8.3](https://github.com/pandaymx/lanchat/compare/v0.8.2...v0.8.3) (2026-09-07)
+
+### Bug Fixes
+
+* **ci:** windows 桌面打包改 PowerShell Compress-Archive ([deb99be](https://github.com/pandaymx/lanchat/commit/deb99beaa081402f6793a7abf8f65a480534305e))
+
 ## [0.8.2](https://github.com/pandaymx/lanchat/compare/v0.8.1...v0.8.2) (2026-09-07)
 
 ### Bug Fixes

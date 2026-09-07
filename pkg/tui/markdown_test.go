@@ -8,6 +8,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
@@ -82,7 +83,10 @@ func TestFormatMessage_Markdown(t *testing.T) {
 	if strings.Contains(line, "**") {
 		t.Errorf("markers leaked into message line: %q", line)
 	}
-	if !strings.Contains(line, "[06:13:20] alice: ") {
+	// 时间串依赖本地时区（formatUnixMilli 用 time.Local 格式化），
+	// CI runner 是 UTC、本地 WSL 是 UTC+8，不能写死字面量。
+	wantTS := time.UnixMilli(1700000000000).Format("15:04:05")
+	if !strings.Contains(line, "["+wantTS+"] alice: ") {
 		t.Errorf("prefix missing: %q", line)
 	}
 	if !strings.Contains(line, "hi") {

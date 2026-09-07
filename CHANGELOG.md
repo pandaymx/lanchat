@@ -1,3 +1,9 @@
+## [0.10.0](https://github.com/pandaymx/lanchat/compare/v0.9.3...v0.10.0) (2026-09-07)
+
+### Features
+
+* **desktop:** M10.2 托盘与系统通知 ([b1765b0](https://github.com/pandaymx/lanchat/commit/b1765b0de820b25ced0d994bcacb5d59bacb035d))
+
 ## [0.9.3](https://github.com/pandaymx/lanchat/compare/v0.9.2...v0.9.3) (2026-09-07)
 
 ### Bug Fixes

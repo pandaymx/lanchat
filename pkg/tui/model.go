@@ -1060,6 +1060,7 @@ func (m *Model) leaveCmd() tea.Cmd {
 	}
 }
 
+// Publish 把事件投进 inbox 供 UI 循环消费；inbox 满时丢弃（非阻塞）。
 func (m *Model) Publish(e core.Event) {
 	select {
 	case m.inbox <- newEventMsg(e):

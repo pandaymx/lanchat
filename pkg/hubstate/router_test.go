@@ -133,7 +133,7 @@ func mustPayload(t *testing.T, v any) []byte {
 func setupRouter(t *testing.T) (*Router, *memory.MemoryStore) {
 	t.Helper()
 	store := memory.New()
-	r := NewRouter(&RouterConfig{Store: store})
+	r := NewRouter(context.Background(), &RouterConfig{Store: store})
 	t.Cleanup(func() {
 		r.Close()
 		_ = store.Close()
@@ -653,7 +653,7 @@ func TestRouterServePeerLifecycle(t *testing.T) {
 // TestRouterNoStore 验证没有 Store 时也能跑（纯内存 Hub）。
 func TestRouterNoStore(t *testing.T) {
 	ctx := context.Background()
-	r := NewRouter(nil)
+	r := NewRouter(context.Background(), nil)
 	defer r.Close()
 
 	p, id := addPeer(t, r, "dev-1", "u-1")

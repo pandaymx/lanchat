@@ -180,7 +180,7 @@ func (s *stubClient) Conversations() []protocol.ConversationSnapshot {
 	return append([]protocol.ConversationSnapshot(nil), s.convs...)
 }
 
-func (s *stubClient) CreateConversation(_ context.Context, title string, memberIDs []string) (protocol.Conversation, error) {
+func (s *stubClient) CreateConversation(_ context.Context, title string, _ []string) (protocol.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return protocol.Conversation{ID: "new-conv", Kind: "group", Title: title}, nil

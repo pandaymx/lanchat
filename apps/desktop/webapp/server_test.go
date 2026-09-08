@@ -61,7 +61,7 @@ func newTestHub(t *testing.T) string {
 	t.Cleanup(cancel)
 
 	store := memory.New()
-	router := hubstate.NewRouter(&hubstate.RouterConfig{Store: store})
+	router := hubstate.NewRouter(context.Background(), &hubstate.RouterConfig{Store: store})
 	onConn := func(conn core.Conn, _ protocol.Hello) error {
 		p, ok := conn.(hubstate.Peer)
 		if !ok {

@@ -98,7 +98,7 @@ func main() {
 	}
 	defer func() { _ = store.Close() }()
 
-	router := hubstate.NewRouter(&hubstate.RouterConfig{
+	router := hubstate.NewRouter(ctx, &hubstate.RouterConfig{
 		Store:           store,
 		StartSeq:        startSeq,
 		MaxHistoryLimit: *maxHistory,

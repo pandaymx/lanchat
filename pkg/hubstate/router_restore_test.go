@@ -22,7 +22,7 @@ func TestRouterRestoreFromStore(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	// 第一世：3 条消息落库。
-	r1 := NewRouter(&RouterConfig{Store: store})
+	r1 := NewRouter(context.Background(), &RouterConfig{Store: store})
 	p1, id1 := addPeer(t, r1, "dev-1", "u-1")
 	for i := 1; i <= 3; i++ {
 		msg := protocol.StoredMessage{
@@ -55,7 +55,7 @@ func TestRouterRestoreFromStore(t *testing.T) {
 			maxSeq = m.ServerSeq
 		}
 	}
-	r2 := NewRouter(&RouterConfig{Store: store, StartSeq: maxSeq})
+	r2 := NewRouter(context.Background(), &RouterConfig{Store: store, StartSeq: maxSeq})
 	t.Cleanup(r2.Close)
 	for i := range prior {
 		r2.History().Append(prior[i])

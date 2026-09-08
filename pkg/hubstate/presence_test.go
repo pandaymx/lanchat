@@ -36,7 +36,7 @@ func presenceOf(t *testing.T, f protocol.Frame) protocol.Presence {
 //  3. alice 收到 bob 的 online 广播；
 //  4. bob 断开后 alice 收到 bob 的 offline 广播。
 func TestPresence_RosterAndBroadcast(t *testing.T) {
-	r := NewRouter(nil)
+	r := NewRouter(context.Background(), nil)
 	ctx := context.Background()
 
 	alice := newPipePeer("dev-alice")
@@ -96,7 +96,7 @@ func TestPresence_RosterAndBroadcast(t *testing.T) {
 // TestPresence_ReconnectNoFalseOffline 验证断线重连防抖：
 // 同设备的新连接已入册时，旧连接离场不应广播 offline（设备其实还在线）。
 func TestPresence_ReconnectNoFalseOffline(t *testing.T) {
-	r := NewRouter(nil)
+	r := NewRouter(context.Background(), nil)
 	ctx := context.Background()
 
 	alice := newPipePeer("dev-alice")

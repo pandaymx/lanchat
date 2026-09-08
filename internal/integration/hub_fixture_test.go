@@ -37,7 +37,7 @@ func newHubFixture(t *testing.T) *hubFixture {
 	t.Helper()
 
 	addr := freePort(t)
-	router := hubstate.NewRouter(&hubstate.RouterConfig{
+	router := hubstate.NewRouter(context.Background(), &hubstate.RouterConfig{
 		Store: memory.New(),
 	})
 	tr := wstransport.New().WithPath("/ws")

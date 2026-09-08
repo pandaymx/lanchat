@@ -128,14 +128,14 @@ func (h *Hub) AttachStore(s core.Store) {
 	// 若 Router 已建但还没有连接，重建以应用新 store；
 	// 已经接过连接就不再动，避免半途换库导致行为不一致。
 	if h.router != nil && h.router.Registry().Count() == 0 {
-		h.router = hubstate.NewRouter(&hubstate.RouterConfig{Store: s})
+		h.router = hubstate.NewRouter(context.Background(), &hubstate.RouterConfig{Store: s})
 	}
 }
 
 // routerLocked 取（必要时构造）Router。调用方须持有 h.mu。
-func (h *Hub) routerLocked() *hubstate.Router {
+func (h *Hub) routerLocked(ctx context.Context) *hubstate.Router {
 	if h.router == nil {
-		h.router = hubstate.NewRouter(&hubstate.RouterConfig{Store: h.store})
+		h.router = hubstate.NewRouter(ctx, &hubstate.RouterConfig{Store: h.store})
 	}
 	return h.router
 }
@@ -155,7 +155,7 @@ func (h *Hub) Accept(ctx context.Context, c core.Conn, hello protocol.Hello) err
 		h.mu.Unlock()
 		return core.ErrClosed
 	}
-	r := h.routerLocked()
+	r := h.routerLocked(ctx)
 	h.mu.Unlock()
 
 	// 预先握手：Accept 的调用方已经把 hello 给全了，
@@ -183,7 +183,7 @@ func (h *Hub) dial(ctx context.Context, hello protocol.Hello) core.Conn {
 	}
 	h.nextConn++
 	c := newConn(hello.DeviceID + "-" + itoa(h.nextConn))
-	r := h.routerLocked()
+	r := h.routerLocked(ctx)
 	h.mu.Unlock()
 
 	// Attach 同步登记，返回后 ConnCount 立即可见（避免调用方断言时的竞态）
@@ -223,7 +223,7 @@ func itoa(n int64) string {
 // ConnCount 返回当前在线 conn 数量，用于测试断言。
 func (h *Hub) ConnCount() int {
 	h.mu.Lock()
-	r := h.routerLocked()
+	r := h.routerLocked(context.Background())
 	h.mu.Unlock()
 	return r.Registry().Count()
 }

@@ -58,7 +58,7 @@ type RouterConfig struct {
 const defaultMaxHistoryLimit = 500
 
 // NewRouter 构造一个 Router。cfg 为 nil 时全部走默认。
-func NewRouter(cfg *RouterConfig) *Router {
+func NewRouter(ctx context.Context, cfg *RouterConfig) *Router {
 	if cfg == nil {
 		cfg = &RouterConfig{}
 	}
@@ -75,7 +75,7 @@ func NewRouter(cfg *RouterConfig) *Router {
 		maxHistoryLimit: limit,
 	}
 	// M12-A：hub 重启后从 store 恢复群与会话成员。
-	r.convs.LoadFromStore(context.Background(), cfg.Store)
+	r.convs.LoadFromStore(ctx, cfg.Store)
 	return r
 }
 
@@ -605,7 +605,7 @@ func (r *Router) handleConvCreate(ctx context.Context, peerID uint64, p Peer, f 
 	if len(f.Payload) > 0 {
 		if err := json.Unmarshal(f.Payload, &req); err != nil {
 			r.sendError(ctx, p, protocol.ErrInvalidFrame, "bad conversation create")
-			return nil
+			return nil //nolint:nilerr // 错误已由 sendError 帧下发，函数级保持 nil
 		}
 	}
 	if req.Title == "" {
@@ -616,7 +616,7 @@ func (r *Router) handleConvCreate(ctx context.Context, peerID uint64, p Peer, f 
 	conv, err := r.convs.Create(ctx, req.Title, memberIDs, r.store)
 	if err != nil {
 		r.sendError(ctx, p, protocol.ErrInternal, "create conversation failed")
-		return nil
+		return nil //nolint:nilerr // 错误已由 sendError 帧下发，函数级保持 nil
 	}
 	ev := protocol.ConversationEvent{
 		Conversation: conv, Event: "created", ByUserID: id.UserID,
@@ -639,12 +639,12 @@ func (r *Router) handleConvInvite(ctx context.Context, peerID uint64, p Peer, f 
 	if len(f.Payload) > 0 {
 		if err := json.Unmarshal(f.Payload, &ref); err != nil {
 			r.sendError(ctx, p, protocol.ErrInvalidFrame, "bad conversation invite")
-			return nil
+			return nil //nolint:nilerr // 错误已由 sendError 帧下发，函数级保持 nil
 		}
 	}
 	if ref.ConversationID == "" || len(ref.UserIDs) == 0 {
 		r.sendError(ctx, p, protocol.ErrInvalidFrame, "conversation id and users required")
-		return nil
+		return nil //nolint:nilerr // 错误已由 sendError 帧下发，函数级保持 nil
 	}
 	if !r.convs.IsMember(ref.ConversationID, id.UserID) {
 		r.sendError(ctx, p, protocol.ErrForbidden, "not a member of this conversation")
@@ -679,7 +679,7 @@ func (r *Router) handleConvLeave(ctx context.Context, peerID uint64, p Peer, f p
 	if len(f.Payload) > 0 {
 		if err := json.Unmarshal(f.Payload, &ref); err != nil {
 			r.sendError(ctx, p, protocol.ErrInvalidFrame, "bad conversation leave")
-			return nil
+			return nil //nolint:nilerr // 错误已由 sendError 帧下发，函数级保持 nil
 		}
 	}
 	if ref.ConversationID == "" {

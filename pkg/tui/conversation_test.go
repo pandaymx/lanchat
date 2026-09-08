@@ -26,17 +26,17 @@ type fakeConvMgr struct {
 
 func (f *fakeConvMgr) SetConversation(convID string)                  { f.convID = convID }
 func (f *fakeConvMgr) Conversations() []protocol.ConversationSnapshot { return f.convs }
-func (f *fakeConvMgr) CreateConversation(ctx context.Context, title string, memberIDs []string) (protocol.Conversation, error) {
+func (f *fakeConvMgr) CreateConversation(_ context.Context, title string, memberIDs []string) (protocol.Conversation, error) {
 	f.created = append(f.created, title+":"+strings.Join(memberIDs, ","))
 	return protocol.Conversation{Title: title}, f.err
 }
 
-func (f *fakeConvMgr) InviteToConversation(ctx context.Context, convID string, userIDs []string) error {
+func (f *fakeConvMgr) InviteToConversation(_ context.Context, convID string, userIDs []string) error {
 	f.invited = append(f.invited, convID+":"+strings.Join(userIDs, ","))
 	return f.err
 }
 
-func (f *fakeConvMgr) LeaveConversation(ctx context.Context, convID string) error {
+func (f *fakeConvMgr) LeaveConversation(_ context.Context, convID string) error {
 	f.left = append(f.left, convID)
 	return f.err
 }

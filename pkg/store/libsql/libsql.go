@@ -279,7 +279,7 @@ func (s *Store) ListConversations(ctx context.Context) ([]protocol.Conversation,
 	if err != nil {
 		return nil, fmt.Errorf("libsql: list conversations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []protocol.Conversation
 	for rows.Next() {
 		var c protocol.Conversation
@@ -313,7 +313,7 @@ func (s *Store) ListConversationMembers(ctx context.Context, convID string) ([]s
 	if err != nil {
 		return nil, fmt.Errorf("libsql: list members %q: %w", convID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []string
 	for rows.Next() {
 		var u string

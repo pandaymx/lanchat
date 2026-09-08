@@ -1,3 +1,9 @@
+## [1.0.2](https://github.com/pandaymx/lanchat/compare/v1.0.1...v1.0.2) (2026-09-08)
+
+### Bug Fixes
+
+* **release:** desktop 补 Windows ARM64 安装包（ubuntu 交叉 + mingw aarch64） ([2fe3aeb](https://github.com/pandaymx/lanchat/commit/2fe3aeb80f650819b3195e7b8bd9de9bfe2229b1))
+
 ## [1.0.1](https://github.com/pandaymx/lanchat/compare/v1.0.0...v1.0.1) (2026-09-08)
 
 ### Bug Fixes

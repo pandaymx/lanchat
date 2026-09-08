@@ -117,6 +117,13 @@ jobs:
           - runner: windows-latest
             goos: windows
             goarch: amd64
+          # Windows on ARM：GitHub 无 windows-arm64 公共 runner，用
+          # ubuntu-latest + gcc-mingw-w64-aarch64 交叉编译（Wails v3
+          # CGO 链同 package job 的 Linux nsis 打包路径，2026-09-08 补）。
+          - runner: ubuntu-latest
+            goos: windows
+            goarch: arm64
+            cc: aarch64-w64-mingw32-gcc
           - runner: macos-latest
             goos: darwin
             goarch: arm64
@@ -139,9 +146,17 @@ jobs:
       # libsoup-3.0 / gio-unix）；Windows 需要 mingw gcc（WebView2 runtime
       # 预装）；macOS xcode CLT 预装无需动作。
       - name: Install Linux dependencies
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.goarch != 'arm64'
         # rpm 供 rpmbuild 产 .rpm；arm64 runner（ubuntu-24.04-arm）原生 apt 装 arm64 依赖
         run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev rpm
+      - name: Install Linux arm64 dependencies
+        if: runner.os == 'Linux' && matrix.goarch == 'arm64' && matrix.goos != 'windows'
+        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev rpm
+      # Windows ARM64 交叉编译（ubuntu-latest + mingw aarch64）：desktop
+      # 是 CGO 构建，aarch64-w64-mingw32-gcc 是唯一交叉途径。
+      - name: Install Windows arm64 cross toolchain
+        if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-aarch64 nsis
       - name: Install Windows toolchain
         if: runner.os == 'Windows'
         run: choco install mingw nsis -y
@@ -164,6 +179,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
+          CC: ${{ matrix.cc }}
         run: |
           set -euo pipefail
           COMMIT=$(git rev-parse --short HEAD)
@@ -185,7 +201,7 @@ jobs:
           #   darwin : .dmg（arm64 = macos-latest 原生 / amd64 = macos-13 原生）
           #   linux  : .deb + .rpm（amd64 = ubuntu-24.04 / arm64 = ubuntu-24.04-arm）
           # 打包逻辑收敛到 .github/installer/ 通用脚本（desktop + CLI 复用）。
-          arch=${{ steps.arch.outputs.arch }}
+          arch=${{ matrix.goarch }}
           case "${{ matrix.goos }}" in
             windows)
               # choco 装的 NSIS 不进当前 step 的 PATH（PATH 在 runner 启动时

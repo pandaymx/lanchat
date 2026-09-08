@@ -1,3 +1,9 @@
+## [1.0.3](https://github.com/pandaymx/lanchat/compare/v1.0.2...v1.0.3) (2026-09-08)
+
+### Bug Fixes
+
+* **release:** desktop woa 交叉改 llvm-mingw（Ubuntu 无 aarch64 mingw 包） ([806a52e](https://github.com/pandaymx/lanchat/commit/806a52eba3ca15ced9208b16a3bd4a9d7789c164))
+
 ## [1.0.2](https://github.com/pandaymx/lanchat/compare/v1.0.1...v1.0.2) (2026-09-08)
 
 ### Bug Fixes

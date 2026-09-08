@@ -123,7 +123,6 @@ jobs:
           - runner: ubuntu-latest
             goos: windows
             goarch: arm64
-            cc: aarch64-w64-mingw32-gcc
           - runner: macos-latest
             goos: darwin
             goarch: arm64
@@ -152,11 +151,17 @@ jobs:
       - name: Install Linux arm64 dependencies
         if: runner.os == 'Linux' && matrix.goarch == 'arm64' && matrix.goos != 'windows'
         run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev rpm
-      # Windows ARM64 交叉编译（ubuntu-latest + mingw aarch64）：desktop
-      # 是 CGO 构建，aarch64-w64-mingw32-gcc 是唯一交叉途径。
+      # Windows ARM64 交叉编译（ubuntu-latest）：Ubuntu noble 无
+      # gcc-mingw-w64-aarch64 包（2026-09-08 apt 实测 E: Unable to locate），
+      # 改用 mstorsjo/llvm-mingw 预编译工具链（aarch64 目标，clang 作 CC，
+      # Go cgo 支持 clang）。nsis 供 Linux 打 windows setup.exe。
       - name: Install Windows arm64 cross toolchain
         if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
-        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-aarch64 nsis
+        run: |
+          sudo apt-get update && sudo apt-get install -y nsis
+          curl -sL https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-ubuntu-20.04-x86_64.tar.xz -o /tmp/llvm-mingw.tar.xz
+          sudo tar -C /opt -xf /tmp/llvm-mingw.tar.xz
+          ls /opt/llvm-mingw*/bin/aarch64-w64-mingw32-clang
       - name: Install Windows toolchain
         if: runner.os == 'Windows'
         run: choco install mingw nsis -y
@@ -179,7 +184,6 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
-          CC: ${{ matrix.cc }}
         run: |
           set -euo pipefail
           COMMIT=$(git rev-parse --short HEAD)
@@ -189,6 +193,11 @@ jobs:
           # 显式带上，后续 Package/Upload 按 .exe 名找。
           out=dist/raw/lanchat-desktop
           if [ "${{ matrix.goos }}" = "windows" ]; then out="$out.exe"; fi
+          # windows/arm64 交叉组合：CC 指向 llvm-mingw 的 aarch64 clang
+          if [ "${{ matrix.goos }}" = "windows" ] && [ "${{ matrix.goarch }}" = "arm64" ]; then
+            export CC="$(ls /opt/llvm-mingw*/bin/aarch64-w64-mingw32-clang | head -1)"
+            echo "CC=$CC"
+          fi
           go build -tags desktop -ldflags "-s -w -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE" -o "$out" ./apps/desktop
           # 诊断：确认产物名与路径（2026-09-08 NSIS no files found 排查）
           ls -la dist/raw/ || echo "dist/raw MISSING"

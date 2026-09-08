@@ -41,9 +41,12 @@ SCRIPT="${ROOT}/.github/installer/lanchat.nsi"
 # desktop(windows-latest) job 因此漏转、makensis 把 /d/... 当 /D 选项）。
 # 直接探测 cygpath 是否可用——Git Bash 必有，Linux 必无，语义最稳。
 if command -v cygpath >/dev/null 2>&1; then
-  ABS_EXE="$(cygpath -m "$ABS_EXE")"
-  ABS_OUT="$(cygpath -m "$ABS_OUT")"
-  SCRIPT="$(cygpath -m "$SCRIPT")"
+  # cygpath -w 出反斜杠路径（D:\a\...）；NSIS 的 File/OutFile 对正斜杠
+  # 盘符路径实测 no files found（2026-09-08 desktop windows job），
+  # 反斜杠是 Windows 原生格式，makensis 解析最稳。
+  ABS_EXE="$(cygpath -w "$ABS_EXE")"
+  ABS_OUT="$(cygpath -w "$ABS_OUT")"
+  SCRIPT="$(cygpath -w "$SCRIPT")"
 fi
 ( cd "$RAW" && MSYS_NO_PATHCONV=1 "$MAKENSIS" \
     -DVERSION="${VERSION}" -DAPPNAME="${APPNAME}" -DEXE="${ABS_EXE}" \

@@ -174,6 +174,8 @@ jobs:
           out=dist/raw/lanchat-desktop
           if [ "${{ matrix.goos }}" = "windows" ]; then out="$out.exe"; fi
           go build -tags desktop -ldflags "-s -w -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE" -o "$out" ./apps/desktop
+          # 诊断：确认产物名与路径（2026-09-08 NSIS no files found 排查）
+          ls -la dist/raw/ || echo "dist/raw MISSING"
       - name: Package
         shell: bash
         run: |

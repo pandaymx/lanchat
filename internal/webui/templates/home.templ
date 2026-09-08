@@ -11,7 +11,11 @@
 //   - <div id="peers"> 在 sidebar 内，presence 帧整段 innerHTML swap
 package templates
 
-import "strconv"
+import (
+	"net/url"
+	"strconv"
+	"strings"
+)
 
 templ Home(data HomeData) {
 	@base(data.Meta) {
@@ -22,19 +26,35 @@ templ Home(data HomeData) {
 			<div class="rail-spacer"></div>
 			<button id="theme-toggle" class="rail-btn" title={ T(data.Tr, "web.theme.toggle") }>🌙</button>
 		</nav>
-
 		// ---- 会话列表 ----
 		<aside class="sidebar">
-			<div class="sidebar-title">{ T(data.Tr, "web.nav.chats") }</div>
-			<ul class="conv-list">
-				<li class="conv-item active">
-					<span class="avatar conv-avatar" style={ avatarBG(T(data.Tr, "web.conv.default")) }>{ AvatarChar(T(data.Tr, "web.conv.default")) }</span>
-					<div class="conv-info">
-						<div class="conv-name">{ T(data.Tr, "web.conv.default") }</div>
-						<div class="conv-meta">{ onlineText(data.Tr, data.OnlineCount()) }</div>
-					</div>
-				</li>
-			</ul>
+			<div class="sidebar-title">
+				{ T(data.Tr, "web.nav.chats") }
+				// M12-A：建群入口。点击展开内联表单（标题 + 成员多选），
+				// hx-post /conversations 建群后整页跳到新群。
+				<button id="conv-create-btn" class="conv-create-btn" type="button" title={ T(data.Tr, "web.group.create") }>＋</button>
+			</div>
+			// 会话列表：首屏服务端渲染（带当前高亮）；SSE conversations
+			// 帧整段 innerHTML swap 进 #conv-list（高亮由 app.js 补）。
+			<div id="conv-list" hx-sse="swap:conversations" hx-swap="innerHTML">
+				@ConvList(data.Tr, data.Convs, data.ConvID)
+			</div>
+			// M12-A：建群内联表单（默认折叠；点 + 展开）。
+			<form id="conv-create-form" class="conv-create-form" hx-post="/conversations" hx-swap="none" hx-on::after-request="this.reset();this.classList.add('hidden')" hidden>
+				<input name="title" placeholder={ T(data.Tr, "web.group.title") } required/>
+				<div class="conv-create-members">
+					// 成员多选：从在线成员勾选（自己恒在群里，不用选）。
+					for _, p := range data.Peers {
+						if !p.Self {
+							<label class="conv-member-opt">
+								<input type="checkbox" name="members" value={ p.User }/>
+								<span>{ p.User }</span>
+							</label>
+						}
+					}
+				</div>
+				<button type="submit" class="send-btn">{ T(data.Tr, "web.group.create") }</button>
+			</form>
 			<div class="sidebar-title">{ T(data.Tr, "web.peers.title") }</div>
 			// 在线成员：SSE presence 帧整段 swap（M7.2 语义不变，容器换到侧栏）。
 			<div id="peers" hx-sse="swap:presence" hx-swap="innerHTML">
@@ -43,14 +63,13 @@ templ Home(data HomeData) {
 			// 当前账号：user@device（多个设备同时在线时能分辨自己是哪台）。
 			<div class="sidebar-foot">{ data.Meta.Who() }</div>
 		</aside>
-
 		// ---- 聊天主区 ----
 		<main class="chat">
 			<header class="chat-head">
 				<div class="chat-head-left">
-					<span class="avatar chat-avatar" style={ avatarBG(T(data.Tr, "web.conv.default")) }>{ AvatarChar(T(data.Tr, "web.conv.default")) }</span>
+					<span class="avatar chat-avatar" style={ avatarBG(data.ConvTitle) }>{ AvatarChar(data.ConvTitle) }</span>
 					<div>
-						<div class="chat-title">{ T(data.Tr, "web.conv.default") }</div>
+						<div class="chat-title">{ data.ConvTitle }</div>
 						<div class="chat-sub">
 							if data.Connected {
 								<span class="dot online"></span>
@@ -65,15 +84,18 @@ templ Home(data HomeData) {
 				<div id="conn-state" hx-sse="swap:state" hx-swap="innerHTML">
 					@ConnStatus(data.Tr, data.Connected)
 				</div>
+				// M12-A：群聊时显示「退出群」入口（大厅不显示）。
+				if data.ConvMember && data.ConvID != "" {
+					<form class="conv-leave-form" hx-post={ "/conversations/" + data.ConvID + "/leave" } hx-swap="none">
+						<button type="submit" class="conv-leave-btn" title={ T(data.Tr, "web.group.leave") }>{ T(data.Tr, "web.group.leave") }</button>
+					</form>
+				}
 			</header>
-
 			// 正在输入指示条：SSE typing 帧 innerHTML swap（M7.3）。
 			<div id="typing" hx-sse="swap:typing" hx-swap="innerHTML"></div>
-
 			if data.Error != "" {
 				<div class="banner">{ data.Error }</div>
 			}
-
 			<ul id="messages" class="messages" hx-sse="swap:message" hx-swap="beforeend">
 				if data.HasMore {
 					@LoadMore(data.Tr, HistoryHref(data.OldestSeq))
@@ -86,7 +108,6 @@ templ Home(data HomeData) {
 					}
 				}
 			</ul>
-
 			// Enter 发送、Shift+Enter 换行；isComposing 保护中文输入法组词期间的 Enter。
 			// requestSubmit() 触发原生 submit 事件，htmx 照常拦截成 AJAX POST；
 			// input 事件做高度自适应（上限 200px），发送后 after-request reset 复原。
@@ -96,6 +117,7 @@ templ Home(data HomeData) {
 				<button id="file-btn" type="button" class="composer-file" title={ T(data.Tr, "web.file.upload") }>📎</button>
 				<input id="file-input" type="file" style="display:none"/>
 				<form class="composer-form" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
+					<input type="hidden" name="conv" value={ data.ConvID }/>
 					<textarea
 						name="body"
 						placeholder={ T(data.Tr, "web.composer.placeholder") }
@@ -103,6 +125,7 @@ templ Home(data HomeData) {
 						hx-on:keydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();this.closest('form').requestSubmit()}"
 						hx-on:input="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,200)+'px'"
 						hx-post="/typing"
+						hx-vals={ typingVals(data.ConvID) }
 						hx-trigger="input[value.trim()!=''] throttle:3s"
 						hx-swap="none"
 					></textarea>
@@ -166,4 +189,64 @@ templ TypingBar(tr Translator, typing []TypingView) {
 // onlineText 是「N 人在线」文案（Tf 单参数注入）。
 func onlineText(tr Translator, n int) string {
 	return Tf(tr, "web.conv.online", strconv.Itoa(n))
+}
+
+// ConvList 是会话列表片段（M12-A）：首屏服务端渲染（activeID 命中项加
+// active class）+ SSE conversations 帧整段 innerHTML swap 进 #conv-list
+// （SSE 时 activeID 传 ""，高亮由 app.js 按当前 ?conv= 补）。
+//
+// 每项是一个指向 /?conv=<id> 的链接：切换会话 = 整页刷新（HTMX 约束下
+// 最简可靠的多会话形态；消息区/输入区由服务端按 conv 渲染）。
+templ ConvList(tr Translator, convs []ConvView, activeID string) {
+	<ul class="conv-list">
+		for _, c := range convs {
+			if c.Active || c.ID == activeID {
+				<li class="conv-item active" data-conv={ c.ID }>
+					<a href={ ConvHref(c.ID) } class="conv-link">
+						<span class="avatar conv-avatar" style={ avatarBG(convTitle(c)) }>{ AvatarChar(convTitle(c)) }</span>
+						<div class="conv-info">
+							<div class="conv-name">{ convTitle(c) }</div>
+							if c.Kind == "group" {
+								<div class="conv-meta">{ Tf(tr, "web.conv.members", strconv.Itoa(c.MemberCount)) }</div>
+							}
+						</div>
+					</a>
+				</li>
+			} else {
+				<li class="conv-item" data-conv={ c.ID }>
+					<a href={ ConvHref(c.ID) } class="conv-link">
+						<span class="avatar conv-avatar" style={ avatarBG(convTitle(c)) }>{ AvatarChar(convTitle(c)) }</span>
+						<div class="conv-info">
+							<div class="conv-name">{ convTitle(c) }</div>
+							if c.Kind == "group" {
+								<div class="conv-meta">{ Tf(tr, "web.conv.members", strconv.Itoa(c.MemberCount)) }</div>
+							}
+						</div>
+					</a>
+				</li>
+			}
+		}
+	</ul>
+}
+
+// ConvHref 构造会话链接：空 ID（大厅）→ 根路径，非空 → /?conv=<id>。
+func ConvHref(id string) string {
+	if id == "" {
+		return "/"
+	}
+	return "/?conv=" + url.QueryEscape(id)
+}
+
+// convTitle 返回会话显示名（空标题回退 Lobby）。
+func convTitle(c ConvView) string {
+	if c.Title != "" {
+		return c.Title
+	}
+	return "Lobby"
+}
+
+// typingVals 构造 typing 上发的 hx-vals JSON：{"conv":"<id>"}。
+// 空 ID（大厅）也要带 conv 字段（值为空串），服务端据此过滤 typing。
+func typingVals(convID string) string {
+	return `{"conv":"` + strings.ReplaceAll(convID, `"`, `"`) + `"}`
 }

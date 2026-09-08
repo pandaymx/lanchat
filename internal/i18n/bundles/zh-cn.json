@@ -39,5 +39,9 @@
   "web.nav.contacts": "联系人",
   "web.conv.default": "默认会话",
   "web.conv.online": "%s 人在线",
-  "web.theme.toggle": "切换主题"
+  "web.theme.toggle": "切换主题",
+  "web.conv.members": "%s 位成员",
+  "web.group.create": "新建群",
+  "web.group.title": "群名称",
+  "web.group.leave": "退出群"
 }

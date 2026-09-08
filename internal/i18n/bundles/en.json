@@ -39,5 +39,9 @@
   "web.nav.contacts": "Contacts",
   "web.conv.default": "Default room",
   "web.conv.online": "%s online",
-  "web.theme.toggle": "Toggle theme"
+  "web.theme.toggle": "Toggle theme",
+  "web.conv.members": "%s members",
+  "web.group.create": "New group",
+  "web.group.title": "Group title",
+  "web.group.leave": "Leave group"
 }

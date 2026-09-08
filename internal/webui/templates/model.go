@@ -78,6 +78,13 @@ type HomeData struct {
 	// Tr 是 UI chrome 文案翻译器；由 cmd/web 装配期注入 i18n bundle，
 	// 缺省 nil 时 T() 兜底返回 key 字面值。
 	Tr Translator
+
+	// M12-A 群聊：会话列表与当前会话。Convs 含合成的大厅（排第一）；
+	// ConvID 是当前渲染的会话 ID（空 = 大厅）；ConvTitle 供顶栏显示。
+	Convs      []ConvView
+	ConvID     string
+	ConvTitle  string
+	ConvMember bool // 当前用户是否为当前会话成员（大厅恒 true）
 }
 
 // OnlineCount 是在线成员数（含自己），左侧会话列表与顶栏展示用。
@@ -194,6 +201,39 @@ func NewMessageView(id string, seq int64, sender, body string, atMs int64, self,
 	}
 }
 
+// ConvView 是会话列表一行的视图模型（M12-A）。
+//
+// Active 标记当前选中的会话；大厅（空 ID）由 handler 合成并恒排第一。
+type ConvView struct {
+	ID     string
+	Title  string
+	Kind   string // "lobby" | "group"
+	Active bool
+	// MemberCount 是群成员数（大厅为 0，不展示）。
+	MemberCount int
+}
+
+// NewConvViews 把协议会话快照转成视图模型，大厅排第一、其余按 ID 升序
+// （handler 已保证传入顺序）；activeConvID 命中的条目标记 Active。
+func NewConvViews(snaps []protocol.ConversationSnapshot, activeConvID string) []ConvView {
+	out := make([]ConvView, 0, len(snaps)+1)
+	// 合成大厅（协议层不落库，客户端恒可见）。
+	out = append(out, ConvView{ID: "", Title: "Lobby", Kind: "lobby", Active: activeConvID == ""})
+	for _, s := range snaps {
+		if s.Conversation.ID == "" {
+			continue // 防御：不重复渲染大厅
+		}
+		out = append(out, ConvView{
+			ID:          s.Conversation.ID,
+			Title:       s.Conversation.Title,
+			Kind:        s.Conversation.Kind,
+			Active:      s.Conversation.ID == activeConvID,
+			MemberCount: len(s.Members),
+		})
+	}
+	return out
+}
+
 // PeerView 是在线成员列表中一行的视图模型（M7.2）。
 //
 // 名单只含在线设备（offline 在 client 层已剔除）；Self 标记当前会话
@@ -224,11 +264,15 @@ type TypingView struct {
 	User string
 }
 
-// NewTypingViews 把协议 Typing 快照转成视图模型（client.Typing()
-// 已按 UserID 去重排序）。
-func NewTypingViews(typing []protocol.Typing) []TypingView {
+// NewTypingViews 把协议 Typing 快照转成视图模型（M7.3 + M12-A）。
+// 只保留 convID 会话的条目（client.Typing() 是全量快照，已按 UserID
+// 去重排序）；convID 为空 = 大厅。
+func NewTypingViews(typing []protocol.Typing, convID string) []TypingView {
 	out := make([]TypingView, 0, len(typing))
 	for _, t := range typing {
+		if t.ConversationID != convID {
+			continue
+		}
 		out = append(out, TypingView{User: t.UserID})
 	}
 	return out

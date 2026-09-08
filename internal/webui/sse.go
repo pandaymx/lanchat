@@ -37,11 +37,28 @@ type sseChunk struct {
 type sseWriter struct {
 	ch      chan sseChunk
 	skipSeq atomic.Uint64
+	// convID 是该 SSE 连接当前渲染的会话（URL ?conv=，空 = 大厅）。
+	// 消息/typing/read 帧只投递到会话匹配的 writer；state/presence/
+	// conversations 等全局帧走 broadcastAll 不按会话过滤。
+	convID string
 }
 
 // addWriter 登记一条新 SSE 连接（多 tab 共享 session 时会有多个）。
-func (s *Session) addWriter() *sseWriter {
-	w := &sseWriter{ch: make(chan sseChunk, writerBuf)}
+// convMatch 判断事件会话与 writer 会话是否同一会话：大厅的两种写法
+// （"" 与旧客户端遗留的 "lobby"）视为等价，其余要求精确匹配。
+func convMatch(want, got string) bool {
+	if want == got {
+		return true
+	}
+	return isLobbyID(want) && isLobbyID(got)
+}
+
+// isLobbyID 报告会话 ID 是否指向大厅（空串，或旧客户端遗留的 "lobby"）。
+func isLobbyID(id string) bool { return id == "" || id == "lobby" }
+
+// addWriter 登记一条新 SSE 连接（多 tab 共享 session 时会有多个）。
+func (s *Session) addWriter(convID string) *sseWriter {
+	w := &sseWriter{ch: make(chan sseChunk, writerBuf), convID: convID}
 	s.mu.Lock()
 	s.writers[w] = struct{}{}
 	s.mu.Unlock()
@@ -74,10 +91,24 @@ func (s *Session) closeWriters() {
 
 // broadcast 把一帧投递给所有当前 writer；慢 writer（ch 满）丢帧不阻塞。
 // seq 为消息帧的 ServerSeq（非消息帧传 0），随帧带上供重连去重。
+// broadcast 把一帧投递给所有 writer；慢 writer（ch 满）丢帧不阻塞。
 func (s *Session) broadcast(seq uint64, frame []byte) {
+	s.broadcastTo(nil, seq, frame)
+}
+
+// broadcastConv 只把帧投给 convID 匹配的 writer（消息/typing/read）。
+// convID 为空（大厅）匹配空串 writer；全局帧用 broadcast（广播全部）。
+func (s *Session) broadcastConv(convID string, seq uint64, frame []byte) {
+	s.broadcastTo(&convID, seq, frame)
+}
+
+func (s *Session) broadcastTo(convID *string, seq uint64, frame []byte) {
 	s.mu.Lock()
 	ws := make([]*sseWriter, 0, len(s.writers))
 	for w := range s.writers {
+		if convID != nil && !convMatch(w.convID, *convID) {
+			continue
+		}
 		ws = append(ws, w)
 	}
 	s.mu.Unlock()
@@ -115,7 +146,28 @@ func (s *Session) startPump() {
 				if !ok {
 					continue
 				}
-				s.broadcast(seq, frame)
+				// 消息/typing/read 帧按会话分流到匹配的 writer；
+				// 其余（state/presence/conversations）广播全部。
+				if e.Kind == core.EventMessage || e.Kind == core.EventTyping || e.Kind == core.EventRead {
+					var convID string
+					switch e.Kind {
+					case core.EventMessage:
+						if e.Message != nil {
+							convID = e.Message.ConversationID
+						}
+					case core.EventTyping:
+						if e.Typing != nil {
+							convID = e.Typing.ConversationID
+						}
+					case core.EventRead:
+						if e.Read != nil {
+							convID = e.Read.ConversationID
+						}
+					}
+					s.broadcastConv(convID, seq, frame)
+				} else {
+					s.broadcast(seq, frame)
+				}
 			}
 		}
 	}()
@@ -129,14 +181,14 @@ func (s *Session) startPump() {
 // 数据源是 client 本地 Store（Connect 的 catch-up 已拉过最近历史）；
 // lastID 太老、超出本地窗口的缺口补不到，刷新整页即可恢复（M4 可接受）。
 func (s *Session) catchUp(w http.ResponseWriter, flusher http.Flusher, wr *sseWriter, lastID uint64) {
-	msgs, err := s.cli.History(s.ctx, s.convID, lastID, historyLimit)
+	msgs, err := s.cli.History(s.ctx, wr.convID, lastID, historyLimit)
 	if err != nil {
 		s.logger.Warn("catch-up history failed", "cookie", s.id, "after", lastID, "err", err)
 		return
 	}
 	var maxSeq uint64
 	for i := range msgs {
-		seq, frame, ok := s.sseFrame(core.Event{Kind: core.EventMessage, Message: &msgs[i]})
+		seq, frame, ok := s.sseFrameConv(core.Event{Kind: core.EventMessage, Message: &msgs[i]}, wr.convID)
 		if !ok {
 			continue
 		}
@@ -170,14 +222,20 @@ func (s *Session) catchUp(w http.ResponseWriter, flusher http.Flusher, wr *sseWr
 //
 // 渲染发生在 pump goroutine，用 Session 生命周期 ctx。
 func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
+	return s.sseFrameConv(e, "")
+}
+
+// sseFrameConv 按指定会话渲染一帧；convID 为空时由事件本身携带的会话
+// 决定（消息/typing/read 自带 conv），渲染后再由 broadcastConv 分流。
+func (s *Session) sseFrameConv(e core.Event, convID string) (uint64, []byte, bool) {
 	switch e.Kind {
 	case core.EventMessage:
 		m := e.Message
-		if m == nil || m.ConversationID != s.convID {
+		if m == nil || !convMatch(m.ConversationID, convID) {
 			return 0, nil, false
 		}
 		var buf bytes.Buffer
-		if err := templates.Message(s.newView(m)).Render(s.ctx, &buf); err != nil {
+		if err := templates.Message(s.newView(m, convID)).Render(s.ctx, &buf); err != nil {
 			s.logger.Error("render message frame failed", "err", err)
 			return 0, nil, false
 		}
@@ -218,13 +276,14 @@ func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
 		return 0, sseDataFrame("presence", buf.Bytes()), true
 
 	case core.EventTyping:
-		// M7.3：有人正在输入。事件到达时 client 的 typing 快照已更新
-		// （dispatch 先 applyTyping 后发布事件），取全量快照整段重渲
-		// #typing。片段自带 6s 后 GET /typing 自刷新——停止输入后没有
-		// 新事件，靠这次刷新取到空快照把指示条清掉；持续输入时新帧
-		// 不断 swap，定时器随之续期。
+		// M7.3 + M12-A：有人正在输入。事件到达时 client 的 typing 快照
+		// 已更新（dispatch 先 applyTyping 后发布事件），取该会话的
+		// typing 快照整段重渲 #typing（Typing 已按 conv 过滤）。片段自带
+		// 6s 后 GET /typing 自刷新——停止输入后没有新事件，靠这次刷新
+		// 取到空快照把指示条清掉；持续输入时新帧不断 swap，定时器随之
+		// 续期。
 		var buf bytes.Buffer
-		if err := templates.TypingBar(s.tr, templates.NewTypingViews(s.cli.Typing())).Render(s.ctx, &buf); err != nil {
+		if err := templates.TypingBar(s.tr, templates.NewTypingViews(s.cli.Typing(), convID)).Render(s.ctx, &buf); err != nil {
 			s.logger.Error("render typing frame failed", "err", err)
 			return 0, nil, false
 		}
@@ -236,7 +295,7 @@ func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
 		// 由 app.js 给已读的自发消息打勾——不整段重渲消息列表，避免
 		// 滚动位置抖动、首屏外已折叠消息被重复渲染。
 		rc := e.Read
-		if rc == nil || rc.ConversationID != s.convID {
+		if rc == nil || !convMatch(rc.ConversationID, convID) {
 			return 0, nil, false
 		}
 		payload, err := json.Marshal(rc)
@@ -245,6 +304,19 @@ func (s *Session) sseFrame(e core.Event) (uint64, []byte, bool) {
 			return 0, nil, false
 		}
 		return 0, sseDataFrame("read", payload), true
+
+	case core.EventConversation:
+		// M12-A：会话列表变化（新建/加入/退出）。事件到达时 client 的
+		// convs 快照已更新（dispatch 先 apply 后发布事件），取全量快照
+		// 整段重渲 #conv-list 片段，广播给所有 writer（全局帧）。
+		// 高亮由浏览器按当前 ?conv= 补（app.js），服务端不带 active。
+		convs := templates.NewConvViews(s.cli.Conversations(), "")
+		var buf bytes.Buffer
+		if err := templates.ConvList(s.tr, convs, "").Render(s.ctx, &buf); err != nil {
+			s.logger.Error("render conversations frame failed", "err", err)
+			return 0, nil, false
+		}
+		return 0, sseDataFrame("conversations", buf.Bytes()), true
 
 	default:
 		return 0, nil, false
@@ -273,20 +345,20 @@ func sseDataFrame(event string, html []byte) []byte {
 
 // newView 把协议消息转成视图模型。Self 以 SenderUser 与 session 身份比对；
 // Read 表示「我发的消息已被其它设备读到」（M8.1，首屏/分页/新帧共用）。
-func (s *Session) newView(m *protocol.StoredMessage) templates.MessageView {
-	return templates.NewMessageView(m.ID, int64(m.ServerSeq), m.SenderUserID, m.Body, m.CreatedAt, m.SenderUserID == s.user, s.isRead(m), m.File)
+func (s *Session) newView(m *protocol.StoredMessage, convID string) templates.MessageView {
+	return templates.NewMessageView(m.ID, int64(m.ServerSeq), m.SenderUserID, m.Body, m.CreatedAt, m.SenderUserID == s.user, s.isRead(m, convID), m.File)
 }
 
 // isRead 报告「我发的消息是否已被其它设备读到」（M8.1）：任一其它设备
 // 的已读游标 >= 该消息 seq 即视为已读。hub 快照/广播不回显本设备
 // 自己的游标，ReadCursors 天然只含他人；过滤 conversation 防止跨会话
 // 游标误标。
-func (s *Session) isRead(m *protocol.StoredMessage) bool {
+func (s *Session) isRead(m *protocol.StoredMessage, convID string) bool {
 	if m.SenderUserID != s.user || m.ServerSeq == 0 {
 		return false
 	}
 	for _, rc := range s.cli.ReadCursors() {
-		if rc.ConversationID == s.convID && rc.ServerSeq >= m.ServerSeq {
+		if convMatch(rc.ConversationID, convID) && rc.ServerSeq >= m.ServerSeq {
 			return true
 		}
 	}

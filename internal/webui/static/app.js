@@ -16,6 +16,13 @@
     return document.getElementById("messages");
   }
 
+  // currentConv 返回当前渲染会话：URL ?conv=（缺省空串 = 大厅）。
+  // 所有上发动作（read/upload）都带它，避免多 tab 错标到其它会话。
+  function currentConv() {
+    var p = new URLSearchParams(window.location.search);
+    return p.get("conv") || "";
+  }
+
   // atBottom 报告消息列表是否已滚到底（或列表短到无需滚动）。
   function atBottom() {
     var el = messagesEl();
@@ -44,6 +51,7 @@
     if (!file) return;
     var fd = new FormData();
     fd.append("file", file);
+    fd.append("conv", currentConv());
     var btn = document.getElementById("file-btn");
     if (btn) btn.disabled = true;
     fetch("/api/files", {
@@ -120,7 +128,7 @@
     fetch("/read", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "seq=" + encodeURIComponent(seq),
+      body: "seq=" + encodeURIComponent(seq) + "&conv=" + encodeURIComponent(currentConv()),
       credentials: "same-origin"
     }).catch(function () {});
   }
@@ -182,6 +190,33 @@
     }
   });
 
+  // ---- M12-A 会话侧栏：建群表单显隐 + 当前会话高亮 ----
+  // active 类由服务端首屏/SSE conversations 帧渲染；这里补一层兜底，
+  // 确保每次 conversations 帧 swap 后当前会话项保持高亮。
+  function bindConvSidebar() {
+    var btn = document.getElementById("conv-create-btn");
+    var form = document.getElementById("conv-create-form");
+    if (btn && form) {
+      btn.addEventListener("click", function () {
+        form.classList.toggle("hidden");
+      });
+    }
+    highlightCurrentConv();
+  }
+
+  function highlightCurrentConv() {
+    var conv = currentConv();
+    var items = document.querySelectorAll(".conv-item[data-conv]");
+    for (var i = 0; i < items.length; i++) {
+      items[i].classList.toggle("active", items[i].getAttribute("data-conv") === conv);
+    }
+  }
+
+  document.addEventListener("htmx:sseMessage", function (evt) {
+    var msg = evt.detail;
+    if (msg && msg.type === "conversations") highlightCurrentConv();
+  });
+
   // 手动滚动贴底即已读（防抖）。
   var scrollTimer = null;
   document.addEventListener(
@@ -196,6 +231,9 @@
 
   // 文件上传交互（按钮 / 粘贴 / 拖拽），M9。
   bindFileComposer();
+
+  // 会话侧栏交互（建群表单 + 高亮兜底），M12-A。
+  bindConvSidebar();
 
   // ---- 主题切换（M11）：data-theme 持久化到 localStorage ----
   function currentTheme() {

@@ -14,12 +14,8 @@ import (
 	"github.com/pandaymx/lanchat/pkg/store/memory"
 )
 
-// DefaultConversationID 是 M3 单会话阶段使用的会话 ID。
-//
-// Hub 侧按 ConversationID 分桶存放历史（见 pkg/hubstate/history.go），
-// 会话不需要预先注册，因此这里用一个固定常量即可，无需建会话流程。
-// M7 引入群聊/频道后由上层传入真实会话 ID 替换。
-const DefaultConversationID = "lobby"
+// DefaultConversationID 是默认会话 ID（M12-A 起统一为空串 = 大厅）。
+const DefaultConversationID = ""
 
 // eventBuf 是订阅通道缓冲。EventBus 满则丢弃，给足缓冲降低丢事件概率。
 const eventBuf = 128

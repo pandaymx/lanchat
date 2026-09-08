@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -54,9 +55,9 @@ const heartbeatInterval = 15 * time.Second
 // 给足缓冲降低高吞吐时丢消息的概率；取值与 pkg/tui 的 eventBuf 一致。
 const eventBuf = 128
 
-// DefaultConversationID 是 M4 单会话阶段使用的会话 ID，与 pkg/tui 一致。
-// Hub 侧按 ConversationID 分桶存放历史，会话无需预先注册（见 pkg/tui 同名常量的注释）。
-const DefaultConversationID = "lobby"
+// DefaultConversationID 是默认会话 ID（M12-A 起统一为空串 = 大厅）。
+// 群聊前所有消息都在大厅桶；群由 hub 显式创建后才有非空会话 ID。
+const DefaultConversationID = ""
 
 // historyLimit 是首页首次渲染时拉取的历史条数。
 //
@@ -149,6 +150,9 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/read", h.handleRead)
 	mux.HandleFunc("/history", h.handleHistory)
 	mux.HandleFunc("/events", h.handleEvents)
+	// M12-A：建群/退群端点。建群成功 303 跳到新群；退群 303 回大厅。
+	mux.HandleFunc("POST /conversations", h.handleConversationCreate)
+	mux.HandleFunc("POST /conversations/{id}/leave", h.handleConversationLeave)
 	// M9 文件传输代理：与 hub 同路径形态，浏览器经自身同源访问。
 	mux.HandleFunc("POST /api/files", h.handleFileUpload)
 	mux.HandleFunc("GET /api/files/{fileID}", h.handleFileDownload)
@@ -177,9 +181,10 @@ func (h *Handler) handleTyping(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case http.MethodGet:
 		// 自刷新只读快照：拨号失败/无会话都渲染空片段（清掉指示条）。
+		// M12-A：按当前会话过滤（?conv=，空 = 大厅）。
 		views := []templates.TypingView(nil)
 		if sess, err := h.ensureSession(w, r); err == nil {
-			views = templates.NewTypingViews(sess.cli.Typing())
+			views = templates.NewTypingViews(sess.cli.Typing(), r.URL.Query().Get("conv"))
 		}
 		h.renderTyping(w, r, views)
 	default:
@@ -224,8 +229,12 @@ func (h *Handler) handleRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if err := sess.cli.SendRead(r.Context(), sess.convID, seq); err != nil {
-		h.logger.Debug("send read failed", "conv", sess.convID, "seq", seq, "err", err)
+	convID := r.PostFormValue("conv")
+	if convID == "" {
+		convID = sess.convID // 兼容不带 conv 的旧表单/直连测试
+	}
+	if err := sess.cli.SendRead(r.Context(), convID, seq); err != nil {
+		h.logger.Debug("send read failed", "conv", convID, "seq", seq, "err", err)
 		http.Error(w, "read failed", http.StatusServiceUnavailable)
 		return
 	}
@@ -272,13 +281,35 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msgs, histErr := sess.cli.History(r.Context(), sess.convID, 0, historyLimit)
+	// M12-A：当前会话来自 URL ?conv=（空 = 大厅）。
+	convID := r.URL.Query().Get("conv")
+
+	msgs, histErr := sess.cli.History(r.Context(), convID, 0, historyLimit)
 	if histErr != nil {
-		h.logger.Error("load history failed", "conv", sess.convID, "err", histErr)
+		h.logger.Error("load history failed", "conv", convID, "err", histErr)
 	}
 	views := make([]templates.MessageView, 0, len(msgs))
 	for i := range msgs {
-		views = append(views, sess.newView(&msgs[i]))
+		views = append(views, sess.newView(&msgs[i], convID))
+	}
+
+	// 会话列表与当前会话信息（标题、是否成员）。
+	convs := templates.NewConvViews(sess.cli.Conversations(), convID)
+	convTitle, convMember := "Lobby", true
+	for _, s := range sess.cli.Conversations() {
+		if s.Conversation.ID == convID {
+			if s.Conversation.Title != "" {
+				convTitle = s.Conversation.Title
+			}
+			convMember = false
+			for _, uid := range s.Members {
+				if uid == sess.user {
+					convMember = true
+					break
+				}
+			}
+			break
+		}
 	}
 
 	data := templates.HomeData{
@@ -295,6 +326,7 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 		// 首屏拉满 limit 即认为可能还有更早的消息（store 是内存视图，
 		// 无法直接区分"正好 50 条"与"还有更多"；点一次加载更多便知分晓）。
 		HasMore: histErr == nil && len(msgs) == historyLimit,
+		Convs:   convs, ConvID: convID, ConvTitle: convTitle, ConvMember: convMember,
 	}
 	if data.HasMore {
 		data.OldestSeq = int64(msgs[0].ServerSeq)
@@ -328,16 +360,17 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := sess.cli.FetchHistory(r.Context(), sess.convID, 0, before, historyLimit)
+	convID := r.URL.Query().Get("conv")
+	resp, err := sess.cli.FetchHistory(r.Context(), convID, 0, before, historyLimit)
 	if err != nil {
-		h.logger.Error("fetch history failed", "conv", sess.convID, "before", before, "err", err)
+		h.logger.Error("fetch history failed", "conv", convID, "before", before, "err", err)
 		http.Error(w, "history unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
 	views := make([]templates.MessageView, 0, len(resp.Messages))
 	for i := range resp.Messages {
-		views = append(views, sess.newView(&resp.Messages[i]))
+		views = append(views, sess.newView(&resp.Messages[i], convID))
 	}
 	// 下一页游标：本批最老一条的 seq（resp.Messages 升序，首条即最老）。
 	var nextBefore int64
@@ -349,6 +382,86 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if err := templates.HistoryPage(h.cfg.Translator, views, resp.HasMore, nextBefore).Render(r.Context(), w); err != nil {
 		h.logger.Error("render history page failed", "err", err)
 	}
+}
+
+// handleConversationCreate 建群（M12-A）。
+//
+// 表单：title（必填）+ members[]（在线成员多选，不含自己——hub 会自动
+// 把创建者加进成员）。CreateConversation 是单向帧，群 ID 由 hub 生成后
+// 经 FKConvEvent created 广播回来；这里轮询本地快照最多 1.5s 等到新群
+// 出现，然后 303 跳转（HTMX 跟随重定向整页刷新）。超时回首页——侧栏
+// 的 SSE conversations 帧随后会刷出新群，用户手动点进去即可。
+func (h *Handler) handleConversationCreate(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		h.logger.Warn("conv create: parse form failed", "err", err)
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	title := strings.TrimSpace(r.PostFormValue("title"))
+	if title == "" {
+		http.Error(w, "title is required", http.StatusBadRequest)
+		return
+	}
+	members := r.PostForm["members"]
+
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		h.logger.Error("conv create: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	before := len(sess.cli.Conversations())
+	if _, err := sess.cli.CreateConversation(r.Context(), title, members); err != nil {
+		h.logger.Error("conv create failed", "title", title, "err", err)
+		http.Error(w, "create failed", http.StatusInternalServerError)
+		return
+	}
+
+	// 等 hub 广播 created 事件后本地快照出现新群。
+	newID := ""
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		snaps := sess.cli.Conversations()
+		if len(snaps) > before {
+			for _, s := range snaps {
+				if s.Conversation.Title == title {
+					newID = s.Conversation.ID
+					break
+				}
+			}
+			if newID != "" {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if newID == "" {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, "/?conv="+url.QueryEscape(newID), http.StatusSeeOther)
+}
+
+// handleConversationLeave 退群（M12-A）。POST /conversations/{id}/leave。
+// 成功 303 回大厅（被移除的会话从本地快照消失，SSE 会同步侧栏）。
+func (h *Handler) handleConversationLeave(w http.ResponseWriter, r *http.Request) {
+	convID := r.PathValue("id")
+	if convID == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		h.logger.Error("conv leave: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := sess.cli.LeaveConversation(r.Context(), convID); err != nil {
+		h.logger.Error("conv leave failed", "conv", convID, "err", err)
+		http.Error(w, "leave failed", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 // renderHome 统一渲染入口，供 handleHome 与将来可能的错误渲染复用。
@@ -406,7 +519,7 @@ func (h *Handler) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad hub response", http.StatusBadGateway)
 		return
 	}
-	if err := sess.cli.SendFileMessage(r.Context(), sess.convID, ref); err != nil {
+	if err := sess.cli.SendFileMessage(r.Context(), r.FormValue("conv"), ref); err != nil {
 		h.logger.Error("file upload: send file message failed", "file", ref.FileID, "err", err)
 		http.Error(w, "send failed", http.StatusInternalServerError)
 		return
@@ -480,8 +593,12 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if err := sess.cli.SendMessage(r.Context(), sess.convID, body); err != nil {
-		h.logger.Error("send message failed", "conv", sess.convID, "err", err)
+	convID := r.PostFormValue("conv")
+	if convID == "" {
+		convID = sess.convID // 兼容不带 conv 的旧表单/直连测试
+	}
+	if err := sess.cli.SendMessage(r.Context(), convID, body); err != nil {
+		h.logger.Error("send message failed", "conv", convID, "err", err)
 		http.Error(w, "send failed", http.StatusInternalServerError)
 		return
 	}
@@ -528,7 +645,9 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// 注册 writer 后立即写首帧：两步之间 pump 已在跑，事件不会丢
 	// （writer ch 有 128 缓冲）。
-	wr := sess.addWriter()
+	// M12-A：SSE 连接按 URL ?conv= 绑定会话；消息/typing/read 帧
+	// 只投递给会话匹配的连接（sse.go broadcastConv）。
+	wr := sess.addWriter(r.URL.Query().Get("conv"))
 	defer sess.removeWriter(wr)
 	sess.touch()
 

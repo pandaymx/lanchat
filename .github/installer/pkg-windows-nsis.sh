@@ -37,7 +37,10 @@ ABS_OUT="${ROOT}/dist/${NAME}"
 SCRIPT="${ROOT}/.github/installer/lanchat.nsi"
 # Windows runner（Git Bash）里 $(pwd) 是 /d/a/... 风格，makensis.exe 是
 # 原生 Windows 程序不认 POSIX 路径；cygpath -m 转成 D:/a/...（正斜杠）。
-if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == mingw* ]]; then
+# 不用 OSTYPE 判断：GitHub Actions 的 Git Bash 偶发不设置 OSTYPE（实测
+# desktop(windows-latest) job 因此漏转、makensis 把 /d/... 当 /D 选项）。
+# 直接探测 cygpath 是否可用——Git Bash 必有，Linux 必无，语义最稳。
+if command -v cygpath >/dev/null 2>&1; then
   ABS_EXE="$(cygpath -m "$ABS_EXE")"
   ABS_OUT="$(cygpath -m "$ABS_OUT")"
   SCRIPT="$(cygpath -m "$SCRIPT")"

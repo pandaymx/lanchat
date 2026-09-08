@@ -253,7 +253,7 @@ jobs:
     # 用 release job 算出的实际版本（git describe 拿不到，见 Detect step）。
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) && needs.release.outputs.released == 'true' }}
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     env:
       LANCHAT_VERSION: ${{ needs.release.outputs.version }}
@@ -261,20 +261,32 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # linux-arm64 走原生 arm64 runner（ubuntu-24.04-arm）：deb 可用
+          # dpkg-deb 交叉打，但 rpmbuild 在 x86_64 host 上 --target aarch64
+          # 报 "No compatible architectures found for build"（缺 aarch64
+          # 平台文件）；原生 runner 零交叉问题（2026-09-08 实测 desktop
+          # ubuntu-24.04-arm 的 deb/rpm 均成功）。其余矩阵维持 ubuntu-latest
+          # 纯 Go 交叉编译（CGO=0）+ Linux nsis/dpkg 打安装包。
           - goos: linux
             goarch: amd64
+            runner: ubuntu-latest
           - goos: linux
             goarch: arm64
+            runner: ubuntu-24.04-arm
           - goos: darwin
             goarch: amd64
+            runner: ubuntu-latest
           - goos: darwin
             goarch: arm64
+            runner: ubuntu-latest
           - goos: windows
             goarch: amd64
             ext: .exe
+            runner: ubuntu-latest
           - goos: windows
             goarch: arm64
             ext: .exe
+            runner: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:

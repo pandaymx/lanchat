@@ -1,3 +1,25 @@
+## [1.0.0](https://github.com/pandaymx/lanchat/compare/v0.13.1...v1.0.0) (2026-09-08)
+
+### ⚠ BREAKING CHANGES
+
+* **proto:** 群聊五帧与 Typing.ConversationID 是破坏性协议
+变更，v0.x 客户端不兼容，需随 v1.0.0 一并升级。
+
+### Features
+
+* **hub:** M12-A 群聊协议与路由（FKConvList/Create/Invite/Leave + 会话广播收敛 + 大厅空会话） ([6252a7e](https://github.com/pandaymx/lanchat/commit/6252a7eafbbbd8dc6c9afb9fdecc0378aeb333bb))
+* **tui:** M12-A 群聊（会话列表/切换/建群/邀请/退群 + 按会话过滤） ([561f558](https://github.com/pandaymx/lanchat/commit/561f558dd993a3449e88ca96b1f1c7224597a257))
+* **web:** M12-A 多会话 Web UI（会话侧栏/建群/退群/按会话分流 SSE） ([d34109f](https://github.com/pandaymx/lanchat/commit/d34109f76d5492b597e2a6d03cc524fe57e1c18d))
+
+### Bug Fixes
+
+* **release:** Windows NSIS 改反斜杠绝对路径 + 产物诊断 ([0e738d7](https://github.com/pandaymx/lanchat/commit/0e738d789227c545ef24eae33127c2473e6cc7ab))
+* **repo:** 修 M12-A 引入的 13 处 lint 问题 ([86a4a2f](https://github.com/pandaymx/lanchat/commit/86a4a2f1791f6ecc7e82a2ab661a0823d311e872))
+
+### Code Refactoring
+
+* **proto:** 记录 M12 群聊协议破坏性变更（文档） ([3dd5850](https://github.com/pandaymx/lanchat/commit/3dd58504e63b8c562f5f179285d8a597c4610168))
+
 ## [0.13.1](https://github.com/pandaymx/lanchat/compare/v0.13.0...v0.13.1) (2026-09-07)
 
 ### Bug Fixes

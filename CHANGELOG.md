@@ -1,3 +1,9 @@
+## [1.0.4](https://github.com/pandaymx/lanchat/compare/v1.0.3...v1.0.4) (2026-09-08)
+
+### Bug Fixes
+
+* **release:** woa 交叉组合 Package 用 Linux makensis ([9d1ab15](https://github.com/pandaymx/lanchat/commit/9d1ab15c159e7a2f0716bf4f6084982960181328))
+
 ## [1.0.3](https://github.com/pandaymx/lanchat/compare/v1.0.2...v1.0.3) (2026-09-08)
 
 ### Bug Fixes

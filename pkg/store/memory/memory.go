@@ -35,6 +35,8 @@ type MemoryStore struct {
 	users         map[string]protocol.User
 	devices       map[string]protocol.Device
 	conversations map[string]protocol.Conversation
+	// members 是会话成员表（M12-A）：convID → 成员 UserID 集合。
+	members map[string]map[string]struct{}
 
 	// messages[convID] = sorted by ServerSeq asc.
 	messages map[string][]protocol.StoredMessage
@@ -54,6 +56,7 @@ func New() *MemoryStore {
 		users:         make(map[string]protocol.User),
 		devices:       make(map[string]protocol.Device),
 		conversations: make(map[string]protocol.Conversation),
+		members:       make(map[string]map[string]struct{}),
 		messages:      make(map[string][]protocol.StoredMessage),
 		cursors:       make(map[string]uint64),
 		files:         make(map[string]protocol.FileMeta),
@@ -146,6 +149,72 @@ func (s *MemoryStore) GetConversation(_ context.Context, id string) (protocol.Co
 	return c, nil
 }
 
+// ListConversations 返回全部已持久化的会话（M12-A）。
+func (s *MemoryStore) ListConversations(_ context.Context) ([]protocol.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, core.ErrClosed
+	}
+	out := make([]protocol.Conversation, 0, len(s.conversations))
+	for _, c := range s.conversations {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// SaveConversationMember 记录某用户加入某会话（M12-A，幂等）。
+func (s *MemoryStore) SaveConversationMember(_ context.Context, convID, userID string) error {
+	if convID == "" || userID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return core.ErrClosed
+	}
+	m := s.members[convID]
+	if m == nil {
+		m = make(map[string]struct{})
+		s.members[convID] = m
+	}
+	m[userID] = struct{}{}
+	return nil
+}
+
+// ListConversationMembers 返回某会话的全部成员 UserID（M12-A）。
+func (s *MemoryStore) ListConversationMembers(_ context.Context, convID string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, core.ErrClosed
+	}
+	m := s.members[convID]
+	out := make([]string, 0, len(m))
+	for u := range m {
+		out = append(out, u)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// DeleteConversationMember 移除某用户出会话（M12-A 退群）。
+func (s *MemoryStore) DeleteConversationMember(_ context.Context, convID, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return core.ErrClosed
+	}
+	if m := s.members[convID]; m != nil {
+		delete(m, userID)
+		if len(m) == 0 {
+			delete(s.members, convID)
+		}
+	}
+	return nil
+}
+
 // AppendMessage 追加或更新一条消息到指定会话（upsert-by-ID）。
 //
 // 设计取舍：upsert 而不是纯追加，是为了支持 Client 侧的乐观写入 + Hub 端的 ServerSeq 分配。
@@ -161,9 +230,6 @@ func (s *MemoryStore) AppendMessage(_ context.Context, m protocol.StoredMessage)
 	defer s.mu.Unlock()
 	if s.closed {
 		return core.ErrClosed
-	}
-	if m.ConversationID == "" {
-		return errMissingConv
 	}
 	if m.CreatedAt == 0 {
 		m.CreatedAt = time.Now().UnixMilli()
@@ -183,8 +249,6 @@ func (s *MemoryStore) AppendMessage(_ context.Context, m protocol.StoredMessage)
 	s.messages[m.ConversationID] = list
 	return nil
 }
-
-var errMissingConv = errInvalidInput("conversation id required")
 
 type errInvalidInput string
 
@@ -229,8 +293,8 @@ func (s *MemoryStore) SetCursor(_ context.Context, deviceID, convID string, seq 
 	if s.closed {
 		return core.ErrClosed
 	}
-	if deviceID == "" || convID == "" {
-		return errInvalidInput("device id and conv id required")
+	if deviceID == "" {
+		return errInvalidInput("device id required")
 	}
 	key := cursorKey(deviceID, convID)
 	if cur, ok := s.cursors[key]; ok && cur >= seq {
@@ -248,8 +312,8 @@ func (s *MemoryStore) GetCursor(_ context.Context, deviceID, convID string) (uin
 	if s.closed {
 		return 0, core.ErrClosed
 	}
-	if deviceID == "" || convID == "" {
-		return 0, errInvalidInput("device id and conv id required")
+	if deviceID == "" {
+		return 0, errInvalidInput("device id required")
 	}
 	return s.cursors[cursorKey(deviceID, convID)], nil
 }

@@ -213,7 +213,7 @@ func TestRouterMessageSequenceAndBroadcast(t *testing.T) {
 
 	msg := protocol.StoredMessage{
 		ID:             "m1",
-		ConversationID: "c1",
+		ConversationID: "",
 		SenderUserID:   "u-1",
 		Body:           "hello",
 	}
@@ -245,7 +245,7 @@ func TestRouterMessageSequenceAndBroadcast(t *testing.T) {
 	}
 
 	// 应已落库
-	hist, err := store.History(ctx, "c1", 0, 10)
+	hist, err := store.History(ctx, "", 0, 10)
 	if err != nil {
 		t.Fatalf("store history: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestRouterSeqMonotonic(t *testing.T) {
 	for i := range n {
 		msg := protocol.StoredMessage{
 			ID:             string(rune('a' + i%26)),
-			ConversationID: "c1",
+			ConversationID: "",
 			Body:           "m",
 		}
 		_ = r.HandleFrame(ctx, id, p,
@@ -278,7 +278,7 @@ func TestRouterSeqMonotonic(t *testing.T) {
 	if got := r.seq.Last(); got != n {
 		t.Fatalf("应分配了 %d 个序号，实际 %d", n, got)
 	}
-	if got := r.hist.Len("c1"); got != n {
+	if got := r.hist.Len(""); got != n {
 		t.Fatalf("History 应有 %d 条，实际 %d", n, got)
 	}
 }
@@ -293,14 +293,14 @@ func TestRouterHistoryReqPerDevice(t *testing.T) {
 
 	// 先灌 3 条消息
 	for i := 1; i <= 3; i++ {
-		msg := protocol.StoredMessage{ID: "m", ConversationID: "c1", ServerSeq: uint64(i)}
+		msg := protocol.StoredMessage{ID: "m", ConversationID: "", ServerSeq: uint64(i)}
 		// 直接走 handleMessage 的等价路径：通过 frame
 		_ = r.HandleFrame(ctx, id1, p1,
 			protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg)})
 	}
 
 	// dev-2 请求补发 after=1
-	req := protocol.HistoryRequest{ConversationIDs: []string{"c1"}, After: 1, Limit: 10}
+	req := protocol.HistoryRequest{ConversationIDs: []string{""}, After: 1, Limit: 10}
 	if err := r.HandleFrame(ctx, id2, p2,
 		protocol.Frame{Kind: protocol.FKHistoryReq, Payload: mustPayload(t, req)}); err != nil {
 		t.Fatalf("history req: %v", err)
@@ -331,12 +331,12 @@ func TestRouterHistoryReqBefore(t *testing.T) {
 	p, id := addPeer(t, r, "dev-1", "u-1")
 
 	for i := 1; i <= 5; i++ {
-		msg := protocol.StoredMessage{ID: "m", ConversationID: "c1", ServerSeq: uint64(i)}
+		msg := protocol.StoredMessage{ID: "m", ConversationID: "", ServerSeq: uint64(i)}
 		_ = r.HandleFrame(ctx, id, p,
 			protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg)})
 	}
 
-	req := protocol.HistoryRequest{ConversationIDs: []string{"c1"}, Before: 4, Limit: 2}
+	req := protocol.HistoryRequest{ConversationIDs: []string{""}, Before: 4, Limit: 2}
 	if err := r.HandleFrame(ctx, id, p,
 		protocol.Frame{Kind: protocol.FKHistoryReq, Payload: mustPayload(t, req)}); err != nil {
 		t.Fatalf("history req: %v", err)
@@ -364,7 +364,7 @@ func TestRouterHistoryLimitCapped(t *testing.T) {
 	r, _ := setupRouter(t)
 	p, id := addPeer(t, r, "dev-1", "u-1")
 
-	req := protocol.HistoryRequest{ConversationIDs: []string{"c1"}, After: 0, Limit: 999999}
+	req := protocol.HistoryRequest{ConversationIDs: []string{""}, After: 0, Limit: 999999}
 	if err := r.HandleFrame(ctx, id, p,
 		protocol.Frame{Kind: protocol.FKHistoryReq, Payload: mustPayload(t, req)}); err != nil {
 		t.Fatalf("history req: %v", err)
@@ -386,13 +386,13 @@ func TestRouterReadCursorPerDevice(t *testing.T) {
 	p1, id1 := addPeer(t, r, "dev-1", "u-1")
 	_, id2 := addPeer(t, r, "dev-2", "u-1")
 
-	rd := protocol.Read{ConversationID: "c1", ServerSeq: 42}
+	rd := protocol.Read{ConversationID: "", ServerSeq: 42}
 	if err := r.HandleFrame(ctx, id1, p1,
 		protocol.Frame{Kind: protocol.FKRead, Payload: mustPayload(t, rd)}); err != nil {
 		t.Fatalf("read: %v", err)
 	}
 
-	c1, err := store.GetCursor(ctx, "dev-1", "c1")
+	c1, err := store.GetCursor(ctx, "dev-1", "")
 	if err != nil {
 		t.Fatalf("get cursor dev-1: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestRouterReadCursorPerDevice(t *testing.T) {
 	}
 
 	// dev-2 未读，应保持 0
-	c2, err := store.GetCursor(ctx, "dev-2", "c1")
+	c2, err := store.GetCursor(ctx, "dev-2", "")
 	if err != nil {
 		t.Fatalf("get cursor dev-2: %v", err)
 	}
@@ -657,7 +657,7 @@ func TestRouterNoStore(t *testing.T) {
 	defer r.Close()
 
 	p, id := addPeer(t, r, "dev-1", "u-1")
-	msg := protocol.StoredMessage{ID: "m1", ConversationID: "c1", Body: "x"}
+	msg := protocol.StoredMessage{ID: "m1", ConversationID: "", Body: "x"}
 	if err := r.HandleFrame(ctx, id, p,
 		protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg)}); err != nil {
 		t.Fatalf("无 Store 时发消息不应报错: %v", err)

@@ -36,7 +36,6 @@ import (
 
 // errMissingConv / errInvalidCursor 与 memory 实现的输入校验同义。
 var (
-	errMissingConv   = errors.New("libsql: conversation id required")
 	errInvalidCursor = errors.New("libsql: device id and conv id required")
 	errMissingFileID = errors.New("libsql: file id required")
 )
@@ -118,6 +117,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			last_seq  INTEGER NOT NULL,
 			PRIMARY KEY (device_id, conv_id)
 		)`,
+		// M12-A 群成员：会话成员表（大厅是隐式会话不落库）。
+		`CREATE TABLE IF NOT EXISTS conversation_members (
+			conv_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			PRIMARY KEY (conv_id, user_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_conv_members_user ON conversation_members (user_id)`,
 		// M9 文件元信息：blob 本体在 hub 文件目录（files/<FileID>），
 		// 这里只保证「重启后按 ID 能查到」；CreatedAt 供未来清理/审计。
 		`CREATE TABLE IF NOT EXISTS file_meta (
@@ -267,6 +273,71 @@ func (s *Store) GetConversation(ctx context.Context, id string) (protocol.Conver
 	return c, nil
 }
 
+// ListConversations 返回全部已持久化的会话（M12-A）。
+func (s *Store) ListConversations(ctx context.Context) ([]protocol.Conversation, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, title FROM conversations ORDER BY rowid`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: list conversations: %w", err)
+	}
+	defer rows.Close()
+	var out []protocol.Conversation
+	for rows.Next() {
+		var c protocol.Conversation
+		if err := rows.Scan(&c.ID, &c.Kind, &c.Title); err != nil {
+			return nil, fmt.Errorf("libsql: scan conversation: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SaveConversationMember 记录某用户加入某会话（M12-A，幂等）。
+func (s *Store) SaveConversationMember(ctx context.Context, convID, userID string) error {
+	if convID == "" || userID == "" {
+		return nil // 大厅/空身份不落库
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO conversation_members (conv_id, user_id) VALUES (?, ?)
+		 ON CONFLICT(conv_id, user_id) DO NOTHING`,
+		convID, userID)
+	if err != nil {
+		return fmt.Errorf("libsql: save member %q/%q: %w", convID, userID, err)
+	}
+	return nil
+}
+
+// ListConversationMembers 返回某会话的全部成员 UserID（M12-A）。
+func (s *Store) ListConversationMembers(ctx context.Context, convID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT user_id FROM conversation_members WHERE conv_id = ? ORDER BY user_id`, convID)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: list members %q: %w", convID, err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, fmt.Errorf("libsql: scan member: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// DeleteConversationMember 移除某用户出会话（M12-A 退群）。
+func (s *Store) DeleteConversationMember(ctx context.Context, convID, userID string) error {
+	if convID == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM conversation_members WHERE conv_id = ? AND user_id = ?`, convID, userID)
+	if err != nil {
+		return fmt.Errorf("libsql: delete member %q/%q: %w", convID, userID, err)
+	}
+	return nil
+}
+
 // ---- messages ---------------------------------------------------------------
 
 // AppendMessage 追加或按 (conv_id, id) 覆盖一条消息。
@@ -274,9 +345,6 @@ func (s *Store) GetConversation(ctx context.Context, id string) (protocol.Conver
 // 与 memory 实现同为 upsert 语义：客户端乐观写入 (ID=local-x, seq=0) 后
 // Hub 回 FKDeliver (同 ID, seq=N)，覆盖更新而不是插成两条。
 func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) error {
-	if m.ConversationID == "" {
-		return errMissingConv
-	}
 	if m.CreatedAt == 0 {
 		m.CreatedAt = nowMillis()
 	}
@@ -446,7 +514,7 @@ func (s *Store) GetFileMeta(ctx context.Context, fileID string) (protocol.FileMe
 
 // SetCursor 设置某设备在某会话的已读游标，单调不回退（UPSERT + MAX）。
 func (s *Store) SetCursor(ctx context.Context, deviceID, convID string, seq uint64) error {
-	if deviceID == "" || convID == "" {
+	if deviceID == "" {
 		return errInvalidCursor
 	}
 	_, err := s.db.ExecContext(ctx,
@@ -462,7 +530,7 @@ func (s *Store) SetCursor(ctx context.Context, deviceID, convID string, seq uint
 
 // GetCursor 返回某设备在某会话的已读游标；未设置返回 0（语义：从未读过）。
 func (s *Store) GetCursor(ctx context.Context, deviceID, convID string) (uint64, error) {
-	if deviceID == "" || convID == "" {
+	if deviceID == "" {
 		return 0, errInvalidCursor
 	}
 	var seq sql.NullInt64

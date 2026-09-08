@@ -2,7 +2,6 @@ package client_test
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -119,7 +118,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 
 	// alice 发消息
-	if err := alice.SendMessage(context.Background(), "conv-1", "hello bob"); err != nil {
+	if err := alice.SendMessage(context.Background(), "", "hello bob"); err != nil {
 		t.Fatalf("SendMessage: %v", err)
 	}
 
@@ -134,7 +133,7 @@ func TestRoundTrip(t *testing.T) {
 	if ev.Message.Body != "hello bob" {
 		t.Fatalf("payload mismatch: got %q want %q", ev.Message.Body, "hello bob")
 	}
-	if ev.ConversationID != "conv-1" {
+	if ev.ConversationID != "" {
 		t.Fatalf("conv id mismatch: %s", ev.ConversationID)
 	}
 	if ev.Message.ServerSeq == 0 {
@@ -142,14 +141,14 @@ func TestRoundTrip(t *testing.T) {
 	}
 
 	// 验证落库：alice 与 bob 两个 store 都应能查到此消息。
-	got, err := alice.History(context.Background(), "conv-1", 0, 10)
+	got, err := alice.History(context.Background(), "", 0, 10)
 	if err != nil {
 		t.Fatalf("alice History: %v", err)
 	}
 	if len(got) != 1 || got[0].Body != "hello bob" {
 		t.Fatalf("alice store wrong: %+v", got)
 	}
-	got, err = bob.History(context.Background(), "conv-1", 0, 10)
+	got, err = bob.History(context.Background(), "", 0, 10)
 	if err != nil {
 		t.Fatalf("bob History: %v", err)
 	}
@@ -185,14 +184,14 @@ func TestOfflineCatchUp(t *testing.T) {
 	defer bobSubA.Close()
 	_ = waitForEvent(t, bobSubA, core.EventState, 2*time.Second)
 
-	if err := aliceA.SendMessage(context.Background(), "c1", "M0-baseline"); err != nil {
+	if err := aliceA.SendMessage(context.Background(), "", "M0-baseline"); err != nil {
 		t.Fatalf("baseline send: %v", err)
 	}
 	m := waitForEvent(t, bobSubA, core.EventMessage, 2*time.Second)
 	if m == nil {
 		t.Fatal("baseline M0 未送达 bob")
 	}
-	if err := bobA.SendRead(context.Background(), "c1", m.Message.ServerSeq); err != nil {
+	if err := bobA.SendRead(context.Background(), "", m.Message.ServerSeq); err != nil {
 		t.Fatalf("SendRead: %v", err)
 	}
 
@@ -204,10 +203,10 @@ func TestOfflineCatchUp(t *testing.T) {
 	// 给 alice 一个新的 client 继续发言，模拟"alice 是离线观察者"的反例不存在。
 	// 由于 aliceStoreB 没必要独立，本测试让 aliceB 共用同一 store，证明"bob 离线不影响 alice 端落库"。
 	aliceB := newClient(t, tr, store, aliceHello, 0)
-	if err := aliceB.SendMessage(context.Background(), "c1", "M1-while-offline"); err != nil {
+	if err := aliceB.SendMessage(context.Background(), "", "M1-while-offline"); err != nil {
 		t.Fatalf("aliceB M1: %v", err)
 	}
-	if err := aliceB.SendMessage(context.Background(), "c1", "M2-while-offline"); err != nil {
+	if err := aliceB.SendMessage(context.Background(), "", "M2-while-offline"); err != nil {
 		t.Fatalf("aliceB M2: %v", err)
 	}
 
@@ -250,7 +249,7 @@ func TestOfflineCatchUp(t *testing.T) {
 	}
 
 	// 验证：bob 自己的 store 现在应当已经收到补发（M1+M2），M0 因为 bobB 是新 store 不存在。
-	got, _ := bobB.History(context.Background(), "c1", 0, 100)
+	got, _ := bobB.History(context.Background(), "", 0, 100)
 	if len(got) != 2 {
 		t.Fatalf("bob 落库消息数错误: 期望 2 (M1+M2)，实际 %d", len(got))
 	}
@@ -287,29 +286,57 @@ func TestSubscribeFilter(t *testing.T) {
 	defer bobSub.Close()
 	_ = waitForEvent(t, bobSub, core.EventState, 2*time.Second)
 
-	// alice 发到 conv-1 与 conv-2
-	if err := alice.SendMessage(context.Background(), "conv-1", "in-conv-1"); err != nil {
-		t.Fatalf("send conv-1: %v", err)
+	// M12-A：alice 建群并把 bob 拉进来。hub 广播 created 事件给成员，
+	// alice 从自己的 EventConversation 里取到 hub 分配的群 ID。
+	if _, err := alice.CreateConversation(context.Background(), "group-x", []string{"bob"}); err != nil {
+		t.Fatalf("CreateConversation: %v", err)
 	}
-	if err := alice.SendMessage(context.Background(), "conv-2", "in-conv-2"); err != nil {
-		t.Fatalf("send conv-2: %v", err)
+	var groupID string
+	deadline := time.After(2 * time.Second)
+	for groupID == "" {
+		select {
+		case e := <-sub.C():
+			if e.Kind == core.EventConversation && e.Conversation != nil {
+				for _, s := range alice.Conversations() {
+					if s.Conversation.Title == "group-x" {
+						groupID = s.Conversation.ID
+					}
+				}
+			}
+		case <-deadline:
+			t.Fatal("alice 未在超时内收到建群快照")
+		}
 	}
 
-	// bob 应收到两条；alice 仅收自己发的（hub 也回 FKDeliver 给发送方）
+	// alice 向群发一条、向大厅（空 conv）发一条
+	if err := alice.SendMessage(context.Background(), groupID, "in-group"); err != nil {
+		t.Fatalf("send group: %v", err)
+	}
+	if err := alice.SendMessage(context.Background(), "", "in-lobby"); err != nil {
+		t.Fatalf("send lobby: %v", err)
+	}
+
+	// bob 应收到两条（群成员 + 大厅全员）；alice 仅收自己发的（hub 也回 FKDeliver 给发送方）
 	allAlice := collectEvents(t, sub, core.EventMessage, 2*time.Second)
 	if len(allAlice) != 2 {
 		t.Fatalf("alice EventMessage 期望 2，实际 %d", len(allAlice))
 	}
 
-	// 业务侧过滤：仅保留 conv-1
-	var aliceConv1 []core.Event
+	// 业务侧过滤：群 1 条、大厅 1 条
+	var aliceGroup, aliceLobby []core.Event
 	for _, e := range allAlice {
-		if e.ConversationID == "conv-1" && e.Message != nil && e.Message.Body == "in-conv-1" {
-			aliceConv1 = append(aliceConv1, e)
+		if e.ConversationID == groupID && e.Message != nil && e.Message.Body == "in-group" {
+			aliceGroup = append(aliceGroup, e)
+		}
+		if e.ConversationID == "" && e.Message != nil && e.Message.Body == "in-lobby" {
+			aliceLobby = append(aliceLobby, e)
 		}
 	}
-	if len(aliceConv1) != 1 {
-		t.Fatalf("alice 过滤 conv-1 应为 1 条，实际 %d", len(aliceConv1))
+	if len(aliceGroup) != 1 {
+		t.Fatalf("alice 过滤群消息应为 1 条，实际 %d", len(aliceGroup))
+	}
+	if len(aliceLobby) != 1 {
+		t.Fatalf("alice 过滤大厅消息应为 1 条，实际 %d", len(aliceLobby))
 	}
 
 	// bob：等待两条
@@ -318,16 +345,28 @@ func TestSubscribeFilter(t *testing.T) {
 		t.Fatalf("bob EventMessage 期望 2，实际 %d", len(allBob))
 	}
 
-	// 不阻塞，并发 sanity
-	var wg sync.WaitGroup
-	for i := 0; i < 3; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_ = alice.SendMessage(context.Background(), "conv-1", "burst")
-		}()
+	// 非群成员验证：carl 不在群里，向群发消息应被 hub 拒绝（ErrForbidden），
+	// 群成员收不到、carl 自己也收不到 FKDeliver。
+	helloCarl := protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "carl-d1",
+		UserID:          "carl",
 	}
-	wg.Wait()
+	carl := newClient(t, tr, store, helloCarl, 0)
+	carlSub := carl.Subscribe(64)
+	defer carlSub.Close()
+	_ = waitForEvent(t, carlSub, core.EventState, 2*time.Second)
+
+	if err := carl.SendMessage(context.Background(), groupID, "intruder"); err != nil {
+		t.Fatalf("carl send to group: %v", err)
+	}
+	if ev := waitForEvent(t, carlSub, core.EventMessage, 1*time.Second); ev != nil {
+		t.Fatalf("carl 不应收到自己发往非成员群的消息回显，实际 %+v", ev.Message)
+	}
+	// alice（群成员）也不应收到 carl 的消息
+	if ev := waitForEvent(t, sub, core.EventMessage, 1*time.Second); ev != nil {
+		t.Fatalf("群成员不应收到非成员消息，实际 %+v", ev.Message)
+	}
 }
 
 // TestMultiDeviceCursor：alice 在两台设备上独立维护 cursor。
@@ -359,7 +398,7 @@ func TestMultiDeviceCursor(t *testing.T) {
 
 	// 制造 5 条消息
 	for i := 0; i < 5; i++ {
-		if err := d1.SendMessage(context.Background(), "c1", "M"); err != nil {
+		if err := d1.SendMessage(context.Background(), "", "M"); err != nil {
 			t.Fatalf("send: %v", err)
 		}
 	}
@@ -376,19 +415,19 @@ func TestMultiDeviceCursor(t *testing.T) {
 	lastSeq := got2[len(got2)-1].Message.ServerSeq
 
 	// d2 标记整段 conv 已读，但 d1 不动
-	if err := d2.SendRead(context.Background(), "c1", lastSeq); err != nil {
+	if err := d2.SendRead(context.Background(), "", lastSeq); err != nil {
 		t.Fatalf("d2 SendRead: %v", err)
 	}
 
 	// d2 cursor 推进，d1 cursor 应仍是 0
-	c2, err := d2.Cursor(context.Background(), "c1")
+	c2, err := d2.Cursor(context.Background(), "")
 	if err != nil {
 		t.Fatalf("d2 cursor: %v", err)
 	}
 	if c2 != lastSeq {
 		t.Fatalf("d2 cursor 应为 %d，实际 %d", lastSeq, c2)
 	}
-	c1, err := d1.Cursor(context.Background(), "c1")
+	c1, err := d1.Cursor(context.Background(), "")
 	if err != nil {
 		t.Fatalf("d1 cursor: %v", err)
 	}
@@ -398,15 +437,15 @@ func TestMultiDeviceCursor(t *testing.T) {
 
 	// 验证 d1 自己 mark-read 部分（cursor 到 seq3）
 	third := got2[2].Message.ServerSeq
-	if err := d1.SendRead(context.Background(), "c1", third); err != nil {
+	if err := d1.SendRead(context.Background(), "", third); err != nil {
 		t.Fatalf("d1 SendRead: %v", err)
 	}
-	c1, _ = d1.Cursor(context.Background(), "c1")
+	c1, _ = d1.Cursor(context.Background(), "")
 	if c1 != third {
 		t.Fatalf("d1 cursor partial 应为 %d，实际 %d", third, c1)
 	}
 	// d2 应不受影响
-	c2, _ = d2.Cursor(context.Background(), "c1")
+	c2, _ = d2.Cursor(context.Background(), "")
 	if c2 != lastSeq {
 		t.Fatalf("d2 cursor 仍应为 %d，实际 %d", lastSeq, c2)
 	}
@@ -517,7 +556,7 @@ func TestExternalCtxCancelDoesNotKillReadPump(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = bob.Close() })
 
-	if err := bob.SendMessage(context.Background(), "c1", "after-external-cancel"); err != nil {
+	if err := bob.SendMessage(context.Background(), "", "after-external-cancel"); err != nil {
 		t.Fatalf("bob send: %v", err)
 	}
 
@@ -572,7 +611,7 @@ func TestFetchHistory(t *testing.T) {
 	aliceSub := alice.Subscribe(64)
 	defer aliceSub.Close()
 	for i := 0; i < 5; i++ {
-		if err := alice.SendMessage(context.Background(), "conv-1", "m"); err != nil {
+		if err := alice.SendMessage(context.Background(), "", "m"); err != nil {
 			t.Fatalf("SendMessage: %v", err)
 		}
 	}
@@ -592,7 +631,7 @@ func TestFetchHistory(t *testing.T) {
 	defer carolSub.Close()
 
 	// 1. 全量拉取：before=0/after=0 从最老开始。
-	resp, err := carol.FetchHistory(context.Background(), "conv-1", 0, 0, 100)
+	resp, err := carol.FetchHistory(context.Background(), "", 0, 0, 100)
 	if err != nil {
 		t.Fatalf("FetchHistory: %v", err)
 	}
@@ -611,7 +650,7 @@ func TestFetchHistory(t *testing.T) {
 	}
 
 	// 3. 消息已写入 carol 本地 Store。
-	got, err := carol.History(context.Background(), "conv-1", 0, 100)
+	got, err := carol.History(context.Background(), "", 0, 100)
 	if err != nil {
 		t.Fatalf("carol History: %v", err)
 	}
@@ -620,7 +659,7 @@ func TestFetchHistory(t *testing.T) {
 	}
 
 	// 4. before 翻页：before=4 → seq<4 的 1,2,3。
-	resp, err = carol.FetchHistory(context.Background(), "conv-1", 0, 4, 100)
+	resp, err = carol.FetchHistory(context.Background(), "", 0, 4, 100)
 	if err != nil {
 		t.Fatalf("FetchHistory before: %v", err)
 	}
@@ -722,7 +761,7 @@ func TestTyping(t *testing.T) {
 	// 吃掉上线阶段的 presence 事件，避免干扰 typing 断言。
 	drainPresence(t, aliceSub, 500*time.Millisecond)
 
-	if err := bob.SendTyping(context.Background()); err != nil {
+	if err := bob.SendTyping(context.Background(), ""); err != nil {
 		t.Fatalf("SendTyping: %v", err)
 	}
 

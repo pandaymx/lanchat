@@ -42,7 +42,7 @@ func TestTwoClientsExchange(t *testing.T) {
 	alice.send(ctx, protocol.FKMessage, protocol.StoredMessage{
 		ID:             "msg-1",
 		ClientNonce:    "n-1",
-		ConversationID: "conv-1",
+		ConversationID: "",
 		SenderUserID:   "alice",
 		SenderDeviceID: "alice-laptop",
 		Body:           "hello bob",
@@ -89,7 +89,7 @@ func TestReconnectHistory(t *testing.T) {
 		first.send(ctx, protocol.FKMessage, protocol.StoredMessage{
 			ID:             body,
 			ClientNonce:    body,
-			ConversationID: "conv-1",
+			ConversationID: "",
 			SenderUserID:   "alice",
 			SenderDeviceID: "alice-laptop",
 			Body:           body,

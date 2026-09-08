@@ -123,6 +123,12 @@ type Client struct {
 	// 语义，设备离线不删除——重连后 Hub 会重发快照，applyRead 单调合并。
 	reads map[string]protocol.ReadCursor
 
+	// convs 是会话列表快照（M12-A 群聊），按会话 ID 索引。数据源：
+	// Hub 握手后 FKConvList 全量下发 + FKConvEvent 增量更新。大厅
+	// （空 ID）不在此表，由 Conversations() 合成返回。
+	convsMu sync.RWMutex
+	convs   map[string]protocol.ConversationSnapshot
+
 	closed atomic.Bool
 	done   chan struct{}
 }
@@ -148,6 +154,7 @@ func New(hello protocol.Hello, conn core.Conn, store core.Store, bus core.EventB
 		peers:  make(map[string]protocol.Presence),
 		typers: make(map[string]typingEntry),
 		reads:  make(map[string]protocol.ReadCursor),
+		convs:  make(map[string]protocol.ConversationSnapshot),
 		done:   make(chan struct{}),
 	}
 }
@@ -399,6 +406,45 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 			})
 		}
 
+	case protocol.FKConvList:
+		// M12-A：会话列表全量快照（握手后 Hub 下发）。直接整体替换
+		// 本地快照——Hub 是权威源，客户端不维护增量状态。
+		var snaps []protocol.ConversationSnapshot
+		if err := json.Unmarshal(f.Payload, &snaps); err != nil {
+			cliLog.Error("unmarshal FKConvList failed", "err", err)
+			return
+		}
+		c.convsMu.Lock()
+		clear(c.convs)
+		for i := range snaps {
+			if snaps[i].Conversation.ID != "" {
+				c.convs[snaps[i].Conversation.ID] = snaps[i]
+			}
+		}
+		c.convsMu.Unlock()
+		// 全量快照刷新：不带会话详情，UI 收到事件后自行拉 Conversations()。
+		c.bus.Publish(core.Event{Kind: core.EventConversation})
+
+	case protocol.FKConvEvent:
+		// M12-A：会话变更增量事件（created/joined/left）。
+		var ev protocol.ConversationEvent
+		if err := json.Unmarshal(f.Payload, &ev); err != nil {
+			cliLog.Error("unmarshal FKConvEvent failed", "err", err)
+			return
+		}
+		applied := c.applyConvEvent(ev)
+		if !applied {
+			return
+		}
+		// 携带变更的会话详情，UI 可据此精确刷新（例如跳到新会话）。
+		var snap *protocol.ConversationSnapshot
+		c.convsMu.RLock()
+		if s, ok := c.convs[ev.Conversation.ID]; ok {
+			snap = &s
+		}
+		c.convsMu.RUnlock()
+		c.bus.Publish(core.Event{Kind: core.EventConversation, Conversation: snap})
+
 	default:
 		// 其它帧不在 M1 范围内，静默丢弃。
 	}
@@ -482,6 +528,88 @@ func (c *Client) applyRead(rc protocol.ReadCursor) bool {
 	}
 	c.reads[rc.DeviceID] = rc
 	return true
+}
+
+// applyConvEvent 应用一条会话变更事件到本地快照（M12-A）。
+//
+//   - created / joined：upsert 会话（joined 用广播里的最新成员）；
+//   - left：若自己是广播里的会话成员（事件由 Hub 发给剩余成员），
+//     直接把整个会话从快照删除——被移除者无需保留任何群状态。
+func (c *Client) applyConvEvent(ev protocol.ConversationEvent) bool {
+	if ev.Conversation.ID == "" {
+		return false
+	}
+	c.convsMu.Lock()
+	defer c.convsMu.Unlock()
+	switch ev.Event {
+	case "left":
+		if _, ok := c.convs[ev.Conversation.ID]; !ok {
+			return false // 本来就不在快照里：无变化，不发布事件
+		}
+		delete(c.convs, ev.Conversation.ID)
+	default: // created / joined：upsert（成员以广播快照为准）
+		c.convs[ev.Conversation.ID] = protocol.ConversationSnapshot{
+			Conversation: ev.Conversation,
+			Members:      ev.Members,
+		}
+	}
+	return true
+}
+
+// Conversations 返回会话列表快照（M12-A），按 ID 升序。含合成的大厅：
+// 空 ID + Kind "lobby" + Title "Lobby"（UI 侧栏第一项）。
+func (c *Client) Conversations() []protocol.ConversationSnapshot {
+	c.convsMu.RLock()
+	out := make([]protocol.ConversationSnapshot, 0, len(c.convs)+1)
+	for _, s := range c.convs {
+		out = append(out, s)
+	}
+	c.convsMu.RUnlock()
+	out = append(out, protocol.ConversationSnapshot{
+		Conversation: protocol.Conversation{ID: "", Kind: "lobby", Title: "Lobby"},
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Conversation.ID < out[j].Conversation.ID })
+	return out
+}
+
+// CreateConversation 创建群（M12-A）。memberIDs 为初始成员（不含自己，
+// hub 侧会自动把创建者加进成员）。返回会话元数据。
+func (c *Client) CreateConversation(ctx context.Context, title string, memberIDs []string) (protocol.Conversation, error) {
+	if c.closed.Load() {
+		return protocol.Conversation{}, core.ErrClosed
+	}
+	payload, err := json.Marshal(protocol.ConversationRequest{Title: title, MemberIDs: memberIDs})
+	if err != nil {
+		return protocol.Conversation{}, fmt.Errorf("marshal conv create: %w", err)
+	}
+	if err := c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKConvCreate, Payload: payload}); err != nil {
+		return protocol.Conversation{}, err
+	}
+	return protocol.Conversation{ID: "", Kind: "group", Title: title}, nil
+}
+
+// InviteToConversation 邀请用户进群（M12-A）。
+func (c *Client) InviteToConversation(ctx context.Context, convID string, userIDs []string) error {
+	if c.closed.Load() {
+		return core.ErrClosed
+	}
+	payload, err := json.Marshal(protocol.ConversationRef{ConversationID: convID, UserIDs: userIDs})
+	if err != nil {
+		return fmt.Errorf("marshal conv invite: %w", err)
+	}
+	return c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKConvInvite, Payload: payload})
+}
+
+// LeaveConversation 退出群（M12-A）。
+func (c *Client) LeaveConversation(ctx context.Context, convID string) error {
+	if c.closed.Load() {
+		return core.ErrClosed
+	}
+	payload, err := json.Marshal(protocol.ConversationRef{ConversationID: convID})
+	if err != nil {
+		return fmt.Errorf("marshal conv leave: %w", err)
+	}
+	return c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKConvLeave, Payload: payload})
 }
 
 // ReadCursors 返回当前已知的他人已读游标快照（M8.1），按 DeviceID 升序。
@@ -665,14 +793,15 @@ func (c *Client) SendRead(ctx context.Context, convID string, serverSeq uint64) 
 	return c.store.SetCursor(ctx, c.hello.DeviceID, convID, serverSeq)
 }
 
-// SendTyping 上发「正在输入」提示（M7.3）。负载为空——身份由 Hub 按
-// 连接注册表盖戳。瞬时提示 best-effort：发送失败只 Debug 日志、不报错，
-// 调用方（UI 层）负责节流（建议 ≥3s 一次），避免每个按键都打帧。
-func (c *Client) SendTyping(ctx context.Context) error {
+// SendTyping 上发「正在输入」提示（M7.3 + M12-A）。负载只声明所在
+// 会话——身份由 Hub 按连接注册表盖戳。瞬时提示 best-effort：发送失败
+// 只 Debug 日志、不报错，调用方（UI 层）负责节流（建议 ≥3s 一次）。
+func (c *Client) SendTyping(ctx context.Context, convID string) error {
 	if c.closed.Load() {
 		return core.ErrClosed
 	}
-	if err := c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKTyping}); err != nil {
+	payload, _ := json.Marshal(protocol.Typing{ConversationID: convID})
+	if err := c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKTyping, Payload: payload}); err != nil {
 		cliLog.Debug("send FKTyping failed", "err", err)
 		return err
 	}

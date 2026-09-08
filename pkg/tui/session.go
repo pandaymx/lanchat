@@ -158,10 +158,11 @@ func (s *Session) FetchHistory(ctx context.Context, before uint64, limit int) ([
 	return resp.Messages, resp.HasMore, nil
 }
 
-// SendTyping 实现 Typer：上发「正在输入」提示（M7.3）。
-// 负载为空，身份由 hub 盖戳；节流由 Model 负责。
+// SendTyping 实现 Typer：上发「正在输入」提示（M7.3 + M12-A）。
+// 会话 ID 由 Session 绑定（typing 只广播给同会话成员）；身份由 hub
+// 盖戳；节流由 Model 负责。
 func (s *Session) SendTyping(ctx context.Context) error {
-	return s.cli.SendTyping(ctx)
+	return s.cli.SendTyping(ctx, s.convID)
 }
 
 // SendRead 实现 Reader：上发「已读到 seq」回执（M8.1）。

@@ -61,6 +61,48 @@ type Conversation struct {
 	Title string `json:"title,omitempty"`
 }
 
+// ConversationSnapshot 是 Hub → Client 的会话快照（M12-A 群聊）。
+//
+// 两种形态：
+//   - 大厅（lobby）：Kind=="lobby"、Members 为 nil。成员是隐式的——
+//     所有已握手用户都在大厅，不落库、不下发成员名单（在线名单本身
+//     由 Presence 覆盖）。
+//   - 群（group）：Kind=="group"、Members 为创建/邀请时的用户 ID 集合。
+//
+// 握手后 Hub 用 FKConvList 下发全量快照；之后每个变更用 FKConvEvent
+// 增量广播。客户端（Web/TUI）按 ID upsert 即可，无需自行合并历史。
+type ConversationSnapshot struct {
+	Conversation Conversation `json:"c"`
+	Members      []string     `json:"m,omitempty"` // 群成员 UserID；大厅为 nil
+}
+
+// ConversationRequest 是创建群的请求（FKConvCreate）。
+type ConversationRequest struct {
+	Title     string   `json:"t"`
+	MemberIDs []string `json:"m,omitempty"`
+}
+
+// ConversationRef 是会话操作引用（FKConvInvite / FKConvLeave）。
+type ConversationRef struct {
+	ConversationID string   `json:"c"`
+	UserIDs        []string `json:"u,omitempty"` // 仅邀请时使用
+}
+
+// ConversationEvent 是会话变更广播（FKConvEvent，M12-A）。
+//
+// Event 取值：
+//   - "created"：新群建成（发给全部初始成员）；
+//   - "joined"：有人被邀请进群（发给群内成员；ByUserID 为邀请者）；
+//   - "left"：有人退群（发给群内剩余成员；ByUserID 为退出者）。
+type ConversationEvent struct {
+	Conversation Conversation `json:"c"`
+	Event        string       `json:"e"`
+	ByUserID     string       `json:"u,omitempty"`
+	// Members 是事件发生后的全量成员 UserID（created/joined 时填充）。
+	// left 事件不含（接收方是剩余成员，自己的快照已含该信息）。
+	Members []string `json:"m,omitempty"`
+}
+
 // User 是人类用户。同一用户可以登录到多个设备（见 Device.UserID）。
 // AvatarSeed 用于在没有头像上传时生成确定性 identicon。
 type User struct {

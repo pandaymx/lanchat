@@ -27,7 +27,7 @@ func TestRouterRestoreFromStore(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		msg := protocol.StoredMessage{
 			ID:             fmt.Sprintf("m%d", i),
-			ConversationID: "c1",
+			ConversationID: "",
 			SenderUserID:   "u-1",
 			Body:           fmt.Sprintf("body-%d", i),
 		}
@@ -42,7 +42,7 @@ func TestRouterRestoreFromStore(t *testing.T) {
 	r1.Close()
 
 	// 重启恢复（与 cmd/hub openStore 之后的步骤同构）。
-	prior, err := store.History(ctx, "c1", 0, HistoryRestoreLimit)
+	prior, err := store.History(ctx, "", 0, HistoryRestoreLimit)
 	if err != nil {
 		t.Fatalf("load prior history: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestRouterRestoreFromStore(t *testing.T) {
 
 	// 重连设备补发：after=0 应拿回重启前的 3 条。
 	p2, id2 := addPeer(t, r2, "dev-2", "u-2")
-	req := protocol.HistoryRequest{ConversationIDs: []string{"c1"}, After: 0, Limit: 100}
+	req := protocol.HistoryRequest{ConversationIDs: []string{""}, After: 0, Limit: 100}
 	if err := r2.HandleFrame(ctx, id2, p2,
 		protocol.Frame{Kind: protocol.FKHistoryReq, Payload: mustPayload(t, req)}); err != nil {
 		t.Fatalf("history req after restart: %v", err)
@@ -80,7 +80,7 @@ func TestRouterRestoreFromStore(t *testing.T) {
 	}
 
 	// 重启后新消息序号接续：应为 maxSeq+1。
-	msg4 := protocol.StoredMessage{ID: "m4", ConversationID: "c1", SenderUserID: "u-2", Body: "after-restart"}
+	msg4 := protocol.StoredMessage{ID: "m4", ConversationID: "", SenderUserID: "u-2", Body: "after-restart"}
 	if err := r2.HandleFrame(ctx, id2, p2,
 		protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg4)}); err != nil {
 		t.Fatalf("second life send: %v", err)

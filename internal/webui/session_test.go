@@ -86,6 +86,9 @@ type stubClient struct {
 	done   chan struct{}
 
 	closeCount int
+
+	// convs 是 Conversations() 快照的预置返回（M12-A 群聊）。
+	convs []protocol.ConversationSnapshot
 }
 
 func newStubClient() *stubClient {
@@ -162,12 +165,30 @@ func (s *stubClient) Typing() []protocol.Typing {
 }
 
 // SendTyping 记录调用次数（M7.3）。
-func (s *stubClient) SendTyping(_ context.Context) error {
+func (s *stubClient) SendTyping(_ context.Context, _ string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sendTypingCalls++
 	return nil
 }
+
+// ---- M12-A 会话 API（stub 返回预置快照） ----
+
+func (s *stubClient) Conversations() []protocol.ConversationSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]protocol.ConversationSnapshot(nil), s.convs...)
+}
+
+func (s *stubClient) CreateConversation(_ context.Context, title string, memberIDs []string) (protocol.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return protocol.Conversation{ID: "new-conv", Kind: "group", Title: title}, nil
+}
+
+func (s *stubClient) InviteToConversation(_ context.Context, _ string, _ []string) error { return nil }
+
+func (s *stubClient) LeaveConversation(_ context.Context, _ string) error { return nil }
 
 func (s *stubClient) typingCalls() int {
 	s.mu.Lock()

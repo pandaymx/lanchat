@@ -192,11 +192,19 @@ func TestStore_AppendMessage_UpsertByID(t *testing.T) {
 	}
 }
 
-func TestStore_AppendMessage_MissingConv(t *testing.T) {
+func TestStore_AppendMessage_EmptyConv(t *testing.T) {
+	// M12-A：空 conv = 大厅，是合法会话桶。
 	s := newTestStore(t)
 	m := msg(1, "x", "")
-	if err := s.AppendMessage(t.Context(), m); err == nil {
-		t.Error("AppendMessage with empty convID must fail")
+	if err := s.AppendMessage(t.Context(), m); err != nil {
+		t.Fatalf("AppendMessage with empty convID (lobby): %v", err)
+	}
+	got, err := s.History(t.Context(), "", 0, 10)
+	if err != nil {
+		t.Fatalf("History lobby: %v", err)
+	}
+	if len(got) != 1 || got[0].Body != "body-x" {
+		t.Fatalf("lobby history = %+v, want 1 msg", got)
 	}
 }
 

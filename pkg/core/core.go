@@ -69,6 +69,9 @@ const (
 	EventPresence
 	// EventTyping 某人正在输入（轻度提示，不持久化）。
 	EventTyping
+	// EventConversation 会话列表变更（M12-A 群聊）：新建/加入/退出。
+	// 快照全量语义：UI 每次收到都 upsert 进自己的会话列表。
+	EventConversation
 	// EventState 本地连接状态变化（连接/已断/重连中）—— 不是线缆上的事件。
 	EventState
 )
@@ -84,6 +87,8 @@ func (k EventKind) String() string {
 		return "presence"
 	case EventTyping:
 		return "typing"
+	case EventConversation:
+		return "conversation"
 	case EventState:
 		return "state"
 	default:
@@ -99,11 +104,12 @@ func (k EventKind) String() string {
 type Event struct {
 	Kind           EventKind
 	ConversationID string
-	Message        *protocol.StoredMessage // 当 Kind == EventMessage
-	Read           *protocol.ReadCursor    // 当 Kind == EventRead
-	Presence       *protocol.Presence      // 当 Kind == EventPresence
-	Typing         *protocol.Typing        // 当 Kind == EventTyping
-	State          *StateInfo              // 当 Kind == EventState
+	Message        *protocol.StoredMessage        // 当 Kind == EventMessage
+	Read           *protocol.ReadCursor           // 当 Kind == EventRead
+	Presence       *protocol.Presence             // 当 Kind == EventPresence
+	Typing         *protocol.Typing               // 当 Kind == EventTyping
+	Conversation   *protocol.ConversationSnapshot // 当 Kind == EventConversation
+	State          *StateInfo                     // 当 Kind == EventState
 }
 
 // StateInfo 是 EventState 的载荷。
@@ -143,6 +149,19 @@ type Store interface {
 
 	SaveConversation(ctx context.Context, c protocol.Conversation) error
 	GetConversation(ctx context.Context, id string) (protocol.Conversation, error)
+
+	// ListConversations 返回全部已持久化的会话（M12-A：hub 重启后恢复
+	// 群列表）。大厅（lobby）是隐式会话不落库，不在返回里。
+	ListConversations(ctx context.Context) ([]protocol.Conversation, error)
+
+	// SaveConversationMember 记录某用户加入某会话（M12-A，幂等）。
+	SaveConversationMember(ctx context.Context, convID, userID string) error
+
+	// ListConversationMembers 返回某会话的全部成员 UserID（M12-A）。
+	ListConversationMembers(ctx context.Context, convID string) ([]string, error)
+
+	// DeleteConversationMember 移除某用户出会话（M12-A 退群）。
+	DeleteConversationMember(ctx context.Context, convID, userID string) error
 
 	// AppendMessage 由 Hub 在接收 FKMessage 后调用：
 	//   - Hub 分配 ServerSeq；

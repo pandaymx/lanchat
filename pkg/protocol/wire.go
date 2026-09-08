@@ -35,6 +35,16 @@ const (
 	FKPresence
 	// FKTyping Client↔Hub：某设备正在输入。
 	FKTyping
+	// FKConvList Hub → Client：会话列表快照（M12-A 群聊；握手后下发）。
+	FKConvList
+	// FKConvCreate Client → Hub：创建群（Title + MemberIDs）。
+	FKConvCreate
+	// FKConvInvite Client → Hub：向群内添加成员（ConvID + UserIDs）。
+	FKConvInvite
+	// FKConvLeave Client → Hub：退出群（ConvID）。
+	FKConvLeave
+	// FKConvEvent Hub → Client：会话变更广播（新建/加入/退出）。
+	FKConvEvent
 	// FKPing Client↔Hub：心跳探活。
 	FKPing
 	// FKPong 应答 FKPing。
@@ -64,6 +74,16 @@ func (k FrameKind) String() string {
 		return "presence"
 	case FKTyping:
 		return "typing"
+	case FKConvList:
+		return "conv_list"
+	case FKConvCreate:
+		return "conv_create"
+	case FKConvInvite:
+		return "conv_invite"
+	case FKConvLeave:
+		return "conv_leave"
+	case FKConvEvent:
+		return "conv_event"
 	case FKPing:
 		return "ping"
 	case FKPong:
@@ -149,8 +169,9 @@ type Presence struct {
 // 他人身份）；Hub 广播时填上发送者的 UserID/DeviceID。瞬时状态、
 // 不持久化、不回显发送者；接收方按最后收到时间自行过期（约 4s）。
 type Typing struct {
-	UserID   string `json:"u"`
-	DeviceID string `json:"d,omitempty"`
+	UserID         string `json:"u"`
+	DeviceID       string `json:"d,omitempty"`
+	ConversationID string `json:"c,omitempty"`
 }
 
 // ErrorPayload 是 FKError 帧的内容，描述为什么关连接或某次请求失败。
@@ -173,6 +194,8 @@ const (
 	ErrInvalidFrame
 	// ErrInternal Hub 内部错误。
 	ErrInternal
+	// ErrForbidden 会话权限不足（如向非成员群发消息）。
+	ErrForbidden
 )
 
 // ----- IO 边：Frame 编码/解码 -----

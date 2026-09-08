@@ -84,8 +84,9 @@ type Client interface {
 	Peers() []protocol.Presence
 	// Typing 返回当前正在输入的成员快照（M7.3），typing SSE 帧的数据源。
 	Typing() []protocol.Typing
-	// SendTyping 上发「正在输入」提示（M7.3）；POST /typing 的出站路径。
-	SendTyping(ctx context.Context) error
+	// SendTyping 上发「正在输入」提示（M7.3 + M12-A）；POST /typing 的
+	// 出站路径，convID 为当前会话（空 = 大厅）。
+	SendTyping(ctx context.Context, convID string) error
 	// ReadCursors 返回当前已知的他人已读游标快照（M8.1）：首屏渲染与
 	// read SSE 帧的数据源。hub 快照/广播都不回显本设备自己的游标，
 	// 所以返回的游标天然只含他人设备。
@@ -97,6 +98,14 @@ type Client interface {
 	// FileRef 由 hub 文件端点返回（FileID 由 hub 生成），本方法只负责
 	// 把引用挂到消息上走既有消息管线；文件二进制不经过 WS。
 	SendFileMessage(ctx context.Context, convID string, ref protocol.FileRef) error
+	// Conversations 返回会话列表快照（M12-A 群聊），含合成的大厅。
+	Conversations() []protocol.ConversationSnapshot
+	// CreateConversation 创建群（M12-A）；memberIDs 为初始成员（不含自己）。
+	CreateConversation(ctx context.Context, title string, memberIDs []string) (protocol.Conversation, error)
+	// InviteToConversation 邀请用户进群（M12-A）。
+	InviteToConversation(ctx context.Context, convID string, userIDs []string) error
+	// LeaveConversation 退出群（M12-A）。
+	LeaveConversation(ctx context.Context, convID string) error
 	Done() <-chan struct{}
 	// Close 释放底层连接（Manager 回收 Session 时调，顺序先于 store.Close）。
 	Close() error
@@ -160,7 +169,7 @@ func (h *Handler) handleTyping(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if err := sess.cli.SendTyping(r.Context()); err != nil {
+		if err := sess.cli.SendTyping(r.Context(), r.FormValue("conv")); err != nil {
 			h.logger.Debug("send typing failed", "err", err)
 			http.Error(w, "typing failed", http.StatusServiceUnavailable)
 			return

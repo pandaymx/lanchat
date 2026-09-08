@@ -249,6 +249,26 @@ func (r *Registry) PeersForDevice(deviceID string) []Peer {
 	return r.collectLocked(r.byDevice[deviceID])
 }
 
+// PeersForUsers 返回一组用户的所有已握手连接（M12-A 群广播）。
+// excludePeerID 非空时跳过该连接（消息/typing 不回显发送者本人）。
+// 同一连接只可能属于一个用户，用户之间天然不重复，无需去重。
+func (r *Registry) PeersForUsers(userIDs []string, excludePeerID uint64) []Peer {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var out []Peer
+	for _, u := range userIDs {
+		for id := range r.byUser[u] {
+			if id == excludePeerID {
+				continue
+			}
+			if e, ok := r.conns[id]; ok && e.helloOK {
+				out = append(out, e.peer)
+			}
+		}
+	}
+	return out
+}
+
 // AllPeers 返回所有已握手连接，用于全局广播（如 Presence）。
 func (r *Registry) AllPeers() []Peer {
 	r.mu.RLock()

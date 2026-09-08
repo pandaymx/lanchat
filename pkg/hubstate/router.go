@@ -33,6 +33,7 @@ type Router struct {
 	seq   *Sequencer
 	reg   *Registry
 	hist  *History
+	convs *Convs
 	store core.Store
 
 	// maxHistoryLimit 是单次补发返回的最大条数上限。
@@ -65,13 +66,17 @@ func NewRouter(cfg *RouterConfig) *Router {
 	if limit <= 0 {
 		limit = defaultMaxHistoryLimit
 	}
-	return &Router{
+	r := &Router{
 		seq:             NewSequencer(cfg.StartSeq),
 		reg:             NewRegistry(),
 		hist:            NewHistory(),
+		convs:           NewConvs(),
 		store:           cfg.Store,
 		maxHistoryLimit: limit,
 	}
+	// M12-A：hub 重启后从 store 恢复群与会话成员。
+	r.convs.LoadFromStore(context.Background(), cfg.Store)
+	return r
 }
 
 // Registry 暴露注册表，供调用方做 Presence 广播等跨连接操作。
@@ -79,6 +84,9 @@ func (r *Router) Registry() *Registry { return r.reg }
 
 // History 暴露补发缓冲，供调用方做灾后恢复（读 MaxSeq 重置 Sequencer）。
 func (r *Router) History() *History { return r.hist }
+
+// Convs 暴露会话注册表，供调用方（如集成测试）直接观测群状态。
+func (r *Router) Convs() *Convs { return r.convs }
 
 // Sequencer 暴露序号分配器，便于测试断言。
 func (r *Router) Sequencer() *Sequencer { return r.seq }
@@ -184,7 +192,7 @@ func (r *Router) HandleFrame(ctx context.Context, peerID uint64, p Peer, f proto
 		return r.handleHello(ctx, peerID, p, f)
 
 	case protocol.FKMessage:
-		return r.handleMessage(ctx, f)
+		return r.handleMessage(ctx, peerID, p, f)
 
 	case protocol.FKHistoryReq:
 		return r.handleHistoryReq(ctx, p, f)
@@ -194,6 +202,15 @@ func (r *Router) HandleFrame(ctx context.Context, peerID uint64, p Peer, f proto
 
 	case protocol.FKRead:
 		return r.handleRead(ctx, peerID, f)
+
+	case protocol.FKConvCreate:
+		return r.handleConvCreate(ctx, peerID, p, f)
+
+	case protocol.FKConvInvite:
+		return r.handleConvInvite(ctx, peerID, p, f)
+
+	case protocol.FKConvLeave:
+		return r.handleConvLeave(ctx, peerID, p, f)
 
 	case protocol.FKPing:
 		// 心跳不携带状态，直接回。失败说明连接已死，交给读循环收尾。
@@ -263,6 +280,10 @@ func (r *Router) announceOnline(ctx context.Context, p Peer, hello protocol.Hell
 	// M8.1：补发已读游标快照，让新连接立刻能渲染「谁已读到哪」，
 	// 不用干等下一次有人读消息。写失败与 presence 名单同语义（连接已坏）。
 	if err := r.sendReadSnapshot(ctx, p, hello.DeviceID); err != nil {
+		return err
+	}
+	// M12-A：下发会话列表快照（群），让新连接立刻能渲染会话侧栏。
+	if err := r.sendConvSnapshot(ctx, p); err != nil {
 		return err
 	}
 	r.broadcastPresence(ctx, protocol.Presence{
@@ -337,12 +358,27 @@ func (r *Router) broadcastPresence(ctx context.Context, pr protocol.Presence) {
 //  1. 先分配 seq 再落库 —— 保证库里的 seq 与广播出去的一致
 //  2. 先落库再广播 —— 「先落库后投递」是 core.Store 的契约，
 //     这样客户端收到 FKDeliver 后再来 History 一定能查到
-func (r *Router) handleMessage(ctx context.Context, f protocol.Frame) error {
+func (r *Router) handleMessage(ctx context.Context, peerID uint64, p Peer, f protocol.Frame) error {
 	var m protocol.StoredMessage
 	if err := json.Unmarshal(f.Payload, &m); err != nil {
 		// 单帧解析失败不关连接：可能只是这一条消息格式有问题，
 		// 断连会误伤同一连接上的其它正常流量。
 		//nolint:nilerr // 故意丢弃：单条坏消息不足以判连接死刑，错误详情只进日志
+		return nil
+	}
+
+	// M12-A：发送者身份以注册表为准（同 typing/read 信任模型）——
+	// 客户端上报的 SenderUserID/DeviceID 一律覆盖，防伪造他人发言。
+	if id, ok := r.reg.IdentityOf(peerID); ok {
+		m.SenderUserID = id.UserID
+		m.SenderDeviceID = id.DeviceID
+	}
+
+	// M12-A：权限校验——只有群成员能向群发消息；大厅（空 conv）全员放行。
+	if !r.convs.IsLobby(m.ConversationID) && !r.convs.IsMember(m.ConversationID, m.SenderUserID) {
+		routerLog.Warn("message rejected: not a member",
+			"conv", m.ConversationID, "user", m.SenderUserID)
+		r.sendError(ctx, p, protocol.ErrForbidden, "not a member of this conversation")
 		return nil
 	}
 
@@ -366,13 +402,13 @@ func (r *Router) handleMessage(ctx context.Context, f protocol.Frame) error {
 	}
 	r.hist.Append(m)
 
-	// 广播给所有在线连接（含发送者自己，客户端按 ID 去重）
+	// 广播给会话成员（含发送者自己，客户端按 ID 去重）；大厅 = 全员。
 	payload, err := json.Marshal(m)
 	if err != nil {
 		//nolint:nilerr // 序列化 StoredMessage 不可能失败；失败了也无补救动作
 		return nil
 	}
-	r.broadcast(ctx, protocol.Frame{Kind: protocol.FKDeliver, Payload: payload})
+	r.broadcastToConv(ctx, m.ConversationID, protocol.Frame{Kind: protocol.FKDeliver, Payload: payload})
 	return nil
 }
 
@@ -455,9 +491,7 @@ func (r *Router) handleRead(ctx context.Context, peerID uint64, f protocol.Frame
 			return nil
 		}
 	}
-	if rd.ConversationID == "" {
-		return nil
-	}
+	// M12-A：空 conv = 大厅，合法会话；不再丢弃。
 	seq := rd.ServerSeq
 	// 序号是 Hub 发的，游标不应超过已分配的最大 seq（防 hub 重启后
 	// 旧客户端的残留帧把已读状态标到未来）。max==0（本进程还没发过
@@ -481,7 +515,8 @@ func (r *Router) handleRead(ctx context.Context, peerID uint64, f protocol.Frame
 		return fmt.Errorf("marshal read cursor: %w", err)
 	}
 	out := protocol.Frame{Kind: protocol.FKRead, Payload: payload}
-	peers := r.reg.OthersPeers(peerID)
+	// M12-A：已读回执只发给同会话成员（大厅 = 全员，排除发送者）。
+	peers := r.convPeers(rd.ConversationID, peerID)
 	routerLog.Debug("read broadcast", "peer", peerID, "device", id.DeviceID, "conv", rd.ConversationID, "seq", seq, "recipients", len(peers))
 	_ = SendToPeers(ctx, peers, func(ctx context.Context, p Peer) error {
 		return p.Send(ctx, out)
@@ -495,23 +530,172 @@ func (r *Router) handleRead(ctx context.Context, peerID uint64, f protocol.Frame
 // 客户端上发的负载被忽略——身份以注册表为准（客户端无权声明他人身份），
 // Hub 盖上发送者的 UserID/DeviceID 后再广播，接收方据此渲染「谁在输入」。
 // 未握手连接的 typing 静默丢弃；单次提示丢失无所谓，best-effort 发送。
-func (r *Router) handleTyping(ctx context.Context, peerID uint64, _ protocol.Frame) error {
+func (r *Router) handleTyping(ctx context.Context, peerID uint64, f protocol.Frame) error {
 	id, ok := r.reg.IdentityOf(peerID)
 	if !ok || id.DeviceID == "" {
 		return nil
 	}
-	payload, err := json.Marshal(protocol.Typing{UserID: id.UserID, DeviceID: id.DeviceID})
+	// M12-A：客户端上发时声明所在会话（空 = 大厅）；身份仍以注册表盖戳。
+	convID := LobbyConvID
+	if len(f.Payload) > 0 {
+		var req protocol.Typing
+		if err := json.Unmarshal(f.Payload, &req); err == nil {
+			convID = req.ConversationID
+		}
+	}
+	payload, err := json.Marshal(protocol.Typing{
+		UserID: id.UserID, DeviceID: id.DeviceID, ConversationID: convID,
+	})
 	if err != nil {
 		// Typing 是固定简单结构，marshal 实践中不会失败；真失败了把
 		// 错误抛给上层日志，而不是静默吞掉（nilerr）。
 		return fmt.Errorf("marshal typing: %w", err)
 	}
 	out := protocol.Frame{Kind: protocol.FKTyping, Payload: payload}
-	peers := r.reg.OthersPeers(peerID)
-	routerLog.Debug("typing broadcast", "peer", peerID, "device", id.DeviceID, "recipients", len(peers))
+	// M12-A：typing 只发给同会话成员（排除发送者本人）。
+	peers := r.convPeers(convID, peerID)
+	routerLog.Debug("typing broadcast", "peer", peerID, "device", id.DeviceID, "conv", convID, "recipients", len(peers))
 	_ = SendToPeers(ctx, peers, func(ctx context.Context, p Peer) error {
 		return p.Send(ctx, out)
 	})
+	return nil
+}
+
+// ---- M12-A 会话管理 ----
+
+// sendConvSnapshot 给单条连接下发全部群快照（FKConvList）。握手后调用，
+// 与 presence/read 名单同语义：新连接一上来就能渲染会话列表。
+// 大厅不在此列——客户端把空会话 ID 隐式渲染为「大厅」。
+func (r *Router) sendConvSnapshot(ctx context.Context, p Peer) error {
+	snaps := r.convs.ListSnapshots()
+	payload, err := json.Marshal(snaps)
+	if err != nil {
+		return fmt.Errorf("marshal conv snapshot: %w", err)
+	}
+	if err := p.Send(ctx, protocol.Frame{Kind: protocol.FKConvList, Payload: payload}); err != nil {
+		return fmt.Errorf("send conv snapshot: %w", err)
+	}
+	return nil
+}
+
+// broadcastConvEvent 把一个会话变更事件广播给指定用户集合（M12-A）。
+func (r *Router) broadcastConvEvent(ctx context.Context, ev protocol.ConversationEvent, userIDs []string, exclude uint64) {
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return
+	}
+	out := protocol.Frame{Kind: protocol.FKConvEvent, Payload: payload}
+	peers := r.reg.PeersForUsers(userIDs, exclude)
+	routerLog.Debug("conv event broadcast", "conv", ev.Conversation.ID, "event", ev.Event, "recipients", len(peers))
+	_ = SendToPeers(ctx, peers, func(ctx context.Context, p Peer) error {
+		return p.Send(ctx, out)
+	})
+}
+
+// handleConvCreate 处理建群请求（FKConvCreate）。
+//
+// 初始成员 = 创建者 + 请求列表（Create 内去重）。创建成功后把
+// "created" 事件广播给全部初始成员（含创建者，客户端按 ID 去重）。
+func (r *Router) handleConvCreate(ctx context.Context, peerID uint64, p Peer, f protocol.Frame) error {
+	id, ok := r.reg.IdentityOf(peerID)
+	if !ok || id.UserID == "" {
+		return nil
+	}
+	var req protocol.ConversationRequest
+	if len(f.Payload) > 0 {
+		if err := json.Unmarshal(f.Payload, &req); err != nil {
+			r.sendError(ctx, p, protocol.ErrInvalidFrame, "bad conversation create")
+			return nil
+		}
+	}
+	if req.Title == "" {
+		r.sendError(ctx, p, protocol.ErrInvalidFrame, "title required")
+		return nil
+	}
+	memberIDs := append([]string{id.UserID}, req.MemberIDs...)
+	conv, err := r.convs.Create(ctx, req.Title, memberIDs, r.store)
+	if err != nil {
+		r.sendError(ctx, p, protocol.ErrInternal, "create conversation failed")
+		return nil
+	}
+	ev := protocol.ConversationEvent{
+		Conversation: conv, Event: "created", ByUserID: id.UserID,
+		Members: r.convs.Members(conv.ID),
+	}
+	r.broadcastConvEvent(ctx, ev, r.convs.Members(conv.ID), 0)
+	return nil
+}
+
+// handleConvInvite 处理邀请成员请求（FKConvInvite）。
+//
+// 权限：仅群成员可邀请（大厅无需邀请）。成功后广播 "joined" 给群内
+// 成员（含被邀请者），ByUserID 为邀请者。
+func (r *Router) handleConvInvite(ctx context.Context, peerID uint64, p Peer, f protocol.Frame) error {
+	id, ok := r.reg.IdentityOf(peerID)
+	if !ok || id.UserID == "" {
+		return nil
+	}
+	var ref protocol.ConversationRef
+	if len(f.Payload) > 0 {
+		if err := json.Unmarshal(f.Payload, &ref); err != nil {
+			r.sendError(ctx, p, protocol.ErrInvalidFrame, "bad conversation invite")
+			return nil
+		}
+	}
+	if ref.ConversationID == "" || len(ref.UserIDs) == 0 {
+		r.sendError(ctx, p, protocol.ErrInvalidFrame, "conversation id and users required")
+		return nil
+	}
+	if !r.convs.IsMember(ref.ConversationID, id.UserID) {
+		r.sendError(ctx, p, protocol.ErrForbidden, "not a member of this conversation")
+		return nil
+	}
+	added, ok := r.convs.Invite(ctx, ref.ConversationID, ref.UserIDs, r.store)
+	if !ok {
+		r.sendError(ctx, p, protocol.ErrInvalidFrame, "conversation not found")
+		return nil
+	}
+	if len(added) == 0 {
+		return nil // 全已在群里，无变更
+	}
+	cv, _ := r.convs.Get(ref.ConversationID)
+	ev := protocol.ConversationEvent{
+		Conversation: cv, Event: "joined", ByUserID: id.UserID,
+		Members: r.convs.Members(ref.ConversationID),
+	}
+	r.broadcastConvEvent(ctx, ev, r.convs.Members(ref.ConversationID), 0)
+	return nil
+}
+
+// handleConvLeave 处理退群请求（FKConvLeave）。
+//
+// 大厅不可退出；群内成员退群后广播 "left" 给剩余成员。
+func (r *Router) handleConvLeave(ctx context.Context, peerID uint64, p Peer, f protocol.Frame) error {
+	id, ok := r.reg.IdentityOf(peerID)
+	if !ok || id.UserID == "" {
+		return nil
+	}
+	var ref protocol.ConversationRef
+	if len(f.Payload) > 0 {
+		if err := json.Unmarshal(f.Payload, &ref); err != nil {
+			r.sendError(ctx, p, protocol.ErrInvalidFrame, "bad conversation leave")
+			return nil
+		}
+	}
+	if ref.ConversationID == "" {
+		r.sendError(ctx, p, protocol.ErrInvalidFrame, "conversation id required")
+		return nil
+	}
+	if r.convs.IsLobby(ref.ConversationID) {
+		r.sendError(ctx, p, protocol.ErrForbidden, "cannot leave lobby")
+		return nil
+	}
+	if !r.convs.Leave(ctx, ref.ConversationID, id.UserID, r.store) {
+		return nil // 不在群里或会话不存在，静默忽略
+	}
+	cv, _ := r.convs.Get(ref.ConversationID)
+	ev := protocol.ConversationEvent{Conversation: cv, Event: "left", ByUserID: id.UserID}
+	r.broadcastConvEvent(ctx, ev, r.convs.Members(ref.ConversationID), 0)
 	return nil
 }
 
@@ -524,6 +708,27 @@ func (r *Router) broadcast(ctx context.Context, f protocol.Frame) {
 	_ = SendToPeers(ctx, peers, func(ctx context.Context, p Peer) error {
 		return p.Send(ctx, f)
 	})
+}
+
+// broadcastToConv 把一帧广播给某会话的全部成员（M12-A）。
+//
+//   - 大厅（空 conv）：发给所有已握手连接（含发送者，客户端按 ID 去重）；
+//   - 群：发给全部成员的在线设备（成员用户之间天然互斥，无需去重）。
+func (r *Router) broadcastToConv(ctx context.Context, convID string, f protocol.Frame) {
+	peers := r.convPeers(convID, 0)
+	routerLog.Debug("conv broadcast", "kind", f.Kind, "conv", convID, "peer_count", len(peers))
+	_ = SendToPeers(ctx, peers, func(ctx context.Context, p Peer) error {
+		return p.Send(ctx, f)
+	})
+}
+
+// convPeers 返回某会话的投递目标连接集合；excludePeerID 非空时跳过
+// 该连接（消息回显、typing/read 排除发送者本人）。
+func (r *Router) convPeers(convID string, excludePeerID uint64) []Peer {
+	if r.convs.IsLobby(convID) {
+		return r.reg.OthersPeers(excludePeerID)
+	}
+	return r.reg.PeersForUsers(r.convs.Members(convID), excludePeerID)
 }
 
 // deviceIDOf 取连接的设备 ID，优先用注册表里握手后的权威值。

@@ -14,6 +14,11 @@ import (
 //   - Client → Hub：Hello/Message/HistoryReq/Ack/Typing/Read  // CKxxx
 //   - Hub → Client：Deliver/HistoryResp/Presence/Error/Pong   // HKxxx
 //   - 双向：Ping
+//
+// M12（v1.0.0）群聊为破坏性协议变更：新增 FKConvList/FKConvCreate/
+// FKConvInvite/FKConvLeave/FKConvEvent 五帧与 ErrForbidden；Typing 帧
+// 增加 ConversationID 字段（旧客户端 SendTyping 载荷不兼容，需同步升级）。
+// 语义化版本因此 major 跳号到 v1.0.0，不再向后兼容 v0.x 客户端。
 type FrameKind uint8
 
 const (

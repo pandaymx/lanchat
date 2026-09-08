@@ -1,9 +1,10 @@
 # LAN Chat
 
-局域网即时通讯，Go 优先，面向程序员用户，覆盖 TUI / Web / 桌面 / 移动四端。
+局域网即时通讯，Go 优先，面向程序员用户，覆盖 Hub / TUI / Web / 桌面四端。
 
-> 当前状态：**M3 TUI 客户端 M3.1–M3.9 全部完成**，待打 v0.3.0 tag。下一里程碑 M4 Web 端。
-> 完整里程碑定义与子任务拆解见 [`AGENTS.md`](./AGENTS.md) §11。
+> 当前状态：**v1.0.0 已发布**（M12 群聊完成）。支持已读回执、Markdown/代码高亮、
+> 文件传输、多会话群聊、桌面端安装包矩阵。
+> 完整里程碑定义与子任务拆解见 [`AGENTS.md`](./AGENTS.md) §1.1。
 
 ## 架构（极简版）
 
@@ -127,6 +128,11 @@ make lint            # golangci-lint
 | `/help` | 切到 help 视图，列命令与键位 |
 | `/clear` | 清屏（清当前 UI 消息与未读计数） |
 | `/quit` | 退出 TUI |
+| `/rooms` | 列出全部会话（`*` 标当前），含群成员数 |
+| `/join <会话ID\|lobby>` | 切换会话（`lobby` 回大厅） |
+| `/group <群名> [用户...]` | 建群（成功后自动跳转新群） |
+| `/invite <会话ID> [用户...]` | 邀请用户进群 |
+| `/leave` | 退当前群并回大厅 |
 
 键位：`Enter` 发送、`Shift+Enter` 换行、`PgUp/PgDn` 翻页、`End` 回到底部（未读自动归零）。
 
@@ -137,12 +143,16 @@ make lint            # golangci-lint
 | M0 | 工程地基（lefthook/golangci-lint/semantic-release） | ✅ | — |
 | M1 | 接口契约（`pkg/core` + `pkg/protocol` v1 + fake transport） | ✅ | `v0.1.0` |
 | M2 | Hub 服务端（Router/Registry/History + WS Transport + `cmd/hub`） | ✅ | `v0.2.0` + Docker |
-| **M3** | **TUI 客户端（bubbletea/v2 + 自适应 layout + / 命令 + 未读计数 + slog 日志 + i18n）** | **✅** | **`v0.3.0` 待发** |
-| M4 | Web 端 | ⬜ | — |
-| M5 | 多 transport（gRPC / QUIC） | ⬜ | — |
-| M6 | 鉴权（Token） | ⬜ | — |
-| M7 | 群聊 / 频道 | ⬜ | — |
-| M8 | TLS / mTLS | ⬜ | — |
+| **M3** | **TUI 客户端（bubbletea/v2 + 自适应 layout + / 命令 + 未读计数 + slog 日志 + i18n）** | ✅ | `v0.3.0` |
+| M4 | Web 端（templ + HTMX + SSE，goldmark Markdown + chroma 高亮） | ✅ | `v0.5.0` |
+| M5 | 多 transport（gRPC / QUIC） | ⬜ | 未来 |
+| M6 | 鉴权（Token） | ⬜ | 未来 |
+| M7 | 体验打磨（分页 / 在线成员 / 正在输入 / 已读回执） | ✅ | `v0.7.x` |
+| M8 | 已读回执 + Markdown/代码高亮 | ✅ | `v0.8.x` |
+| M9 | 文件传输（TUI /file + Web 上传下载 / 粘贴 / 拖拽） | ✅ | `v0.9.x` |
+| M10 | 桌面端（Wails v3 窗口壳 + 托盘通知 + 安装包） | ✅ | `v0.9.3` |
+| M11 | 安装包矩阵（NSIS / dmg / deb / rpm，含 Windows ARM + redhat） | ✅ | `v0.13.x` |
+| **M12** | **群聊 / 多会话（协议 5 帧 + Web 会话侧栏 + TUI 会话命令）** | **✅** | **`v1.0.0`** |
 
 ## CI
 

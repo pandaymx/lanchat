@@ -11,7 +11,7 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：M10 桌面端已发布（apps/desktop Wails v3 窗口壳 + webapp 本地装配 + CI 原生 runner 桌面 job）；**v0.9.3 已发布**，Release 页 36 资产（6 平台 × 3 端纯 Go 矩阵）+ 桌面端 3 平台「安装包」资产（windows NSIS .exe / darwin .dmg / linux .deb，哈希由 checksums job 聚合为单个 checksums.txt；按用户要求桌面端不再出 zip）。架构决策摘要内嵌于本文档 §12。桌面窗口真机运行验证待做（CI 无图形环境，见 M10 验收标准）。
+**当前阶段**：M12 群聊已完成（hub 协议 5 帧 + 多会话 Web UI + TUI 会话命令），M11 安装包矩阵已补齐（v0.13.x 全平台安装包，含 Windows ARM/redhat rpm），**目标 v1.0.0 发布**。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 
@@ -102,6 +102,27 @@
 | M10.3 | 打包 | release.yml `desktop` job（原生 runner × 平台）产「安装包」：windows NSIS 向导安装器（.github/installer/desktop.nsi，Program Files + 开始菜单 + 卸载注册表）、darwin .dmg（.app bundle + ad-hoc 签名 + /Applications 软链）、linux .deb（Depends 声明 gtk4/webkitgtk 运行时，apt 自动装依赖）；脚本在 .github/installer/ | ✅ 本 commit |
 
 **M10 验收标准**：桌面窗口打开即连 hub（自动发现或手动指定），Web UI 全部功能可用（消息/已读/Markdown/文件）；关闭窗口进程退出、本地 server 随之释放端口；`go build ./...`（无 tag）与 CI 纯 Go 矩阵不含桌面端且全绿；release 产物 `lanchat-desktop-*` 压缩包可下载运行。
+
+**M11 子任务拆解与进度**（安装包矩阵；用户要求：exe 安装包而非 zip、macOS 与 Linux 都要安装包、redhat rpm 与 Windows on ARM 必须给够、GitHub Action 资源管够）：
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M11.1 | 安装包矩阵 | release.yml 重构：desktop job 原生 runner 产 windows NSIS .exe（amd64+arm64）/ darwin .dmg（amd64+arm64）/ linux deb+rpm（amd64+arm64）；CLI 端 6 平台 deb+rpm 安装包 + 压缩包双形态；checksums job 聚合单个 checksums.txt；清理 .sha 尾缀单文件产物 | ✅ v0.13.x |
+| M11.2 | 报毒与图标 | Windows 启动报「特洛伊木马」走方案 1（无签名解释）；托盘/桌面图标程序化生成自建图标（32x32 PNG 注入，非第三方素材） | ✅ |
+
+**M11 验收标准**：每个受支持平台至少有一个「安装包」形态资产（windows .exe NSIS / darwin .dmg / linux .deb+.rpm），Windows ARM 与 redhat rpm 不缺席；Release 页无成堆的 `.sha` 单文件；checksums.txt 单文件聚合全部哈希。
+
+**M12 子任务拆解与进度**（群聊 / 多房间；A=群聊 B=体验 C=收尾，用户 2026-09-08 拍板「A 到 C 开始做完」，完成后发 v1.0.0）：
+
+| # | 主题 | 交付物 | 状态 |
+|---|---|---|---|
+| M12.1 | 群聊协议与路由 | 协议 FKConvList/FKConvCreate/FKConvInvite/FKConvLeave/FKConvEvent + ErrForbidden；Convs 注册表（大厅=空串隐式不落库 + 群显式持久化，conversation_members 表 LibSQL+Memory 双实现）；信任模型复用 typing/read 盖戳（非成员发群消息 → ErrForbidden）；广播按会话收敛（PeersForUsers + broadcastToConv） | ✅ `6252a7e` |
+| M12.2 | client 会话 API | FKConvList/FKConvEvent dispatch；Conversations()/CreateConversation/InviteToConversation/LeaveConversation；ConversationEvent.Members 全量成员；IsLobby 兼容旧 "lobby" 字符串 | ✅ `6252a7e` |
+| M12.3 | Web 多会话 UI | 会话侧栏（大厅+群，成员数）；建群内联表单（成员多选）+ /conversations 建群 303 跳新群；退群入口；SSE 按会话分流（writer 绑 convID，broadcastConv；typing/read/message 帧按 conv 过滤，convMatch 归一化大厅两种写法）；read/upload 上发带 conv 防多 tab 错标 | ✅ `d34109f` |
+| M12.4 | TUI 群聊 | ConversationManager 接口 + Session 实现；/rooms /join /group /invite /leave 五命令；消息按会话过滤（其它会话只提示标题）；status 栏显示当前会话；建群后 FKConvEvent 命中 pendingJoin 自动跳转 | ✅ `561f558` |
+| M12.5 | 收尾 | README/AGENTS 里程碑更新（本文档）；CI 测试门禁；v1.0.0 发版 | 本阶段 |
+
+**M12 验收标准**：任一端可建群/进群/退群；群消息只投给群成员（非成员收到 ErrForbidden 不落库）；Web/TUI 切换会话后历史/typing/已读均按会话隔离；大厅（空串）与旧 "lobby" 字符串语义等价；四端（hub/tui/web/desktop）全量测试绿。
 
 **M3 验收标准（对应方案 §11.5）**：两终端聊天；断网重连自动补发；历史可滚动；代码块可复制。
 

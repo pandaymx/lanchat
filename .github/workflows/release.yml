@@ -120,9 +120,12 @@ jobs:
           - runner: macos-latest
             goos: darwin
             goarch: arm64
-          - runner: macos-13
-            goos: darwin
-            goarch: amd64
+          # macos-13（Intel）公共 runner 2026-09 供给极差（曾排队 9h+ 拖死
+          # 整个 release）。Intel dmg 暂时移除，待 macos-14/15 有 amd64
+          # runner 或自建 runner 后恢复（pkg-macos-dmg.sh 已支持 arch）。
+          # - runner: macos-13
+          #   goos: darwin
+          #   goarch: amd64
     steps:
       - uses: actions/checkout@v4
         with:

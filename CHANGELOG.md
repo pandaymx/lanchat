@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/pandaymx/lanchat/compare/v1.0.0...v1.0.1) (2026-09-08)
+
+### Bug Fixes
+
+* **release:** checksums job 加 checkout（gh download 需 git 上下文） ([5718dd0](https://github.com/pandaymx/lanchat/commit/5718dd04bc829a51a184eefdb581dd6271ca8691))
+
 ## [1.0.0](https://github.com/pandaymx/lanchat/compare/v0.13.1...v1.0.0) (2026-09-08)
 
 ### ⚠ BREAKING CHANGES

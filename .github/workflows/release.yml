@@ -214,9 +214,13 @@ jobs:
           case "${{ matrix.goos }}" in
             windows)
               # choco 装的 NSIS 不进当前 step 的 PATH（PATH 在 runner 启动时
-              # 固化，choco 的 PATH 修改对后续 step 不生效），显式全路径。
-              MAKENSIS="/c/Program Files (x86)/NSIS/makensis.exe" \
-                ./.github/installer/pkg-windows-nsis.sh "${LANCHAT_VERSION#v}" "$arch" desktop
+              # 固化，choco 的 PATH 修改对后续 step 不生效），Windows runner
+              # 显式全路径；Linux runner（woa 交叉组合）直接用 PATH 里
+              # 的 makensis（apt 装的 nsis）。
+              if [ "${{ runner.os }}" = "Windows" ]; then
+                export MAKENSIS="/c/Program Files (x86)/NSIS/makensis.exe"
+              fi
+              ./.github/installer/pkg-windows-nsis.sh "${LANCHAT_VERSION#v}" "$arch" desktop
               ;;
             darwin)
               bash .github/installer/pkg-macos-dmg.sh "${LANCHAT_VERSION#v}" "$arch"

@@ -91,6 +91,17 @@ type Model struct {
 	fileSender   FileSender
 	fileReceiver FileReceiver
 	fileSaved    map[string]string
+
+	// M12-A：群聊。convMgr 由 AttachConversations 注入（Session 实现
+	// ConversationManager）；convID 是当前会话（空串 = 大厅）；convs 是
+	// 会话快照（握手 FKConvList + 增量 FKConvEvent 驱动，见 applyEvent）；
+	// pendingJoin 记录 /group 建群后待跳转的群标题（事件到达后匹配跳转）；
+	// convNotice 是「其它会话有新消息」的一次性提示（status 行显示）。
+	convMgr     ConversationManager
+	convID      string
+	convs       []protocol.ConversationSnapshot
+	pendingJoin string
+	convNotice  string
 }
 
 // typingState 是一条对端「正在输入」记录（M7.3）。
@@ -125,6 +136,7 @@ func New(cfg Config) *Model {
 		typings:      make(map[string]typingState),
 		reads:        make(map[string]uint64),
 		fileSaved:    make(map[string]string),
+		convs:        nil, // 握手后 FKConvList 事件填充
 	}
 	// M8.1：historyView 的已读标记判定由 Model 注入（读 m.reads 快照，
 	// 与其它状态一样只在 Update goroutine 内访问，无需加锁）。
@@ -373,8 +385,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 
 	case eventMsg:
-		m.applyEvent(msg.event)
 		cmds := []tea.Cmd{listenCmd(m.inbox)}
+		if cmd := m.applyEvent(msg.event); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		// M7.3：typing 事件安排一个过期 Tick（事件已 upsert，到点清条目）。
 		if msg.event.Kind == core.EventTyping {
 			cmds = append(cmds, m.typingExpireCmd())
@@ -478,7 +492,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // 为什么用「之前」而非 SetContent 之后的 AtBottom：viewport.SetContent
 // 会按新 maxYOffset clamp yoffset，新消息到来后 AtBottom 的语义会被
 // 「内容增长」污染，必须锚定更新前的状态。
-func (m *Model) applyEvent(e core.Event) {
+// applyEvent 把 core.Event 反映到 Model 状态。返回可选的后续命令
+// （M12-A：EventConversation 命中 pendingJoin 时返回切换会话命令）。
+func (m *Model) applyEvent(e core.Event) tea.Cmd {
 	switch e.Kind {
 	case core.EventState:
 		if e.State != nil {
@@ -491,6 +507,12 @@ func (m *Model) applyEvent(e core.Event) {
 		}
 	case core.EventMessage:
 		if e.Message != nil {
+			// M12-A：只接收当前会话的消息；其它会话的消息提示一次并跳过
+			//（不污染当前视图，切过去后历史里能看到）。
+			if !convMatchTUI(m.convID, e.Message.ConversationID) {
+				m.noteForeignMessage(*e.Message)
+				return nil
+			}
 			wasAtBottom := m.history.AtBottom()
 			m.appendMessage(*e.Message)
 			// 对方消息到达即说明输入结束，立刻撤掉该设备的 typing 指示。
@@ -500,6 +522,19 @@ func (m *Model) applyEvent(e core.Event) {
 				m.unread++
 			}
 			tuiLog.Debug("message applied", "seq", e.Message.ServerSeq, "from", e.Message.SenderUserID, "len", len(e.Message.Body), "unread", m.unread)
+		}
+	case core.EventConversation:
+		// M12-A：会话快照/增量刷新。拉全量快照（FKConvList 全量替换、
+		// FKConvEvent 增量 upsert 后 client 层已一致）；若带会话详情且
+		// pendingJoin 命中（建群后自动跳转），切换到新群。
+		if m.convMgr != nil {
+			m.convs = m.convMgr.Conversations()
+		}
+		if e.Conversation != nil && m.pendingJoin != "" {
+			if convTitle(e.Conversation.Conversation) == m.pendingJoin {
+				m.pendingJoin = ""
+				return m.switchConv(e.Conversation.Conversation.ID)
+			}
 		}
 	case core.EventPresence:
 		if e.Presence != nil {
@@ -515,7 +550,10 @@ func (m *Model) applyEvent(e core.Event) {
 		if e.Read != nil && m.upsertRead(*e.Read) {
 			m.refreshHistory()
 		}
+	default:
+		// 其它事件类型不处理。
 	}
+	return nil
 }
 
 // refreshHistory 把当前 m.messages 推给 historyView。
@@ -597,6 +635,45 @@ func (m *Model) tryCommand(text string) tea.Cmd {
 		return tea.Cmd(tea.Quit)
 	case "/file":
 		return m.fileCmd(fields[1:])
+	case "/rooms":
+		// M12-A：列出全部会话（* 标当前），结果放 status 行。
+		if m.convMgr == nil {
+			m.PublishError(errors.New(m.t("tui.conv.unsupported")))
+			break
+		}
+		m.convNotice = m.renderRooms()
+	case "/join":
+		// M12-A：切换会话。/join lobby 回大厅。
+		if len(fields) < 2 {
+			m.PublishError(errors.New(m.t("tui.conv.join.usage")))
+			break
+		}
+		return m.switchConv(fields[1])
+	case "/group":
+		// M12-A：建群。/group <title> <user...>（不填成员 = 只有自己）。
+		if len(fields) < 2 {
+			m.PublishError(errors.New(m.t("tui.conv.group.usage")))
+			break
+		}
+		if m.convMgr == nil {
+			m.PublishError(errors.New(m.t("tui.conv.unsupported")))
+			break
+		}
+		return m.groupCmd(fields[1], fields[2:])
+	case "/invite":
+		// M12-A：邀请。/invite <convID> <user...>。
+		if len(fields) < 3 {
+			m.PublishError(errors.New(m.t("tui.conv.invite.usage")))
+			break
+		}
+		if m.convMgr == nil {
+			m.PublishError(errors.New(m.t("tui.conv.unsupported")))
+			break
+		}
+		return m.inviteCmd(fields[1], fields[2:])
+	case "/leave":
+		// M12-A：退当前群并回大厅。
+		return m.leaveCmd()
 	}
 	return listenCmd(m.inbox)
 }
@@ -838,6 +915,151 @@ func (m *Model) latestSeq() uint64 {
 
 // Publish 把外部事件投递到 inbox。M3.5+ 由 client bus → adapter 调用。
 // inbox 满时静默丢弃非关键状态；调用方不能依赖 Publish 同步返回。
+// ---- M12-A 群聊 helper ----
+
+// convMatchTUI 判断事件会话与当前会话是否同一会话：大厅两种写法
+// （"" 与旧客户端遗留的 "lobby"）等价，其余要求精确匹配。
+func convMatchTUI(want, got string) bool {
+	if want == got {
+		return true
+	}
+	return (want == "" || want == "lobby") && (got == "" || got == "lobby")
+}
+
+// convTitle 返回会话显示名：空 ID = 大厅。
+func convTitle(c protocol.Conversation) string {
+	if c.ID == "" || c.ID == "lobby" {
+		return "Lobby"
+	}
+	if c.Title != "" {
+		return c.Title
+	}
+	return c.ID
+}
+
+// convTitleByID 从会话快照列表找标题（找不到返回空串）。
+func convTitleByID(convs []protocol.ConversationSnapshot, id string) string {
+	for _, s := range convs {
+		if s.Conversation.ID == id {
+			return convTitle(s.Conversation)
+		}
+	}
+	return ""
+}
+
+// noteForeignMessage 记录「其它会话有新消息」提示（M12-A）。
+// 只记会话标题到 convNotice（status 行显示），不污染当前视图。
+func (m *Model) noteForeignMessage(msg protocol.StoredMessage) {
+	title := convTitleByID(m.convs, msg.ConversationID)
+	if title == "" {
+		title = msg.ConversationID
+	}
+	m.convNotice = m.t("tui.conv.notice") + " " + title
+	tuiLog.Debug("foreign-conv message noted", "conv", msg.ConversationID, "title", title)
+}
+
+// switchConv 切换当前会话（M12-A）：更新 Session 绑定、清空视图、
+// 拉该会话首屏历史。切到大厅传 ""（或 "lobby"）。
+func (m *Model) switchConv(convID string) tea.Cmd {
+	if m.convMgr == nil {
+		m.PublishError(errors.New(m.t("tui.conv.unsupported")))
+		return nil
+	}
+	if convID == "lobby" {
+		convID = ""
+	}
+	m.convID = convID
+	m.convMgr.SetConversation(convID)
+	m.messages = m.messages[:0]
+	m.unread = 0
+	m.olderHasMore = true
+	m.convNotice = ""
+	m.refreshHistory()
+	f, ok := m.sender.(HistoryFetcher)
+	if !ok {
+		return nil
+	}
+	return fetchOlderCmd(f, 0)
+}
+
+// renderRooms 生成 /rooms 会话列表文本（status 行展示）。
+func (m *Model) renderRooms() string {
+	out := m.t("tui.conv.rooms.title") + "\n"
+	for _, s := range m.convs {
+		mark := " "
+		if convMatchTUI(m.convID, s.Conversation.ID) {
+			mark = "*"
+		}
+		title := convTitle(s.Conversation)
+		member := ""
+		if s.Conversation.ID != "" && s.Conversation.ID != "lobby" {
+			member = " [" + itoa(len(s.Members)) + "]"
+		}
+		out += mark + " " + s.Conversation.ID + " " + title + member + "\n"
+	}
+	if len(m.convs) == 0 {
+		out += "(none)\n"
+	}
+	return out
+}
+
+// groupCmd 异步建群（M12-A）：成功后置 pendingJoin，等 hub 广播
+// FKConvEvent created（applyEvent 里匹配标题后自动跳转新群）。
+func (m *Model) groupCmd(title string, members []string) tea.Cmd {
+	mgr := m.convMgr
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if _, err := mgr.CreateConversation(ctx, title, members); err != nil {
+			tuiLog.Error("create conversation failed", "title", title, "err", err)
+			return newErrMsg(fmt.Errorf("create group: %w", err))
+		}
+		m.pendingJoin = title
+		return newSentMsg("/group " + title)
+	}
+}
+
+// inviteCmd 异步邀请（M12-A）：/invite <convID> <user...>。
+func (m *Model) inviteCmd(convID string, users []string) tea.Cmd {
+	mgr := m.convMgr
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if err := mgr.InviteToConversation(ctx, convID, users); err != nil {
+			tuiLog.Error("invite failed", "conv", convID, "err", err)
+			return newErrMsg(fmt.Errorf("invite: %w", err))
+		}
+		return newSentMsg("/invite " + convID)
+	}
+}
+
+// leaveCmd 退当前群（M12-A）：成功后回大厅。
+func (m *Model) leaveCmd() tea.Cmd {
+	if m.convMgr == nil {
+		m.PublishError(errors.New(m.t("tui.conv.unsupported")))
+		return nil
+	}
+	convID := m.convID
+	if convID == "" {
+		m.PublishError(errors.New(m.t("tui.conv.leave.lobby")))
+		return nil
+	}
+	mgr := m.convMgr
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if err := mgr.LeaveConversation(ctx, convID); err != nil {
+			tuiLog.Error("leave failed", "conv", convID, "err", err)
+			return newErrMsg(fmt.Errorf("leave: %w", err))
+		}
+		// 退群成功回大厅：切换由 FKConvEvent left 驱动（EventConversation
+		// 无会话详情时不自动跳），这里直接回大厅更即时。
+		m.pendingJoin = ""
+		m.switchConv("")
+		return newSentMsg("/leave")
+	}
+}
+
 func (m *Model) Publish(e core.Event) {
 	select {
 	case m.inbox <- newEventMsg(e):
@@ -887,6 +1109,17 @@ func (m *Model) View() tea.View {
 // 个 1 行 height，所以不影响布局。
 //
 // M3.9.3：lastError 用 lipgloss 红字渲染，到 errExpireAt 自动清掉。
+// currentConvTitle 返回当前会话显示名（M12-A）。
+func (m *Model) currentConvTitle() string {
+	if m.convID == "" || m.convID == "lobby" {
+		return "Lobby"
+	}
+	if t := convTitleByID(m.convs, m.convID); t != "" && t != m.convID {
+		return t
+	}
+	return m.convID
+}
+
 func (m *Model) renderStatus() string {
 	if m.helpMode {
 		return m.t("tui.help.row")
@@ -897,9 +1130,13 @@ func (m *Model) renderStatus() string {
 	}
 	parts := []string{
 		conn,
+		m.t("tui.status.label.conv") + "=" + m.currentConvTitle(),
 		m.t("tui.status.label.user") + "=" + m.user,
 		m.t("tui.status.label.device") + "=" + m.device,
 		m.t("tui.status.label.hub") + "=" + m.hubURL,
+	}
+	if m.convNotice != "" {
+		parts = append(parts, m.convNotice)
 	}
 	if m.unread > 0 {
 		parts = append(parts, m.t("tui.status.label.unread")+"="+itoa(m.unread))
@@ -1096,6 +1333,16 @@ func (m *Model) ScrollDown(n int) {
 //	go sess.Pump(ctx, m.Publish)
 //	p := tea.NewProgram(m)
 func (m *Model) AttachSender(s Sender) { m.sender = s }
+
+// AttachConversations 注入会话管理能力（M12-A）。Session 实现
+// ConversationManager；不注入时 /rooms//join/group/invite/leave 全部
+// 提示「不可用」而非崩溃。
+func (m *Model) AttachConversations(mgr ConversationManager) {
+	m.convMgr = mgr
+}
+
+// ConversationID 返回当前会话 ID（测试/诊断用）。
+func (m *Model) ConversationID() string { return m.convID }
 
 // Sender returns the currently attached sender (nil if no live link).
 //

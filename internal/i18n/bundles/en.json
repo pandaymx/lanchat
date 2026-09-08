@@ -43,5 +43,13 @@
   "web.conv.members": "%s members",
   "web.group.create": "New group",
   "web.group.title": "Group title",
-  "web.group.leave": "Leave group"
+  "web.group.leave": "Leave group",
+  "tui.status.label.conv": "conv",
+  "tui.conv.unsupported": "conversations unavailable",
+  "tui.conv.notice": "new message in",
+  "tui.conv.rooms.title": "rooms (* = current):",
+  "tui.conv.join.usage": "usage: /join <convID|lobby>",
+  "tui.conv.group.usage": "usage: /group <title> [user...]",
+  "tui.conv.invite.usage": "usage: /invite <convID> [user...]",
+  "tui.conv.leave.lobby": "already in lobby"
 }

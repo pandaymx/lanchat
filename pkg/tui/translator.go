@@ -100,6 +100,7 @@ var enDefaults = map[string]string{
 	"tui.input.help.newline":    "insert newline",
 	"tui.status.online":         "online",
 	"tui.status.offline":        "offline",
+	"tui.status.label.conv":     "conv",
 	"tui.status.label.user":     "user",
 	"tui.status.label.device":   "device",
 	"tui.status.label.hub":      "hub",
@@ -117,10 +118,17 @@ var enDefaults = map[string]string{
 	// M8.1：自己消息被他人读到后的「✓已读」标记（英文同勾号）。
 	"tui.history.read": "✓ read",
 	// M9：附件消息。
-	"tui.file.tag":         "[file]",
-	"tui.file.saved":       "saved %s",
-	"tui.file.usage":       "usage: /file <path>",
-	"tui.file.unsupported": "file transfer not available",
+	"tui.file.tag":          "[file]",
+	"tui.file.saved":        "saved %s",
+	"tui.file.usage":        "usage: /file <path>",
+	"tui.conv.unsupported":  "conversations unavailable (no manager attached)",
+	"tui.conv.notice":       "new message in",
+	"tui.conv.rooms.title":  "rooms (* = current):",
+	"tui.conv.join.usage":   "usage: /join <convID|lobby>",
+	"tui.conv.group.usage":  "usage: /group <title> [user...]",
+	"tui.conv.invite.usage": "usage: /invite <convID> [user...]",
+	"tui.conv.leave.lobby":  "already in lobby",
+	"tui.file.unsupported":  "file transfer not available",
 }
 
 // defaultENTranslator 是 Model.New() 默认注入的 translator，

@@ -49,6 +49,24 @@ type Reader interface {
 	SendRead(ctx context.Context, serverSeq uint64) error
 }
 
+// ConversationManager 是 Sender 的可选能力（M12-A）：会话列表/切换/
+// 建群/邀请/退群。Session 实现该接口；测试 fake 不实现时 Model 静默
+// 禁用对应命令（类型断言失败 no-op + 提示）。
+type ConversationManager interface {
+	// SetConversation 切换当前会话（空串 = 大厅）。会话 ID 由 hub 生成，
+	// 之后本 Session 的 Send/SendTyping/SendRead/FetchHistory 都发往它。
+	SetConversation(convID string)
+	// Conversations 返回本地会话快照（大厅合成排第一，其余按 ID 升序）。
+	Conversations() []protocol.ConversationSnapshot
+	// CreateConversation 建群：hub 生成 ID 后经 FKConvEvent 广播回来，
+	// 本地快照随之更新（不等同步返回）。
+	CreateConversation(ctx context.Context, title string, memberIDs []string) (protocol.Conversation, error)
+	// InviteToConversation 邀请用户进群（须是当前成员）。
+	InviteToConversation(ctx context.Context, convID string, userIDs []string) error
+	// LeaveConversation 退群（群主退群后群保留给剩余成员）。
+	LeaveConversation(ctx context.Context, convID string) error
+}
+
 // Session 是 TUI 与 pkg/client 之间的适配层，负责连接的完整生命周期。
 //
 // 职责边界：
@@ -169,6 +187,30 @@ func (s *Session) SendRead(ctx context.Context, serverSeq uint64) error {
 
 // ConversationID 返回本 Session 绑定的会话 ID。
 func (s *Session) ConversationID() string { return s.convID }
+
+// SetConversation 切换当前会话（M12-A）。空串 = 大厅。
+func (s *Session) SetConversation(convID string) { s.convID = convID }
+
+// Conversations 返回本地会话快照（client 层已合成大厅、按 ID 升序）。
+func (s *Session) Conversations() []protocol.ConversationSnapshot {
+	return s.cli.Conversations()
+}
+
+// CreateConversation 建群（M12-A）。返回的 Conversation 只有本地请求的
+// 字段（ID 为空——hub 生成后经 FKConvEvent 广播，UI 用 /rooms 刷新）。
+func (s *Session) CreateConversation(ctx context.Context, title string, memberIDs []string) (protocol.Conversation, error) {
+	return s.cli.CreateConversation(ctx, title, memberIDs)
+}
+
+// InviteToConversation 邀请用户进群（M12-A）。
+func (s *Session) InviteToConversation(ctx context.Context, convID string, userIDs []string) error {
+	return s.cli.InviteToConversation(ctx, convID, userIDs)
+}
+
+// LeaveConversation 退群（M12-A）。
+func (s *Session) LeaveConversation(ctx context.Context, convID string) error {
+	return s.cli.LeaveConversation(ctx, convID)
+}
 
 // FileSender / FileReceiver 是 Model 可选注入的文件收发能力（M9）。
 // 与 Sender/Typer/Reader 同一模式：Session 实现，测试可注入 fake。

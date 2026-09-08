@@ -43,5 +43,13 @@
   "web.conv.members": "%s 位成员",
   "web.group.create": "新建群",
   "web.group.title": "群名称",
-  "web.group.leave": "退出群"
+  "web.group.leave": "退出群",
+  "tui.status.label.conv": "会话",
+  "tui.conv.unsupported": "会话管理不可用（未接入）",
+  "tui.conv.notice": "新消息：",
+  "tui.conv.rooms.title": "会话（* = 当前）：",
+  "tui.conv.join.usage": "用法：/join <会话ID|lobby>",
+  "tui.conv.group.usage": "用法：/group <群名> [用户...]",
+  "tui.conv.invite.usage": "用法：/invite <会话ID> [用户...]",
+  "tui.conv.leave.lobby": "已在大厅"
 }

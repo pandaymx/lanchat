@@ -224,6 +224,12 @@ jobs:
     env:
       LANCHAT_VERSION: ${{ needs.release.outputs.version }}
     steps:
+      # gh 在无 .git 的目录跑 release download 会报
+      # "failed to run git: not a git repository"（2026-09-08 v1.0.0
+      # checksums job 实测），先 checkout 拿到 repo 上下文。
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Download release assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

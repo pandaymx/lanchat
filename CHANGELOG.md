@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/pandaymx/lanchat/compare/v1.2.0...v1.3.0) (2026-09-09)
+
+### Features
+
+* **web:** v1.3 体验与设计 - QQ 风格强化 强调色设置 语音消息 ([8630c94](https://github.com/pandaymx/lanchat/commit/8630c94291b7dafe2f11305f4fd75074cdb07ac5))
+
 ## [1.2.0](https://github.com/pandaymx/lanchat/compare/v1.1.0...v1.2.0) (2026-09-09)
 
 ### Features

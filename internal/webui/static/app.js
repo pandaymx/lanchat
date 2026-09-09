@@ -389,6 +389,190 @@
     if (!btn) return;
     btn.textContent = currentTheme() === "dark" ? "\u2600\uFE0F" : "\uD83C\uDF19";
   }
+  // ============ v1.3 设置面板（主题 / 强调色）============
+
+  // currentTheme 返回生效中的主题：localStorage（含 "system"）→ data-theme。
+  function storedTheme() {
+    try { return localStorage.getItem("lanchat-theme") || "system"; } catch (e) { return "system"; }
+  }
+  function currentTheme() {
+    var st = storedTheme();
+    if (st === "system") {
+      return matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+    return st;
+  }
+  function currentAccent() {
+    try { return localStorage.getItem("lanchat-accent") || "blue"; } catch (e) { return "blue"; }
+  }
+
+  // syncSettingsUI 按当前存储值高亮设置面板里的选中项。
+  function syncSettingsUI() {
+    var st = storedTheme();
+    var choices = document.querySelectorAll(".theme-choice");
+    for (var i = 0; i < choices.length; i++) {
+      choices[i].classList.toggle("active", choices[i].getAttribute("data-theme-choice") === st);
+    }
+    var acc = currentAccent();
+    var dots = document.querySelectorAll(".accent-dot");
+    for (var j = 0; j < dots.length; j++) {
+      dots[j].classList.toggle("active", dots[j].getAttribute("data-accent-choice") === acc);
+    }
+  }
+
+  // bindSettings 挂设置面板：开关、主题三选、强调色五选、点外关闭。
+  function bindSettings() {
+    var btn = document.getElementById("settings-btn");
+    var panel = document.getElementById("settings-panel");
+    if (!btn || !panel) return;
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      panel.hidden = !panel.hidden;
+      if (!panel.hidden) syncSettingsUI();
+    });
+    document.addEventListener("click", function (e) {
+      if (!panel.hidden && !panel.contains(e.target)) panel.hidden = true;
+    });
+    var themeRow = document.getElementById("theme-row");
+    if (themeRow) {
+      themeRow.addEventListener("click", function (e) {
+        var b = e.target.closest(".theme-choice");
+        if (!b) return;
+        var choice = b.getAttribute("data-theme-choice");
+        try { localStorage.setItem("lanchat-theme", choice); } catch (err) {}
+        var t = choice === "system"
+          ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+          : choice;
+        document.documentElement.setAttribute("data-theme", t);
+        setThemeIcon();
+        syncSettingsUI();
+      });
+    }
+    var accentGrid = document.getElementById("accent-grid");
+    if (accentGrid) {
+      accentGrid.addEventListener("click", function (e) {
+        var b = e.target.closest(".accent-dot");
+        if (!b) return;
+        var acc = b.getAttribute("data-accent-choice");
+        try { localStorage.setItem("lanchat-accent", acc); } catch (err) {}
+        document.documentElement.setAttribute("data-accent", acc);
+        syncSettingsUI();
+      });
+    }
+  }
+
+  // ============ v1.3 语音消息（MediaRecorder → 文件通道）============
+
+  // formatVoiceDur 把秒数格式化成 m:ss。
+  function formatVoiceDur(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+
+  // bindVoiceComposer 挂录音交互：🎤 点击开始 → 录音态（计时 + 取消/发送）
+  // → 停止后把 webm blob 走 uploadFile 通道发出（Mime 由 fetch 自动
+  // 推断 audio/webm，服务端经既有文件管线发 FileRef 消息）。
+  function bindVoiceComposer() {
+    var btn = document.getElementById("voice-btn");
+    var rec = document.getElementById("voice-rec");
+    var timeEl = document.getElementById("voice-rec-time");
+    var stopBtn = document.getElementById("voice-stop");
+    var cancelBtn = document.getElementById("voice-cancel");
+    if (!btn || !rec || !timeEl || !stopBtn || !cancelBtn) return;
+
+    var recorder = null, chunks = [], timer = null, startAt = 0, cancelled = false;
+
+    function showRec() {
+      btn.hidden = true;
+      rec.hidden = false;
+      timeEl.textContent = "0:00";
+    }
+    function hideRec() {
+      btn.hidden = false;
+      rec.hidden = true;
+      if (timer) { clearInterval(timer); timer = null; }
+    }
+    function tick() {
+      timeEl.textContent = formatVoiceDur((Date.now() - startAt) / 1000);
+    }
+
+    btn.addEventListener("click", function () {
+      if (!navigator.mediaDevices || !window.MediaRecorder) {
+        var el = document.getElementById("conn-state");
+        if (el) el.textContent = "✗ voice not supported in this browser";
+        return;
+      }
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        chunks = [];
+        cancelled = false;
+        startAt = Date.now();
+        var mime = (window.MediaRecorder.isTypeSupported("audio/webm;codecs=opus"))
+          ? "audio/webm;codecs=opus" : "audio/webm";
+        recorder = new MediaRecorder(stream, { mimeType: mime });
+        recorder.addEventListener("dataavailable", function (e) {
+          if (e.data && e.data.size) chunks.push(e.data);
+        });
+        recorder.addEventListener("stop", function () {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          if (cancelled || !chunks.length) return;
+          var blob = new Blob(chunks, { type: "audio/webm" });
+          uploadFile(new File([blob], "voice-" + Date.now() + ".webm", { type: "audio/webm" }));
+        });
+        recorder.start();
+        showRec();
+        timer = setInterval(tick, 1000);
+      }).catch(function (err) {
+        var el = document.getElementById("conn-state");
+        if (el) el.textContent = "✗ mic denied: " + err.message;
+      });
+    });
+
+    stopBtn.addEventListener("click", function () {
+      if (recorder && recorder.state !== "inactive") { recorder.stop(); }
+      hideRec();
+    });
+    cancelBtn.addEventListener("click", function () {
+      cancelled = true;
+      if (recorder && recorder.state !== "inactive") { recorder.stop(); }
+      hideRec();
+    });
+  }
+
+  // bindVoicePlayback 委托播放：点击语音条的播放键切换 audio 播放/暂停，
+  // metadata 加载后填时长，播放结束恢复 ▶。
+  function bindVoicePlayback() {
+    document.addEventListener("click", function (e) {
+      var b = e.target.closest(".voice-play");
+      if (!b) return;
+      var box = b.closest(".msg-voice");
+      var au = box && box.querySelector("audio.voice-audio");
+      if (!au) return;
+      if (au.paused) {
+        au.play();
+        b.textContent = "\u23F8"; // ⏸
+      } else {
+        au.pause();
+        b.textContent = "\u25B6"; // ▶
+      }
+    });
+    document.addEventListener("loadedmetadata", function (e) {
+      var au = e.target;
+      if (!au.classList || !au.classList.contains("voice-audio")) return;
+      var box = au.closest(".msg-voice");
+      var dur = box && box.querySelector(".voice-dur");
+      if (dur) dur.textContent = formatVoiceDur(au.duration);
+    }, true);
+    document.addEventListener("ended", function (e) {
+      var au = e.target;
+      if (!au.classList || !au.classList.contains("voice-audio")) return;
+      var box = au.closest(".msg-voice");
+      var b = box && box.querySelector(".voice-play");
+      if (b) b.textContent = "\u25B6";
+    }, true);
+  }
+
   function toggleTheme() {
     var next = currentTheme() === "dark" ? "light" : "dark";
     document.documentElement.setAttribute("data-theme", next);
@@ -400,6 +584,11 @@
     themeBtn.addEventListener("click", toggleTheme);
   }
   setThemeIcon();
+
+  // v1.3：设置面板、语音录音、语音播放委托。
+  bindSettings();
+  bindVoiceComposer();
+  bindVoicePlayback();
 
   // 首屏：列表短到无需滚动或已在底部 → 立即上发已读。
   if (document.readyState === "loading") {

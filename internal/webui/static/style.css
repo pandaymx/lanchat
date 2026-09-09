@@ -826,3 +826,189 @@ body.drag-over::after {
   border-radius: 8px;
   box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
 }
+
+
+/* ================= v1.3 体验与设计 ================= */
+
+/* ---- 强调色（data-accent 覆盖 --accent / --bubble-self）----
+ * blue 为默认（root 已定义），其余四色在这里覆盖。
+ * 双主题共用同一强调色（bubble-self 白字对比度足够）。 */
+html[data-accent="green"]  { --accent: #07c160; --bubble-self: #07c160; }
+html[data-accent="purple"] { --accent: #7c5cff; --bubble-self: #7c5cff; }
+html[data-accent="orange"] { --accent: #ff9500; --bubble-self: #ff9500; }
+html[data-accent="pink"]   { --accent: #ff4d8d; --bubble-self: #ff4d8d; }
+
+/* ---- 时间分隔线（v1.3）---- */
+.day-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 14px 0 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  user-select: none;
+}
+.day-divider::before,
+.day-divider::after {
+  content: "";
+  height: 1px;
+  width: 48px;
+  background: var(--border);
+}
+
+/* ---- 语音消息条（v1.3）---- */
+.msg-voice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 160px;
+}
+.voice-play {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.voice-play:hover { filter: brightness(1.1); }
+.voice-wave {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  flex: 1;
+}
+.voice-wave i {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.85;
+  display: inline-block;
+}
+.voice-dur {
+  font-size: 12px;
+  color: var(--fg-dim);
+  min-width: 34px;
+  text-align: right;
+}
+.voice-audio { display: none; }
+
+/* hidden 属性必须压过 display:flex（UA 样式优先级低于类选择器）。 */
+.voice-rec[hidden],
+.settings-panel[hidden] { display: none; }
+
+/* ---- 录音态（composer 内）---- */
+.composer-voice {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 6px;
+  color: var(--fg);
+}
+.composer-voice:hover { opacity: 0.8; }
+.voice-rec {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 13px;
+}
+.voice-rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: voice-blink 1s ease-in-out infinite;
+}
+@keyframes voice-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+.voice-rec-cancel, .voice-rec-send {
+  border: none;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #fff;
+}
+.voice-rec-cancel { background: rgba(255, 255, 255, 0.22); }
+.voice-rec-send { background: rgba(0, 0, 0, 0.25); font-weight: 600; }
+
+/* ---- 设置面板（v1.3）---- */
+.settings-panel {
+  position: fixed;
+  top: 8px;
+  left: 52px;
+  width: 200px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  padding: 12px;
+  z-index: 50;
+}
+.settings-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 10px;
+}
+.settings-label {
+  font-size: 12px;
+  color: var(--fg-dim);
+  margin: 10px 0 6px;
+}
+.theme-row {
+  display: flex;
+  gap: 6px;
+}
+.theme-choice {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  border-radius: 6px;
+  font-size: 12px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.theme-choice:hover { background: var(--hover); }
+.theme-choice.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.accent-grid {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+}
+.accent-dot {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.accent-dot.blue   { background: #3b7bff; }
+.accent-dot.green  { background: #07c160; }
+.accent-dot.purple { background: #7c5cff; }
+.accent-dot.orange { background: #ff9500; }
+.accent-dot.pink   { background: #ff4d8d; }
+.accent-dot.active { border-color: var(--fg); box-shadow: 0 0 0 2px var(--panel) inset; }
+.accent-dot:hover { transform: scale(1.12); }

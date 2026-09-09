@@ -71,5 +71,21 @@
   "tui.sync.done": "synced %d message(s)",
   "tui.hubs.title": "hub instances:",
   "tui.hubs.none": "no hubs found",
-  "web.export": "Export backup"
+  "web.export": "Export backup",
+  "web.settings": "Settings",
+  "web.theme.label": "Theme",
+  "web.theme.system": "System",
+  "web.theme.light": "Light",
+  "web.theme.dark": "Dark",
+  "web.accent.label": "Accent",
+  "web.accent.blue": "Blue",
+  "web.accent.green": "Green",
+  "web.accent.purple": "Purple",
+  "web.accent.orange": "Orange",
+  "web.accent.pink": "Pink",
+  "web.voice.start": "Voice message",
+  "web.voice.stop": "Send",
+  "web.voice.cancel": "Cancel",
+  "web.day.today": "Today",
+  "web.day.yesterday": "Yesterday"
 }

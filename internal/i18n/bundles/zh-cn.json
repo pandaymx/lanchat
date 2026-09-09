@@ -71,5 +71,21 @@
   "tui.sync.done": "已同步 %d 条消息",
   "tui.hubs.title": "发现的 hub：",
   "tui.hubs.none": "未发现 hub",
-  "web.export": "导出备份"
+  "web.export": "导出备份",
+  "web.settings": "设置",
+  "web.theme.label": "主题",
+  "web.theme.system": "跟随系统",
+  "web.theme.light": "浅色",
+  "web.theme.dark": "深色",
+  "web.accent.label": "强调色",
+  "web.accent.blue": "蓝色",
+  "web.accent.green": "绿色",
+  "web.accent.purple": "紫色",
+  "web.accent.orange": "橙色",
+  "web.accent.pink": "粉色",
+  "web.voice.start": "语音消息",
+  "web.voice.stop": "发送",
+  "web.voice.cancel": "取消",
+  "web.day.today": "今天",
+  "web.day.yesterday": "昨天"
 }

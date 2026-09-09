@@ -27,8 +27,27 @@ templ Home(data HomeData) {
 			<button class="rail-btn active" title={ T(data.Tr, "web.nav.chats") }>💬</button>
 			<button class="rail-btn" title={ T(data.Tr, "web.nav.contacts") }>👥</button>
 			<div class="rail-spacer"></div>
+			<button id="settings-btn" class="rail-btn" title={ T(data.Tr, "web.settings") }>⚙</button>
 			<button id="theme-toggle" class="rail-btn" title={ T(data.Tr, "web.theme.toggle") }>🌙</button>
 		</nav>
+		// ---- v1.3 设置面板（主题 / 强调色）----
+		<div id="settings-panel" class="settings-panel" hidden>
+			<div class="settings-title">{ T(data.Tr, "web.settings") }</div>
+			<div class="settings-label">{ T(data.Tr, "web.theme.label") }</div>
+			<div class="theme-row" id="theme-row">
+				<button type="button" class="theme-choice" data-theme-choice="system">{ T(data.Tr, "web.theme.system") }</button>
+				<button type="button" class="theme-choice" data-theme-choice="light">{ T(data.Tr, "web.theme.light") }</button>
+				<button type="button" class="theme-choice" data-theme-choice="dark">{ T(data.Tr, "web.theme.dark") }</button>
+			</div>
+			<div class="settings-label">{ T(data.Tr, "web.accent.label") }</div>
+			<div class="accent-grid" id="accent-grid">
+				<button type="button" class="accent-dot blue" data-accent-choice="blue" title={ T(data.Tr, "web.accent.blue") }></button>
+				<button type="button" class="accent-dot green" data-accent-choice="green" title={ T(data.Tr, "web.accent.green") }></button>
+				<button type="button" class="accent-dot purple" data-accent-choice="purple" title={ T(data.Tr, "web.accent.purple") }></button>
+				<button type="button" class="accent-dot orange" data-accent-choice="orange" title={ T(data.Tr, "web.accent.orange") }></button>
+				<button type="button" class="accent-dot pink" data-accent-choice="pink" title={ T(data.Tr, "web.accent.pink") }></button>
+			</div>
+		</div>
 		// ---- 会话列表 ----
 		<aside class="sidebar">
 			<div class="sidebar-title">
@@ -126,6 +145,14 @@ templ Home(data HomeData) {
 			// 发，之后 3s 最多一次；空 body 不触发；停止输入后靠对端 TTL 消失。
 			<footer class="composer">
 				<button id="file-btn" type="button" class="composer-file" title={ T(data.Tr, "web.file.upload") }>📎</button>
+				// v1.3 语音消息：点击开始/停止录音，停止后经文件通道自动发送。
+				<button id="voice-btn" type="button" class="composer-voice" title={ T(data.Tr, "web.voice.start") }>🎤</button>
+				<div id="voice-rec" class="voice-rec" hidden>
+					<span class="voice-rec-dot"></span>
+					<span id="voice-rec-time">0:00</span>
+					<button id="voice-cancel" type="button" class="voice-rec-cancel">{ T(data.Tr, "web.voice.cancel") }</button>
+					<button id="voice-stop" type="button" class="voice-rec-send">{ T(data.Tr, "web.voice.stop") }</button>
+				</div>
 				<input id="file-input" type="file" style="display:none"/>
 				<form class="composer-form" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset();window.__clearReply&&window.__clearReply()">
 					<input type="hidden" name="conv" value={ data.ConvID }/>

@@ -21,6 +21,11 @@ package templates
 import "strconv"
 
 templ Message(m MessageView) {
+	// v1.3 时间分隔线：日期变化时在本条前插 <li class="day-divider">。
+	// 由 MarkDayDividers 在列表组装期填充，SSE 单条推送不触发。
+	if m.ShowDivider {
+		<li class="day-divider">{ m.DividerText }</li>
+	}
 	// data-seq / data-self（M8.1）：read SSE 帧到达时 app.js 据此给已读的
 	// 自发消息打勾，无需重渲整条列表。
 	<li id={ "msg-" + m.ID } class={ msgRowClass(m.Self) } data-seq={ m.Seq } data-self={ m.Self } data-conv={ m.ConvID }>
@@ -42,7 +47,20 @@ templ Message(m MessageView) {
 				<div class="msg-body">@templ.Raw(m.HTML)
 </div>
 				if m.HasFile() {
-					if m.IsImage() {
+					if m.IsAudio() {
+						// v1.3 语音消息：播放键 + 波形条 + 时长。audio 元素
+						// 隐藏，app.js 委托播放/暂停并加载时长（metadata）。
+						<div class="msg-voice">
+							<button class="voice-play" type="button" title="play" aria-label="play">▶</button>
+							<div class="voice-wave">
+								for _, h := range VoiceWaveHeights(m.File.FileID) {
+									<i style={ "height:" + strconv.Itoa(h) + "%" }></i>
+								}
+							</div>
+							<span class="voice-dur" data-dur>0:00</span>
+							<audio class="voice-audio" preload="metadata" src={ "/api/files/" + m.File.FileID }></audio>
+						</div>
+					} else if m.IsImage() {
 						<div class="msg-file image">
 							<a href={ "/api/files/" + m.File.FileID } target="_blank" rel="noopener">
 								<img src={ "/api/files/" + m.File.FileID } alt={ m.File.Name } loading="lazy" />

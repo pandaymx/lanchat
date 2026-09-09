@@ -300,6 +300,9 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 		views = append(views, sess.newView(&msgs[i], convID))
 	}
 
+	// v1.3 时间分隔线：按自然日在消息列表上插"今天/昨天/日期"。
+	templates.MarkDayDividers(h.cfg.Translator, views)
+
 	// 会话列表与当前会话信息（标题、是否成员）。
 	convs := templates.NewConvViews(sess.cli.Conversations(), convID)
 	convTitle, convMember := "Lobby", true
@@ -386,6 +389,9 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// v1.3 时间分隔线：分页片段内按自然日分组（片段首条也显示日期）。
+	templates.MarkDayDividers(h.cfg.Translator, views)
+
 	if err := templates.HistoryPage(h.cfg.Translator, views, resp.HasMore, nextBefore).Render(r.Context(), w); err != nil {
 		h.logger.Error("render history page failed", "err", err)
 	}

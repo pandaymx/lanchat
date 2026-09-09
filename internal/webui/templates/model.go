@@ -145,6 +145,14 @@ type MessageView struct {
 	// ConvID 是消息所属会话（v1.1）：SSE 帧渲染的 <li> 带 data-conv，
 	// app.js 据此区分「当前会话」与「其它会话」，做未读计数。
 	ConvID string
+	// AtMs 是消息的 Unix 毫秒时间（v1.3）：列表组装时据此生成
+	// 时间分隔线（ShowDivider/DividerText 由 MarkDayDividers 填充）。
+	AtMs int64
+	// ShowDivider/DividerText（v1.3）：本消息前插入一条日期分隔线
+	// （今天 / 昨天 / 具体日期）。SSE 单条推送恒为 false——新消息
+	// 一定落在"今天"，列表场景才需要分隔。
+	ShowDivider bool
+	DividerText string
 	// Reply 非空表示该消息是引用回复（v1.1）。快照由发送端构造，
 	// 渲染引用块无需再查库；nil = 普通消息。
 	Reply *protocol.ReplyRef
@@ -161,6 +169,74 @@ func (m MessageView) FileSizeText() string {
 // IsImage 报告附件是否为可内联预览的图片（image/*）。
 func (m MessageView) IsImage() bool {
 	return m.File != nil && strings.HasPrefix(m.File.Mime, "image/")
+}
+
+// IsAudio 报告附件是否为语音消息（audio/*，v1.3）：Web 端渲染成
+// 语音条（播放 / 波形 / 时长）。语音与图片共用文件通道（FileRef），
+// 区别仅在 Mime——协议零改动。
+func (m MessageView) IsAudio() bool {
+	return m.File != nil && strings.HasPrefix(m.File.Mime, "audio/")
+}
+
+// VoiceWaveHeights 返回语音条波形条的高度（% of bar max，v1.3）。
+//
+// 由 FileID 哈希出 24 个稳定高度（30-100%），同一语音永远同波形；
+// 纯展示装饰，不含真实音频能量。模板据此渲染 <i> 的 style="height"。
+func VoiceWaveHeights(fid string) []int {
+	out := make([]int, 24)
+	h := uint32(2166136261)
+	for _, b := range []byte(fid) {
+		h ^= uint32(b)
+		h *= 16777619
+	}
+	for i := range out {
+		h = h*1664525 + 1013904223 // LCG 递推，避免全部取低 4 位雷同
+		out[i] = 30 + int(h%71)
+	}
+	return out
+}
+
+// MarkDayDividers 在消息列表上按自然日插入分隔线（v1.3）。
+//
+// 遍历时与上一条比较日期：日期变化则在当前消息置 ShowDivider。
+// 列表必须是升序（时间从旧到新）；SSE 单条推送不调用本函数。
+func MarkDayDividers(tr Translator, views []MessageView) {
+	prevDay := ""
+	for i := range views {
+		day := dayKey(views[i].AtMs)
+		if day != prevDay {
+			views[i].ShowDivider = true
+			views[i].DividerText = dayDividerText(tr, views[i].AtMs)
+			prevDay = day
+		}
+	}
+}
+
+func dayKey(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	return time.UnixMilli(ms).Local().Format("2006-01-02")
+}
+
+// dayDividerText 把 Unix 毫秒转成分隔线文案：今天 / 昨天 / 具体日期。
+// 时间比较用本地时区；非今昨的日期统一显示 ISO 格式（2006-01-02），
+// 语言无关，避免 i18n 格式串与 fmt 动词的耦合（%b 会被 Go 解释成
+// 二进制）。今天/昨天文案来自 i18n（web.day.today / web.day.yesterday）。
+func dayDividerText(tr Translator, ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	t := time.UnixMilli(ms).Local()
+	now := time.Now()
+	switch {
+	case t.Year() == now.Year() && t.YearDay() == now.YearDay():
+		return T(tr, "web.day.today")
+	case t.Add(24*time.Hour).Year() == now.Year() && t.Add(24*time.Hour).YearDay() == now.YearDay():
+		return T(tr, "web.day.yesterday")
+	default:
+		return t.Format("2006-01-02")
+	}
 }
 
 // ReplyPreview 是引用块的展示文案（v1.1）：「sender: 正文预览」。
@@ -234,6 +310,7 @@ func NewMessageView(id string, seq int64, sender, body string, atMs int64, self,
 		Body:       body,
 		HTML:       renderMarkdown(body),
 		AtText:     FormatTime(atMs),
+		AtMs:       atMs,
 		Self:       self,
 		Read:       read,
 		File:       file,

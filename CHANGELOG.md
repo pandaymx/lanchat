@@ -1,3 +1,9 @@
+## [1.4.0](https://github.com/pandaymx/lanchat/compare/v1.3.0...v1.4.0) (2026-09-09)
+
+### Features
+
+* **web:** v1.4 PWA 移动端 - manifest 离线壳 会话抽屉 ([85bc710](https://github.com/pandaymx/lanchat/commit/85bc7106a142d42b98e019dbb406a84dbd25aa7e))
+
 ## [1.3.0](https://github.com/pandaymx/lanchat/compare/v1.2.0...v1.3.0) (2026-09-09)
 
 ### Features

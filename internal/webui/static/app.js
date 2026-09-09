@@ -389,6 +389,44 @@
     if (!btn) return;
     btn.textContent = currentTheme() === "dark" ? "\u2600\uFE0F" : "\uD83C\uDF19";
   }
+  // ============ v1.4 PWA：service worker 注册 ============
+  // 仅 https / localhost（SW 安全要求）。注册失败静默：PWA 是增强，
+  // 不影响普通浏览。
+  function registerSW() {
+    if (!("serviceWorker" in navigator)) return;
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("/sw.js").catch(function () {});
+    });
+  }
+
+  // ============ v1.4 移动端：会话抽屉（≤720px）============
+  // rail 首按钮（💬）在窄屏切换 sidebar 抽屉；遮罩点击关闭。
+  function bindMobileSidebar() {
+    var sidebar = document.querySelector(".sidebar");
+    var mask = document.getElementById("sidebar-mask");
+    var railChat = document.querySelector(".rail .rail-btn");
+    if (!sidebar || !mask || !railChat) return;
+    if (!window.matchMedia("(max-width: 720px)").matches) return;
+
+    function open() {
+      sidebar.classList.add("sidebar-open");
+      mask.hidden = false;
+    }
+    function close() {
+      sidebar.classList.remove("sidebar-open");
+      mask.hidden = true;
+    }
+    railChat.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (sidebar.classList.contains("sidebar-open")) close(); else open();
+    });
+    mask.addEventListener("click", close);
+    // 点会话链接（整页跳转）前先关抽屉，避免跳转动画里残留遮罩。
+    sidebar.addEventListener("click", function (e) {
+      if (e.target.closest("a")) close();
+    });
+  }
+
   // ============ v1.3 设置面板（主题 / 强调色）============
 
   // currentTheme 返回生效中的主题：localStorage（含 "system"）→ data-theme。
@@ -589,6 +627,10 @@
   bindSettings();
   bindVoiceComposer();
   bindVoicePlayback();
+
+  // v1.4：PWA 注册 + 移动端会话抽屉。
+  registerSW();
+  bindMobileSidebar();
 
   // 首屏：列表短到无需滚动或已在底部 → 立即上发已读。
   if (document.readyState === "loading") {

@@ -91,6 +91,8 @@ templ Home(data HomeData) {
 			// 当前账号：user@device（多个设备同时在线时能分辨自己是哪台）。
 			<div class="sidebar-foot">{ data.Meta.Who() }</div>
 		</aside>
+		// v1.4 移动端：会话抽屉的遮罩（≤720px 时显示，点击关闭抽屉）。
+		<div id="sidebar-mask" class="sidebar-mask" hidden></div>
 		// ---- 聊天主区 ----
 		<main class="chat">
 			<header class="chat-head">

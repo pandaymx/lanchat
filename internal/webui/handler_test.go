@@ -258,6 +258,26 @@ func TestHandleHome_RendersShell(t *testing.T) {
 	}
 }
 
+// TestHandleSW 验证根路径 service worker（v1.4 PWA）：
+// embed 的 static/sw.js 能经 handleSW 返回，Content-Type 正确。
+func TestHandleSW(t *testing.T) {
+	h, _ := newTestHandler(t, nil)
+	req := httptest.NewRequest(http.MethodGet, "/sw.js", nil)
+	rec := httptest.NewRecorder()
+
+	h.handleSW(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /sw.js status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/javascript" {
+		t.Fatalf("Content-Type = %q, want application/javascript", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "self.addEventListener") {
+		t.Fatal("sw.js body missing service worker hooks")
+	}
+}
+
 // TestHandleHome_IssuesCookie 验证首次访问（无 cookie）会签发会话 cookie。
 func TestHandleHome_IssuesCookie(t *testing.T) {
 	h, _ := newTestHandler(t, nil)

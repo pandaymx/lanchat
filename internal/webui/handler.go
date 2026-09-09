@@ -156,6 +156,10 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/history", h.handleHistory)
 	// v1.1 消息搜索：GET /search?q=…（可选 &conv= 限定会话）。
 	mux.HandleFunc("/search", h.handleSearch)
+	// v1.4 PWA：service worker 必须在根作用域才能控制全站（/assets/ 下
+	// 的 sw.js 作用域会限于 /assets/）。静态文件由 assets.go 的 embed
+	// 提供，这里直接读 embed 返回。
+	mux.HandleFunc("/sw.js", h.handleSW)
 	mux.HandleFunc("/events", h.handleEvents)
 	// M12-A：建群/退群端点。建群成功 303 跳到新群；退群 303 回大厅。
 	mux.HandleFunc("POST /conversations", h.handleConversationCreate)
@@ -540,6 +544,21 @@ func (h *Handler) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	// 200 + FileRef JSON：前端可即时展示（消息随后经 SSE 回显，幂等）。
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ref)
+}
+
+// handleSW 返回根路径的 service worker（v1.4 PWA）。
+//
+// Content-Type 与缓存策略跟 /assets/ 一致（no-cache：SW 更新靠
+// 注册时的 updateViaCache 默认 + fetch 网络优先，不发版本哈希）。
+func (h *Handler) handleSW(w http.ResponseWriter, _ *http.Request) {
+	b, err := staticFS.ReadFile("static/sw.js")
+	if err != nil {
+		http.Error(w, "sw missing", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/javascript")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(b)
 }
 
 // handleFileDownload 代理 hub → 浏览器的文件下载/内联预览（M9）。

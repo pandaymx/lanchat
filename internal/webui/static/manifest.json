@@ -1,0 +1,24 @@
+{
+  "name": "lanchat - 局域网聊天",
+  "short_name": "lanchat",
+  "description": "局域网点对点聊天（文本 / Markdown / 文件 / 语音）",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#17181c",
+  "theme_color": "#17181c",
+  "icons": [
+    {
+      "src": "/assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

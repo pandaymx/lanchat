@@ -1,3 +1,14 @@
+## [1.5.0](https://github.com/pandaymx/lanchat/compare/v1.4.0...v1.5.0) (2026-09-09)
+
+### Features
+
+* **mobile:** v1.5 Flutter 移动端 - 直连 hub 的 Android 客户端 ([f91bfb9](https://github.com/pandaymx/lanchat/commit/f91bfb9f7d2e5f32bc956ecc6085d6db0359fb0f))
+
+### Bug Fixes
+
+* **release:** checksums job 缩进回归 - mobile 插入时丢失 2 空格 ([2fe6d69](https://github.com/pandaymx/lanchat/commit/2fe6d693e3b4aaf401e29717a4455073209aa361))
+* **release:** 换官方 sumdb/proxy 根治 templ 安装网络抖动 [skip ci] ([0854d59](https://github.com/pandaymx/lanchat/commit/0854d59e0d3613516f2ee1c3208921d452162f7e))
+
 ## [1.4.0](https://github.com/pandaymx/lanchat/compare/v1.3.0...v1.4.0) (2026-09-09)
 
 ### Features

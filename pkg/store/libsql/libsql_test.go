@@ -514,3 +514,70 @@ func TestStore_AppendMessage_ReplyToRoundTrip(t *testing.T) {
 		t.Fatalf("ReplyTo mismatch: %+v", hist[0].ReplyTo)
 	}
 }
+
+// TestStore_ExportAll 验证 libsql 全量导出（v1.2）：各表数据往返完整。
+func TestStore_ExportAll(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	_ = s.SaveUser(ctx, protocol.User{ID: "u1", Name: "alice", AvatarSeed: "a"})
+	_ = s.SaveDevice(ctx, protocol.Device{ID: "d1", UserID: "u1", Name: "laptop"})
+	_ = s.SaveConversation(ctx, protocol.Conversation{ID: "g1", Kind: "group", Title: "team"})
+	_ = s.SaveConversationMember(ctx, "g1", "u1")
+
+	m := msg(1, "m1", "g1")
+	m.ReplyTo = &protocol.ReplyRef{ID: "m0", SenderUserID: "bob", Body: "原消息"}
+	m.File = &protocol.FileRef{FileID: "f1", Name: "x.png", Size: 3, Mime: "image/png"}
+	_ = s.AppendMessage(ctx, m)
+	_ = s.SetCursor(ctx, "d1", "g1", 1)
+	_ = s.SaveFileMeta(ctx, protocol.FileMeta{FileID: "f1", Name: "x.png", Size: 3, Mime: "image/png", CreatedAt: 2})
+
+	b, err := s.ExportAll(ctx)
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+	if b == nil || b.Schema != protocol.BackupSchema {
+		t.Fatalf("schema = %+v", b)
+	}
+	if len(b.Users) != 1 || b.Users[0].Name != "alice" {
+		t.Errorf("users = %+v", b.Users)
+	}
+	if len(b.Devices) != 1 || b.Devices[0].UserID != "u1" {
+		t.Errorf("devices = %+v", b.Devices)
+	}
+	if len(b.Conversations) != 1 || len(b.Conversations[0].Members) != 1 {
+		t.Errorf("conversations = %+v", b.Conversations)
+	}
+	if len(b.Messages) != 1 {
+		t.Fatalf("messages = %d", len(b.Messages))
+	}
+	got := b.Messages[0]
+	if got.ReplyTo == nil || got.ReplyTo.ID != "m0" {
+		t.Errorf("ReplyTo 导出丢失: %+v", got.ReplyTo)
+	}
+	if got.File == nil || got.File.FileID != "f1" {
+		t.Errorf("File 导出丢失: %+v", got.File)
+	}
+	if len(b.Cursors) != 1 || b.Cursors[0].ServerSeq != 1 {
+		t.Errorf("cursors = %+v", b.Cursors)
+	}
+	if len(b.Files) != 1 || b.Files[0].FileID != "f1" {
+		t.Errorf("files = %+v", b.Files)
+	}
+
+	// 空库：非 nil 的空切片 Backup（JSON 输出稳定）
+	s2 := newTestStore(t)
+	b2, err := s2.ExportAll(ctx)
+	if err != nil {
+		t.Fatalf("empty ExportAll: %v", err)
+	}
+	if b2 == nil {
+		t.Fatalf("empty backup b2 is nil")
+	}
+	if b2.Users == nil {
+		t.Fatalf("empty backup Users is nil (len %d)", len(b2.Users))
+	}
+	if b2.Messages == nil {
+		t.Fatalf("empty backup Messages is nil (len %d)", len(b2.Messages))
+	}
+}

@@ -199,5 +199,10 @@ type Store interface {
 	// 按字面处理：Query 中的 %/_/\ 会被转义，不会展开成通配。
 	SearchMessages(ctx context.Context, query, convID string, limit int) ([]protocol.StoredMessage, error)
 
+	// ExportAll 导出全量数据（v1.2 备份）。返回的 Backup 应包含全部
+	// 用户、设备、会话（含成员）、消息、游标与文件元数据；实现方保证
+	// 返回非 nil 的 Backup（空数据 = 空切片）。
+	ExportAll(ctx context.Context) (*protocol.Backup, error)
+
 	Close() error
 }

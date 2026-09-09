@@ -167,3 +167,29 @@ type ReadCursor struct {
 	ConversationID string `json:"c"`
 	ServerSeq      uint64 `json:"s"`
 }
+
+// BackupSchema 是导出文件（GET /api/export）的 schema 标识（v1.2）。
+// 变更字段时 +1 版本，保证旧备份可识别、新导入器可兼容。
+const BackupSchema = "lanchat.backup.v1"
+
+// ConversationEntry 是导出的一个会话：会话本体 + 成员列表。
+type ConversationEntry struct {
+	Conversation Conversation `json:"conversation"`
+	Members      []string     `json:"members,omitempty"`
+}
+
+// Backup 是 hub 全量数据导出（v1.2 备份导出）。
+//
+// 由 store.ExportAll 组装、GET /api/export 以 JSON 下发。只含结构化
+// 数据；文件 blob（hubfile 目录）不打包进 JSON，导出时附 files 元数据
+// 列表，恢复时按 FileID 重新放回 <filesDir>/<FileID> 即可。
+type Backup struct {
+	Schema        string              `json:"schema"`
+	ExportedAt    int64               `json:"exported_at"`
+	Users         []User              `json:"users,omitempty"`
+	Devices       []Device            `json:"devices,omitempty"`
+	Conversations []ConversationEntry `json:"conversations,omitempty"`
+	Messages      []StoredMessage     `json:"messages,omitempty"`
+	Cursors       []ReadCursor        `json:"cursors,omitempty"`
+	Files         []FileMeta          `json:"files,omitempty"`
+}

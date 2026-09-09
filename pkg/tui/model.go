@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
@@ -206,6 +207,13 @@ const fileDownloadTimeout = 30 * time.Second
 
 // fetchOlderTimeout 是上翻分页请求的硬性上限（M7.1）。
 const fetchOlderTimeout = 10 * time.Second
+
+// v1.2：/export 下载与 /sync 全量同步的异步超时；/hubs 的 mDNS 探测超时。
+const (
+	exportTimeout       = 2 * time.Minute
+	syncTimeout         = 2 * time.Minute
+	hubDiscoveryTimeout = 4 * time.Second
+)
 
 // fetchOlderLimit 是单次上翻拉取的条数，与 web 端「加载更多」同量级。
 const fetchOlderLimit = 50
@@ -422,6 +430,39 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case searchResultMsg:
 		// v1.1：/search 结果写 convNotice（status 行显示，最多 8 条）。
 		m.convNotice = m.renderSearchResults(msg)
+		return m, listenCmd(m.inbox)
+
+	case exportDoneMsg:
+		// v1.2：备份导出结果 → 提示或报错。
+		if msg.err != nil {
+			m.lastError = msg.err
+			m.errExpireAt = time.Now().Add(errExpireDur)
+		} else {
+			m.convNotice = fmt.Sprintf(m.t("tui.export.done"), msg.path)
+		}
+		return m, listenCmd(m.inbox)
+
+	case syncDoneMsg:
+		// v1.2：/sync 结果 → 提示同步条数或报错。
+		if msg.err != nil {
+			m.lastError = msg.err
+			m.errExpireAt = time.Now().Add(errExpireDur)
+		} else {
+			m.convNotice = fmt.Sprintf(m.t("tui.sync.done"), itoa(msg.count))
+		}
+		return m, listenCmd(m.inbox)
+
+	case hubsDoneMsg:
+		// v1.2：/hubs 结果 → convNotice 列实例。
+		if msg.err != nil || len(msg.instances) == 0 {
+			m.convNotice = m.t("tui.hubs.none")
+		} else {
+			out := m.t("tui.hubs.title") + "\n"
+			for _, inst := range msg.instances {
+				out += fmt.Sprintf("  %s  %s (%s)\n", inst.Name, inst.Addr, itoa(inst.Port))
+			}
+			m.convNotice = out
+		}
 		return m, listenCmd(m.inbox)
 
 	case errMsg:
@@ -691,6 +732,15 @@ func (m *Model) tryCommand(text string) tea.Cmd {
 	case "/reply":
 		// v1.1：引用回复 /reply <seq> <text>（可选能力）。
 		return m.replyCmd(fields[1:])
+	case "/export":
+		// v1.2：备份导出 /export <path>（可选能力）。
+		return m.exportCmd(fields[1:])
+	case "/sync":
+		// v1.2：拉全量历史落本地 store /sync（可选能力）。
+		return m.syncCmd()
+	case "/hubs":
+		// v1.2：列出局域网发现的 hub 实例（mDNS）。
+		return m.hubsCmd()
 	}
 	return listenCmd(m.inbox)
 }
@@ -1139,6 +1189,69 @@ func (m *Model) renderSearchResults(msg searchResultMsg) string {
 			conv, formatUnixMilli(hit.CreatedAt, &m.history), hit.SenderUserID, clipRunesTUI(hit.Body, 40))
 	}
 	return out
+}
+
+// exportCmd 处理 /export <path>（v1.2）：Exporter 可选能力断言，
+// 异步下载 hub 备份到本地文件，结果投 exportDoneMsg。
+func (m *Model) exportCmd(args []string) tea.Cmd {
+	if len(args) == 0 {
+		m.PublishError(errors.New(m.t("tui.export.usage")))
+		return listenCmd(m.inbox)
+	}
+	exporter, ok := m.sender.(Exporter)
+	if !ok {
+		m.PublishError(errors.New(m.t("tui.export.unsupported")))
+		return listenCmd(m.inbox)
+	}
+	path := strings.Join(args, " ")
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), exportTimeout)
+		defer cancel()
+		err := exporter.Export(ctx, path)
+		return exportDoneMsg{path: path, err: err}
+	}
+}
+
+// syncCmd 处理 /sync（v1.2）：Syncer 可选能力断言，异步拉全量历史。
+func (m *Model) syncCmd() tea.Cmd {
+	syncer, ok := m.sender.(Syncer)
+	if !ok {
+		m.PublishError(errors.New(m.t("tui.sync.unsupported")))
+		return listenCmd(m.inbox)
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), syncTimeout)
+		defer cancel()
+		count, err := syncer.Sync(ctx)
+		return syncDoneMsg{count: count, err: err}
+	}
+}
+
+// hubsCmd 处理 /hubs（v1.2）：mDNS 发现局域网 hub 实例并列出。
+// 不依赖连接态（断网/未连接也能诊断），失败只提示未发现。
+func (m *Model) hubsCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), hubDiscoveryTimeout)
+		defer cancel()
+		instances, err := discovery.Discover(ctx, hubDiscoveryTimeout)
+		return hubsDoneMsg{instances: instances, err: err}
+	}
+}
+
+// exportDoneMsg / syncDoneMsg / hubsDoneMsg 携带 v1.2 异步命令结果。
+type exportDoneMsg struct {
+	path string
+	err  error
+}
+
+type syncDoneMsg struct {
+	count int
+	err   error
+}
+
+type hubsDoneMsg struct {
+	instances []discovery.Instance
+	err       error
 }
 
 // groupCmd 异步建群（M12-A）：成功后置 pendingJoin，等 hub 广播

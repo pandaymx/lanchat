@@ -124,10 +124,13 @@ func main() {
 		os.Exit(1)
 	}
 	filesAPI := hubapi.NewFilesAPI(fileSvc)
+	// v1.2 备份导出：GET /api/export（与 WS 同端口）。
+	exportAPI := hubapi.NewExportAPI(store)
 	tr := wstransport.New().WithPath(*path)
 	tr = tr.
 		WithHandler("POST /api/files", filesAPI).
-		WithHandler("GET /api/files/{fileID}", filesAPI)
+		WithHandler("GET /api/files/{fileID}", filesAPI).
+		WithHandler("GET /api/export", exportAPI)
 	logger.Info("file service ready", "dir", *filesDir, "maxFileSize", *maxFileSize)
 
 	if *mDNS {

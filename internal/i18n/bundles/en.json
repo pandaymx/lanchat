@@ -62,5 +62,14 @@
   "tui.search.results": "%s: %s result(s)",
   "tui.reply.usage": "usage: /reply <seq> <text>",
   "tui.reply.notfound": "message seq %s not found",
-  "tui.reply.unsupported": "reply not supported by this connection"
+  "tui.reply.unsupported": "reply not supported by this connection",
+  "tui.export.usage": "usage: /export <path>",
+  "tui.export.unsupported": "export not supported by this connection",
+  "tui.export.done": "backup saved to %s",
+  "tui.sync.usage": "usage: /sync",
+  "tui.sync.unsupported": "sync not supported by this connection",
+  "tui.sync.done": "synced %d message(s)",
+  "tui.hubs.title": "hub instances:",
+  "tui.hubs.none": "no hubs found",
+  "web.export": "Export backup"
 }

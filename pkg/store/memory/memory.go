@@ -421,6 +421,78 @@ func (s *MemoryStore) GetFileMeta(_ context.Context, fileID string) (protocol.Fi
 	return m, nil
 }
 
+// ExportAll 导出全量数据（v1.2 备份导出）：遍历内存各表组装 Backup。
+func (s *MemoryStore) ExportAll(_ context.Context) (*protocol.Backup, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, core.ErrClosed
+	}
+	b := &protocol.Backup{
+		Schema:        protocol.BackupSchema,
+		ExportedAt:    time.Now().UnixMilli(),
+		Users:         make([]protocol.User, 0, len(s.users)),
+		Devices:       make([]protocol.Device, 0, len(s.devices)),
+		Conversations: []protocol.ConversationEntry{},
+		Messages:      []protocol.StoredMessage{},
+		Cursors:       []protocol.ReadCursor{},
+		Files:         make([]protocol.FileMeta, 0, len(s.files)),
+	}
+	for _, u := range s.users {
+		b.Users = append(b.Users, u)
+	}
+	for _, d := range s.devices {
+		b.Devices = append(b.Devices, d)
+	}
+	// 会话：按 ID 排序输出（map 遍历无序，排序保证导出确定性）
+	convIDs := make([]string, 0, len(s.conversations))
+	for id := range s.conversations {
+		convIDs = append(convIDs, id)
+	}
+	sort.Strings(convIDs)
+	for _, id := range convIDs {
+		c := s.conversations[id]
+		members := make([]string, 0, len(s.members[id]))
+		for u := range s.members[id] {
+			members = append(members, u)
+		}
+		sort.Strings(members)
+		b.Conversations = append(b.Conversations, protocol.ConversationEntry{
+			Conversation: c,
+			Members:      members,
+		})
+	}
+	// 消息：全量按 ServerSeq 升序（messages 切片本身按 seq 升序，逐 conv 归并）
+	var all []protocol.StoredMessage
+	for _, list := range s.messages {
+		all = append(all, list...)
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].ServerSeq < all[j].ServerSeq })
+	// 空库时 all 是 nil，归一为空切片（JSON 输出稳定）。
+	if all == nil {
+		all = []protocol.StoredMessage{}
+	}
+	b.Messages = all
+	// 游标：按 device/conv 排序
+	cursorKeys := make([]string, 0, len(s.cursors))
+	for k := range s.cursors {
+		cursorKeys = append(cursorKeys, k)
+	}
+	sort.Strings(cursorKeys)
+	for _, k := range cursorKeys {
+		device, conv, _ := strings.Cut(k, "\x00")
+		b.Cursors = append(b.Cursors, protocol.ReadCursor{
+			DeviceID:       device,
+			ConversationID: conv,
+			ServerSeq:      s.cursors[k],
+		})
+	}
+	for _, m := range s.files {
+		b.Files = append(b.Files, m)
+	}
+	return b, nil
+}
+
 // Close 释放资源。重复调用安全。
 func (s *MemoryStore) Close() error {
 	s.mu.Lock()

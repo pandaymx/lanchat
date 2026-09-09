@@ -62,5 +62,14 @@
   "tui.search.results": "%s：共 %s 条结果",
   "tui.reply.usage": "用法：/reply <序号> <内容>",
   "tui.reply.notfound": "未找到序号 %s 的消息",
-  "tui.reply.unsupported": "当前连接不支持引用回复"
+  "tui.reply.unsupported": "当前连接不支持引用回复",
+  "tui.export.usage": "用法：/export <路径>",
+  "tui.export.unsupported": "当前连接不支持导出",
+  "tui.export.done": "备份已保存到 %s",
+  "tui.sync.usage": "用法：/sync",
+  "tui.sync.unsupported": "当前连接不支持同步",
+  "tui.sync.done": "已同步 %d 条消息",
+  "tui.hubs.title": "发现的 hub：",
+  "tui.hubs.none": "未发现 hub",
+  "web.export": "导出备份"
 }

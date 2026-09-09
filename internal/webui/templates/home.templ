@@ -93,6 +93,8 @@ templ Home(data HomeData) {
 				<div id="conn-state" hx-sse="swap:state" hx-swap="innerHTML">
 					@ConnStatus(data.Tr, data.Connected)
 				</div>
+				// v1.2 备份导出：同源直链下载（hub 与 Web 同端口）。
+				<a class="export-link" href="/api/export" download title={ T(data.Tr, "web.export") }>⬇ { T(data.Tr, "web.export") }</a>
 				// M12-A：群聊时显示「退出群」入口（大厅不显示）。
 				if data.ConvMember && data.ConvID != "" {
 					<form class="conv-leave-form" hx-post={ "/conversations/" + data.ConvID + "/leave" } hx-swap="none">
@@ -274,8 +276,9 @@ templ SearchResults(tr Translator, hits []protocol.StoredMessage, q string) {
 			<div class="search-item">
 				<a href={ ConvHref(m.ConversationID) }>
 					<span class="search-sender">{ m.SenderUserID }</span>
-					<span class="search-body">@templ.Raw(highlightEscaped(m.Body, q))
-</span>
+					<span class="search-body">
+						@templ.Raw(highlightEscaped(m.Body, q))
+					</span>
 					<span class="search-time">{ FormatTime(m.CreatedAt) }</span>
 				</a>
 			</div>

@@ -54,6 +54,18 @@ type Searcher interface {
 	Search(ctx context.Context, query string, limit int) ([]protocol.StoredMessage, error)
 }
 
+// Exporter 是 Sender 的可选能力（v1.2）：把 hub 全量备份下载到本地路径。
+// Session 实现该接口；测试 fake 不实现时 Model 静默禁用 /export。
+type Exporter interface {
+	Export(ctx context.Context, path string) error
+}
+
+// Syncer 是 Sender 的可选能力（v1.2）：把当前会话全量历史拉进本地 store
+// （离线可查）。Session 实现该接口；测试 fake 不实现时 Model 静默禁用 /sync。
+type Syncer interface {
+	Sync(ctx context.Context) (int, error)
+}
+
 // Reader 是 Sender 的可选能力（M8.1）：用户已读时向 hub 上发已读回执。
 // 会话绑定 ConversationID，接口只收 ServerSeq；Session 实现该接口，
 // 测试 fake 不实现时 Model 静默禁用（类型断言失败 no-op）。
@@ -177,6 +189,33 @@ func (s *Session) Search(ctx context.Context, query string, limit int) ([]protoc
 		return nil, err
 	}
 	return resp.Hits, nil
+}
+
+// Export 实现 Exporter（v1.2）：把 hub 全量备份下载到 path（HTTP 数据面）。
+func (s *Session) Export(ctx context.Context, path string) error {
+	return s.cli.Export(ctx, path)
+}
+
+// Sync 实现 Syncer（v1.2）：循环 FetchHistory 把当前会话全部历史拉进本地
+// store（分页从最新往旧翻，before 逐页前移直到 hub 说没有更早）。返回
+// 拉取到的消息总数。
+func (s *Session) Sync(ctx context.Context) (int, error) {
+	total := 0
+	before := uint64(0)
+	const pageSize = 500
+	for {
+		msgs, more, err := s.FetchHistory(ctx, before, pageSize)
+		if err != nil {
+			return total, err
+		}
+		total += len(msgs)
+		if len(msgs) == 0 || !more {
+			break
+		}
+		// FetchHistory 升序返回；最旧一条的 seq - 1 是下一页 before。
+		before = msgs[0].ServerSeq - 1
+	}
+	return total, nil
 }
 
 // Send 实现 Sender：把一行文本发往会话。

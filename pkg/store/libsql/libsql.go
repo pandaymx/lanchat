@@ -454,6 +454,136 @@ func (s *Store) RecentMessages(ctx context.Context, limit int) ([]protocol.Store
 	return out, nil
 }
 
+// ExportAll 导出全量数据（v1.2 备份导出）。
+//
+// 直读各表（用户/设备/会话/成员/消息/游标/文件元信息）组装 Backup。
+// 消息按 ServerSeq 升序；会话条目含成员列表；空库返回空切片的 Backup。
+func (s *Store) ExportAll(ctx context.Context) (*protocol.Backup, error) {
+	b := &protocol.Backup{
+		Schema:        protocol.BackupSchema,
+		ExportedAt:    time.Now().UnixMilli(),
+		Users:         []protocol.User{},
+		Devices:       []protocol.Device{},
+		Conversations: []protocol.ConversationEntry{},
+		Messages:      []protocol.StoredMessage{},
+		Cursors:       []protocol.ReadCursor{},
+		Files:         []protocol.FileMeta{},
+	}
+
+	// 用户
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, avatar_seed FROM users ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: export users: %w", err)
+	}
+	for rows.Next() {
+		var u protocol.User
+		if err := rows.Scan(&u.ID, &u.Name, &u.AvatarSeed); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("libsql: export scan user: %w", err)
+		}
+		b.Users = append(b.Users, u)
+	}
+	_ = rows.Close()
+
+	// 设备
+	rows, err = s.db.QueryContext(ctx, `SELECT id, user_id, name FROM devices ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: export devices: %w", err)
+	}
+	for rows.Next() {
+		var d protocol.Device
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Name); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("libsql: export scan device: %w", err)
+		}
+		b.Devices = append(b.Devices, d)
+	}
+	_ = rows.Close()
+
+	// 会话（含成员）。注意 SetMaxOpenConns(1)：必须先把会话行读完整、
+	// 关闭 rows，再逐个查成员，否则嵌套查询会等连接而死锁。
+	var convs []protocol.Conversation
+	convRows, err := s.db.QueryContext(ctx, `SELECT id, kind, title FROM conversations ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: export conversations: %w", err)
+	}
+	for convRows.Next() {
+		var c protocol.Conversation
+		if err := convRows.Scan(&c.ID, &c.Kind, &c.Title); err != nil {
+			_ = convRows.Close()
+			return nil, fmt.Errorf("libsql: export scan conv: %w", err)
+		}
+		convs = append(convs, c)
+	}
+	_ = convRows.Close()
+	for _, c := range convs {
+		members, err := s.ListConversationMembers(ctx, c.ID)
+		if err != nil {
+			return nil, fmt.Errorf("libsql: export members %q: %w", c.ID, err)
+		}
+		b.Conversations = append(b.Conversations, protocol.ConversationEntry{
+			Conversation: c,
+			Members:      members,
+		})
+	}
+
+	// 消息（全量升序）
+	msgRows, err := s.db.QueryContext(ctx,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		        file_id, file_name, file_size, file_mime, reply_to
+		 FROM messages ORDER BY server_seq ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: export messages: %w", err)
+	}
+	msgs, err := scanMessages(msgRows)
+	if err != nil {
+		_ = msgRows.Close()
+		return nil, fmt.Errorf("libsql: export scan messages: %w", err)
+	}
+	_ = msgRows.Close()
+	// 空库时 scanMessages 返回 nil，归一为空切片（JSON 输出稳定）。
+	if msgs == nil {
+		msgs = []protocol.StoredMessage{}
+	}
+	b.Messages = msgs
+
+	// 游标
+	cursorRows, err := s.db.QueryContext(ctx,
+		`SELECT device_id, conv_id, last_seq FROM read_cursors ORDER BY device_id, conv_id`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: export cursors: %w", err)
+	}
+	for cursorRows.Next() {
+		var c protocol.ReadCursor
+		var seq int64
+		if err := cursorRows.Scan(&c.DeviceID, &c.ConversationID, &seq); err != nil {
+			_ = cursorRows.Close()
+			return nil, fmt.Errorf("libsql: export scan cursor: %w", err)
+		}
+		c.ServerSeq = uint64(seq)
+		b.Cursors = append(b.Cursors, c)
+	}
+	_ = cursorRows.Close()
+
+	// 文件元信息
+	fileRows, err := s.db.QueryContext(ctx,
+		`SELECT file_id, name, size, mime, created_at FROM file_meta ORDER BY file_id`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: export files: %w", err)
+	}
+	for fileRows.Next() {
+		var m protocol.FileMeta
+		if err := fileRows.Scan(&m.FileID, &m.Name, &m.Size, &m.Mime, &m.CreatedAt); err != nil {
+			_ = fileRows.Close()
+			return nil, fmt.Errorf("libsql: export scan file: %w", err)
+		}
+		b.Files = append(b.Files, m)
+	}
+	_ = fileRows.Close()
+
+	return b, nil
+}
+
 // SearchMessages 按关键词搜索历史消息（v1.1）。
 //
 // 实现：LIKE '%kw%' 子串匹配（SQLite 默认 ASCII 大小写不敏感，中文按

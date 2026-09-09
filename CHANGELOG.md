@@ -1,3 +1,9 @@
+## [1.5.2](https://github.com/pandaymx/lanchat/compare/v1.5.1...v1.5.2) (2026-09-09)
+
+### Bug Fixes
+
+* **release:** apt 通杀 dl.google.com 源行 + update 容错 根治 Hash mismatch ([c7f9770](https://github.com/pandaymx/lanchat/commit/c7f9770303751453602e08d98c248977c9e81099))
+
 ## [1.5.1](https://github.com/pandaymx/lanchat/compare/v1.5.0...v1.5.1) (2026-09-09)
 
 ### Bug Fixes

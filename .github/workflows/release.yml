@@ -169,8 +169,11 @@ jobs:
       # 构建前必须 templ generate（与 package job 同款 pin）。
       - name: Install templ CLI
         env:
-          GOPROXY: https://goproxy.cn,direct
-          GOSUMDB: sum.golang.google.cn
+          # sum.golang.google.cn 在美国 runner 上不稳定（两次 INSTALL
+          # 因 tile 校验 INTERNAL_ERROR 失败）；github-hosted runner 走
+          # sum.golang.org + proxy.golang.org 才是官方稳定通道。
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
         run: go install github.com/a-h/templ/cmd/templ@v0.3.1020
       - name: Generate templ files
         run: templ generate
@@ -338,8 +341,11 @@ jobs:
       # 版本与 go.mod / ci.yml / check.sh 的 pin 保持一致（0.3.1020）。
       - name: Install templ CLI
         env:
-          GOPROXY: https://goproxy.cn,direct
-          GOSUMDB: sum.golang.google.cn
+          # sum.golang.google.cn 在美国 runner 上不稳定（两次 INSTALL
+          # 因 tile 校验 INTERNAL_ERROR 失败）；github-hosted runner 走
+          # sum.golang.org + proxy.golang.org 才是官方稳定通道。
+          GOPROXY: https://proxy.golang.org,direct
+          GOSUMDB: sum.golang.org
         run: go install github.com/a-h/templ/cmd/templ@v0.3.1020
       - name: Generate templ files
         run: templ generate

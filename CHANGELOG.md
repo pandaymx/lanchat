@@ -1,3 +1,9 @@
+## [1.5.1](https://github.com/pandaymx/lanchat/compare/v1.5.0...v1.5.1) (2026-09-09)
+
+### Bug Fixes
+
+* **release:** apt 前移除 runner 预装 google-chrome 源根治 Hash mismatch ([6931b46](https://github.com/pandaymx/lanchat/commit/6931b463cd6cddf4ad0713e4d85f969bef37cf2f))
+
 ## [1.5.0](https://github.com/pandaymx/lanchat/compare/v1.4.0...v1.5.0) (2026-09-09)
 
 ### Features

@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/pandaymx/lanchat/compare/v1.1.0...v1.2.0) (2026-09-09)
+
+### Features
+
+* **web:** v1.2 离线与数据 - 备份导出 /sync /hubs ([0b14c42](https://github.com/pandaymx/lanchat/commit/0b14c429c699f4b84a7f60d41cfb3cca4b5df6a8))
+
 ## [1.1.0](https://github.com/pandaymx/lanchat/compare/v1.0.4...v1.1.0) (2026-09-09)
 
 ### Features

@@ -147,10 +147,10 @@ jobs:
       - name: Install Linux dependencies
         if: runner.os == 'Linux' && matrix.goarch != 'arm64'
         # rpm 供 rpmbuild 产 .rpm；arm64 runner（ubuntu-24.04-arm）原生 apt 装 arm64 依赖
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev rpm
+        run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list || true && sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev rpm
       - name: Install Linux arm64 dependencies
         if: runner.os == 'Linux' && matrix.goarch == 'arm64' && matrix.goos != 'windows'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev rpm
+        run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list || true && sudo apt-get update && sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev libglib2.0-dev rpm
       # Windows ARM64 交叉编译（ubuntu-latest）：Ubuntu noble 无
       # gcc-mingw-w64-aarch64 包（2026-09-08 apt 实测 E: Unable to locate），
       # 改用 mstorsjo/llvm-mingw 预编译工具链（aarch64 目标，clang 作 CC，
@@ -158,7 +158,7 @@ jobs:
       - name: Install Windows arm64 cross toolchain
         if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
         run: |
-          sudo apt-get update && sudo apt-get install -y nsis
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list || true && sudo apt-get update && sudo apt-get install -y nsis
           curl -sL https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-ubuntu-20.04-x86_64.tar.xz -o /tmp/llvm-mingw.tar.xz
           sudo tar -C /opt -xf /tmp/llvm-mingw.tar.xz
           ls /opt/llvm-mingw*/bin/aarch64-w64-mingw32-clang
@@ -393,7 +393,7 @@ jobs:
       # windows NSIS + linux deb/rpm；darwin 只产压缩包不需要）。
       - name: Install packaging tools
         if: matrix.goos != 'darwin'
-        run: sudo apt-get update && sudo apt-get install -y rpm nsis
+        run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list || true && sudo apt-get update && sudo apt-get install -y rpm nsis
       # 纯 Go + 零 CGO（AGENTS.md §2）：CGO_ENABLED=0 交叉编译无坑。
       # 版本注入与 Makefile LDFLAGS 同款（main.version/commit/date），
       # 值取自 git（describe / rev-parse），与触发方式无关。

@@ -51,5 +51,16 @@
   "tui.conv.join.usage": "usage: /join <convID|lobby>",
   "tui.conv.group.usage": "usage: /group <title> [user...]",
   "tui.conv.invite.usage": "usage: /invite <convID> [user...]",
-  "tui.conv.leave.lobby": "already in lobby"
+  "tui.conv.leave.lobby": "already in lobby",
+  "web.search.placeholder": "Search messages",
+  "web.search.empty": "No results",
+  "web.search.count": "%s result(s)",
+  "web.reply.cancel": "Cancel reply",
+  "tui.search.usage": "usage: /search <keyword>",
+  "tui.search.unsupported": "search not supported by this connection",
+  "tui.search.none": "no results for",
+  "tui.search.results": "%s: %s result(s)",
+  "tui.reply.usage": "usage: /reply <seq> <text>",
+  "tui.reply.notfound": "message seq %s not found",
+  "tui.reply.unsupported": "reply not supported by this connection"
 }

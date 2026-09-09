@@ -19,8 +19,10 @@ package libsql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	// 纯 Go libSQL 驱动（本地模式 = modernc sqlite），匿名注册到 database/sql。
@@ -142,7 +144,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	// messages 附件列（M9）：老库（M8 及以前）的 messages 表没有这些列，
 	// CREATE TABLE IF NOT EXISTS 不会补列；PRAGMA table_info 幂等补加。
 	// 列名来自内部常量表，不拼接任何外部输入，无注入面。
-	for _, col := range []string{"file_id", "file_name", "file_size", "file_mime"} {
+	for _, col := range []string{"file_id", "file_name", "file_size", "file_mime", "reply_to"} {
 		has, err := s.hasColumn(ctx, "messages", col)
 		if err != nil {
 			return err
@@ -353,11 +355,19 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) err
 	if m.File != nil {
 		fileID, fileName, fileSize, fileMime = m.File.FileID, m.File.Name, m.File.Size, m.File.Mime
 	}
+	// v1.1 引用回复：reply_to 列存 ReplyRef 的 JSON；nil 存空串。
+	// 存快照而非 ID：历史补发渲染引用块不需要再查库。
+	replyJSON := ""
+	if m.ReplyTo != nil {
+		if b, err := json.Marshal(m.ReplyTo); err == nil {
+			replyJSON = string(b)
+		}
+	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO messages
 		   (conv_id, id, server_seq, client_nonce, sender_user, sender_device, body, created_at,
-		    file_id, file_name, file_size, file_mime)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		    file_id, file_name, file_size, file_mime, reply_to)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(conv_id, id) DO UPDATE SET
 		   server_seq    = excluded.server_seq,
 		   client_nonce  = excluded.client_nonce,
@@ -368,10 +378,11 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) err
 		   file_id       = excluded.file_id,
 		   file_name     = excluded.file_name,
 		   file_size     = excluded.file_size,
-		   file_mime     = excluded.file_mime`,
+		   file_mime     = excluded.file_mime,
+		   reply_to      = excluded.reply_to`,
 		m.ConversationID, m.ID, int64(m.ServerSeq), m.ClientNonce,
 		m.SenderUserID, m.SenderDeviceID, m.Body, m.CreatedAt,
-		fileID, fileName, fileSize, fileMime)
+		fileID, fileName, fileSize, fileMime, replyJSON)
 	if err != nil {
 		return fmt.Errorf("libsql: append message %q/%q: %w", m.ConversationID, m.ID, err)
 	}
@@ -386,7 +397,7 @@ func (s *Store) History(ctx context.Context, convID string, after uint64, limit 
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
-		        file_id, file_name, file_size, file_mime
+		        file_id, file_name, file_size, file_mime, reply_to
 		 FROM messages
 		 WHERE conv_id = ? AND server_seq > ?
 		 ORDER BY server_seq ASC
@@ -424,7 +435,7 @@ func (s *Store) RecentMessages(ctx context.Context, limit int) ([]protocol.Store
 	// 先 DESC 取最近 N 条，再在 Go 侧反转成升序——补发缓冲要求升序追加。
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
-		        file_id, file_name, file_size, file_mime
+		        file_id, file_name, file_size, file_mime, reply_to
 		 FROM messages
 		 ORDER BY server_seq DESC
 		 LIMIT ?`,
@@ -443,6 +454,49 @@ func (s *Store) RecentMessages(ctx context.Context, limit int) ([]protocol.Store
 	return out, nil
 }
 
+// SearchMessages 按关键词搜索历史消息（v1.1）。
+//
+// 实现：LIKE '%kw%' 子串匹配（SQLite 默认 ASCII 大小写不敏感，中文按
+// 字节串匹配——局域网消息量级下足够）。Query 中的 % _ \\ 会被转义，
+// 用户搜什么就是什么，不会展开成通配符（防"搜 % 出全库"）。
+func (s *Store) SearchMessages(ctx context.Context, query, convID string, limit int) ([]protocol.StoredMessage, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > maxHistoryLimit {
+		limit = 50
+	}
+	esc := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(query)
+	like := "%" + esc + "%"
+	var rows *sql.Rows
+	var err error
+	if convID != "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+			        file_id, file_name, file_size, file_mime, reply_to
+			 FROM messages
+			 WHERE conv_id = ? AND body LIKE ? ESCAPE '\'
+			 ORDER BY server_seq DESC
+			 LIMIT ?`,
+			convID, like, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+			        file_id, file_name, file_size, file_mime, reply_to
+			 FROM messages
+			 WHERE body LIKE ? ESCAPE '\'
+			 ORDER BY server_seq DESC
+			 LIMIT ?`,
+			like, limit)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("libsql: search %q: %w", query, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanMessages(rows)
+}
+
 // scanMessages 消费 rows 到 StoredMessage 切片（升序由 SQL 保证）。
 // M9：读取附件四列，file_id 非空时组装 FileRef（老库该列默认空串）。
 func scanMessages(rows *sql.Rows) ([]protocol.StoredMessage, error) {
@@ -452,17 +506,22 @@ func scanMessages(rows *sql.Rows) ([]protocol.StoredMessage, error) {
 		var seq int64
 		var fileID, fileName, fileMime string
 		var fileSize int64
+		var replyTo string
 		if err := rows.Scan(
 			&m.ID, &m.ClientNonce, &m.ConversationID,
 			&m.SenderUserID, &m.SenderDeviceID, &m.Body,
 			&seq, &m.CreatedAt,
 			&fileID, &fileName, &fileSize, &fileMime,
+			&replyTo,
 		); err != nil {
 			return nil, fmt.Errorf("libsql: scan message: %w", err)
 		}
 		m.ServerSeq = uint64(seq)
 		if fileID != "" {
 			m.File = &protocol.FileRef{FileID: fileID, Name: fileName, Size: fileSize, Mime: fileMime}
+		}
+		if replyTo != "" {
+			_ = json.Unmarshal([]byte(replyTo), &m.ReplyTo) // 坏 JSON 忽略，引用块不渲染
 		}
 		out = append(out, m)
 	}

@@ -193,5 +193,11 @@ type Store interface {
 	// GetFileMeta 按 FileID 读取文件元信息。未命中返回 ErrNotFound。
 	GetFileMeta(ctx context.Context, fileID string) (protocol.FileMeta, error)
 
+	// SearchMessages 按关键词子串匹配（大小写不敏感）搜索历史消息
+	//（v1.1）。convID 为空时搜索全部会话；结果按 ServerSeq 降序
+	//（最新在前），最多 limit 条（<=0 时实现取默认上限）。LIKE 通配符
+	// 按字面处理：Query 中的 %/_/\ 会被转义，不会展开成通配。
+	SearchMessages(ctx context.Context, query, convID string, limit int) ([]protocol.StoredMessage, error)
+
 	Close() error
 }

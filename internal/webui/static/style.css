@@ -660,3 +660,169 @@ body.drag-over::after {
   color: #ff5a5a;
   background: rgba(255, 80, 80, 0.08);
 }
+
+/* ================= v1.1：搜索 / 引用回复 / 未读角标 / lightbox ================= */
+
+/* ---- 消息搜索框与结果面板 ---- */
+.search-box { padding: 6px 10px 4px; }
+.search-box input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 12px;
+  outline: none;
+}
+.search-box input:focus { border-color: var(--accent, #2f6bff); }
+.search-box input::placeholder { color: var(--fg-dim); }
+
+.search-panel {
+  position: absolute;
+  top: 88px;
+  left: 10px;
+  width: 260px;
+  max-height: 340px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  z-index: 40;
+  padding: 6px 0;
+}
+.search-panel .search-count {
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.search-panel .search-empty { padding: 16px 12px; font-size: 12px; color: var(--fg-dim); text-align: center; }
+.search-item a {
+  display: block;
+  padding: 8px 12px;
+  text-decoration: none;
+  color: var(--fg);
+  border-left: 2px solid transparent;
+}
+.search-item a:hover { background: var(--hover); border-left-color: var(--accent, #2f6bff); }
+.search-item .search-sender {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent, #2f6bff);
+  margin-right: 6px;
+}
+.search-item .search-body {
+  display: block;
+  font-size: 12px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 2px 0;
+}
+.search-item .search-body mark { background: rgba(255, 200, 0, 0.35); color: inherit; border-radius: 2px; }
+.search-item .search-time { font-size: 10px; color: var(--fg-dim); }
+
+/* ---- 消息引用块 ---- */
+.msg-reply {
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  background: var(--bg);
+  border-left: 3px solid var(--accent, #2f6bff);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--fg-dim);
+  line-height: 1.45;
+  max-height: 3em;
+  overflow: hidden;
+}
+.msg-reply .msg-reply-who { font-weight: 600; color: var(--fg); margin-right: 6px; }
+.msg-reply .msg-reply-body { white-space: nowrap; }
+
+/* ---- 回复按钮（hover 出现）---- */
+.msg-reply-btn {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+  vertical-align: middle;
+}
+.msg-row:hover .msg-reply-btn { opacity: 1; }
+.msg-reply-btn:hover { color: var(--accent, #2f6bff); }
+
+/* ---- composer 回复条 ---- */
+.reply-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  margin-bottom: 6px;
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.reply-bar-label {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg);
+}
+.reply-bar-cancel {
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+}
+.reply-bar-cancel:hover { color: #ff5a5a; }
+
+/* ---- 会话列表未读角标 ---- */
+.conv-link { position: relative; }
+.unread-badge {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: #ff4d4f;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+/* ---- 图片 lightbox ---- */
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  cursor: zoom-out;
+}
+.lightbox img {
+  max-width: 92vw;
+  max-height: 92vh;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+}

@@ -56,6 +56,12 @@ const (
 	FKPong
 	// FKError Hub → Client：错误通知（含关连接原因）。
 	FKError
+	// FKSearchReq Client → Hub：按关键词搜索历史消息（v1.1）。
+	// 只能加在枚举末尾：已有帧的 uint8 数值是线缆协议的一部分，
+	// 中间插入会让旧客户端把后续帧误解析成别的语义。
+	FKSearchReq
+	// FKSearchResp Hub → Client：搜索结果（v1.1）。
+	FKSearchResp
 )
 
 // String 实现 Stringer，仅用于日志和 CLI 输出，不参与 wire 协议。
@@ -95,6 +101,10 @@ func (k FrameKind) String() string {
 		return "pong"
 	case FKError:
 		return "error"
+	case FKSearchReq:
+		return "search_req"
+	case FKSearchResp:
+		return "search_resp"
 	default:
 		return fmt.Sprintf("frame_kind(%d)", uint8(k))
 	}

@@ -42,6 +42,18 @@ type Typer interface {
 	SendTyping(ctx context.Context) error
 }
 
+// ReplySender 是 Sender 的可选能力（v1.1）：发送引用回复。
+// Session 实现该接口；测试 fake 不实现时 Model 静默禁用 /reply。
+type ReplySender interface {
+	SendReply(ctx context.Context, body string, ref *protocol.ReplyRef) error
+}
+
+// Searcher 是 Sender 的可选能力（v1.1）：按关键词搜索历史消息。
+// Session 实现该接口；测试 fake 不实现时 Model 静默禁用 /search。
+type Searcher interface {
+	Search(ctx context.Context, query string, limit int) ([]protocol.StoredMessage, error)
+}
+
 // Reader 是 Sender 的可选能力（M8.1）：用户已读时向 hub 上发已读回执。
 // 会话绑定 ConversationID，接口只收 ServerSeq；Session 实现该接口，
 // 测试 fake 不实现时 Model 静默禁用（类型断言失败 no-op）。
@@ -150,6 +162,21 @@ func Dial(ctx context.Context, opts DialOptions) (*Session, error) {
 		convID: convID,
 		done:   make(chan struct{}),
 	}, nil
+}
+
+// SendReply 实现 ReplySender（v1.1）：把一条引用回复发给当前会话。
+func (s *Session) SendReply(ctx context.Context, body string, ref *protocol.ReplyRef) error {
+	return s.cli.SendMessage(ctx, s.convID, body, ref)
+}
+
+// Search 实现 Searcher（v1.1）：按关键词搜索（含当前会话限定，
+// convID 为空 = 搜索全部会话）。返回降序命中列表。
+func (s *Session) Search(ctx context.Context, query string, limit int) ([]protocol.StoredMessage, error) {
+	resp, err := s.cli.Search(ctx, query, s.convID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Hits, nil
 }
 
 // Send 实现 Sender：把一行文本发往会话。

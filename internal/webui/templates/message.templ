@@ -23,13 +23,22 @@ import "strconv"
 templ Message(m MessageView) {
 	// data-seq / data-self（M8.1）：read SSE 帧到达时 app.js 据此给已读的
 	// 自发消息打勾，无需重渲整条列表。
-	<li id={ "msg-" + m.ID } class={ msgRowClass(m.Self) } data-seq={ m.Seq } data-self={ m.Self }>
+	<li id={ "msg-" + m.ID } class={ msgRowClass(m.Self) } data-seq={ m.Seq } data-self={ m.Self } data-conv={ m.ConvID }>
 		<span class="avatar" style={ avatarBG(m.SenderUser) }>{ AvatarChar(m.SenderUser) }</span>
 		<div class="msg-main">
 			if !m.Self {
 				<div class="msg-sender">{ m.SenderUser }</div>
 			}
 			<div class="msg-bubble">
+				// v1.1 引用回复：气泡顶部渲染灰色引用块（发送者 + 正文预览）。
+				// 快照来自发送端 ReplyRef，无需查库；坏引用（被删/不存在）
+				// 也照常渲染——局域网轻量模型，不校验引用有效性。
+				if m.Reply != nil {
+					<div class="msg-reply">
+						<span class="msg-reply-who">{ m.Reply.SenderUserID }</span>
+						<span class="msg-reply-body">{ m.ReplyPreview() }</span>
+					</div>
+				}
 				<div class="msg-body">@templ.Raw(m.HTML)
 </div>
 				if m.HasFile() {
@@ -50,12 +59,22 @@ templ Message(m MessageView) {
 					}
 				}
 			</div>
-			// meta 行：时间 + 已读双勾（M8.1，self 且已被其它设备读到）。
+			// meta 行：时间 + 已读双勾（M8.1）+ 回复按钮（v1.1）。
+			// 按钮只带 data 属性、不做行为：app.js 统一委托监听，点击后
+			// 把引用快照填进 composer 的回复条（见 app.js bindReplyButtons）。
 			<div class="msg-meta">
 				{ m.AtText }
 				if m.Self && m.Read {
 					<span class="msg-read">✓✓</span>
 				}
+				<button
+					class="msg-reply-btn"
+					type="button"
+					title={ T(nil, "reply") }
+					data-reply-id={ m.ID }
+					data-reply-sender={ m.SenderUser }
+					data-reply-body={ m.ReplyBodyShort() }
+				>↩</button>
 			</div>
 		</div>
 	</li>

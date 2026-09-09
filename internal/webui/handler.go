@@ -72,7 +72,12 @@ const historyLimit = 50
 //
 // 编译期断言保证 *client.Client 始终满足本接口。
 type Client interface {
-	SendMessage(ctx context.Context, convID, body string) error
+	// SendMessage 发送文本消息；replyTo 可选（v1.1 引用回复），
+	// 传了就在消息上附带 ReplyRef 快照，Hub 原样透传。
+	SendMessage(ctx context.Context, convID, body string, replyTo ...*protocol.ReplyRef) error
+	// Search 按关键词搜索历史消息（v1.1）：convID 为空搜全部会话，
+	// 返回按 ServerSeq 降序的命中列表（hub 侧已做会话权限过滤）。
+	Search(ctx context.Context, query, convID string, limit int) (protocol.SearchResponse, error)
 	Subscribe(buf int) core.Subscription
 	History(ctx context.Context, convID string, after uint64, limit int) ([]protocol.StoredMessage, error)
 	// FetchHistory 向 hub 同步拉取一段历史（before>0 向更早翻页）。
@@ -149,6 +154,8 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/typing", h.handleTyping)
 	mux.HandleFunc("/read", h.handleRead)
 	mux.HandleFunc("/history", h.handleHistory)
+	// v1.1 消息搜索：GET /search?q=…（可选 &conv= 限定会话）。
+	mux.HandleFunc("/search", h.handleSearch)
 	mux.HandleFunc("/events", h.handleEvents)
 	// M12-A：建群/退群端点。建群成功 303 跳到新群；退群 303 回大厅。
 	mux.HandleFunc("POST /conversations", h.handleConversationCreate)
@@ -587,6 +594,17 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// v1.1 引用回复：reply 表单字段是 ReplyRef JSON（app.js 填值）。
+	// 空串 = 普通消息；非空但解析失败 = 坏请求（前端只会在引用有效时填）。
+	var reply *protocol.ReplyRef
+	if raw := r.PostFormValue("reply"); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &reply); err != nil || reply == nil || reply.ID == "" {
+			h.logger.Warn("bad reply payload", "raw", raw)
+			http.Error(w, "bad reply", http.StatusBadRequest)
+			return
+		}
+	}
+
 	sess, err := h.ensureSession(w, r)
 	if err != nil {
 		h.logger.Error("messages: session unavailable", "err", err)
@@ -597,7 +615,7 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	if convID == "" {
 		convID = sess.convID // 兼容不带 conv 的旧表单/直连测试
 	}
-	if err := sess.cli.SendMessage(r.Context(), convID, body); err != nil {
+	if err := sess.cli.SendMessage(r.Context(), convID, body, reply); err != nil {
 		h.logger.Error("send message failed", "conv", convID, "err", err)
 		http.Error(w, "send failed", http.StatusInternalServerError)
 		return
@@ -606,6 +624,42 @@ func (h *Handler) handleMessages(w http.ResponseWriter, r *http.Request) {
 	// 204 No Content：HTMX 收到后不做任何 DOM 替换，输入框由
 	// hx-on::after-request="this.reset()" 清空（见 home.templ）。
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSearch 是消息搜索端点（v1.1）：GET /search?q=…[&conv=…]。
+//
+// 出站走 Client.Search（hub 全量搜 + 会话权限过滤），结果渲染成
+// SearchResults HTML 片段由 app.js 塞进 #search-panel。q 必填非空；
+// conv 可选（限定会话内搜索）。超时/断连返回 503，前端显示错误。
+func (h *Handler) handleSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		http.Error(w, "q is required", http.StatusBadRequest)
+		return
+	}
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		h.logger.Error("search: session unavailable", "err", err)
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	convID := r.URL.Query().Get("conv")
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	resp, err := sess.cli.Search(ctx, q, convID, 50)
+	if err != nil {
+		h.logger.Error("search failed", "q", q, "err", err)
+		http.Error(w, "search failed", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := templates.SearchResults(h.cfg.Translator, resp.Hits, q).Render(ctx, w); err != nil {
+		h.logger.Error("render search results failed", "err", err)
+	}
 }
 
 // handleEvents 是 SSE 长连接端点。

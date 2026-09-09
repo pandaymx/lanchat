@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pandaymx/lanchat/pkg/core"
@@ -211,6 +212,9 @@ func (r *Router) HandleFrame(ctx context.Context, peerID uint64, p Peer, f proto
 
 	case protocol.FKConvLeave:
 		return r.handleConvLeave(ctx, peerID, p, f)
+
+	case protocol.FKSearchReq:
+		return r.handleSearchReq(ctx, peerID, p, f)
 
 	case protocol.FKPing:
 		// 心跳不携带状态，直接回。失败说明连接已死，交给读循环收尾。
@@ -448,6 +452,58 @@ func (r *Router) handleHistoryReq(ctx context.Context, p Peer, f protocol.Frame)
 		Payload: payload,
 	}); err != nil {
 		return fatalf("send history resp: %v", err)
+	}
+	return nil
+}
+
+// handleSearchReq 处理历史搜索请求（FKSearchReq，v1.1）。
+//
+// 权限：大厅（空 conv）全员可见；群搜索结果只保留发起者是成员的群——
+// 先全量搜（store 层不感知会话权限），再按 Convs.IsMember 过滤，避免
+// 非成员通过搜索窥探群消息。结果只回发起连接（per-device，同补发）。
+func (r *Router) handleSearchReq(ctx context.Context, peerID uint64, p Peer, f protocol.Frame) error {
+	id, ok := r.reg.IdentityOf(peerID)
+	if !ok || id.UserID == "" {
+		return nil
+	}
+	var req protocol.SearchRequest
+	if len(f.Payload) > 0 {
+		if err := json.Unmarshal(f.Payload, &req); err != nil {
+			r.sendError(ctx, p, protocol.ErrInvalidFrame, "bad search request")
+			return nil //nolint:nilerr // 错误已由 sendError 帧下发
+		}
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		r.sendError(ctx, p, protocol.ErrInvalidFrame, "query required")
+		return nil //nolint:nilerr // 错误已由 sendError 帧下发
+	}
+	if r.store == nil {
+		r.sendError(ctx, p, protocol.ErrInternal, "search unavailable (no store)")
+		return nil //nolint:nilerr // 错误已由 sendError 帧下发
+	}
+	hits, err := r.store.SearchMessages(ctx, req.Query, req.ConversationID, req.Limit)
+	if err != nil {
+		routerLog.Warn("search failed", "err", err)
+		r.sendError(ctx, p, protocol.ErrInternal, "search failed")
+		return nil //nolint:nilerr // 错误已由 sendError 帧下发
+	}
+	// 会话权限过滤：非成员群的消息剔除。
+	if req.ConversationID == "" {
+		filtered := hits[:0]
+		for _, h := range hits {
+			if r.convs.IsLobby(h.ConversationID) || r.convs.IsMember(h.ConversationID, id.UserID) {
+				filtered = append(filtered, h)
+			}
+		}
+		hits = filtered
+	}
+	payload, err := json.Marshal(protocol.SearchResponse{Hits: hits})
+	if err != nil {
+		//nolint:nilerr // 序列化 SearchResponse 不可能失败
+		return nil
+	}
+	if err := p.Send(ctx, protocol.Frame{Kind: protocol.FKSearchResp, Payload: payload}); err != nil {
+		return fatalf("send search resp: %v", err)
 	}
 	return nil
 }

@@ -20,6 +20,39 @@ type StoredMessage struct {
 	// HTTP 端点（POST/GET /api/files），FileID 由 hub 生成、消息里只带
 	// 引用与展示用元信息；历史补发 / 已读 / 去重全走消息原有管线。
 	File *FileRef `json:"f,omitempty"`
+	// ReplyTo 非空表示该消息是引用回复（v1.1）。快照由发送端构造
+	//（被引用消息的 ID + 发送者 + 正文截断预览），接收端渲染引用块
+	// 无需再查库。Hub 原样透传；旧客户端忽略该字段（向后兼容）。
+	ReplyTo *ReplyRef `json:"r,omitempty"`
+}
+
+// ReplyRef 是引用回复的引用快照（v1.1）。
+//
+// 发送端构造：ID 是被引用消息的服务端 ID；SenderUserID 是被引用消息
+// 的发送者；Body 是被引用消息正文的截断预览（渲染用，不保证全文）。
+// Hub 不校验引用是否存在（局域网信任模型同正文）。
+type ReplyRef struct {
+	ID           string `json:"id"`
+	SenderUserID string `json:"suid"`
+	Body         string `json:"body,omitempty"`
+}
+
+// SearchRequest 是历史搜索请求（FKSearchReq，v1.1）。
+//
+// Query 是关键词（子串匹配，大小写不敏感）；ConversationID 为空表示
+// 搜全部（hub 侧按会话权限收敛：群仅成员可见，大厅全员可见）；
+// Limit<=0 时 hub 取默认上限（50）。
+type SearchRequest struct {
+	Query          string `json:"q"`
+	ConversationID string `json:"conv,omitempty"`
+	Limit          int    `json:"limit,omitempty"`
+}
+
+// SearchResponse 是搜索结果（FKSearchResp，v1.1）。
+//
+// Hits 按 ServerSeq 降序（最新在前）；调用方按 ConversationID 分组渲染。
+type SearchResponse struct {
+	Hits []StoredMessage `json:"hits"`
 }
 
 // FileRef 是消息携带的文件附件引用（M9）。

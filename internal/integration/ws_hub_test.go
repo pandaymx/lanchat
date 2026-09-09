@@ -192,3 +192,81 @@ func mustDecodeMsg(t *testing.T, b []byte) protocol.StoredMessage {
 	}
 	return m
 }
+
+// TestReplyToAndSearch 端到端（v1.1）：引用回复透传 + 消息搜索。
+func TestReplyToAndSearch(t *testing.T) {
+	t.Parallel()
+
+	fx := newHubFixture(t)
+	defer fx.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	alice := dial(t, fx.addr, protocol.Hello{
+		ProtocolVersion: 1,
+		DeviceID:        "alice-laptop",
+		UserID:          "alice",
+	})
+	defer alice.close()
+	alice.awaitReady()
+
+	bob := dial(t, fx.addr, protocol.Hello{
+		ProtocolVersion: 1,
+		DeviceID:        "bob-desktop",
+		UserID:          "bob",
+	})
+	defer bob.close()
+	bob.awaitReady()
+
+	// Alice 发一条带关键词的消息。
+	alice.send(ctx, protocol.FKMessage, protocol.StoredMessage{
+		ID:             "m1",
+		ClientNonce:    "n-1",
+		ConversationID: "",
+		SenderUserID:   "alice",
+		SenderDeviceID: "alice-laptop",
+		Body:           "the bug is at router.go handleSearchReq",
+		CreatedAt:      time.Now().UnixMilli(),
+	})
+	// Bob 收到后引用回复。
+	_ = mustDecodeMsg(t, bob.eventually(protocol.FKDeliver, 10*time.Second, 200*time.Millisecond))
+
+	bob.send(ctx, protocol.FKMessage, protocol.StoredMessage{
+		ID:             "m2",
+		ClientNonce:    "n-2",
+		ConversationID: "",
+		SenderUserID:   "bob",
+		SenderDeviceID: "bob-desktop",
+		Body:           "收到，router.go 我去看",
+		CreatedAt:      time.Now().UnixMilli(),
+		ReplyTo: &protocol.ReplyRef{
+			ID:           "m1",
+			SenderUserID: "alice",
+			Body:         "the bug is at router.go handleSearchReq",
+		},
+	})
+	got := mustDecodeMsg(t, alice.eventually(protocol.FKDeliver, 10*time.Second, 200*time.Millisecond))
+	// alice 可能先收到自己的 m1（回环），轮询到 m2 为止。
+	for got.ID != "m2" {
+		got = mustDecodeMsg(t, alice.eventually(protocol.FKDeliver, 10*time.Second, 200*time.Millisecond))
+	}
+	if got.ReplyTo == nil || got.ReplyTo.ID != "m1" {
+		t.Fatalf("alice: ReplyTo 丢失: %+v", got.ReplyTo)
+	}
+
+	// Alice 搜索 "router.go" → 至少命中两条。
+	alice.send(ctx, protocol.FKSearchReq, protocol.SearchRequest{Query: "router.go", ConversationID: ""})
+	var resp protocol.SearchResponse
+	payload := alice.eventually(protocol.FKSearchResp, 10*time.Second, 200*time.Millisecond)
+	if err := json.Unmarshal(payload, &resp); err != nil {
+		t.Fatalf("unmarshal search resp: %v", err)
+	}
+	if len(resp.Hits) < 2 {
+		t.Fatalf("search hits = %d, want >= 2", len(resp.Hits))
+	}
+	// 降序：m2 在前
+	if resp.Hits[0].ID != "m2" {
+		t.Fatalf("hits[0] = %s, want m2 (desc order)", resp.Hits[0].ID)
+	}
+}

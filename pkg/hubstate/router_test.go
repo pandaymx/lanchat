@@ -666,3 +666,114 @@ func TestRouterNoStore(t *testing.T) {
 		t.Fatal("无 Store 时也应广播")
 	}
 }
+
+// TestRouterSearchScoped 验证搜索权限（v1.1）：跨会话搜索时，
+// 非群成员的消息会被 hub 过滤掉，成员可搜到。
+func TestRouterSearchScoped(t *testing.T) {
+	ctx := context.Background()
+	r, store := setupRouter(t)
+
+	alice, idA := addPeer(t, r, "dev-a", "alice")
+	bob, idB := addPeer(t, r, "dev-b", "bob")
+	carol, idC := addPeer(t, r, "dev-c", "carol")
+
+	// 建群 g1（成员 alice、bob）；carol 不在群里。convID 用 Create 返回值。
+	conv, err := r.Convs().Create(ctx, "g1", []string{"alice", "bob"}, store)
+	if err != nil {
+		t.Fatalf("create conv: %v", err)
+	}
+	g1 := conv.ID
+
+	// bob 在群里发一条带密钥词的消息。
+	msg := protocol.StoredMessage{ID: "m1", ConversationID: g1, SenderUserID: "bob", Body: "secret plan"}
+	if err := r.HandleFrame(ctx, idB, bob, protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg)}); err != nil {
+		t.Fatalf("bob send: %v", err)
+	}
+	if !alice.waitFor(protocol.FKDeliver, 1, time.Second) {
+		t.Fatal("alice 未收到群消息")
+	}
+
+	// alice（成员）跨会话搜索 → 命中群消息。
+	req := protocol.SearchRequest{Query: "secret", ConversationID: ""}
+	if err := r.HandleFrame(ctx, idA, alice, protocol.Frame{Kind: protocol.FKSearchReq, Payload: mustPayload(t, req)}); err != nil {
+		t.Fatalf("alice search: %v", err)
+	}
+	if !alice.waitFor(protocol.FKSearchResp, 1, time.Second) {
+		t.Fatal("alice 未收到 FKSearchResp")
+	}
+	respA := decodeSearchResp(t, alice)
+	if len(respA.Hits) != 1 || respA.Hits[0].ID != "m1" {
+		t.Fatalf("alice hits = %+v, want [m1]", respA.Hits)
+	}
+
+	// carol（非成员）跨会话搜索 → 群消息被过滤。
+	if err := r.HandleFrame(ctx, idC, carol, protocol.Frame{Kind: protocol.FKSearchReq, Payload: mustPayload(t, req)}); err != nil {
+		t.Fatalf("carol search: %v", err)
+	}
+	if !carol.waitFor(protocol.FKSearchResp, 1, time.Second) {
+		t.Fatal("carol 未收到 FKSearchResp")
+	}
+	respC := decodeSearchResp(t, carol)
+	if len(respC.Hits) != 0 {
+		t.Fatalf("carol hits = %+v, want empty (non-member filtered)", respC.Hits)
+	}
+}
+
+// TestRouterReplyToRoundTrip 验证引用回复（v1.1）：ReplyTo 随 FKMessage
+// 透传广播并落库，双方收到一致。
+func TestRouterReplyToRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	r, store := setupRouter(t)
+
+	p1, id1 := addPeer(t, r, "dev-1", "u-1")
+	p2, _ := addPeer(t, r, "dev-2", "u-2")
+
+	msg := protocol.StoredMessage{
+		ID:             "m2",
+		ConversationID: "",
+		SenderUserID:   "u-1",
+		Body:           "收到",
+		ReplyTo: &protocol.ReplyRef{
+			ID:           "m1",
+			SenderUserID: "u-2",
+			Body:         "bug at router.go:464",
+		},
+	}
+	if err := r.HandleFrame(ctx, id1, p1, protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg)}); err != nil {
+		t.Fatalf("HandleFrame: %v", err)
+	}
+	if !p2.waitFor(protocol.FKDeliver, 1, time.Second) {
+		t.Fatal("对方未收到 FKDeliver")
+	}
+	delivered := p2.framesOf(protocol.FKDeliver)
+	var got protocol.StoredMessage
+	if err := json.Unmarshal(delivered[0].Payload, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.ReplyTo == nil || got.ReplyTo.ID != "m1" || got.ReplyTo.Body != "bug at router.go:464" {
+		t.Fatalf("ReplyTo 透传失败: %+v", got.ReplyTo)
+	}
+
+	// 落库往返
+	hist, err := store.History(ctx, "", 0, 10)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(hist) != 1 || hist[0].ReplyTo == nil || hist[0].ReplyTo.ID != "m1" {
+		t.Fatalf("ReplyTo 落库失败: %+v", hist)
+	}
+}
+
+// decodeSearchResp 解出最近一条 FKSearchResp。
+func decodeSearchResp(t *testing.T, p *pipePeer) protocol.SearchResponse {
+	t.Helper()
+	frames := p.framesOf(protocol.FKSearchResp)
+	if len(frames) == 0 {
+		t.Fatal("no FKSearchResp")
+	}
+	var resp protocol.SearchResponse
+	if err := json.Unmarshal(frames[len(frames)-1].Payload, &resp); err != nil {
+		t.Fatalf("unmarshal search resp: %v", err)
+	}
+	return resp
+}

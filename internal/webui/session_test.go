@@ -48,6 +48,15 @@ func (f *fakeTranslator) keys() []string {
 type sendRecord struct {
 	convID string
 	body   string
+	// reply 是引用回复快照（v1.1）；nil = 普通消息。
+	reply *protocol.ReplyRef
+}
+
+// searchRecord 是 Search 调用记录（v1.1）。
+type searchRecord struct {
+	query string
+	conv  string
+	limit int
 }
 
 // stubClient 是 Client 接口的测试替身：记录 SendMessage 入参，
@@ -89,6 +98,12 @@ type stubClient struct {
 
 	// convs 是 Conversations() 快照的预置返回（M12-A 群聊）。
 	convs []protocol.ConversationSnapshot
+
+	// v1.1 搜索：searchHits/searchErr 是 Search 的预置返回，
+	// searchQueries 记录调用入参供断言。
+	searchHits    []protocol.StoredMessage
+	searchErr     error
+	searchQueries []searchRecord
 }
 
 func newStubClient() *stubClient {
@@ -98,14 +113,29 @@ func newStubClient() *stubClient {
 	}
 }
 
-func (s *stubClient) SendMessage(_ context.Context, convID, body string) error {
+func (s *stubClient) SendMessage(_ context.Context, convID, body string, replyTo ...*protocol.ReplyRef) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.sendErr != nil {
 		return s.sendErr
 	}
-	s.sends = append(s.sends, sendRecord{convID: convID, body: body})
+	var reply *protocol.ReplyRef
+	if len(replyTo) > 0 {
+		reply = replyTo[0]
+	}
+	s.sends = append(s.sends, sendRecord{convID: convID, body: body, reply: reply})
 	return nil
+}
+
+// Search 实现 webui Client 接口的搜索（v1.1）：返回预置 hits。
+func (s *stubClient) Search(_ context.Context, query, convID string, limit int) (protocol.SearchResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.searchQueries = append(s.searchQueries, searchRecord{query: query, conv: convID, limit: limit})
+	if s.searchErr != nil {
+		return protocol.SearchResponse{}, s.searchErr
+	}
+	return protocol.SearchResponse{Hits: s.searchHits}, nil
 }
 
 func (s *stubClient) Subscribe(_ int) core.Subscription {

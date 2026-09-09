@@ -12,9 +12,12 @@
 package templates
 
 import (
+	"html"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/pandaymx/lanchat/pkg/protocol"
 )
 
 templ Home(data HomeData) {
@@ -34,6 +37,12 @@ templ Home(data HomeData) {
 				// hx-post /conversations 建群后整页跳到新群。
 				<button id="conv-create-btn" class="conv-create-btn" type="button" title={ T(data.Tr, "web.group.create") }>＋</button>
 			</div>
+			// v1.1 消息搜索：Enter 触发 GET /search?q=…，结果整段 innerHTML
+			// 进 #search-panel（点外部 / Esc 关闭）。交互逻辑见 app.js bindSearch。
+			<div class="search-box">
+				<input id="search-input" type="search" placeholder={ T(data.Tr, "web.search.placeholder") } autocomplete="off"/>
+			</div>
+			<div id="search-panel" class="search-panel" hidden></div>
 			// 会话列表：首屏服务端渲染（带当前高亮）；SSE conversations
 			// 帧整段 innerHTML swap 进 #conv-list（高亮由 app.js 补）。
 			<div id="conv-list" hx-sse="swap:conversations" hx-swap="innerHTML">
@@ -116,8 +125,15 @@ templ Home(data HomeData) {
 			<footer class="composer">
 				<button id="file-btn" type="button" class="composer-file" title={ T(data.Tr, "web.file.upload") }>📎</button>
 				<input id="file-input" type="file" style="display:none"/>
-				<form class="composer-form" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset()">
+				<form class="composer-form" hx-post="/messages" hx-swap="none" hx-on::after-request="this.reset();window.__clearReply&&window.__clearReply()">
 					<input type="hidden" name="conv" value={ data.ConvID }/>
+					// v1.1 引用回复：reply 是 ReplyRef JSON（app.js 填值）；
+					// 空串 = 普通消息。回复条显示「回复 sender: 预览 + ✕」。
+					<input type="hidden" name="reply" id="reply-input" value=""/>
+					<div id="reply-bar" class="reply-bar" hidden>
+						<span class="reply-bar-label"></span>
+						<button type="button" class="reply-bar-cancel" title={ T(data.Tr, "web.reply.cancel") }>✕</button>
+					</div>
 					<textarea
 						name="body"
 						placeholder={ T(data.Tr, "web.composer.placeholder") }
@@ -243,6 +259,41 @@ func convTitle(c ConvView) string {
 		return c.Title
 	}
 	return "Lobby"
+}
+
+// SearchResults 是搜索结果面板片段（v1.1）：GET /search 返回它，
+// app.js 把 HTML 塞进 #search-panel。每条命中是一个跳转链接：
+// 点击整页刷新到该消息所在会话。正文带 <mark> 关键词高亮
+//（服务端转义后替换，杜绝 XSS——见 highlightEscaped）。
+templ SearchResults(tr Translator, hits []protocol.StoredMessage, q string) {
+	if len(hits) == 0 {
+		<div class="search-empty">{ T(tr, "web.search.empty") }</div>
+	} else {
+		<div class="search-count">{ Tf(tr, "web.search.count", strconv.Itoa(len(hits))) }</div>
+		for _, m := range hits {
+			<div class="search-item">
+				<a href={ ConvHref(m.ConversationID) }>
+					<span class="search-sender">{ m.SenderUserID }</span>
+					<span class="search-body">@templ.Raw(highlightEscaped(m.Body, q))
+</span>
+					<span class="search-time">{ FormatTime(m.CreatedAt) }</span>
+				</a>
+			</div>
+		}
+	}
+}
+
+// highlightEscaped 把正文转义后给关键词包 <mark>（v1.1）。
+// 顺序很重要：先 html.EscapeString 把用户正文整体转义（<script> 变成
+// 实体、不可能注入），再把转义后的关键词串包进 <mark>——关键词本身也
+// 是用户输入，同样先转义，因此 <mark> 只会包裹纯文本，不会产生新标签。
+func highlightEscaped(body, q string) string {
+	escBody := html.EscapeString(body)
+	escQ := html.EscapeString(q)
+	if escQ == "" {
+		return escBody
+	}
+	return strings.ReplaceAll(escBody, escQ, "<mark>"+escQ+"</mark>")
 }
 
 // typingVals 构造 typing 上发的 hx-vals JSON：{"conv":"<id>"}。

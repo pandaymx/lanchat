@@ -90,6 +90,8 @@ type Client struct {
 	// 重复追加到界面底部。nil 时（Connect 的 catch-up 补发）走原发布路径。
 	histMu   sync.Mutex
 	histWait chan protocol.HistoryResponse
+	// searchWait 是 Search 的同步等待通道（同一时刻只允许一个在途搜索）。
+	searchWait chan protocol.SearchResponse
 	// historyDone 在 WaitHistory 连接里由 FKHistoryResp 落完 Store 后关闭，
 	// Connect 用它同步等待首屏历史就绪。受 histMu 保护。
 	historyDone chan struct{}
@@ -334,6 +336,23 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 			Kind:  core.EventState,
 			State: &core.StateInfo{Connected: true},
 		})
+
+	case protocol.FKSearchResp:
+		var resp protocol.SearchResponse
+		if err := json.Unmarshal(f.Payload, &resp); err != nil {
+			cliLog.Error("unmarshal FKSearchResp failed", "err", err)
+			return
+		}
+		cliLog.Debug("search resp received", "count", len(resp.Hits))
+		// 搜索结果只交付给等待中的 Search 调用方，不进 Store、不发布事件
+		//（搜索是只读查询；命中消息已在本地/全局 store 中）。
+		c.histMu.Lock()
+		wait := c.searchWait
+		c.searchWait = nil
+		c.histMu.Unlock()
+		if wait != nil {
+			wait <- resp
+		}
 
 	case protocol.FKError:
 		var e protocol.ErrorPayload
@@ -746,7 +765,12 @@ func (c *Client) setLastHistorySeq(seq uint64) {
 
 // SendMessage 发出一条消息。Client 立即返回（不阻塞等回执）。
 // 服务端之后会通过 FKDeliver 回一份，readPump 负责持久化与事件发射。
-func (c *Client) SendMessage(ctx context.Context, convID, body string) error {
+// SendMessage 发送一条文本消息到指定会话（Hub 分配 ServerSeq）。
+//
+// replyTo 是可选的引用快照（v1.1 引用回复）：传了就在消息上附带
+// ReplyTo，Hub 原样透传、接收端渲染引用块。多传只取第一个；
+// 不传则行为与 v1.0 完全一致（向后兼容）。
+func (c *Client) SendMessage(ctx context.Context, convID, body string, replyTo ...*protocol.ReplyRef) error {
 	if c.closed.Load() {
 		return core.ErrClosed
 	}
@@ -760,6 +784,10 @@ func (c *Client) SendMessage(ctx context.Context, convID, body string) error {
 		SenderDeviceID: c.hello.DeviceID,
 		Body:           body,
 		CreatedAt:      time.Now().UnixMilli(),
+	}
+	// v1.1：可选引用回复——发送端构造 ReplyRef 快照，Hub 原样透传。
+	if len(replyTo) > 0 && replyTo[0] != nil && replyTo[0].ID != "" {
+		msg.ReplyTo = replyTo[0]
 	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
@@ -863,6 +891,46 @@ func (c *Client) FetchHistory(ctx context.Context, convID string, after, before 
 		return protocol.HistoryResponse{}, ctx.Err()
 	case <-c.done:
 		return protocol.HistoryResponse{}, core.ErrClosed
+	}
+}
+
+// Search 按关键词搜索历史消息（v1.1）。convID 为空搜索全部会话；
+// 返回按 ServerSeq 降序的命中列表。实现与 FetchHistory 同模式：
+// 发 FKSearchReq 后同步等 FKSearchResp（searchWait 单飞通道）。
+func (c *Client) Search(ctx context.Context, query, convID string, limit int) (protocol.SearchResponse, error) {
+	if c.closed.Load() {
+		return protocol.SearchResponse{}, core.ErrClosed
+	}
+	ch := make(chan protocol.SearchResponse, 1)
+	c.histMu.Lock()
+	if c.searchWait != nil {
+		c.histMu.Unlock()
+		return protocol.SearchResponse{}, fmt.Errorf("search already in flight")
+	}
+	c.searchWait = ch
+	c.histMu.Unlock()
+	defer func() {
+		c.histMu.Lock()
+		c.searchWait = nil
+		c.histMu.Unlock()
+	}()
+
+	req := protocol.SearchRequest{Query: query, ConversationID: convID, Limit: limit}
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return protocol.SearchResponse{}, fmt.Errorf("marshal search req: %w", err)
+	}
+	cliLog.Debug("send search req", "q", query, "conv", convID, "limit", limit)
+	if err := c.conn.Send(ctx, protocol.Frame{Kind: protocol.FKSearchReq, Payload: payload}); err != nil {
+		return protocol.SearchResponse{}, fmt.Errorf("send search req: %w", err)
+	}
+	select {
+	case resp := <-ch:
+		return resp, nil
+	case <-ctx.Done():
+		return protocol.SearchResponse{}, ctx.Err()
+	case <-c.done:
+		return protocol.SearchResponse{}, core.ErrClosed
 	}
 }
 

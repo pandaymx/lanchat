@@ -142,6 +142,12 @@ type MessageView struct {
 	// File 是附件引用（M9）；nil 表示纯文本消息。模板据此渲染
 	// 文件卡片 / 图片内联预览，下载链接指向 web 自身的代理端点。
 	File *protocol.FileRef
+	// ConvID 是消息所属会话（v1.1）：SSE 帧渲染的 <li> 带 data-conv，
+	// app.js 据此区分「当前会话」与「其它会话」，做未读计数。
+	ConvID string
+	// Reply 非空表示该消息是引用回复（v1.1）。快照由发送端构造，
+	// 渲染引用块无需再查库；nil = 普通消息。
+	Reply *protocol.ReplyRef
 }
 
 // HasFile 报告本消息是否带附件（模板可读性 helper）。
@@ -155,6 +161,39 @@ func (m MessageView) FileSizeText() string {
 // IsImage 报告附件是否为可内联预览的图片（image/*）。
 func (m MessageView) IsImage() bool {
 	return m.File != nil && strings.HasPrefix(m.File.Mime, "image/")
+}
+
+// ReplyPreview 是引用块的展示文案（v1.1）：「sender: 正文预览」。
+// 预览截断到 60 runes 且把换行压成空格——引用块必须是单行小字，
+// 多行正文会把气泡撑变形。
+func (m MessageView) ReplyPreview() string {
+	if m.Reply == nil {
+		return ""
+	}
+	return m.Reply.SenderUserID + ": " + clipRunes(m.Reply.Body, 60)
+}
+
+// ReplyBodyShort 是回复按钮 data-reply-body 的短正文（v1.1）：
+// 发送端点击「回复」时 app.js 读到它构造 ReplyRef 快照。截断到
+// 80 runes，换行压空格，保证 data 属性是单行可转义文本。
+func (m MessageView) ReplyBodyShort() string {
+	if m.Reply == nil {
+		return clipRunes(m.Body, 80)
+	}
+	return clipRunes(m.Reply.Body, 80)
+}
+
+// clipRunes 把 s 截断到最多 n 个 rune，并把 CR/LF/Tab 统一压成空格。
+func clipRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	flat := strings.Join(strings.Fields(s), " ")
+	r := []rune(flat)
+	if len(r) <= n {
+		return flat
+	}
+	return string(r[:n]) + "…"
 }
 
 // formatBytes 1024 进制人读尺寸。

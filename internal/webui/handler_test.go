@@ -747,7 +747,7 @@ func TestHandleEvents_DeliversMessageFrame(t *testing.T) {
 	for _, want := range []string{
 		"event: message\n",
 		"id: 7\n",
-		`data: <li id="msg-m1" class="msg-row" data-seq="7" data-self="false">`,
+		`data: <li id="msg-m1" class="msg-row" data-seq="7" data-self="false" data-conv=`,
 		"bob",
 		"hi <!-- raw HTML omitted -->x", // goldmark 剥离原始 HTML
 	} {

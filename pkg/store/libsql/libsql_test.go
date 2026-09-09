@@ -411,3 +411,106 @@ func TestStore_MessageWithFileRef_RoundTrip(t *testing.T) {
 		t.Errorf("text message File = %+v, want nil", msgs2[1].File)
 	}
 }
+
+// TestStore_SearchMessages 验证 LIKE 通配符转义、降序排序与会话限定（v1.1）。
+func TestStore_SearchMessages(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	msgs := []struct {
+		id   string
+		body string
+		conv string
+	}{
+		{"m1", "hello world", "lobby"},
+		{"m2", "hello alice 100% ready", "lobby"},
+		{"m3", "under_score and 100% done", "g1"},
+		{"m4", "HELLO UPPER", "g1"},
+	}
+	ids := []string{"m1", "m2", "m3", "m4"}
+	for i, mm := range msgs {
+		m := msg(uint64(i+1), ids[i], mm.conv)
+		m.Body = mm.body
+		if err := s.AppendMessage(ctx, m); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+
+	// 基本子串 + 大小写不敏感 + 降序
+	hits, err := s.SearchMessages(ctx, "hello", "", 0)
+	if err != nil {
+		t.Fatalf("search hello: %v", err)
+	}
+	if len(hits) != 3 {
+		t.Fatalf("hello hits = %d, want 3", len(hits))
+	}
+	// 降序：m4(HELLO) 在 m2、m1 之前
+	if hits[0].ID != "m4" || hits[1].ID != "m2" || hits[2].ID != "m1" {
+		t.Errorf("hello order = %s %s %s, want m4 m2 m1", hits[0].ID, hits[1].ID, hits[2].ID)
+	}
+
+	// % 转义：100% 只能命中字面含 100% 的两条，不会展开成通配符
+	hits, err = s.SearchMessages(ctx, "100%", "", 0)
+	if err != nil {
+		t.Fatalf("search 100%%: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("100%% hits = %d, want 2 (literal match only)", len(hits))
+	}
+
+	// _ 转义：under_score 字面命中，不展开
+	hits, err = s.SearchMessages(ctx, "under_score", "", 0)
+	if err != nil {
+		t.Fatalf("search under_score: %v", err)
+	}
+	if len(hits) != 1 || hits[0].ID != "m3" {
+		t.Fatalf("under_score hits = %+v, want [m3]", hits)
+	}
+
+	// 会话限定
+	hits, err = s.SearchMessages(ctx, "hello", "g1", 0)
+	if err != nil {
+		t.Fatalf("search conv g1: %v", err)
+	}
+	if len(hits) != 1 || hits[0].ID != "m4" {
+		t.Fatalf("conv g1 hits = %+v, want [m4]", hits)
+	}
+
+	// 空 query / 无命中
+	hits, err = s.SearchMessages(ctx, "   ", "", 0)
+	if err != nil {
+		t.Fatalf("search empty: %v", err)
+	}
+	if hits != nil {
+		t.Fatalf("empty query hits = %+v, want nil", hits)
+	}
+	hits, err = s.SearchMessages(ctx, "zzz-no-such", "", 0)
+	if err != nil {
+		t.Fatalf("search miss: %v", err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("miss hits = %+v, want empty", hits)
+	}
+}
+
+// TestStore_AppendMessage_ReplyToRoundTrip 验证 ReplyTo 往返（v1.1）。
+func TestStore_AppendMessage_ReplyToRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	orig := msg(1, "hello", "lobby")
+	orig.ReplyTo = &protocol.ReplyRef{ID: "m0", SenderUserID: "alice", Body: "被引用内容"}
+	if err := s.AppendMessage(ctx, orig); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	hist, err := s.History(ctx, "lobby", 0, 0)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if len(hist) != 1 || hist[0].ReplyTo == nil {
+		t.Fatalf("ReplyTo lost: %+v", hist)
+	}
+	if hist[0].ReplyTo.ID != "m0" || hist[0].ReplyTo.SenderUserID != "alice" || hist[0].ReplyTo.Body != "被引用内容" {
+		t.Fatalf("ReplyTo mismatch: %+v", hist[0].ReplyTo)
+	}
+}

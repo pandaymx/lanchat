@@ -51,5 +51,16 @@
   "tui.conv.join.usage": "用法：/join <会话ID|lobby>",
   "tui.conv.group.usage": "用法：/group <群名> [用户...]",
   "tui.conv.invite.usage": "用法：/invite <会话ID> [用户...]",
-  "tui.conv.leave.lobby": "已在大厅"
+  "tui.conv.leave.lobby": "已在大厅",
+  "web.search.placeholder": "搜索消息",
+  "web.search.empty": "无结果",
+  "web.search.count": "%s 条结果",
+  "web.reply.cancel": "取消回复",
+  "tui.search.usage": "用法：/search <关键词>",
+  "tui.search.unsupported": "当前连接不支持搜索",
+  "tui.search.none": "未找到与",
+  "tui.search.results": "%s：共 %s 条结果",
+  "tui.reply.usage": "用法：/reply <序号> <内容>",
+  "tui.reply.notfound": "未找到序号 %s 的消息",
+  "tui.reply.unsupported": "当前连接不支持引用回复"
 }

@@ -286,6 +286,50 @@ func (s *MemoryStore) History(_ context.Context, convID string, after uint64, li
 	return out, nil
 }
 
+// SearchMessages 按关键词子串匹配搜索历史消息（v1.1）。
+//
+// 内存实现：遍历全部会话的消息切片（消息量级小，线性扫描足够）；
+// convID 为空搜全部。结果按 ServerSeq 降序，最多 limit 条（默认 50）。
+func (s *MemoryStore) SearchMessages(_ context.Context, query, convID string, limit int) ([]protocol.StoredMessage, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > maxHistoryLimit {
+		limit = 50
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return nil, core.ErrClosed
+	}
+	needle := strings.ToLower(query)
+	if convID != "" {
+		list := s.messages[convID]
+		var out []protocol.StoredMessage
+		for i := len(list) - 1; i >= 0 && len(out) < limit; i-- {
+			if strings.Contains(strings.ToLower(list[i].Body), needle) {
+				out = append(out, list[i])
+			}
+		}
+		return out, nil
+	}
+	// 跨会话：先收全再按 ServerSeq 降序合并，量小无妨。
+	var out []protocol.StoredMessage
+	for _, list := range s.messages {
+		for _, m := range list {
+			if strings.Contains(strings.ToLower(m.Body), needle) {
+				out = append(out, m)
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ServerSeq > out[j].ServerSeq })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // SetCursor 设置某设备在某会话的已读游标。
 func (s *MemoryStore) SetCursor(_ context.Context, deviceID, convID string, seq uint64) error {
 	s.mu.Lock()

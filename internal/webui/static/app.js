@@ -187,6 +187,9 @@
       }
       maybeSendRead();
       pinned = false;
+      // v1.1 未读计数：其它会话的消息给该会话角标 +1（当前会话不算）。
+      var conv = convOfFrameData(msg.data);
+      if (conv !== null && conv !== currentConv()) bumpUnread(conv);
     }
   });
 
@@ -229,8 +232,150 @@
     true
   );
 
+  // ---- v1.1 未读计数（纯前端：SSE 期非当前会话消息累加角标）----
+  var unread = {}; // convID -> count；整页刷新（切会话）即清零，符合 IM 习惯
+
+  function convOfFrameData(data) {
+    try {
+      var d = new DOMParser().parseFromString(data, "text/html");
+      var li = d.querySelector("li[data-conv]");
+      return li ? li.getAttribute("data-conv") : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function bumpUnread(conv) {
+    unread[conv] = (unread[conv] || 0) + 1;
+    renderUnread();
+  }
+
+  function renderUnread() {
+    var items = document.querySelectorAll(".conv-item[data-conv]");
+    for (var i = 0; i < items.length; i++) {
+      var c = items[i].getAttribute("data-conv");
+      var n = unread[c] || 0;
+      var link = items[i].querySelector(".conv-link");
+      var badge = items[i].querySelector(".unread-badge");
+      if (n > 0) {
+        if (!badge && link) {
+          badge = document.createElement("span");
+          badge.className = "unread-badge";
+          link.appendChild(badge);
+        }
+        if (badge) badge.textContent = n > 99 ? "99+" : String(n);
+      } else if (badge) {
+        badge.remove();
+      }
+    }
+  }
+
+  // ---- v1.1 消息引用/回复 ----
+  // 点消息的 ↩ 按钮 → composer 上方出现回复条（label + ✕ 取消），
+  // 隐藏域 reply 填 ReplyRef JSON；提交后 after-request 清空（templ 侧
+  // 调 window.__clearReply）。
+  window.__clearReply = function () {
+    window.__replyCtx = null;
+    var bar = document.getElementById("reply-bar");
+    var input = document.getElementById("reply-input");
+    if (bar) bar.hidden = true;
+    if (input) input.value = "";
+  };
+
+  function bindReply() {
+    document.addEventListener("click", function (e) {
+      var cancel = e.target.closest(".reply-bar-cancel");
+      if (cancel) {
+        window.__clearReply();
+        return;
+      }
+      var btn = e.target.closest(".msg-reply-btn");
+      if (!btn) return;
+      var bar = document.getElementById("reply-bar");
+      var input = document.getElementById("reply-input");
+      var label = document.querySelector(".reply-bar-label");
+      if (!bar || !input || !label) return;
+      var ctx = {
+        id: btn.getAttribute("data-reply-id"),
+        suid: btn.getAttribute("data-reply-sender"),
+        body: btn.getAttribute("data-reply-body") || ""
+      };
+      window.__replyCtx = ctx;
+      label.textContent = "\u21A9 " + (ctx.suid || "?") + ": " + ctx.body;
+      input.value = JSON.stringify(ctx);
+      bar.hidden = false;
+      var ta = document.querySelector(".composer-form textarea");
+      if (ta) ta.focus();
+    });
+  }
+
+  // ---- v1.1 消息搜索 ----
+  // Enter 触发 GET /search?q=…，结果片段塞进 #search-panel；点面板外
+  // 或 Esc 关闭。命中项是跳转链接（整页刷新到所属会话）。
+  function bindSearch() {
+    var input = document.getElementById("search-input");
+    var panel = document.getElementById("search-panel");
+    if (!input || !panel) return;
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        panel.hidden = true;
+        return;
+      }
+      if (e.key !== "Enter") return;
+      var q = input.value.trim();
+      if (!q) {
+        panel.hidden = true;
+        return;
+      }
+      fetch("/search?q=" + encodeURIComponent(q), { credentials: "same-origin" })
+        .then(function (r) {
+          if (!r.ok) throw new Error("search failed (" + r.status + ")");
+          return r.text();
+        })
+        .then(function (html) {
+          panel.innerHTML = html;
+          panel.hidden = false;
+        })
+        .catch(function (err) {
+          panel.innerHTML = '<div class="search-empty">\u2717 ' + err.message + "</div>";
+          panel.hidden = false;
+        });
+    });
+    document.addEventListener("click", function (e) {
+      if (!panel.hidden && !panel.contains(e.target) && e.target !== input) {
+        panel.hidden = true;
+      }
+    });
+  }
+
+  // ---- v1.1 图片预览 lightbox（替代 target=_blank 新窗口）----
+  function bindLightbox() {
+    document.addEventListener("click", function (e) {
+      var img = e.target.closest(".msg-file.image img");
+      if (!img) return;
+      e.preventDefault();
+      var ov = document.getElementById("lightbox");
+      if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "lightbox";
+        ov.className = "lightbox";
+        ov.addEventListener("click", function () { ov.remove(); });
+        document.body.appendChild(ov);
+      } else {
+        ov.innerHTML = "";
+      }
+      var big = document.createElement("img");
+      big.src = img.getAttribute("src");
+      big.alt = img.getAttribute("alt") || "";
+      ov.appendChild(big);
+    });
+  }
+
   // 文件上传交互（按钮 / 粘贴 / 拖拽），M9。
   bindFileComposer();
+  bindReply();
+  bindSearch();
+  bindLightbox();
 
   // 会话侧栏交互（建群表单 + 高亮兜底），M12-A。
   bindConvSidebar();

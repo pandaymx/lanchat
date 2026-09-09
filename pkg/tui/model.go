@@ -102,6 +102,11 @@ type Model struct {
 	convs       []protocol.ConversationSnapshot
 	pendingJoin string
 	convNotice  string
+
+	// v1.1：unreadByConv 是各会话的未读计数（其它会话有新消息时 +1，
+	// 切换进该会话清零），/rooms 列表展示角标。与 m.unread（当前会话
+	// 未跟随底部的计数）互不干扰。
+	unreadByConv map[string]int
 }
 
 // typingState 是一条对端「正在输入」记录（M7.3）。
@@ -137,6 +142,7 @@ func New(cfg Config) *Model {
 		reads:        make(map[string]uint64),
 		fileSaved:    make(map[string]string),
 		convs:        nil, // 握手后 FKConvList 事件填充
+		unreadByConv: make(map[string]int),
 	}
 	// M8.1：historyView 的已读标记判定由 Model 注入（读 m.reads 快照，
 	// 与其它状态一样只在 Update goroutine 内访问，无需加锁）。
@@ -413,6 +419,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshHistory()
 		return m, listenCmd(m.inbox)
 
+	case searchResultMsg:
+		// v1.1：/search 结果写 convNotice（status 行显示，最多 8 条）。
+		m.convNotice = m.renderSearchResults(msg)
+		return m, listenCmd(m.inbox)
+
 	case errMsg:
 		m.lastError = msg.err
 		// M3.9.3：5s 后自动清。schedule 一个 tea.Tick，到点投递 errExpireMsg
@@ -674,8 +685,102 @@ func (m *Model) tryCommand(text string) tea.Cmd {
 	case "/leave":
 		// M12-A：退当前群并回大厅。
 		return m.leaveCmd()
+	case "/search":
+		// v1.1：搜索历史消息（可选能力，Session 实现；fake 未实现则提示）。
+		return m.searchCmd(fields[1:])
+	case "/reply":
+		// v1.1：引用回复 /reply <seq> <text>（可选能力）。
+		return m.replyCmd(fields[1:])
 	}
 	return listenCmd(m.inbox)
+}
+
+// searchCmd 处理 /search <keyword>（v1.1）：Searcher 可选能力断言，
+// 异步调 hub 搜索，结果投 notice 消息（status 行滚动显示）。
+func (m *Model) searchCmd(args []string) tea.Cmd {
+	if len(args) == 0 {
+		m.PublishError(errors.New(m.t("tui.search.usage")))
+		return listenCmd(m.inbox)
+	}
+	searcher, ok := m.sender.(Searcher)
+	if !ok {
+		m.PublishError(errors.New(m.t("tui.search.unsupported")))
+		return listenCmd(m.inbox)
+	}
+	query := strings.Join(args, " ")
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		hits, err := searcher.Search(ctx, query, 0)
+		if err != nil {
+			return errMsg{err: err}
+		}
+		return searchResultMsg{query: query, hits: hits}
+	}
+}
+
+// replyCmd 处理 /reply <seq> <text>（v1.1）：按 ServerSeq 在本地消息里
+// 找被引用消息，构造 ReplyRef 快照（ID + 发送者 + 正文截断预览）后
+// 异步发送。找不到该 seq 时本地报错。
+func (m *Model) replyCmd(args []string) tea.Cmd {
+	if len(args) < 2 {
+		m.PublishError(errors.New(m.t("tui.reply.usage")))
+		return listenCmd(m.inbox)
+	}
+	var seq uint64
+	if _, err := fmt.Sscanf(args[0], "%d", &seq); err != nil {
+		m.PublishError(errors.New(m.t("tui.reply.usage")))
+		return listenCmd(m.inbox)
+	}
+	body := strings.Join(args[1:], " ")
+	var target *protocol.StoredMessage
+	for i := range m.messages {
+		if m.messages[i].ServerSeq == seq {
+			target = &m.messages[i]
+			break
+		}
+	}
+	if target == nil {
+		m.PublishError(fmt.Errorf(m.t("tui.reply.notfound"), args[0]))
+		return listenCmd(m.inbox)
+	}
+	sender, ok := m.sender.(ReplySender)
+	if !ok {
+		m.PublishError(errors.New(m.t("tui.reply.unsupported")))
+		return listenCmd(m.inbox)
+	}
+	ref := &protocol.ReplyRef{
+		ID:           target.ID,
+		SenderUserID: target.SenderUserID,
+		Body:         clipRunesTUI(target.Body, 80),
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if err := sender.SendReply(ctx, body, ref); err != nil {
+			return errMsg{err: err}
+		}
+		return sentMsg{text: body}
+	}
+}
+
+// clipRunesTUI 是 TUI 侧引用预览截断（v1.1）：换行压空格 + 80 runes。
+func clipRunesTUI(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	flat := strings.Join(strings.Fields(s), " ")
+	r := []rune(flat)
+	if len(r) <= n {
+		return flat
+	}
+	return string(r[:n]) + "…"
+}
+
+// searchResultMsg 携带 /search 的异步结果（v1.1）。
+type searchResultMsg struct {
+	query string
+	hits  []protocol.StoredMessage
 }
 
 // errInboxFull 描述 inbox 通道已满、submitMsg 被丢弃的情况。
@@ -955,6 +1060,11 @@ func (m *Model) noteForeignMessage(msg protocol.StoredMessage) {
 		title = msg.ConversationID
 	}
 	m.convNotice = m.t("tui.conv.notice") + " " + title
+	// v1.1：累计该会话未读（/rooms 角标用）。
+	if m.unreadByConv == nil {
+		m.unreadByConv = make(map[string]int)
+	}
+	m.unreadByConv[msg.ConversationID]++
 	tuiLog.Debug("foreign-conv message noted", "conv", msg.ConversationID, "title", title)
 }
 
@@ -972,6 +1082,9 @@ func (m *Model) switchConv(convID string) tea.Cmd {
 	m.convMgr.SetConversation(convID)
 	m.messages = m.messages[:0]
 	m.unread = 0
+	if m.unreadByConv != nil {
+		delete(m.unreadByConv, convID)
+	}
 	m.olderHasMore = true
 	m.convNotice = ""
 	m.refreshHistory()
@@ -995,10 +1108,35 @@ func (m *Model) renderRooms() string {
 		if s.Conversation.ID != "" && s.Conversation.ID != "lobby" {
 			member = " [" + itoa(len(s.Members)) + "]"
 		}
-		out += mark + " " + s.Conversation.ID + " " + title + member + "\n"
+		unread := ""
+		if n := m.unreadByConv[s.Conversation.ID]; n > 0 {
+			unread = " [" + itoa(n) + "]"
+		}
+		out += mark + " " + s.Conversation.ID + " " + title + member + unread + "\n"
 	}
 	if len(m.convs) == 0 {
 		out += "(none)\n"
+	}
+	return out
+}
+
+// renderSearchResults 把 /search 结果拼成 status 行文本（v1.1）。
+// 格式：标题行 + 最多 8 条「[会话] 时间 发送者: 正文预览」。
+func (m *Model) renderSearchResults(msg searchResultMsg) string {
+	if len(msg.hits) == 0 {
+		return m.t("tui.search.none") + " " + msg.query
+	}
+	out := fmt.Sprintf(m.t("tui.search.results"), msg.query, itoa(len(msg.hits))) + "\n"
+	for i, hit := range msg.hits {
+		if i >= 8 {
+			break
+		}
+		conv := hit.ConversationID
+		if conv == "" {
+			conv = "lobby"
+		}
+		out += fmt.Sprintf("[%s] %s %s: %s\n",
+			conv, formatUnixMilli(hit.CreatedAt, &m.history), hit.SenderUserID, clipRunesTUI(hit.Body, 40))
 	}
 	return out
 }

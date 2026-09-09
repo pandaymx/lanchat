@@ -247,10 +247,50 @@ jobs:
   # 哈希汇总（2026-09-07）：逐文件 .sha256 太多（每资产一个），改为
   # 全部资产一个 checksums.txt。package / desktop 各 job 不再产 .sha256，
   # 本 job 等两批上传完成后下载全量资产、聚合写入一个文件再上传。
-  checksums:
+    # Flutter 移动端（2026-09-10）：Android APK。
+  # lanchat_mobile 直连 hub 的 WS 协议（wire v1）；subosito/flutter-action
+  # 装稳定版 Flutter + Android SDK（ubuntu-latest），缓存 pub/gradle。
+  # 产物 lanchat-mobile-<ver>-android.apk 上传同 Release（checksums 的
+  # lanchat-* 通配自动覆盖）。iOS 构建需签名与 Apple 账号，留后续迭代。
+  mobile:
+    name: mobile (android)
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) && needs.release.outputs.released == 'true' }}
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      LANCHAT_VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build APK
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build apk --release --build-name="${LANCHAT_VERSION#v}" --build-number=1
+      - name: Upload release asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ver="$LANCHAT_VERSION"
+          tag="$ver"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI mobile job 补建的 Release 页面。"
+          mkdir -p dist
+          cp "apps/mobile/build/app/outputs/flutter-apk/app-release.apk" "dist/lanchat-mobile-$ver-android.apk"
+          gh release upload "$tag" "dist/lanchat-mobile-$ver-android.apk" --clobber
+
+checksums:
     name: checksums
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) && needs.release.outputs.released == 'true' }}
-    needs: [release, package, desktop]
+    needs: [release, package, desktop, mobile]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

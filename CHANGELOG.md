@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/pandaymx/lanchat/compare/v1.0.4...v1.1.0) (2026-09-09)
+
+### Features
+
+* **tui:** v1.1 消息体验闭环 - /search /reply 未读角标 ([59fcbfe](https://github.com/pandaymx/lanchat/commit/59fcbfeb06237bad34a62ec78eb5f5deccd6342c))
+
 ## [1.0.4](https://github.com/pandaymx/lanchat/compare/v1.0.3...v1.0.4) (2026-09-08)
 
 ### Bug Fixes

@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:record/record.dart';
 
 import '../api.dart';
 import '../hub_client.dart';
@@ -34,6 +36,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _uploading = false;
   StoredMessage? _replyTo;
 
+  final AudioRecorder _recorder = AudioRecorder();
+  bool _recording = false;
+  Timer? _recordTimer;
+  int _recordSeconds = 0;
+
   HubClient get client => widget.client;
   String get convId => widget.conversationId;
   bool get _isLobby => convId == lobbyConversationId;
@@ -52,6 +59,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _inputCtrl.dispose();
     _inputFocus.dispose();
     _scrollCtrl.dispose();
+    _recordTimer?.cancel();
     super.dispose();
   }
 
@@ -169,9 +177,93 @@ class _ChatScreenState extends State<ChatScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  /// 点击麦克风：开始/停止录音。停止后自动上传并发送语音消息。
+  Future<void> _toggleRecord() async {
+    if (_recording) {
+      final path = await _recorder.stop();
+      _recordTimer?.cancel();
+      setState(() => _recording = false);
+      if (path != null) {
+        if (_recordSeconds >= 1) {
+          await _sendAudio(File(path));
+        } else {
+          try {
+            File(path).deleteSync();
+          } catch (_) {}
+          _toast('录音太短，未发送');
+        }
+      }
+    } else {
+      final ok = await _recorder.hasPermission();
+      if (!ok) {
+        _toast('需要麦克风权限才能录音');
+        return;
+      }
+      final path = '${Directory.systemTemp.path}/lm_voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      try {
+        await _recorder.start(
+          const RecordConfig(encoder: AudioEncoder.aacLc),
+          path: path,
+        );
+      } catch (e) {
+        _toast('录音启动失败: $e');
+        return;
+      }
+      setState(() {
+        _recording = true;
+        _recordSeconds = 0;
+      });
+      _recordTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        setState(() => _recordSeconds++);
+        if (_recordSeconds >= 120) _toggleRecord(); // 最长 2 分钟自动停
+      });
+    }
+  }
+
+  Future<void> _sendAudio(File file) async {
+    setState(() => _uploading = true);
+    try {
+      final api = HubApi(host: client.host, port: client.port);
+      final ref = await api.uploadFile(file, mime: 'audio/m4a');
+      if (!mounted) return;
+      client.sendFileMessage(convId, ref);
+      _scrollToBottom();
+    } catch (e) {
+      _toast('语音上传失败: $e');
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  /// 按天分组：相邻同一天的消息之间不插条，跨天插日期分隔条。
+  List<Object> _buildItems(List<StoredMessage> messages) {
+    final items = <Object>[];
+    DateTime? prevDay;
+    for (final m in messages) {
+      final t = DateTime.fromMillisecondsSinceEpoch(m.createdAt);
+      final day = DateTime(t.year, t.month, t.day);
+      if (prevDay == null || day != prevDay) {
+        items.add(day);
+        prevDay = day;
+      }
+      items.add(m);
+    }
+    return items;
+  }
+
+  void _openFullImage(StoredMessage m) {
+    final url = 'http://${client.host}:${client.port}/api/files/${m.file!.fileId}';
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _FullImageViewer(url: url, name: m.file!.name),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final messages = client.messagesOf(convId);
+    final items = _buildItems(messages);
     final onlineCount = client.onlineUsers.values.where((v) => v).length;
     final title = widget.title.isEmpty && _isLobby ? '大厅' : widget.title;
 
@@ -216,17 +308,76 @@ class _ChatScreenState extends State<ChatScreen> {
                 : ListView.builder(
                     controller: _scrollCtrl,
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: messages.length,
-                    itemBuilder: (context, i) => MessageBubble(
-                      message: messages[i],
-                      client: client,
-                      selfUserId: client.userId,
-                      onLongPress: () => _onMessageLongPress(messages[i]),
-                    ),
+                    itemCount: items.length,
+                    itemBuilder: (context, i) {
+                      final item = items[i];
+                      if (item is DateTime) return _dateDivider(item);
+                      final m = item as StoredMessage;
+                      return MessageBubble(
+                        message: m,
+                        client: client,
+                        selfUserId: client.userId,
+                        onTap: m.file != null && (m.file!.mime.startsWith('image/')) ? () => _openFullImage(m) : null,
+                        onLongPress: () => _onMessageLongPress(m),
+                      );
+                    },
                   ),
           ),
           if (_replyTo != null) _replyBar(),
+          if (_recording) _recordingBar(),
           _composer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _dateDivider(DateTime day) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    String label;
+    if (day == today) {
+      label = '今天';
+    } else if (day == yesterday) {
+      label = '昨天';
+    } else {
+      label = '${day.month}月${day.day}日';
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2B2D33),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF8B919C)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _recordingBar() {
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFF3A2A2A),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 10,
+            height: 10,
+            decoration: const BoxDecoration(color: Color(0xFFE86452), shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            '录音中 $_recordSeconds 秒 · 点击下方麦克风停止',
+            style: const TextStyle(fontSize: 13, color: Color(0xFFFFB4B4)),
+          ),
         ],
       ),
     );
@@ -289,6 +440,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 : const Icon(Icons.add_circle_outline, color: Color(0xFF8B919C)),
             tooltip: '发送图片',
           ),
+          IconButton(
+            onPressed: _toggleRecord,
+            icon: _recording
+                ? const Icon(Icons.mic, color: Color(0xFFE86452))
+                : const Icon(Icons.mic_none, color: Color(0xFF8B919C)),
+            tooltip: _recording ? '停止录音并发送' : '录音',
+          ),
           Expanded(
             child: TextField(
               controller: _inputCtrl,
@@ -318,6 +476,46 @@ class _ChatScreenState extends State<ChatScreen> {
             tooltip: '发送',
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// 图片全屏查看页（黑底 + 双指缩放 + 点击关闭）。
+class _FullImageViewer extends StatelessWidget {
+  final String url;
+  final String name;
+
+  const _FullImageViewer({required this.url, required this.name});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: Text(name, style: const TextStyle(fontSize: 14)),
+      ),
+      body: GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Center(
+          child: InteractiveViewer(
+            maxScale: 5,
+            child: Image.network(
+              url,
+              fit: BoxFit.contain,
+              loadingBuilder: (context, child, progress) {
+                if (progress == null) return child;
+                return const CircularProgressIndicator(color: Colors.white54);
+              },
+              errorBuilder: (context, error, stack) => const Text(
+                '图片加载失败',
+                style: TextStyle(color: Colors.white54),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

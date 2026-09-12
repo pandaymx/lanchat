@@ -307,6 +307,12 @@ class HubClient extends ChangeNotifier {
     _send(Frame(kind: kConvLeave, payload: {'c': conversationId}));
   }
 
+  /// 邀请成员入群（FKConvInvite，payload {c, u}）。hub 广播 joined 事件。
+  void inviteMembers(String conversationId, List<String> userIds) {
+    if (userIds.isEmpty) return;
+    _send(Frame(kind: kConvInvite, payload: {'c': conversationId, 'u': userIds}));
+  }
+
   /// 历史搜索（v1.1）。结果异步回填 [searchResults] 并 notify。
   final List<StoredMessage> searchResults = [];
   bool searching = false;

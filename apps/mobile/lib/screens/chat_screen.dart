@@ -574,6 +574,34 @@ class _GroupInfoScreenState extends State<_GroupInfoScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _invite() async {
+    final conv = client.conversations[convId];
+    final members = conv?.members ?? const <String>[];
+    final known = <String>{
+      ...client.onlineUsers.keys,
+      ...client.messages.map((m) => m.senderUserId),
+    }..remove(client.userId);
+    known.removeAll(members);
+    known.remove('');
+    if (known.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('没有可邀请的新成员')),
+      );
+      return;
+    }
+    final picked = await showModalBottomSheet<List<String>>(
+      context: context,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _InviteSheet(client: client, candidates: known.toList()..sort()),
+    );
+    if (picked != null && picked.isNotEmpty && mounted) {
+      client.inviteMembers(convId, picked);
+    }
+  }
+
   Future<void> _leave() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -642,6 +670,20 @@ class _GroupInfoScreenState extends State<_GroupInfoScreen> {
           const SizedBox(height: 24),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: OutlinedButton.icon(
+              onPressed: _invite,
+              icon: const Icon(Icons.person_add_alt, size: 18),
+              label: const Text('邀请成员', style: TextStyle(fontSize: 15)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF2B6BFF),
+                side: const BorderSide(color: Color(0xFF2B6BFF)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             child: OutlinedButton(
               onPressed: _leave,
               style: OutlinedButton.styleFrom(
@@ -668,5 +710,74 @@ class _GroupInfoScreenState extends State<_GroupInfoScreen> {
     ];
     if (u.isEmpty) return colors[0];
     return colors[u.codeUnitAt(0) % colors.length];
+  }
+}
+
+
+/// 邀请成员选择弹层（复用建群成员多选交互）。
+class _InviteSheet extends StatefulWidget {
+  final HubClient client;
+  final List<String> candidates;
+
+  const _InviteSheet({required this.client, required this.candidates});
+
+  @override
+  State<_InviteSheet> createState() => _InviteSheetState();
+}
+
+class _InviteSheetState extends State<_InviteSheet> {
+  final Set<String> _selected = {};
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Text(
+            '邀请成员（已选 ${_selected.length}）',
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Color(0xFFE6E8EC)),
+          ),
+        ),
+        Flexible(
+          child: ListView(
+            shrinkWrap: true,
+            children: widget.candidates.map((u) {
+              final online = widget.client.onlineUsers[u] ?? false;
+              final checked = _selected.contains(u);
+              return CheckboxListTile(
+                value: checked,
+                dense: true,
+                activeColor: const Color(0xFF2B6BFF),
+                onChanged: (v) => setState(() {
+                  if (v == true) {
+                    _selected.add(u);
+                  } else {
+                    _selected.remove(u);
+                  }
+                }),
+                title: Text(u, style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 14)),
+                subtitle: online
+                    ? const Text('在线', style: TextStyle(fontSize: 11, color: Color(0xFF07C160)))
+                    : null,
+              );
+            }).toList(),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: FilledButton(
+            onPressed: () => Navigator.of(context).pop(_selected.toList()),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF2B6BFF),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            child: const Text('邀请', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+          ),
+        ),
+      ],
+    );
   }
 }

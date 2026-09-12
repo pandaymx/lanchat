@@ -1,3 +1,9 @@
+## [1.10.0](https://github.com/pandaymx/lanchat/compare/v1.9.1...v1.10.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 底部导航（消息/联系人）+ 群信息页（成员/退出群聊） ([33a8fac](https://github.com/pandaymx/lanchat/commit/33a8faceb4e8764d04324c6d4ed364567d46ed73))
+
 ## [1.9.1](https://github.com/pandaymx/lanchat/compare/v1.9.0...v1.9.1) (2026-09-12)
 
 ### Bug Fixes

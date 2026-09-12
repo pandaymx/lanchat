@@ -279,27 +279,41 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _pickAndSendImage() async {
     final picker = ImagePicker();
-    final XFile? picked;
+    final List<XFile> picked;
     try {
-      picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+      picked = await picker.pickMultiImage(imageQuality: 85);
     } catch (e) {
       _toast('无法打开图库: $e');
       return;
     }
-    if (picked == null) return;
+    if (picked.isEmpty) return;
     setState(() => _uploading = true);
     try {
       final api = HubApi(host: client.host, port: client.port);
-      final file = File(picked.path);
-      final ref = await api.uploadFile(file, mime: 'image/jpeg');
-      if (!mounted) return;
-      client.sendFileMessage(convId, ref);
-      _scrollToBottom();
+      var sent = 0;
+      for (final x in picked) {
+        final file = File(x.path);
+        final mime = _mimeOf(file);
+        final ref = await api.uploadFile(file, mime: mime);
+        if (!mounted) return;
+        client.sendFileMessage(convId, ref);
+        sent++;
+      }
+      if (sent > 0) _scrollToBottom();
     } catch (e) {
       _toast('上传失败: $e');
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  String _mimeOf(File f) {
+    final name = f.path.toLowerCase();
+    if (name.endsWith('.png')) return 'image/png';
+    if (name.endsWith('.gif')) return 'image/gif';
+    if (name.endsWith('.webp')) return 'image/webp';
+    if (name.endsWith('.heic')) return 'image/heic';
+    return 'image/jpeg';
   }
 
   void _toast(String msg) {

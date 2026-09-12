@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../hub_client.dart';
+import '../notifier.dart';
 import '../protocol.dart';
 import 'chat_screen.dart';
 import 'contacts_screen.dart';
@@ -126,6 +127,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _onChanged() {
     if (mounted) setState(() {});
+    _maybeNotifyNewMessages();
+  }
+
+  final Map<String, int> _lastUnread = {};
+
+  /// 未读增量 → 系统通知（免打扰会话不弹）。
+  void _maybeNotifyNewMessages() {
+    if (_muted.isEmpty && _lastUnread.isEmpty) return;
+    final now = <String, int>{};
+    for (final c in client.sortedConversations) {
+      final u = client.unreadCount(c.id);
+      now[c.id] = u;
+      final prev = _lastUnread[c.id] ?? 0;
+      if (u > prev && !_muted.contains(c.id)) {
+        final last = client.lastMessageOf(c.id);
+        final isLobby = c.id == lobbyConversationId;
+        final title = isLobby ? '大厅' : (c.title.isEmpty ? '群聊' : c.title);
+        final preview = _preview(last);
+        if (preview.isNotEmpty) {
+          Notifier.instance.show('$title：$preview', '来自 ${last?.senderUserId ?? ''}');
+        }
+      }
+    }
+    _lastUnread
+      ..clear()
+      ..addAll(now);
   }
 
   Future<void> _saveCursor() async {

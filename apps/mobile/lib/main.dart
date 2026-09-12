@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'notifier.dart';
 import 'screens/connect_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Notifier.instance.init();
   runApp(const LanchatApp());
 }
 

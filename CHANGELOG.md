@@ -1,3 +1,9 @@
+## [1.11.0](https://github.com/pandaymx/lanchat/compare/v1.10.0...v1.11.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 群信息页支持邀请成员（FKConvInvite） ([77499cd](https://github.com/pandaymx/lanchat/commit/77499cdca189cbe596cbb16640e95f63b4165bee))
+
 ## [1.10.0](https://github.com/pandaymx/lanchat/compare/v1.9.1...v1.10.0) (2026-09-12)
 
 ### Features

@@ -1,3 +1,9 @@
+## [1.14.0](https://github.com/pandaymx/lanchat/compare/v1.13.0...v1.14.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 会话置顶 + 消息免打扰（本地持久化） ([149df7a](https://github.com/pandaymx/lanchat/commit/149df7a74965462a4956a3b5dc65ffd116739168))
+
 ## [1.13.0](https://github.com/pandaymx/lanchat/compare/v1.12.0...v1.13.0) (2026-09-12)
 
 ### Features

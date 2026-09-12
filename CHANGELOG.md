@@ -1,3 +1,9 @@
+## [1.13.0](https://github.com/pandaymx/lanchat/compare/v1.12.0...v1.13.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 聊天流向上加载更早历史（HistoryRequest {c,b}） ([ff90717](https://github.com/pandaymx/lanchat/commit/ff907175ee9ba3d691e9309ed77c951e55ea526c))
+
 ## [1.12.0](https://github.com/pandaymx/lanchat/compare/v1.11.0...v1.12.0) (2026-09-12)
 
 ### Features

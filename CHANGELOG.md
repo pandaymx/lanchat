@@ -1,3 +1,9 @@
+## [1.23.0](https://github.com/pandaymx/lanchat/compare/v1.22.0...v1.23.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 聊天页「回到最新」浮动按钮（离开底部 300px 显示） ([bb928d0](https://github.com/pandaymx/lanchat/commit/bb928d0f5a7bf231561a54a1b2e069084cc01ea2))
+
 ## [1.22.0](https://github.com/pandaymx/lanchat/compare/v1.21.0...v1.22.0) (2026-09-12)
 
 ### Features

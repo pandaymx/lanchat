@@ -1,3 +1,9 @@
+## [1.9.1](https://github.com/pandaymx/lanchat/compare/v1.9.0...v1.9.1) (2026-09-12)
+
+### Bug Fixes
+
+* **mobile:** record 升 6.2.1 修复 CI Linux 编译（record_linux 1.3.1 签名兼容） ([ff02508](https://github.com/pandaymx/lanchat/commit/ff0250850ad225b08591f39c21e9f5f2d41ee230))
+
 ## [1.9.0](https://github.com/pandaymx/lanchat/compare/v1.8.1...v1.9.0) (2026-09-12)
 
 ### Features

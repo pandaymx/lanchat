@@ -19,6 +19,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final _userCtrl = TextEditingController();
   final _deviceCtrl = TextEditingController();
   bool _connecting = false;
+  List<String> _recent = const [];
 
   @override
   void initState() {
@@ -28,12 +29,26 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   Future<void> _loadSaved() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _hostCtrl.text = prefs.getString('hub_host') ?? '';
       _portCtrl.text = prefs.getString('hub_port') ?? '9000';
       _userCtrl.text = prefs.getString('hub_user') ?? '';
       _deviceCtrl.text = prefs.getString('hub_device') ?? '';
+      _recent = prefs.getStringList('recent_conns') ?? const [];
     });
+  }
+
+  Future<void> _rememberRecent(String host, int port, String user) async {
+    final entry = '$host:$port:$user';
+    final next = [
+      entry,
+      ..._recent.where((e) => e != entry),
+    ].take(5).toList();
+    if (!mounted) return;
+    setState(() => _recent = next);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('recent_conns', next);
   }
 
   Future<void> _connect() async {
@@ -60,6 +75,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
     final client = HubClient(host: host, port: port, userId: user, deviceId: device);
     final cursor = prefs.getInt('cursor_$user') ?? 0;
+    await _rememberRecent(host, port, user);
 
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -113,6 +129,32 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   _field(_userCtrl, '用户名', Icons.person),
                   const SizedBox(height: 12),
                   _field(_deviceCtrl, '设备名（可选）', Icons.phone_android),
+                  if (_recent.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: _recent.map((e) {
+                        final parts = e.split(':');
+                        final label = parts.length == 3 ? '${parts[0]}:${parts[1]} · ${parts[2]}' : e;
+                        return ActionChip(
+                          backgroundColor: const Color(0xFF26282E),
+                          side: BorderSide.none,
+                          label: Text(
+                            label,
+                            style: const TextStyle(fontSize: 12, color: Color(0xFFB6BAC2)),
+                          ),
+                          onPressed: () {
+                            if (parts.length == 3) {
+                              _hostCtrl.text = parts[0];
+                              _portCtrl.text = parts[1];
+                              _userCtrl.text = parts[2];
+                            }
+                          },
+                        );
+                      }).toList(),
+                    ),
+                  ],
                   const SizedBox(height: 28),
                   SizedBox(
                     height: 48,

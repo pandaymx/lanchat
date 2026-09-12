@@ -217,9 +217,19 @@ class HubClient extends ChangeNotifier {
           onlineUsers[presence.userId] = presence.online;
         }
         notifyListeners();
+      case kSearchResp:
+        searchResults
+          ..clear()
+          ..addAll(SearchResponse.fromJson(p ?? {}).hits);
+        searching = false;
+        notifyListeners();
       case kError:
         lastError = (p?['msg'] as String?) ?? (p?['code']?.toString() ?? 'hub error');
         connectionStatus = '错误: $lastError';
+        if (searching) {
+          searching = false;
+          searchError = lastError;
+        }
         notifyListeners();
       case kPong:
         break;
@@ -289,6 +299,28 @@ class HubClient extends ChangeNotifier {
   void createConversation(String title, List<String> memberIds) {
     final req = ConversationRequest(title: title, memberIds: memberIds);
     _send(Frame(kind: kConvCreate, payload: req.toJson()));
+  }
+
+  /// 历史搜索（v1.1）。结果异步回填 [searchResults] 并 notify。
+  final List<StoredMessage> searchResults = [];
+  bool searching = false;
+  String? searchError;
+
+  void search(String query, {String conversationId = ''}) {
+    if (query.trim().isEmpty) return;
+    searching = true;
+    searchError = null;
+    searchResults.clear();
+    notifyListeners();
+    final req = SearchRequest(query: query.trim(), conversationId: conversationId);
+    _send(Frame(kind: kSearchReq, payload: req.toJson()));
+  }
+
+  void clearSearch() {
+    searching = false;
+    searchError = null;
+    searchResults.clear();
+    notifyListeners();
   }
 
   void sendTyping(String conversationId) {

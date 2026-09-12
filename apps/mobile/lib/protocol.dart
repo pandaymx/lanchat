@@ -263,6 +263,34 @@ class ConversationRequest {
       };
 }
 
+/// 历史搜索请求（Go: SearchRequest，json: q/conv/limit）。
+class SearchRequest {
+  final String query;
+  final String conversationId;
+  final int limit;
+
+  SearchRequest({required this.query, this.conversationId = '', this.limit = 50});
+
+  Map<String, dynamic> toJson() => {
+        'q': query,
+        if (conversationId.isNotEmpty) 'conv': conversationId,
+        if (limit != 0) 'limit': limit,
+      };
+}
+
+/// 搜索结果（Go: SearchResponse，json: hits，按 seq 降序）。
+class SearchResponse {
+  final List<StoredMessage> hits;
+
+  SearchResponse({required this.hits});
+
+  factory SearchResponse.fromJson(Map<String, dynamic> j) => SearchResponse(
+        hits: ((j['hits'] as List?) ?? [])
+            .map((e) => StoredMessage.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 /// 会话变更广播（Go: ConversationEvent，json: c/e/u/m）。
 class ConversationEvent {
   final ConversationSnapshot snapshot;

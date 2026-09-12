@@ -58,7 +58,8 @@ class MessageBubble extends StatelessWidget {
         t.month == yesterday.month &&
         t.day == yesterday.day;
     if (isYesterday) return '昨天 $hm';
-    return '${t.month}/${t.day} $hm';
+    if (t.year == now.year) return '${t.month}/${t.day} $hm';
+    return '${t.year}/${t.month}/${t.day} $hm';
   }
 
   bool get _isImage {

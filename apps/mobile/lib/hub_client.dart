@@ -23,6 +23,7 @@ class HubClient extends ChangeNotifier {
 
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
+  final List<Frame> _pending = [];
   Timer? _pingTimer;
   Timer? _reconnectTimer;
   bool _closed = false;
@@ -126,6 +127,7 @@ class HubClient extends ChangeNotifier {
       await channel.ready;
       _attempts = 0;
       _sendHello();
+      _flushPending();
       _startPing();
       connected = true;
       connectionStatus = '已连接';
@@ -154,10 +156,29 @@ class HubClient extends ChangeNotifier {
   }
 
   void _send(Frame frame) {
+    // 断线时入队，重连成功后补发（消息不丢）。
+    if (_channel == null || !connected) {
+      if (frame.kind == kHello) return; // Hello 只由 _open 发送
+      _pending.add(frame);
+      return;
+    }
     try {
       _channel?.sink.add(frame.encode());
     } catch (_) {
-      // 通道已关：由 onDone/onError 负责重连。
+      _pending.add(frame);
+    }
+  }
+
+  void _flushPending() {
+    if (_pending.isEmpty) return;
+    final frames = List<Frame>.from(_pending);
+    _pending.clear();
+    for (final f in frames) {
+      try {
+        _channel?.sink.add(f.encode());
+      } catch (_) {
+        _pending.add(f);
+      }
     }
   }
 

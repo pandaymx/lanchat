@@ -1,3 +1,9 @@
+## [1.8.1](https://github.com/pandaymx/lanchat/compare/v1.8.0...v1.8.1) (2026-09-12)
+
+### Bug Fixes
+
+* **mobile:** 补同步语音播放组件（audio_ctl + 语音气泡渲染 + record 依赖） ([e490f3f](https://github.com/pandaymx/lanchat/commit/e490f3f5da33c618651b2e7bbd3bc309c317d31b))
+
 ## [1.8.0](https://github.com/pandaymx/lanchat/compare/v1.7.0...v1.8.0) (2026-09-12)
 
 ### Features

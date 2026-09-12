@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../api.dart';
@@ -28,8 +29,10 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final _inputCtrl = TextEditingController();
+  final _inputFocus = FocusNode();
   final _scrollCtrl = ScrollController();
   bool _uploading = false;
+  StoredMessage? _replyTo;
 
   HubClient get client => widget.client;
   String get convId => widget.conversationId;
@@ -47,6 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     client.removeListener(_onClientChanged);
     _inputCtrl.dispose();
+    _inputFocus.dispose();
     _scrollCtrl.dispose();
     super.dispose();
   }
@@ -80,9 +84,59 @@ class _ChatScreenState extends State<ChatScreen> {
   void _send() {
     final body = _inputCtrl.text.trim();
     if (body.isEmpty) return;
-    client.sendMessage(convId, body);
+    if (_replyTo != null) {
+      client.sendMessage(convId, body,
+          replyTo: ReplyRef(
+            id: _replyTo!.id,
+            senderUserId: _replyTo!.senderUserId,
+            body: _replyTo!.body,
+          ));
+    } else {
+      client.sendMessage(convId, body);
+    }
     _inputCtrl.clear();
+    setState(() => _replyTo = null);
     _scrollToBottom();
+  }
+
+  void _onMessageLongPress(StoredMessage m) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.reply, color: Color(0xFFE6E8EC)),
+              title: const Text('回复', style: TextStyle(color: Color(0xFFE6E8EC))),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                setState(() {
+                  _replyTo = m;
+                  _inputFocus.requestFocus();
+                });
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.copy, color: Color(0xFFE6E8EC)),
+              title: const Text('复制', style: TextStyle(color: Color(0xFFE6E8EC))),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                if (m.body.isNotEmpty) {
+                  final data = ClipboardData(text: m.body);
+                  Clipboard.setData(data);
+                  _toast('已复制');
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _pickAndSendImage() async {
@@ -167,10 +221,47 @@ class _ChatScreenState extends State<ChatScreen> {
                       message: messages[i],
                       client: client,
                       selfUserId: client.userId,
+                      onLongPress: () => _onMessageLongPress(messages[i]),
                     ),
                   ),
           ),
+          if (_replyTo != null) _replyBar(),
           _composer(),
+        ],
+      ),
+    );
+  }
+
+  Widget _replyBar() {
+    final m = _replyTo!;
+    return Container(
+      width: double.infinity,
+      color: const Color(0xFF2B2D33),
+      padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '回复 ${m.senderUserId}',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF2B6BFF)),
+                ),
+                Text(
+                  m.body.isEmpty ? (m.file?.name ?? '') : m.body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: Color(0xFF8B919C)),
+                ),
+              ],
+            ),
+          ),
+          IconButton(
+            onPressed: () => setState(() => _replyTo = null),
+            icon: const Icon(Icons.close, size: 18, color: Color(0xFF8B919C)),
+          ),
         ],
       ),
     );
@@ -201,6 +292,7 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: TextField(
               controller: _inputCtrl,
+              focusNode: _inputFocus,
               style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15),
               minLines: 1,
               maxLines: 4,

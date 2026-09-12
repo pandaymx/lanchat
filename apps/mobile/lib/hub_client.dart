@@ -191,6 +191,26 @@ class HubClient extends ChangeNotifier {
         final msg = StoredMessage.fromJson(p ?? {});
         _merge([msg]);
         notifyListeners();
+      case kConvEvent:
+        final ev = ConversationEvent.fromJson(p ?? {});
+        final existing = conversations[ev.snapshot.id];
+        if (existing == null || ev.members.isNotEmpty) {
+          conversations[ev.snapshot.id] = ConversationSnapshot(
+            id: ev.snapshot.id,
+            kind: ev.snapshot.kind,
+            title: ev.snapshot.title,
+            members: ev.members.isNotEmpty ? ev.members : (existing?.members ?? const []),
+          );
+        }
+        if (ev.event == 'left' && ev.snapshot.id != lobbyConversationId &&
+            ev.snapshot.id.isNotEmpty) {
+          // 自己退出：会话列表移除（保留大厅）。left 广播给剩余成员，
+          // 对离开者自己此处保守处理：仅当 byUser 是自己时才移除。
+          if (ev.byUserId == userId) {
+            conversations.remove(ev.snapshot.id);
+          }
+        }
+        notifyListeners();
       case kPresence:
         final presence = Presence.fromJson(p ?? {});
         if (presence.deviceId.isEmpty || presence.deviceId == deviceId) {
@@ -262,6 +282,13 @@ class HubClient extends ChangeNotifier {
     );
     _send(Frame(kind: kMessage, payload: msg.toJson()));
     return nonce;
+  }
+
+  /// 创建群聊（FKConvCreate，payload {t, m}）。hub 广播 created 事件后
+  /// 会话列表自动更新（创建者自动成为成员）。
+  void createConversation(String title, List<String> memberIds) {
+    final req = ConversationRequest(title: title, memberIds: memberIds);
+    _send(Frame(kind: kConvCreate, payload: req.toJson()));
   }
 
   void sendTyping(String conversationId) {

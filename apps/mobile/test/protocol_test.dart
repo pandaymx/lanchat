@@ -110,4 +110,24 @@ void main() {
     expect(g.map((m) => m.serverSeq).toList(), [1, 3]);
     expect(c.messagesOf('').length, 1);
   });
+
+  test('ConversationEvent 解析（created 广播）', () {
+    final ev = ConversationEvent.fromJson({
+      'c': {'id': 'g1', 'kind': 'group', 'title': '前端组'},
+      'e': 'created',
+      'u': 'alice',
+      'm': ['alice', 'bob'],
+    });
+    expect(ev.snapshot.id, 'g1');
+    expect(ev.snapshot.title, '前端组');
+    expect(ev.event, 'created');
+    expect(ev.members, ['alice', 'bob']);
+  });
+
+  test('ConversationRequest 构造（FKConvCreate payload）', () {
+    final req = ConversationRequest(title: '前端组', memberIds: ['bob', 'carol']);
+    final json = req.toJson();
+    expect(json['t'], '前端组');
+    expect(json['m'], ['bob', 'carol']);
+  });
 }

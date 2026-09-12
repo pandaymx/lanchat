@@ -54,6 +54,29 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _openCreateGroup() {
+    final candidates = <String>{
+      ...client.onlineUsers.keys,
+      ...client.messages.map((m) => m.senderUserId),
+    }..remove(client.userId);
+    candidates.remove('');
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('还没有可邀请的成员（等待其他人上线）')),
+      );
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _CreateGroupSheet(client: client, candidates: candidates.toList()..sort()),
+    );
+  }
+
   String _timeLabel(int atMs) {
     if (atMs <= 0) return '';
     final t = DateTime.fromMillisecondsSinceEpoch(atMs);
@@ -111,6 +134,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: '创建群聊',
+            icon: const Icon(Icons.group_add),
+            onPressed: _openCreateGroup,
+          ),
           IconButton(
             tooltip: '断开连接',
             icon: const Icon(Icons.link_off),
@@ -231,5 +259,148 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
     if (id.isEmpty) return colors[0];
     return colors[id.codeUnitAt(0) % colors.length];
+  }
+}
+
+/// 建群底部弹层：群名 + 成员多选。
+class _CreateGroupSheet extends StatefulWidget {
+  final HubClient client;
+  final List<String> candidates;
+
+  const _CreateGroupSheet({required this.client, required this.candidates});
+
+  @override
+  State<_CreateGroupSheet> createState() => _CreateGroupSheetState();
+}
+
+class _CreateGroupSheetState extends State<_CreateGroupSheet> {
+  final _titleCtrl = TextEditingController();
+  final Set<String> _selected = {};
+
+  @override
+  void dispose() {
+    _titleCtrl.dispose();
+    super.dispose();
+  }
+
+  void _create() {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请填写群名称')),
+      );
+      return;
+    }
+    widget.client.createConversation(title, _selected.toList());
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: keyboardInset),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text(
+              '创建群聊',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Color(0xFFE6E8EC)),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: TextField(
+              controller: _titleCtrl,
+              autofocus: true,
+              style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15),
+              decoration: InputDecoration(
+                hintText: '群名称',
+                hintStyle: const TextStyle(color: Color(0xFF6B7078)),
+                filled: true,
+                fillColor: const Color(0xFF2B2D33),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Text(
+              '邀请成员（已选 ${_selected.length}）',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF8B919C)),
+            ),
+          ),
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              children: widget.candidates.map((u) {
+                final online = widget.client.onlineUsers[u] ?? false;
+                final checked = _selected.contains(u);
+                return CheckboxListTile(
+                  value: checked,
+                  dense: true,
+                  activeColor: const Color(0xFF2B6BFF),
+                  onChanged: (v) => setState(() {
+                    if (v == true) {
+                      _selected.add(u);
+                    } else {
+                      _selected.remove(u);
+                    }
+                  }),
+                  title: Text(
+                    u,
+                    style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 14),
+                  ),
+                  secondary: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(color: _seedColor(u), shape: BoxShape.circle),
+                    alignment: Alignment.center,
+                    child: Text(
+                      u[0].toUpperCase(),
+                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  subtitle: online
+                      ? const Text('在线', style: TextStyle(fontSize: 11, color: Color(0xFF07C160)))
+                      : null,
+                );
+              }).toList(),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: FilledButton(
+              onPressed: _create,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF2B6BFF),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+              child: const Text('创建', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Color _seedColor(String u) {
+    const colors = [
+      Color(0xFF5B8FF9),
+      Color(0xFF61C766),
+      Color(0xFFF6BD16),
+      Color(0xFFE86452),
+      Color(0xFF9A60B4),
+      Color(0xFF2F9E9B),
+    ];
+    return colors[u.codeUnitAt(0) % colors.length];
   }
 }

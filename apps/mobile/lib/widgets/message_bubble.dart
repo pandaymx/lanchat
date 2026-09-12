@@ -10,6 +10,7 @@ class MessageBubble extends StatelessWidget {
   final HubClient client;
   final String selfUserId;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   const MessageBubble({
     super.key,
@@ -17,6 +18,7 @@ class MessageBubble extends StatelessWidget {
     required this.client,
     required this.selfUserId,
     this.onTap,
+    this.onLongPress,
   });
 
   bool get isMine => message.senderUserId == selfUserId;
@@ -86,29 +88,32 @@ class MessageBubble extends StatelessWidget {
                 if (_isImage)
                   _imageBubble(textColor, radius)
                 else
-                  Container(
-                    constraints: const BoxConstraints(maxWidth: 260),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                    decoration: BoxDecoration(color: bubbleColor, borderRadius: radius),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        if (message.body.isNotEmpty)
-                          SelectableText(
-                            message.body,
-                            style: TextStyle(fontSize: 15, color: textColor, height: 1.4),
-                          ),
-                        if (message.file != null)
+                  GestureDetector(
+                    onLongPress: onLongPress,
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 260),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                      decoration: BoxDecoration(color: bubbleColor, borderRadius: radius),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          if (message.body.isNotEmpty)
+                            SelectableText(
+                              message.body,
+                              style: TextStyle(fontSize: 15, color: textColor, height: 1.4),
+                            ),
+                          if (message.file != null)
+                            Text(
+                              '📎 ${message.file!.name}',
+                              style: TextStyle(fontSize: 13, color: textColor),
+                            ),
+                          const SizedBox(height: 2),
                           Text(
-                            '📎 ${message.file!.name}',
-                            style: TextStyle(fontSize: 13, color: textColor),
+                            _formatTime(message.createdAt),
+                            style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.6)),
                           ),
-                        const SizedBox(height: 2),
-                        Text(
-                          _formatTime(message.createdAt),
-                          style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.6)),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
               ],
@@ -179,6 +184,7 @@ class MessageBubble extends StatelessWidget {
     final url = 'http://${client.host}:${client.port}/api/files/${file.fileId}';
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Container(
         decoration: BoxDecoration(
           color: isMine ? const Color(0xFF2B6BFF) : const Color(0xFF2B2D33),

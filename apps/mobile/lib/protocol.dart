@@ -249,3 +249,45 @@ class ConversationSnapshot {
     );
   }
 }
+
+/// 创建群请求（Go: ConversationRequest，json: t/m）。
+class ConversationRequest {
+  final String title;
+  final List<String> memberIds;
+
+  ConversationRequest({required this.title, this.memberIds = const []});
+
+  Map<String, dynamic> toJson() => {
+        't': title,
+        if (memberIds.isNotEmpty) 'm': memberIds,
+      };
+}
+
+/// 会话变更广播（Go: ConversationEvent，json: c/e/u/m）。
+class ConversationEvent {
+  final ConversationSnapshot snapshot;
+  final String event; // created / joined / left
+  final String byUserId;
+  final List<String> members;
+
+  ConversationEvent({
+    required this.snapshot,
+    required this.event,
+    this.byUserId = '',
+    this.members = const [],
+  });
+
+  factory ConversationEvent.fromJson(Map<String, dynamic> j) {
+    final c = (j['c'] as Map<String, dynamic>?) ?? const {};
+    return ConversationEvent(
+      snapshot: ConversationSnapshot(
+        id: (c['id'] as String?) ?? '',
+        kind: (c['kind'] as String?) ?? '',
+        title: (c['title'] as String?) ?? '',
+      ),
+      event: (j['e'] as String?) ?? '',
+      byUserId: (j['u'] as String?) ?? '',
+      members: ((j['m'] as List?) ?? []).map((e) => e.toString()).toList(),
+    );
+  }
+}

@@ -1,3 +1,9 @@
+## [1.15.0](https://github.com/pandaymx/lanchat/compare/v1.14.0...v1.15.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 消息转发（选会话重发文本/文件，fileId 复用） ([ebc3d90](https://github.com/pandaymx/lanchat/commit/ebc3d90cb39b886ee7578057615c3bc406be8b76))
+
 ## [1.14.0](https://github.com/pandaymx/lanchat/compare/v1.13.0...v1.14.0) (2026-09-12)
 
 ### Features

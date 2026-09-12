@@ -1,3 +1,9 @@
+## [1.7.0](https://github.com/pandaymx/lanchat/compare/v1.6.0...v1.7.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 消息引用/回复 + 群创建入口 ([6a3b309](https://github.com/pandaymx/lanchat/commit/6a3b3090c00258fdb59a7926186bb2b2bf519de3))
+
 ## [1.6.0](https://github.com/pandaymx/lanchat/compare/v1.5.2...v1.6.0) (2026-09-12)
 
 ### Features

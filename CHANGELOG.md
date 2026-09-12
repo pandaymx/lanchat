@@ -1,3 +1,9 @@
+## [1.22.0](https://github.com/pandaymx/lanchat/compare/v1.21.0...v1.22.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 消息 tab 未读总数角标（99+ 封顶） ([c514c81](https://github.com/pandaymx/lanchat/commit/c514c812ddbbef5b381840f7cb9cda999be9369c))
+
 ## [1.21.0](https://github.com/pandaymx/lanchat/compare/v1.20.1...v1.21.0) (2026-09-12)
 
 ### Features

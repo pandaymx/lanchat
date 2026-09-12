@@ -235,6 +235,14 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _openGroupInfo() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _GroupInfoScreen(client: client, conversationId: convId),
+      ),
+    );
+  }
+
   /// 按天分组：相邻同一天的消息之间不插条，跨天插日期分隔条。
   List<Object> _buildItems(List<StoredMessage> messages) {
     final items = <Object>[];
@@ -286,6 +294,19 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
+        actions: [
+          if (!_isLobby)
+            PopupMenuButton<String>(
+              color: const Color(0xFF2B2D33),
+              icon: const Icon(Icons.more_vert, size: 20),
+              onSelected: (v) {
+                if (v == 'info') _openGroupInfo();
+              },
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'info', child: Text('群信息', style: TextStyle(color: Color(0xFFE6E8EC)))),
+              ],
+            ),
+        ],
       ),
       body: Column(
         children: [
@@ -518,5 +539,134 @@ class _FullImageViewer extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+
+/// 群信息页：成员列表 + 退出群聊（FKConvLeave）。
+class _GroupInfoScreen extends StatefulWidget {
+  final HubClient client;
+  final String conversationId;
+
+  const _GroupInfoScreen({required this.client, required this.conversationId});
+
+  @override
+  State<_GroupInfoScreen> createState() => _GroupInfoScreenState();
+}
+
+class _GroupInfoScreenState extends State<_GroupInfoScreen> {
+  HubClient get client => widget.client;
+  String get convId => widget.conversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    client.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    client.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _leave() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF20232A),
+        title: const Text('退出群聊', style: TextStyle(color: Color(0xFFE6E8EC))),
+        content: const Text('退出后将不再收到该群消息，确定退出？', style: TextStyle(color: Color(0xFF8B919C))),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消', style: TextStyle(color: Color(0xFF8B919C))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('退出', style: TextStyle(color: Color(0xFFE86452))),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    client.leaveConversation(convId);
+    Navigator.of(context).popUntil((r) => r.isFirst);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final conv = client.conversations[convId];
+    final title = conv?.title ?? '群聊';
+    final members = conv?.members ?? const <String>[];
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF17181C),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF20232A),
+        foregroundColor: const Color(0xFFE6E8EC),
+        title: Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text(
+              '成员 ${members.length} 人',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF8B919C)),
+            ),
+          ),
+          ...members.map(
+            (u) => ListTile(
+              leading: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(color: _seedColor(u), shape: BoxShape.circle),
+                alignment: Alignment.center,
+                child: Text(
+                  u.isEmpty ? '?' : u[0].toUpperCase(),
+                  style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ),
+              title: Text(u, style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 14)),
+              trailing: (client.onlineUsers[u] ?? false)
+                  ? const Text('在线', style: TextStyle(fontSize: 12, color: Color(0xFF07C160)))
+                  : null,
+            ),
+          ),
+          const SizedBox(height: 24),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: OutlinedButton(
+              onPressed: _leave,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFE86452),
+                side: const BorderSide(color: Color(0xFFE86452)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: const Text('退出群聊', style: TextStyle(fontSize: 15)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _seedColor(String u) {
+    const colors = [
+      Color(0xFF5B8FF9),
+      Color(0xFF61C766),
+      Color(0xFFF6BD16),
+      Color(0xFFE86452),
+      Color(0xFF9A60B4),
+      Color(0xFF2F9E9B),
+    ];
+    if (u.isEmpty) return colors[0];
+    return colors[u.codeUnitAt(0) % colors.length];
   }
 }

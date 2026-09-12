@@ -301,6 +301,12 @@ class HubClient extends ChangeNotifier {
     _send(Frame(kind: kConvCreate, payload: req.toJson()));
   }
 
+  /// 退出群聊（FKConvLeave，payload {c}）。hub 广播 left 事件后
+  /// 会话列表自动移除（仅剩大厅）。
+  void leaveConversation(String conversationId) {
+    _send(Frame(kind: kConvLeave, payload: {'c': conversationId}));
+  }
+
   /// 历史搜索（v1.1）。结果异步回填 [searchResults] 并 notify。
   final List<StoredMessage> searchResults = [];
   bool searching = false;

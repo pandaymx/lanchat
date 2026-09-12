@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../hub_client.dart';
 import '../protocol.dart';
 import 'chat_screen.dart';
+import 'contacts_screen.dart';
 import 'search_screen.dart';
 
 /// 会话列表页（QQ 风格）：大厅 + 群聊，未读角标，最后消息预览。
@@ -19,6 +20,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   HubClient get client => widget.client;
+  int _tab = 0;
 
   @override
   void initState() {
@@ -173,26 +175,50 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           Expanded(
-            child: client.connected && convs.isEmpty
-                ? const Center(
-                    child: Text('加载中…', style: TextStyle(color: Color(0xFF8B919C))),
-                  )
-                : ListView.separated(
-                    itemCount: convs.length,
-                    separatorBuilder: (_, __) => const Divider(
-                      height: 1,
-                      indent: 72,
-                      color: Color(0xFF26282E),
-                    ),
-                    itemBuilder: (context, i) {
-                      final conv = convs[i];
-                      return _convTile(conv);
-                    },
-                  ),
+            child: _tab == 0 ? _messagesTab(convs) : ContactsScreen(client: client),
+          ),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _tab,
+        backgroundColor: const Color(0xFF20232A),
+        selectedItemColor: const Color(0xFF2B6BFF),
+        unselectedItemColor: const Color(0xFF8B919C),
+        type: BottomNavigationBarType.fixed,
+        onTap: (i) => setState(() => _tab = i),
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.forum_outlined),
+            activeIcon: Icon(Icons.forum),
+            label: '消息',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.people_outline),
+            activeIcon: Icon(Icons.people),
+            label: '联系人',
           ),
         ],
       ),
     );
+  }
+
+  Widget _messagesTab(List<ConversationSnapshot> convs) {
+    return client.connected && convs.isEmpty
+        ? const Center(
+            child: Text('加载中…', style: TextStyle(color: Color(0xFF8B919C))),
+          )
+        : ListView.separated(
+            itemCount: convs.length,
+            separatorBuilder: (_, __) => const Divider(
+              height: 1,
+              indent: 72,
+              color: Color(0xFF26282E),
+            ),
+            itemBuilder: (context, i) {
+              final conv = convs[i];
+              return _convTile(conv);
+            },
+          );
   }
 
   Widget _convTile(ConversationSnapshot conv) {

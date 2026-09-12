@@ -1,3 +1,9 @@
+## [1.6.0](https://github.com/pandaymx/lanchat/compare/v1.5.2...v1.6.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 会话列表页 + 图片发送，QQ/微信式多会话体验 ([7edf69e](https://github.com/pandaymx/lanchat/commit/7edf69ea4990bd4ca60a78918866b09e87af978a))
+
 ## [1.5.2](https://github.com/pandaymx/lanchat/compare/v1.5.1...v1.5.2) (2026-09-09)
 
 ### Bug Fixes

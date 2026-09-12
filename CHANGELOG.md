@@ -1,3 +1,9 @@
+## [1.19.0](https://github.com/pandaymx/lanchat/compare/v1.18.0...v1.19.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 连接页最近连接历史（一键回填，最多 5 条） ([a43949b](https://github.com/pandaymx/lanchat/commit/a43949ba2654ffae94d09d900dbdb1649fe559d4))
+
 ## [1.18.0](https://github.com/pandaymx/lanchat/compare/v1.17.0...v1.18.0) (2026-09-12)
 
 ### Features

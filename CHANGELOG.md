@@ -1,3 +1,9 @@
+## [1.20.1](https://github.com/pandaymx/lanchat/compare/v1.20.0...v1.20.1) (2026-09-12)
+
+### Bug Fixes
+
+* **mobile:** flutter_local_notifications 需 core library desugaring ([8cbf60f](https://github.com/pandaymx/lanchat/commit/8cbf60fb6e065b00a6da3e0aa25b715341c77fda))
+
 ## [1.20.0](https://github.com/pandaymx/lanchat/compare/v1.19.0...v1.20.0) (2026-09-12)
 
 ### Features

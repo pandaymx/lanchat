@@ -369,11 +369,10 @@ class _HomeScreenState extends State<HomeScreen> {
           borderRadius: BorderRadius.circular(12),
         ),
         alignment: Alignment.center,
-        child: Icon(
-          isLobby ? Icons.forum : Icons.group,
-          color: Colors.white,
-          size: 24,
-        ),
+        clipBehavior: Clip.antiAlias,
+        child: isLobby
+            ? const Icon(Icons.forum, color: Colors.white, size: 24)
+            : _groupAvatar(conv.members),
       ),
       title: Row(
         children: [
@@ -447,6 +446,46 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
     if (id.isEmpty) return colors[0];
     return colors[id.codeUnitAt(0) % colors.length];
+  }
+
+  /// 群头像：前 4 名成员 2×2 色块拼图（成员名为种子）。
+  Widget _groupAvatar(List<String> members) {
+    if (members.isEmpty) {
+      return const Icon(Icons.group, color: Colors.white, size: 24);
+    }
+    final shown = members.take(4).toList();
+    final cells = shown.map((u) {
+      return Container(
+        color: _convColor(u),
+        alignment: Alignment.center,
+        child: Text(
+          u.isEmpty ? '?' : u[0].toUpperCase(),
+          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+        ),
+      );
+    }).toList();
+    if (shown.length == 1) return cells[0];
+    if (shown.length == 2) {
+      return Column(
+        children: [
+          Expanded(child: Row(children: [Expanded(child: cells[0]), Expanded(child: cells[1])])),
+        ],
+      );
+    }
+    if (shown.length == 3) {
+      return Column(
+        children: [
+          Expanded(child: Row(children: [Expanded(child: cells[0]), Expanded(child: cells[1])])),
+          Expanded(child: cells[2]),
+        ],
+      );
+    }
+    return Column(
+      children: [
+        Expanded(child: Row(children: [Expanded(child: cells[0]), Expanded(child: cells[1])])),
+        Expanded(child: Row(children: [Expanded(child: cells[2]), Expanded(child: cells[3])])),
+      ],
+    );
   }
 }
 

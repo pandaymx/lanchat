@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../hub_client.dart';
-import 'chat_screen.dart';
+import 'home_screen.dart';
 
 /// 连接页：host / port / 用户名 / 设备名。
 /// 参数持久化（shared_preferences），下次打开免输入。
@@ -64,7 +64,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => ChatScreen(client: client, startCursor: cursor),
+        builder: (_) => HomeScreen(client: client, startCursor: cursor),
       ),
     );
   }

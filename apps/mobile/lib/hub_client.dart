@@ -1,14 +1,14 @@
-/// hub WS 客户端：连接、心跳、重连、事件分发。
+/// hub WS 客户端：连接、心跳、重连、事件分发、多会话与未读。
 ///
 /// 与 Go pkg/client 对齐的 MVP 子集：
 /// - 连接后发 Hello（含 ResumeFrom）；
 /// - 收 ConvList / HistoryResp / Deliver / Presence / Error / Pong；
-/// - 30s 心跳 Ping；断线 3s 指数退避重连（0-15s）；
-/// - 本地游标（max serverSeq）持久化，重连时续传。
+/// - 30s 心跳 Ping；断线指数退避重连（0-15s）；
+/// - 本地游标（max serverSeq）持久化，重连时续传；
+/// - 多会话：messages 全局收流，按 conv 过滤渲染；每会话已读游标。
 library;
 
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -31,6 +31,7 @@ class HubClient extends ChangeNotifier {
   final List<StoredMessage> messages = [];
   final Map<String, bool> onlineUsers = {}; // userID -> online
   final Map<String, ConversationSnapshot> conversations = {};
+  final Map<String, int> _readCursors = {}; // convID -> 已读 ServerSeq
   String connectionStatus = '未连接';
   bool connected = false;
   String? lastError;
@@ -46,6 +47,56 @@ class HubClient extends ChangeNotifier {
   });
 
   String get wsUrl => 'ws://$host:$port/ws';
+
+  /// 会话列表（大厅 + 群聊），按最后消息时间降序。
+  List<ConversationSnapshot> get sortedConversations {
+    final all = <ConversationSnapshot>[
+      ...conversations.values,
+      const ConversationSnapshot(id: lobbyConversationId, kind: 'lobby', title: '大厅'),
+    ];
+    final seen = <String>{};
+    final unique = <ConversationSnapshot>[];
+    for (final c in all) {
+      if (seen.add(c.id)) unique.add(c);
+    }
+    unique.sort((a, b) {
+      final la = lastMessageOf(a.id)?.createdAt ?? 0;
+      final lb = lastMessageOf(b.id)?.createdAt ?? 0;
+      return lb.compareTo(la);
+    });
+    return unique;
+  }
+
+  /// 某会话的消息（按 ServerSeq 升序）。
+  List<StoredMessage> messagesOf(String convId) {
+    final out = messages.where((m) => m.conversationId == convId).toList()
+      ..sort((a, b) => a.serverSeq.compareTo(b.serverSeq));
+    return out;
+  }
+
+  /// 某会话最后一条消息。
+  StoredMessage? lastMessageOf(String convId) {
+    final list = messagesOf(convId);
+    return list.isEmpty ? null : list.last;
+  }
+
+  /// 某会话未读数：他人发、seq 大于本地已读游标的消息数。
+  int unreadCount(String convId) {
+    final readSeq = _readCursors[convId] ?? 0;
+    return messagesOf(convId)
+        .where((m) => m.senderUserId != userId && m.serverSeq > readSeq)
+        .length;
+  }
+
+  /// 进入会话：上报已读并本地记录游标。
+  void markRead(String convId) {
+    final last = lastMessageOf(convId);
+    if (last == null || last.serverSeq <= (_readCursors[convId] ?? 0)) return;
+    final seq = last.serverSeq;
+    _readCursors[convId] = seq;
+    _send(Frame(kind: kRead, payload: ReadMark(conversationId: convId, serverSeq: seq).toJson()));
+    notifyListeners();
+  }
 
   /// 开始连接。startCursor 来自本地持久化（0 = 首次）。
   Future<void> start(int startCursor) async {
@@ -70,7 +121,6 @@ class HubClient extends ChangeNotifier {
         },
         cancelOnError: true,
       );
-      // 等待底层连接建立后发 Hello。
       await channel.ready;
       _attempts = 0;
       _sendHello();
@@ -112,7 +162,7 @@ class HubClient extends ChangeNotifier {
   void _onData(dynamic raw) {
     try {
       final bytes = raw is List<int> ? raw : (raw as String).codeUnits;
-      final frame = Frame.decode(bytes is Uint8List ? bytes : Uint8List.fromList(bytes));
+      final frame = Frame.decode(Uint8List.fromList(bytes));
       _handleFrame(frame);
     } catch (e) {
       debugPrint('frame decode error: $e');
@@ -140,7 +190,6 @@ class HubClient extends ChangeNotifier {
       case kDeliver:
         final msg = StoredMessage.fromJson(p ?? {});
         _merge([msg]);
-        _sendRead(msg.conversationId, _cursor);
         notifyListeners();
       case kPresence:
         final presence = Presence.fromJson(p ?? {});
@@ -179,14 +228,6 @@ class HubClient extends ChangeNotifier {
     messages.sort((a, b) => a.serverSeq.compareTo(b.serverSeq));
   }
 
-  void _sendRead(String conversationId, int serverSeq) {
-    if (serverSeq <= 0) return;
-    _send(Frame(kind: kRead, payload: ReadMark(
-      conversationId: conversationId,
-      serverSeq: serverSeq,
-    ).toJson()));
-  }
-
   /// 发送一条文本消息。返回本地 nonce；Hub 回 FKDeliver 后合并。
   String sendMessage(String conversationId, String body, {ReplyRef? replyTo}) {
     final nonce = _newNonce();
@@ -200,6 +241,24 @@ class HubClient extends ChangeNotifier {
       body: body,
       createdAt: now,
       reply: replyTo,
+    );
+    _send(Frame(kind: kMessage, payload: msg.toJson()));
+    return nonce;
+  }
+
+  /// 发送一条带文件附件的消息（FileRef 已由上传获得）。
+  String sendFileMessage(String conversationId, FileRef file, {String body = ''}) {
+    final nonce = _newNonce();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final msg = StoredMessage(
+      id: 'local-$nonce',
+      clientNonce: nonce,
+      conversationId: conversationId,
+      senderUserId: userId,
+      senderDeviceId: deviceId,
+      body: body,
+      createdAt: now,
+      file: file,
     );
     _send(Frame(kind: kMessage, payload: msg.toJson()));
     return nonce;
@@ -225,8 +284,7 @@ class HubClient extends ChangeNotifier {
     notifyListeners();
     if (!_closed) {
       _attempts++;
-      final delay = const [3, 6, 12, 15, 15]
-          [(_attempts - 1).clamp(0, 4)];
+      final delay = const [3, 6, 12, 15, 15][(_attempts - 1).clamp(0, 4)];
       _reconnectTimer?.cancel();
       _reconnectTimer = Timer(Duration(seconds: delay), () {
         if (!_closed) _open();

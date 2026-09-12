@@ -232,7 +232,7 @@ class ConversationSnapshot {
   final String title;
   final List<String> members;
 
-  ConversationSnapshot({
+  const ConversationSnapshot({
     required this.id,
     required this.kind,
     this.title = '',

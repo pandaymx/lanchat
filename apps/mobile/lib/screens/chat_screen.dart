@@ -1,17 +1,26 @@
-import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
 
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+
+import '../api.dart';
 import '../hub_client.dart';
 import '../protocol.dart';
 import '../widgets/message_bubble.dart';
 
-/// 聊天页：大厅会话（conv = ""）。
-/// 历史加载 → 实时消息 → 输入发送 → 已读标记 → 断线重连。
+/// 聊天页：指定会话（大厅 conv="" 或群聊）。
+/// 历史加载 → 实时消息 → 文本/图片发送 → 已读 → 断线重连。
 class ChatScreen extends StatefulWidget {
   final HubClient client;
-  final int startCursor;
+  final String conversationId;
+  final String title;
 
-  const ChatScreen({super.key, required this.client, required this.startCursor});
+  const ChatScreen({
+    super.key,
+    required this.client,
+    required this.conversationId,
+    required this.title,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -20,21 +29,23 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final _inputCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
+  bool _uploading = false;
 
   HubClient get client => widget.client;
+  String get convId => widget.conversationId;
+  bool get _isLobby => convId == lobbyConversationId;
 
   @override
   void initState() {
     super.initState();
     client.addListener(_onClientChanged);
-    client.start(widget.startCursor);
+    // 进入会话即已读（列表页已 markRead，这里兜底新消息）。
+    WidgetsBinding.instance.addPostFrameCallback((_) => client.markRead(convId));
   }
 
   @override
   void dispose() {
     client.removeListener(_onClientChanged);
-    _saveCursor();
-    client.close();
     _inputCtrl.dispose();
     _scrollCtrl.dispose();
     super.dispose();
@@ -66,24 +77,49 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Future<void> _saveCursor() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (client.cursor > 0) {
-      await prefs.setInt('cursor_${client.userId}', client.cursor);
-    }
-  }
-
   void _send() {
     final body = _inputCtrl.text.trim();
     if (body.isEmpty) return;
-    client.sendMessage(lobbyConversationId, body);
+    client.sendMessage(convId, body);
     _inputCtrl.clear();
     _scrollToBottom();
   }
 
+  Future<void> _pickAndSendImage() async {
+    final picker = ImagePicker();
+    final XFile? picked;
+    try {
+      picked = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
+    } catch (e) {
+      _toast('无法打开图库: $e');
+      return;
+    }
+    if (picked == null) return;
+    setState(() => _uploading = true);
+    try {
+      final api = HubApi(host: client.host, port: client.port);
+      final file = File(picked.path);
+      final ref = await api.uploadFile(file, mime: 'image/jpeg');
+      if (!mounted) return;
+      client.sendFileMessage(convId, ref);
+      _scrollToBottom();
+    } catch (e) {
+      _toast('上传失败: $e');
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   @override
   Widget build(BuildContext context) {
+    final messages = client.messagesOf(convId);
     final onlineCount = client.onlineUsers.values.where((v) => v).length;
+    final title = widget.title.isEmpty && _isLobby ? '大厅' : widget.title;
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B1D22),
@@ -93,30 +129,17 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('大厅', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+            Text(title.isEmpty ? '群聊' : title,
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
             Text(
-              client.connected
-                  ? '在线 $onlineCount 人'
-                  : client.connectionStatus,
+              client.connected ? '在线 $onlineCount 人' : client.connectionStatus,
               style: TextStyle(
                 fontSize: 11,
-                color: client.connected
-                    ? const Color(0xFF07C160)
-                    : const Color(0xFFE86452),
+                color: client.connected ? const Color(0xFF07C160) : const Color(0xFFE86452),
               ),
             ),
           ],
         ),
-        actions: [
-          IconButton(
-            tooltip: '断开',
-            icon: const Icon(Icons.link_off),
-            onPressed: () {
-              client.close();
-              Navigator.of(context).pop();
-            },
-          ),
-        ],
       ),
       body: Column(
         children: [
@@ -132,25 +155,19 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           Expanded(
-            child: client.messages.isEmpty && !client.connected
+            child: messages.isEmpty && !client.connected
                 ? const Center(
-                    child: Text(
-                      '连接中…',
-                      style: TextStyle(color: Color(0xFF8B919C)),
-                    ),
+                    child: Text('连接中…', style: TextStyle(color: Color(0xFF8B919C))),
                   )
                 : ListView.builder(
                     controller: _scrollCtrl,
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: client.messages.length,
-                    itemBuilder: (context, i) {
-                      final msg = client.messages[i];
-                      return MessageBubble(
-                        message: msg,
-                        client: client,
-                        selfUserId: client.userId,
-                      );
-                    },
+                    itemCount: messages.length,
+                    itemBuilder: (context, i) => MessageBubble(
+                      message: messages[i],
+                      client: client,
+                      selfUserId: client.userId,
+                    ),
                   ),
           ),
           _composer(),
@@ -163,7 +180,7 @@ class _ChatScreenState extends State<ChatScreen> {
     return Container(
       color: const Color(0xFF20232A),
       padding: EdgeInsets.only(
-        left: 12,
+        left: 8,
         right: 12,
         top: 10,
         bottom: MediaQuery.of(context).padding.bottom + 10,
@@ -171,9 +188,15 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Row(
         children: [
           IconButton(
-            onPressed: null,
-            icon: const Icon(Icons.add_circle_outline, color: Color(0xFF8B919C)),
-            tooltip: '附件（下一迭代）',
+            onPressed: _uploading ? null : _pickAndSendImage,
+            icon: _uploading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
+                  )
+                : const Icon(Icons.add_circle_outline, color: Color(0xFF8B919C)),
+            tooltip: '发送图片',
           ),
           Expanded(
             child: TextField(

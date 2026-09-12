@@ -1,3 +1,9 @@
+## [1.9.0](https://github.com/pandaymx/lanchat/compare/v1.8.1...v1.9.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 历史消息搜索（全局 + 点击进会话） ([78d6cb8](https://github.com/pandaymx/lanchat/commit/78d6cb846b1082a5e938e0cb86028bd48d5a705e))
+
 ## [1.8.1](https://github.com/pandaymx/lanchat/compare/v1.8.0...v1.8.1) (2026-09-12)
 
 ### Bug Fixes

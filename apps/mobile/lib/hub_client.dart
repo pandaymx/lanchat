@@ -185,6 +185,7 @@ class HubClient extends ChangeNotifier {
       case kHistoryResp:
         final resp = HistoryResponse.fromJson(p ?? {});
         _merge(resp.messages);
+        loadingEarlier = false;
         if (resp.hasMore && resp.messages.isNotEmpty) {
           _requestHistory(after: resp.messages.last.serverSeq);
         }
@@ -256,6 +257,22 @@ class HubClient extends ChangeNotifier {
 
   void _requestHistory({int after = 0, int limit = 200}) {
     final req = HistoryRequest(after: after, limit: limit).toJson();
+    _send(Frame(kind: kHistoryReq, payload: req));
+  }
+
+  /// 向上加载更早历史（单会话，before=当前最早 seq）。
+  bool loadingEarlier = false;
+
+  void loadEarlier(String convId) {
+    if (loadingEarlier) return;
+    final earliest = messagesOf(convId).isEmpty ? null : messagesOf(convId).first.serverSeq;
+    if (earliest == null) {
+      _requestHistory();
+      return;
+    }
+    loadingEarlier = true;
+    notifyListeners();
+    final req = HistoryRequest(conversationIds: [convId], before: earliest, limit: 200).toJson();
     _send(Frame(kind: kHistoryReq, payload: req));
   }
 

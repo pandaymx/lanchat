@@ -50,8 +50,18 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     client.addListener(_onClientChanged);
+    _scrollCtrl.addListener(_onScroll);
     // 进入会话即已读（列表页已 markRead，这里兜底新消息）。
     WidgetsBinding.instance.addPostFrameCallback((_) => client.markRead(convId));
+  }
+
+  void _onScroll() {
+    if (!_scrollCtrl.hasClients) return;
+    final pos = _scrollCtrl.position;
+    // 接近顶部 → 加载更早历史
+    if (pos.pixels < 60 && !client.loadingEarlier) {
+      client.loadEarlier(convId);
+    }
   }
 
   @override
@@ -345,9 +355,21 @@ class _ChatScreenState extends State<ChatScreen> {
                 : ListView.builder(
                     controller: _scrollCtrl,
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: items.length,
+                    itemCount: items.length + (client.loadingEarlier ? 1 : 0),
                     itemBuilder: (context, i) {
-                      final item = items[i];
+                      if (client.loadingEarlier && i == 0) {
+                        return const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 10),
+                          child: Center(
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
+                            ),
+                          ),
+                        );
+                      }
+                      final item = items[i - (client.loadingEarlier ? 1 : 0)];
                       if (item is DateTime) return _dateDivider(item);
                       final m = item as StoredMessage;
                       return MessageBubble(

@@ -1,3 +1,9 @@
+## [1.18.0](https://github.com/pandaymx/lanchat/compare/v1.17.0...v1.18.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 输入框 emoji 面板（60 常用表情，点击插入） ([816739d](https://github.com/pandaymx/lanchat/commit/816739df0d851225577c55ee97f6c0c8ba2b47d2))
+
 ## [1.17.0](https://github.com/pandaymx/lanchat/compare/v1.16.0...v1.17.0) (2026-09-12)
 
 ### Features

@@ -40,6 +40,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _recording = false;
   Timer? _recordTimer;
   int _recordSeconds = 0;
+  Timer? _typingTimer;
 
   HubClient get client => widget.client;
   String get convId => widget.conversationId;
@@ -60,6 +61,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _inputFocus.dispose();
     _scrollCtrl.dispose();
     _recordTimer?.cancel();
+    _typingTimer?.cancel();
     super.dispose();
   }
 
@@ -91,8 +93,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _send() {
     final body = _inputCtrl.text.trim();
-    if (body.isEmpty) return;
-    if (_replyTo != null) {
+    if (body.isEmpty) return;    if (_replyTo != null) {
       client.sendMessage(convId, body,
           replyTo: ReplyRef(
             id: _replyTo!.id,
@@ -105,6 +106,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _inputCtrl.clear();
     setState(() => _replyTo = null);
     _scrollToBottom();
+  }
+
+  /// 输入变化：防抖上发 typing（M7.3，hub 盖戳转发给同会话成员）。
+  void _onInputChanged(String _) {
+    _typingTimer?.cancel();
+    _typingTimer = Timer(const Duration(milliseconds: 500), () {
+      if (_inputCtrl.text.trim().isNotEmpty) {
+        client.sendTyping(convId);
+      }
+    });
   }
 
   void _onMessageLongPress(StoredMessage m) {
@@ -274,6 +285,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final items = _buildItems(messages);
     final onlineCount = client.onlineUsers.values.where((v) => v).length;
     final title = widget.title.isEmpty && _isLobby ? '大厅' : widget.title;
+    final typer = client.typingUsers[convId];
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B1D22),
@@ -286,10 +298,14 @@ class _ChatScreenState extends State<ChatScreen> {
             Text(title.isEmpty ? '群聊' : title,
                 style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
             Text(
-              client.connected ? '在线 $onlineCount 人' : client.connectionStatus,
+              typer != null
+                  ? '$typer 正在输入…'
+                  : (client.connected ? '在线 $onlineCount 人' : client.connectionStatus),
               style: TextStyle(
                 fontSize: 11,
-                color: client.connected ? const Color(0xFF07C160) : const Color(0xFFE86452),
+                color: typer != null
+                    ? const Color(0xFF2B6BFF)
+                    : (client.connected ? const Color(0xFF07C160) : const Color(0xFFE86452)),
               ),
             ),
           ],
@@ -472,6 +488,7 @@ class _ChatScreenState extends State<ChatScreen> {
             child: TextField(
               controller: _inputCtrl,
               focusNode: _inputFocus,
+              onChanged: _onInputChanged,
               style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15),
               minLines: 1,
               maxLines: 4,

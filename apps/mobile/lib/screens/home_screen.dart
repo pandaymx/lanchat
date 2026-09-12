@@ -6,6 +6,7 @@ import '../protocol.dart';
 import 'chat_screen.dart';
 import 'contacts_screen.dart';
 import 'search_screen.dart';
+import 'settings_screen.dart';
 
 /// 会话列表页（QQ 风格）：大厅 + 群聊，未读角标，最后消息预览。
 class HomeScreen extends StatefulWidget {
@@ -143,6 +144,15 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute(builder: (_) => SearchScreen(client: client)),
+              );
+            },
+          ),
+          IconButton(
+            tooltip: '设置',
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => SettingsScreen(client: client)),
               );
             },
           ),

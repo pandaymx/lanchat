@@ -32,6 +32,8 @@ class HubClient extends ChangeNotifier {
   final Map<String, bool> onlineUsers = {}; // userID -> online
   final Map<String, ConversationSnapshot> conversations = {};
   final Map<String, int> _readCursors = {}; // convID -> 已读 ServerSeq
+  final Map<String, String> typingUsers = {}; // convID -> 正在输入的 userID
+  final Map<String, Timer> _typingTimers = {};
   String connectionStatus = '未连接';
   bool connected = false;
   String? lastError;
@@ -217,6 +219,20 @@ class HubClient extends ChangeNotifier {
           onlineUsers[presence.userId] = presence.online;
         }
         notifyListeners();
+      case kTyping:
+        final convId = (p?['c'] as String?) ?? '';
+        final typer = (p?['u'] as String?) ?? '';
+        if (convId.isNotEmpty && typer.isNotEmpty && typer != userId) {
+          typingUsers[convId] = typer;
+          _typingTimers[convId]?.cancel();
+          _typingTimers[convId] = Timer(const Duration(seconds: 3), () {
+            if (typingUsers[convId] == typer) {
+              typingUsers.remove(convId);
+              notifyListeners();
+            }
+          });
+          notifyListeners();
+        }
       case kSearchResp:
         searchResults
           ..clear()

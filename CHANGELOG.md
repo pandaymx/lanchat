@@ -1,3 +1,9 @@
+## [1.8.0](https://github.com/pandaymx/lanchat/compare/v1.7.0...v1.8.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 语音消息（录音发送+播放）、图片全屏预览、聊天日期分隔线 ([ec47604](https://github.com/pandaymx/lanchat/commit/ec47604dba26d9e8d03a1db17cb0474490e3dad1))
+
 ## [1.7.0](https://github.com/pandaymx/lanchat/compare/v1.6.0...v1.7.0) (2026-09-12)
 
 ### Features

@@ -34,6 +34,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _inputFocus = FocusNode();
   final _scrollCtrl = ScrollController();
   bool _uploading = false;
+  bool _emojiOpen = false;
   StoredMessage? _replyTo;
 
   final AudioRecorder _recorder = AudioRecorder();
@@ -609,7 +610,11 @@ class _ChatScreenState extends State<ChatScreen> {
         top: 10,
         bottom: MediaQuery.of(context).padding.bottom + 10,
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_emojiOpen) _emojiPanel(),
+          Row(
         children: [
           IconButton(
             onPressed: _uploading ? null : _pickAndSendImage,
@@ -628,6 +633,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? const Icon(Icons.mic, color: Color(0xFFE86452))
                 : const Icon(Icons.mic_none, color: Color(0xFF8B919C)),
             tooltip: _recording ? '停止录音并发送' : '录音',
+          ),
+          IconButton(
+            onPressed: () => setState(() => _emojiOpen = !_emojiOpen),
+            icon: Icon(
+              _emojiOpen ? Icons.keyboard : Icons.emoji_emotions_outlined,
+              color: _emojiOpen ? const Color(0xFF2B6BFF) : const Color(0xFF8B919C),
+            ),
+            tooltip: '表情',
           ),
           Expanded(
             child: TextField(
@@ -659,7 +672,53 @@ class _ChatScreenState extends State<ChatScreen> {
             tooltip: '发送',
           ),
         ],
+        ),
+        ],
       ),
+    );
+  }
+
+  static const List<String> _emojiList = [
+    '😀', '😄', '😁', '😂', '🤣', '😊', '😍', '😘', '😎', '🤔',
+    '😅', '😭', '😡', '🥳', '😇', '🤗', '🫡', '🫶', '🤝', '👍',
+    '👎', '👏', '🙏', '💪', '✌️', '🤞', '🎉', '🎂', '🎁', '❤️',
+    '💔', '💯', '🔥', '✨', '🌟', '🚀', '🌙', '☀️', '⭐', '🌈',
+    '🍎', '🍺', '☕', '🍜', '🍰', '⚽', '🏀', '🎮', '🎧', '🎵',
+    '📱', '💻', '🕐', '❓', '❗', '✅', '❌', '⚠️', '🔒', '📌',
+  ];
+
+  Widget _emojiPanel() {
+    return Container(
+      height: 190,
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+      decoration: const BoxDecoration(
+        color: Color(0xFF2B2D33),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+      ),
+      child: GridView.count(
+        crossAxisCount: 8,
+        children: _emojiList.map((e) {
+          return InkWell(
+            onTap: () => _insertEmoji(e),
+            borderRadius: BorderRadius.circular(8),
+            child: Center(
+              child: Text(e, style: const TextStyle(fontSize: 22)),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  void _insertEmoji(String emoji) {
+    final ctrl = _inputCtrl;
+    final sel = ctrl.selection;
+    final text = ctrl.text;
+    final start = sel.isValid ? sel.start : text.length;
+    final next = text.substring(0, start) + emoji + text.substring(sel.isValid ? sel.end : start);
+    ctrl.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + emoji.length),
     );
   }
 }

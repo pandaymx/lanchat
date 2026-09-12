@@ -1,3 +1,9 @@
+## [1.17.0](https://github.com/pandaymx/lanchat/compare/v1.16.0...v1.17.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 图片多选发送 + 新消息系统通知 ([e88b720](https://github.com/pandaymx/lanchat/commit/e88b72031f32c18b4697b5f2382dc25e7f2b793c))
+
 ## [1.16.0](https://github.com/pandaymx/lanchat/compare/v1.15.0...v1.16.0) (2026-09-12)
 
 ### Features

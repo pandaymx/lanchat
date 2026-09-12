@@ -130,35 +130,75 @@ class _SearchScreenState extends State<SearchScreen> {
         child: Text('没有匹配的消息', style: TextStyle(color: Color(0xFF6B7078))),
       );
     }
-    return ListView.separated(
-      itemCount: results.length,
-      separatorBuilder: (_, __) => const Divider(height: 1, indent: 16, color: Color(0xFF26282E)),
-      itemBuilder: (context, i) {
-        final m = results[i];
-        return ListTile(
-          onTap: () => _openHit(m),
-          leading: Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(color: _seedColor(m.senderUserId), shape: BoxShape.circle),
-            alignment: Alignment.center,
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+          child: Align(
+            alignment: Alignment.centerLeft,
             child: Text(
-              m.senderUserId.isEmpty ? '?' : m.senderUserId[0].toUpperCase(),
-              style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+              '共 ${results.length} 条结果',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF8B919C)),
             ),
           ),
-          title: Text(
-            m.body.isEmpty ? (m.file?.name ?? '[文件]') : m.body,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 14),
+        ),
+        Expanded(
+          child: ListView.separated(
+            itemCount: results.length,
+            separatorBuilder: (_, __) => const Divider(height: 1, indent: 16, color: Color(0xFF26282E)),
+            itemBuilder: (context, i) {
+              final m = results[i];
+              final isImage = m.file != null &&
+                  (m.file!.mime.startsWith('image/') ||
+                      m.file!.name.toLowerCase().endsWith('.png') ||
+                      m.file!.name.toLowerCase().endsWith('.jpg') ||
+                      m.file!.name.toLowerCase().endsWith('.jpeg') ||
+                      m.file!.name.toLowerCase().endsWith('.gif') ||
+                      m.file!.name.toLowerCase().endsWith('.webp'));
+              return ListTile(
+                onTap: () => _openHit(m),
+                leading: isImage
+                    ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.network(
+                          'http://${client.host}:${client.port}/api/files/${m.file!.fileId}',
+                          width: 38,
+                          height: 38,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                            width: 38,
+                            height: 38,
+                            color: const Color(0xFF26282E),
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.image, size: 18, color: Color(0xFF8B919C)),
+                          ),
+                        ),
+                      )
+                    : Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(color: _seedColor(m.senderUserId), shape: BoxShape.circle),
+                        alignment: Alignment.center,
+                        child: Text(
+                          m.senderUserId.isEmpty ? '?' : m.senderUserId[0].toUpperCase(),
+                          style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                title: Text(
+                  m.body.isEmpty ? (m.file?.name ?? '[文件]') : m.body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 14),
+                ),
+                subtitle: Text(
+                  '${m.senderUserId} · ${_convTitle(m.conversationId)}',
+                  style: const TextStyle(color: Color(0xFF8B919C), fontSize: 12),
+                ),
+              );
+            },
           ),
-          subtitle: Text(
-            '${m.senderUserId} · ${_convTitle(m.conversationId)}',
-            style: const TextStyle(color: Color(0xFF8B919C), fontSize: 12),
-          ),
-        );
-      },
+        ),
+      ],
     );
   }
 

@@ -227,6 +227,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final pb = _pinned.contains(b.id) ? 0 : 1;
         return pa - pb; // 稳定排序：置顶优先，其余保持时间降序
       });
+    final totalUnread = convs.fold<int>(0, (acc, c) => acc + client.unreadCount(c.id));
 
     return Scaffold(
       backgroundColor: const Color(0xFF17181C),
@@ -314,13 +315,25 @@ class _HomeScreenState extends State<HomeScreen> {
         unselectedItemColor: const Color(0xFF8B919C),
         type: BottomNavigationBarType.fixed,
         onTap: (i) => setState(() => _tab = i),
-        items: const [
+        items: [
           BottomNavigationBarItem(
-            icon: Icon(Icons.forum_outlined),
-            activeIcon: Icon(Icons.forum),
+            icon: Badge(
+              isLabelVisible: totalUnread > 0,
+              backgroundColor: const Color(0xFFE86452),
+              label: Text(totalUnread > 99 ? '99+' : '$totalUnread',
+                  style: const TextStyle(fontSize: 9, color: Colors.white)),
+              child: const Icon(Icons.forum_outlined),
+            ),
+            activeIcon: Badge(
+              isLabelVisible: totalUnread > 0,
+              backgroundColor: const Color(0xFFE86452),
+              label: Text(totalUnread > 99 ? '99+' : '$totalUnread',
+                  style: const TextStyle(fontSize: 9, color: Colors.white)),
+              child: const Icon(Icons.forum),
+            ),
             label: '消息',
           ),
-          BottomNavigationBarItem(
+          const BottomNavigationBarItem(
             icon: Icon(Icons.people_outline),
             activeIcon: Icon(Icons.people),
             label: '联系人',

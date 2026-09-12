@@ -35,6 +35,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollCtrl = ScrollController();
   bool _uploading = false;
   bool _emojiOpen = false;
+  bool _showJumpDown = false;
   StoredMessage? _replyTo;
 
   final AudioRecorder _recorder = AudioRecorder();
@@ -62,6 +63,11 @@ class _ChatScreenState extends State<ChatScreen> {
     // 接近顶部 → 加载更早历史
     if (pos.pixels < 60 && !client.loadingEarlier) {
       client.loadEarlier(convId);
+    }
+    // 离开底部 → 显示「回到最新」按钮
+    final away = pos.maxScrollExtent - pos.pixels > 300;
+    if (away != _showJumpDown && mounted) {
+      setState(() => _showJumpDown = away);
     }
   }
 
@@ -476,34 +482,56 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? const Center(
                     child: Text('连接中…', style: TextStyle(color: Color(0xFF8B919C))),
                   )
-                : ListView.builder(
-                    controller: _scrollCtrl,
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                    itemCount: items.length + (client.loadingEarlier ? 1 : 0),
-                    itemBuilder: (context, i) {
-                      if (client.loadingEarlier && i == 0) {
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 10),
-                          child: Center(
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
+                : Stack(
+                    children: [
+                      ListView.builder(
+                        controller: _scrollCtrl,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        itemCount: items.length + (client.loadingEarlier ? 1 : 0),
+                        itemBuilder: (context, i) {
+                          if (client.loadingEarlier && i == 0) {
+                            return const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 10),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
+                                ),
+                              ),
+                            );
+                          }
+                          final item = items[i - (client.loadingEarlier ? 1 : 0)];
+                          if (item is DateTime) return _dateDivider(item);
+                          final m = item as StoredMessage;
+                          return MessageBubble(
+                            message: m,
+                            client: client,
+                            selfUserId: client.userId,
+                            onTap: m.file != null && (m.file!.mime.startsWith('image/')) ? () => _openFullImage(m) : null,
+                            onLongPress: () => _onMessageLongPress(m),
+                          );
+                        },
+                      ),
+                      if (_showJumpDown)
+                        Positioned(
+                          right: 14,
+                          bottom: 14,
+                          child: Material(
+                            color: const Color(0xFF2B6BFF),
+                            shape: const CircleBorder(),
+                            elevation: 3,
+                            child: InkWell(
+                              customBorder: const CircleBorder(),
+                              onTap: _scrollToBottom,
+                              child: const Padding(
+                                padding: EdgeInsets.all(8),
+                                child: Icon(Icons.arrow_downward, color: Colors.white, size: 20),
+                              ),
                             ),
                           ),
-                        );
-                      }
-                      final item = items[i - (client.loadingEarlier ? 1 : 0)];
-                      if (item is DateTime) return _dateDivider(item);
-                      final m = item as StoredMessage;
-                      return MessageBubble(
-                        message: m,
-                        client: client,
-                        selfUserId: client.userId,
-                        onTap: m.file != null && (m.file!.mime.startsWith('image/')) ? () => _openFullImage(m) : null,
-                        onLongPress: () => _onMessageLongPress(m),
-                      );
-                    },
+                        ),
+                    ],
                   ),
           ),
           if (_replyTo != null) _replyBar(),

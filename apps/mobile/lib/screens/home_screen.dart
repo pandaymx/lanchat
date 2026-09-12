@@ -22,12 +22,98 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   HubClient get client => widget.client;
   int _tab = 0;
+  final Set<String> _pinned = {};
+  final Set<String> _muted = {};
 
   @override
   void initState() {
     super.initState();
     client.addListener(_onChanged);
     client.start(widget.startCursor);
+    _loadConvPrefs();
+  }
+
+  Future<void> _loadConvPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final pins = prefs.getStringList('pinned_convs') ?? const [];
+    final mutes = prefs.getStringList('muted_convs') ?? const [];
+    if (!mounted) return;
+    setState(() {
+      _pinned
+        ..clear()
+        ..addAll(pins);
+      _muted
+        ..clear()
+        ..addAll(mutes);
+    });
+  }
+
+  Future<void> _saveConvPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('pinned_convs', _pinned.toList());
+    await prefs.setStringList('muted_convs', _muted.toList());
+  }
+
+  void _togglePin(ConversationSnapshot conv) {
+    setState(() {
+      if (!_pinned.remove(conv.id)) _pinned.add(conv.id);
+    });
+    _saveConvPrefs();
+  }
+
+  void _toggleMute(ConversationSnapshot conv) {
+    setState(() {
+      if (!_muted.remove(conv.id)) _muted.add(conv.id);
+    });
+    _saveConvPrefs();
+  }
+
+  void _onConvLongPress(ConversationSnapshot conv) {
+    final pinned = _pinned.contains(conv.id);
+    final muted = _muted.contains(conv.id);
+    final title = conv.id == lobbyConversationId ? '大厅' : (conv.title.isEmpty ? '群聊' : conv.title);
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                title,
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFFE6E8EC)),
+              ),
+            ),
+            ListTile(
+              leading: Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                  color: pinned ? const Color(0xFF2B6BFF) : const Color(0xFF8B919C)),
+              title: Text(pinned ? '取消置顶' : '置顶会话',
+                  style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _togglePin(conv);
+              },
+            ),
+            ListTile(
+              leading: Icon(muted ? Icons.notifications_off : Icons.notifications_off_outlined,
+                  color: muted ? const Color(0xFFE86452) : const Color(0xFF8B919C)),
+              title: Text(muted ? '取消免打扰' : '消息免打扰',
+                  style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _toggleMute(conv);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -108,7 +194,12 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final onlineCount = client.onlineUsers.values.where((v) => v).length;
-    final convs = client.sortedConversations;
+    final convs = client.sortedConversations.toList()
+      ..sort((a, b) {
+        final pa = _pinned.contains(a.id) ? 0 : 1;
+        final pb = _pinned.contains(b.id) ? 0 : 1;
+        return pa - pb; // 稳定排序：置顶优先，其余保持时间降序
+      });
 
     return Scaffold(
       backgroundColor: const Color(0xFF17181C),
@@ -235,11 +326,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final last = client.lastMessageOf(conv.id);
     final unread = client.unreadCount(conv.id);
     final isLobby = conv.id == lobbyConversationId;
+    final isPinned = _pinned.contains(conv.id);
+    final isMuted = _muted.contains(conv.id);
     final title = isLobby ? '大厅' : (conv.title.isEmpty ? '群聊' : conv.title);
     final subtitle = isLobby ? '所有人' : '${conv.members.length} 人';
 
     return ListTile(
       onTap: () => _openChat(conv),
+      onLongPress: () => _onConvLongPress(conv),
       leading: Container(
         width: 46,
         height: 46,
@@ -254,9 +348,21 @@ class _HomeScreenState extends State<HomeScreen> {
           size: 24,
         ),
       ),
-      title: Text(
-        title,
-        style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15, fontWeight: FontWeight.w600),
+      title: Row(
+        children: [
+          if (isPinned) ...[
+            const Icon(Icons.push_pin, size: 13, color: Color(0xFF2B6BFF)),
+            const SizedBox(width: 4),
+          ],
+          Flexible(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
       ),
       subtitle: Text(
         '${_preview(last)} · $subtitle',
@@ -268,16 +374,25 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(
-            _timeLabel(last?.createdAt ?? 0),
-            style: const TextStyle(color: Color(0xFF6B7078), fontSize: 11),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isMuted) ...[
+                const Icon(Icons.notifications_off, size: 13, color: Color(0xFF6B7078)),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                _timeLabel(last?.createdAt ?? 0),
+                style: const TextStyle(color: Color(0xFF6B7078), fontSize: 11),
+              ),
+            ],
           ),
           const SizedBox(height: 4),
           if (unread > 0)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
-                color: const Color(0xFFE86452),
+                color: isMuted ? const Color(0xFF6B7078) : const Color(0xFFE86452),
                 borderRadius: BorderRadius.circular(999),
               ),
               constraints: const BoxConstraints(minWidth: 18),

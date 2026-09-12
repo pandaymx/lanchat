@@ -1,3 +1,9 @@
+## [1.24.0](https://github.com/pandaymx/lanchat/compare/v1.23.0...v1.24.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 搜索结果图片缩略图 + 结果计数 ([7c5ff5d](https://github.com/pandaymx/lanchat/commit/7c5ff5d44d01e7156241fada10e852c75bf28bcb))
+
 ## [1.23.0](https://github.com/pandaymx/lanchat/compare/v1.22.0...v1.23.0) (2026-09-12)
 
 ### Features

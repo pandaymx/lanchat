@@ -1,3 +1,9 @@
+## [1.16.0](https://github.com/pandaymx/lanchat/compare/v1.15.0...v1.16.0) (2026-09-12)
+
+### Features
+
+* **mobile:** @提及（输入@选成员插入 + 消息体@高亮） ([2c031ef](https://github.com/pandaymx/lanchat/commit/2c031eff9c3dee47bc750c86796a0a229aabc916))
+
 ## [1.15.0](https://github.com/pandaymx/lanchat/compare/v1.14.0...v1.15.0) (2026-09-12)
 
 ### Features

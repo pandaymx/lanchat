@@ -1,3 +1,9 @@
+## [1.21.0](https://github.com/pandaymx/lanchat/compare/v1.20.1...v1.21.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 群会话头像 2×2 成员色块拼图 ([c9d28a3](https://github.com/pandaymx/lanchat/commit/c9d28a3908ad5992ae69e8682028a7b005366da1))
+
 ## [1.20.1](https://github.com/pandaymx/lanchat/compare/v1.20.0...v1.20.1) (2026-09-12)
 
 ### Bug Fixes

@@ -24,6 +24,27 @@ class MessageBubble extends StatelessWidget {
 
   bool get isMine => message.senderUserId == selfUserId;
 
+  /// @提及高亮：`@名字` 用品牌蓝渲染，其余文本保持基础色。
+  TextSpan _bodySpan(String body, Color base) {
+    final mention = RegExp(r'@([^\s@，。！？,.!?]+)');
+    final out = <TextSpan>[];
+    var start = 0;
+    for (final m in mention.allMatches(body)) {
+      if (m.start > start) {
+        out.add(TextSpan(text: body.substring(start, m.start)));
+      }
+      out.add(TextSpan(
+        text: m.group(0),
+        style: const TextStyle(color: Color(0xFF2B6BFF), fontWeight: FontWeight.w600),
+      ));
+      start = m.end;
+    }
+    if (start < body.length) {
+      out.add(TextSpan(text: body.substring(start)));
+    }
+    return TextSpan(children: out, style: TextStyle(color: base, height: 1.4));
+  }
+
   String _formatTime(int atMs) {
     if (atMs <= 0) return '';
     final t = DateTime.fromMillisecondsSinceEpoch(atMs);
@@ -113,8 +134,8 @@ class MessageBubble extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           if (message.body.isNotEmpty)
-                            SelectableText(
-                              message.body,
+                            SelectableText.rich(
+                              _bodySpan(message.body, textColor),
                               style: TextStyle(fontSize: 15, color: textColor, height: 1.4),
                             ),
                           if (message.file != null)

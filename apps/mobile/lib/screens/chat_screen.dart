@@ -118,14 +118,67 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
-  /// 输入变化：防抖上发 typing（M7.3，hub 盖戳转发给同会话成员）。
-  void _onInputChanged(String _) {
+  /// 输入变化：防抖上发 typing（M7.3，hub 盖戳转发给同会话成员）；
+  /// 输入以 @ 结尾时弹出群成员选择。
+  void _onInputChanged(String text) {
     _typingTimer?.cancel();
     _typingTimer = Timer(const Duration(milliseconds: 500), () {
       if (_inputCtrl.text.trim().isNotEmpty) {
         client.sendTyping(convId);
       }
     });
+    if (!_isLobby && text.endsWith('@')) {
+      _openMentionPicker();
+    }
+  }
+
+  /// @提及：弹层选择群成员，插入「@名字 」并继续输入。
+  Future<void> _openMentionPicker() async {
+    final conv = client.conversations[convId];
+    final members = (conv?.members ?? const <String>[])
+        .where((u) => u != client.userId)
+        .toList();
+    if (members.isEmpty) return;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('选择成员', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFFE6E8EC))),
+            ),
+            ...members.map(
+              (u) => ListTile(
+                dense: true,
+                leading: Icon(Icons.person, color: client.onlineUsers[u] == true ? const Color(0xFF07C160) : const Color(0xFF8B919C)),
+                title: Text(u, style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+                onTap: () => Navigator.of(ctx).pop(u),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final ctrl = _inputCtrl;
+    final sel = ctrl.selection;
+    final text = ctrl.text;
+    final atPos = text.lastIndexOf('@', sel.isValid ? sel.start : text.length);
+    final base = atPos >= 0 ? text.substring(0, atPos) : text;
+    final suffix = atPos >= 0 && sel.isValid ? text.substring(sel.start) : '';
+    final next = '$base@$picked $suffix';
+    ctrl.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: next.length - suffix.length),
+    );
+    _inputFocus.requestFocus();
   }
 
   void _onMessageLongPress(StoredMessage m) {

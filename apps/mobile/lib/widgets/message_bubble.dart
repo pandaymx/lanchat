@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../hub_client.dart';
 import '../protocol.dart';
+import 'audio_ctl.dart';
 
 /// 消息气泡：文本 / 图片 / 引用 / 时间戳。
 /// 深色仿 QQ：自己蓝色（#2B6BFF）、他人深灰。
@@ -51,6 +52,18 @@ class MessageBubble extends StatelessWidget {
         lower.endsWith('.webp');
   }
 
+  bool get _isAudio {
+    final f = message.file;
+    if (f == null) return false;
+    if (f.mime.startsWith('audio/')) return true;
+    final lower = f.name.toLowerCase();
+    return lower.endsWith('.m4a') ||
+        lower.endsWith('.aac') ||
+        lower.endsWith('.mp3') ||
+        lower.endsWith('.wav') ||
+        lower.endsWith('.ogg');
+  }
+
   @override
   Widget build(BuildContext context) {
     final bubbleColor = isMine ? const Color(0xFF2B6BFF) : const Color(0xFF2B2D33);
@@ -87,6 +100,8 @@ class MessageBubble extends StatelessWidget {
                 if (message.reply != null) _replyBlock(textColor),
                 if (_isImage)
                   _imageBubble(textColor, radius)
+                else if (_isAudio)
+                  _audioBubble(textColor, radius)
                 else
                   GestureDetector(
                     onLongPress: onLongPress,
@@ -175,6 +190,62 @@ class MessageBubble extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.6)),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _audioBubble(Color textColor, BorderRadius radius) {
+    final file = message.file!;
+    final url = 'http://${client.host}:${client.port}/api/files/${file.fileId}';
+    return GestureDetector(
+      onLongPress: onLongPress,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 220, minWidth: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: isMine ? const Color(0xFF2B6BFF) : const Color(0xFF2B2D33),
+          borderRadius: radius,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ValueListenableBuilder<bool>(
+              valueListenable: AudioCtl.playing,
+              builder: (context, playing, _) {
+                final isThis = playing && AudioCtl.currentUrl == url;
+                return IconButton(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => AudioCtl.toggle(url),
+                  icon: Icon(
+                    isThis ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                    color: textColor,
+                    size: 30,
+                  ),
+                );
+              },
+            ),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '语音 ${_formatTime(message.createdAt)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.9)),
+                  ),
+                  Text(
+                    file.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.6)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

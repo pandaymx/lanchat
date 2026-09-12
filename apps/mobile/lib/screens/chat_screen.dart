@@ -162,10 +162,66 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.forward, color: Color(0xFFE6E8EC)),
+              title: const Text('转发', style: TextStyle(color: Color(0xFFE6E8EC))),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                _onForward(m);
+              },
+            ),
           ],
         ),
       ),
     );
+  }
+
+  /// 转发：选会话 → 重发原消息（文本原样；文件复用 fileId，hub 已有存储）。
+  Future<void> _onForward(StoredMessage m) async {
+    final convs = client.sortedConversations
+        .where((c) => c.id != convId)
+        .toList();
+    if (convs.isEmpty) {
+      _toast('没有可转发到的会话');
+      return;
+    }
+    final picked = await showModalBottomSheet<ConversationSnapshot>(
+      context: context,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('转发到…', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFFE6E8EC))),
+            ),
+            ...convs.map((c) {
+              final isLobby = c.id == lobbyConversationId;
+              return ListTile(
+                leading: Icon(isLobby ? Icons.forum : Icons.group, color: const Color(0xFF2B6BFF)),
+                title: Text(
+                  isLobby ? '大厅' : (c.title.isEmpty ? '群聊' : c.title),
+                  style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15),
+                ),
+                onTap: () => Navigator.of(ctx).pop(c),
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    if (m.file != null) {
+      client.sendFileMessage(picked.id, m.file!, body: m.body);
+    } else {
+      client.sendMessage(picked.id, m.body);
+    }
+    _toast('已转发');
   }
 
   Future<void> _pickAndSendImage() async {

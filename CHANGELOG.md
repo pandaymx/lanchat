@@ -1,3 +1,9 @@
+## [1.20.0](https://github.com/pandaymx/lanchat/compare/v1.19.0...v1.20.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 断线消息入队重连补发 + 气泡时间跨年显示 ([aa35e48](https://github.com/pandaymx/lanchat/commit/aa35e485c56c32807941880d7e948b1f103e5951))
+
 ## [1.19.0](https://github.com/pandaymx/lanchat/compare/v1.18.0...v1.19.0) (2026-09-12)
 
 ### Features

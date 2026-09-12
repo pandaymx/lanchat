@@ -1,3 +1,9 @@
+## [1.12.0](https://github.com/pandaymx/lanchat/compare/v1.11.0...v1.12.0) (2026-09-12)
+
+### Features
+
+* **mobile:** 正在输入提示（FKTyping）+ 设置页 ([5781336](https://github.com/pandaymx/lanchat/commit/578133655e691cb4b234505f797b5ea8a1bd4070))
+
 ## [1.11.0](https://github.com/pandaymx/lanchat/compare/v1.10.0...v1.11.0) (2026-09-12)
 
 ### Features

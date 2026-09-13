@@ -1,7 +1,5 @@
-package hubserver
-
-// 嵌入式 hub（ADR-014 M-a）：把 cmd/hub 的启动逻辑库内化，
-// 客户端进程内可直接起一个 hub，无需独立 hub 进程。
+// Package hubserver 提供嵌入式 hub（ADR-014 M-a）：把 cmd/hub 的启动
+// 逻辑库内化，客户端进程内可直接起一个 hub，无需独立 hub 进程。
 //
 // 用法：
 //
@@ -12,6 +10,7 @@ package hubserver
 //
 // 独立部署（cmd/hub）只保留为调试 / 单机模式入口，与 embedded 共用
 // 本包：cmd/hub 解析 flag 后组装 Config 调用 Start，信号触发 ctx 取消。
+package hubserver
 
 import (
 	"context"

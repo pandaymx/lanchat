@@ -1,3 +1,9 @@
+## [1.51.0](https://github.com/pandaymx/lanchat/compare/v1.50.0...v1.51.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 会话列表加载态增强（转圈+文案） ([b1f19d5](https://github.com/pandaymx/lanchat/commit/b1f19d5e13ac91ff61f1bde0460e342858b0b51e))
+
 ## [1.50.0](https://github.com/pandaymx/lanchat/compare/v1.49.0...v1.50.0) (2026-09-13)
 
 ### Features

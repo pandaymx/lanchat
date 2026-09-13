@@ -475,6 +475,55 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
     if (picked.isEmpty) return;
+    // 预览确认：展示数量与首图，确认后批量发送。
+    if (mounted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: const Color(0xFF20232A),
+          title: Text('发送 ${picked.length} 张图片？',
+              style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 16)),
+          content: SizedBox(
+            width: 260,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    File(picked.first.path),
+                    width: 220,
+                    height: 150,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 220,
+                      height: 150,
+                      color: const Color(0xFF1B1D22),
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.image_outlined, color: Color(0xFF6B7078)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text(picked.length > 1 ? '将按顺序发送 ${picked.length} 张' : '发送到 ${widget.title}',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFF8B919C))),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('取消', style: TextStyle(color: Color(0xFF8B919C))),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('发送', style: TextStyle(color: Color(0xFF2B6BFF))),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
     setState(() => _uploading = true);
     try {
       final api = HubApi(host: client.host, port: client.port);

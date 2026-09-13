@@ -159,6 +159,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   final Map<String, int> _lastUnread = {};
   bool _notifyEnabled = true;
+  bool _bannerShowing = false;
 
   Future<void> _loadNotifyPref() async {
     final prefs = await SharedPreferences.getInstance();
@@ -166,12 +167,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     setState(() => _notifyEnabled = prefs.getBool('notify_enabled') ?? true);
   }
 
-  /// 未读增量 → 系统通知（前台、免打扰会话、通知开关关闭时不弹）。
+  /// 未读增量 → 系统通知（前台横幅、免打扰会话、通知开关关闭时不弹）。
   void _maybeNotifyNewMessages() {
-    if (_appForeground) return;
     if (_muted.isEmpty && _lastUnread.isEmpty) return;
     if (!_notifyEnabled) return;
     final now = <String, int>{};
+    String? banner;
     for (final c in client.sortedConversations) {
       final u = client.unreadCount(c.id);
       now[c.id] = u;
@@ -182,13 +183,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final title = isLobby ? '大厅' : (c.title.isEmpty ? '群聊' : c.title);
         final preview = _preview(last);
         if (preview.isNotEmpty) {
-          Notifier.instance.show('$title：$preview', '来自 ${last?.senderUserId ?? ''}', payload: c.id);
+          if (_appForeground) {
+            banner ??= '$title：$preview';
+          } else {
+            Notifier.instance.show('$title：$preview', '来自 ${last?.senderUserId ?? ''}', payload: c.id);
+          }
         }
       }
     }
     _lastUnread
       ..clear()
       ..addAll(now);
+    if (banner != null) _showBanner(banner);
+  }
+
+  /// 前台新消息横幅（SnackBar，弱提示）。
+  void _showBanner(String text) {
+    if (!mounted || _bannerShowing) return;
+    _bannerShowing = true;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.chat_bubble, size: 16, color: Color(0xFF2B6BFF)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+        margin: const EdgeInsets.only(bottom: 76, left: 12, right: 12),
+        backgroundColor: const Color(0xFF2B2D33),
+      ))
+      .closed.then((_) => _bannerShowing = false);
   }
 
   Future<void> _saveCursor() async {

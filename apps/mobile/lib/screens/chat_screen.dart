@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:record/record.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api.dart';
 import '../hub_client.dart';
@@ -58,6 +59,27 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollCtrl.addListener(_onScroll);
     // 进入会话即已读（列表页已 markRead，这里兜底新消息）。
     WidgetsBinding.instance.addPostFrameCallback((_) => client.markRead(convId));
+    _restoreDraft();
+  }
+
+  /// 恢复上次未发送的草稿（prefs per-conversation）。
+  Future<void> _restoreDraft() async {
+    final prefs = await SharedPreferences.getInstance();
+    final draft = prefs.getString('draft_$convId') ?? '';
+    if (draft.isNotEmpty && mounted) {
+      _inputCtrl.text = draft;
+      _inputCtrl.selection = TextSelection.collapsed(offset: draft.length);
+    }
+  }
+
+  Future<void> _saveDraft() async {
+    final prefs = await SharedPreferences.getInstance();
+    final draft = _inputCtrl.text.trim();
+    if (draft.isEmpty) {
+      await prefs.remove('draft_$convId');
+    } else {
+      await prefs.setString('draft_$convId', draft);
+    }
   }
 
   void _onScroll() {
@@ -76,6 +98,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    _saveDraft();
     client.removeListener(_onClientChanged);
     _inputCtrl.dispose();
     _inputFocus.dispose();
@@ -113,7 +136,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _send() {
     final body = _inputCtrl.text.trim();
-    if (body.isEmpty) return;    if (_replyTo != null) {
+    if (body.isEmpty) return;
+    if (_replyTo != null) {
       client.sendMessage(convId, body,
           replyTo: ReplyRef(
             id: _replyTo!.id,
@@ -124,6 +148,7 @@ class _ChatScreenState extends State<ChatScreen> {
       client.sendMessage(convId, body);
     }
     _inputCtrl.clear();
+    _saveDraft();
     setState(() => _replyTo = null);
     _scrollToBottom();
   }

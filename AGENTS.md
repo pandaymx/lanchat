@@ -14,7 +14,8 @@
 **当前阶段**：去中心化 mesh（ADR-014 wire v2）迭代中——M-a 嵌入式 hub
 （`pkg/hubserver`）已完成（v2.3.0）；M-b 同步引擎/传输加密/后台循环/双向
 E2E 与广播闭环已合入（v2.4–v2.9），`cmd/hub` 已暴露 `-mesh/-peers/-node-id`；
-M-c 体验对齐（文件全节点同步、presence、群成员一致性、多节点历史视图）进行中。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
+M-c 体验对齐（文件全节点同步、presence、群成员一致性、多节点历史视图）进行中——
+多节点历史视图已完成（LocalSeq 本地视图序，`7dfdaf7`），剩余 3 项待做。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 

@@ -1,3 +1,9 @@
+## [1.29.0](https://github.com/pandaymx/lanchat/compare/v1.28.0...v1.29.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 会话输入草稿自动保存恢复（prefs per-conv） ([111c3df](https://github.com/pandaymx/lanchat/commit/111c3df02214f97ee2afc3df9ec838abbfa460bc))
+
 ## [1.28.0](https://github.com/pandaymx/lanchat/compare/v1.27.0...v1.28.0) (2026-09-13)
 
 ### Features

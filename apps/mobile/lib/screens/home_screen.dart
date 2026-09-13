@@ -416,14 +416,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       body: Column(
         children: [
           if (!client.connected)
-            Container(
-              width: double.infinity,
-              color: const Color(0xFF3A2A2A),
-              padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-              child: Text(
-                client.connectionStatus,
-                style: const TextStyle(fontSize: 12, color: Color(0xFFFFB4B4)),
-                textAlign: TextAlign.center,
+            GestureDetector(
+              onTap: _refresh,
+              child: Container(
+                width: double.infinity,
+                color: const Color(0xFF3A2A2A),
+                padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.refresh, size: 13, color: Color(0xFFFFB4B4)),
+                    const SizedBox(width: 6),
+                    Text(
+                      client.connectionStatus,
+                      style: const TextStyle(fontSize: 12, color: Color(0xFFFFB4B4)),
+                    ),
+                    const SizedBox(width: 6),
+                    const Text('点击重连',
+                        style: TextStyle(fontSize: 12, color: Color(0xFFFFB4B4), fontWeight: FontWeight.w600)),
+                  ],
+                ),
               ),
             ),
           Expanded(

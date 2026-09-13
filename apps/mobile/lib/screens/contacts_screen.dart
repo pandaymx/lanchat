@@ -3,11 +3,27 @@ import 'package:flutter/material.dart';
 import '../hub_client.dart';
 import 'chat_screen.dart';
 
-/// 联系人页：在线用户 + 群聊列表（QQ 式第二 tab）。
-class ContactsScreen extends StatelessWidget {
+/// 联系人页：在线用户 + 群聊列表（QQ 式第二 tab，支持搜索过滤）。
+class ContactsScreen extends StatefulWidget {
   final HubClient client;
 
   const ContactsScreen({super.key, required this.client});
+
+  @override
+  State<ContactsScreen> createState() => _ContactsScreenState();
+}
+
+class _ContactsScreenState extends State<ContactsScreen> {
+  final _queryCtrl = TextEditingController();
+  String _query = '';
+
+  HubClient get client => widget.client;
+
+  @override
+  void dispose() {
+    _queryCtrl.dispose();
+    super.dispose();
+  }
 
   List<String> get _knownUsers {
     final users = <String>{
@@ -15,17 +31,51 @@ class ContactsScreen extends StatelessWidget {
       ...client.messages.map((m) => m.senderUserId),
     }..remove(client.userId);
     users.remove('');
-    return users.toList()..sort();
+    final list = users.toList()..sort();
+    if (_query.isEmpty) return list;
+    return list.where((u) => u.contains(_query)).toList();
   }
 
   @override
   Widget build(BuildContext context) {
     final onlineCount = client.onlineUsers.values.where((v) => v).length;
-    final groups = client.conversations.values.where((c) => c.kind == 'group').toList();
+    final allGroups = client.conversations.values.where((c) => c.kind == 'group').toList();
+    final groups = _query.isEmpty
+        ? allGroups
+        : allGroups.where((g) => g.title.contains(_query)).toList();
 
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 4),
       children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: TextField(
+            controller: _queryCtrl,
+            onChanged: (v) => setState(() => _query = v.trim()),
+            style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 14),
+            decoration: InputDecoration(
+              hintText: '搜索用户 / 群聊',
+              hintStyle: const TextStyle(color: Color(0xFF6B7078), fontSize: 14),
+              prefixIcon: const Icon(Icons.search, size: 20, color: Color(0xFF8B919C)),
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.clear, size: 18, color: Color(0xFF8B919C)),
+                      onPressed: () {
+                        _queryCtrl.clear();
+                        setState(() => _query = '');
+                      },
+                    ),
+              filled: true,
+              fillColor: const Color(0xFF26282E),
+              contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+        ),
         _sectionHeader('在线用户 $onlineCount'),
         if (_knownUsers.isEmpty)
           const Padding(

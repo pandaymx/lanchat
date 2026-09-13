@@ -1,3 +1,9 @@
+## [2.9.1](https://github.com/pandaymx/lanchat/compare/v2.9.0...v2.9.1) (2026-09-13)
+
+### Bug Fixes
+
+* **mobile:** release APK 联网修复——补 INTERNET 权限 + 明文流量 ([485eb98](https://github.com/pandaymx/lanchat/commit/485eb981e094bd723bb76257a5f094f613a40f25))
+
 ## [2.9.0](https://github.com/pandaymx/lanchat/compare/v2.8.0...v2.9.0) (2026-09-13)
 
 ### Features

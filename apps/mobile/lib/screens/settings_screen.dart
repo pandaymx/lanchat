@@ -101,6 +101,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  /// 退出登录：断开连接、清除连接参数，回到连接页。
+  Future<void> _logout(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF20232A),
+        title: const Text('退出登录', style: TextStyle(color: Color(0xFFE6E8EC))),
+        content: const Text('将断开与 hub 的连接，并返回连接页。', style: TextStyle(color: Color(0xFF8B919C))),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消', style: TextStyle(color: Color(0xFF8B919C))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('退出', style: TextStyle(color: Color(0xFFE86452))),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    client.close();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('host');
+    await prefs.remove('port');
+    await prefs.remove('user_id');
+    if (context.mounted) {
+      Navigator.of(context).popUntil((r) => r.isFirst);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -159,6 +190,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onChangeEnd: (v) => _setFontScale(v.round()),
               ),
             ),
+          ),
+          const Divider(height: 1, color: Color(0xFF26282E)),
+          ListTile(
+            leading: const Icon(Icons.logout, color: Color(0xFFE86452)),
+            title: const Text('退出登录', style: TextStyle(color: Color(0xFFE86452), fontSize: 15)),
+            onTap: () => _logout(context),
           ),
           const Divider(height: 1, color: Color(0xFF26282E)),
           ListTile(

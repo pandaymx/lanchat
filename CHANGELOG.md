@@ -1,3 +1,9 @@
+## [1.32.0](https://github.com/pandaymx/lanchat/compare/v1.31.0...v1.32.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 语音消息未播放红点（prefs 记录已播放） ([b2adb38](https://github.com/pandaymx/lanchat/commit/b2adb38ea6c739303eae0ee31d7da143ff335216))
+
 ## [1.31.0](https://github.com/pandaymx/lanchat/compare/v1.30.0...v1.31.0) (2026-09-13)
 
 ### Features

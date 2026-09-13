@@ -1,3 +1,16 @@
+## [2.2.0](https://github.com/pandaymx/lanchat/compare/v2.1.3...v2.2.0) (2026-09-13)
+
+### Features
+
+* **ci:** 安卓稳定签名与 versionCode 递增 ([40aa4cd](https://github.com/pandaymx/lanchat/commit/40aa4cd707eb0fddf639d9469048040aa862eaaf))
+* **web:** 桌面端 UI 向新版 QQ 深色客户端靠拢 ([5dc947b](https://github.com/pandaymx/lanchat/commit/5dc947b6a0083d4375078e70fa51ab52a75f3296))
+
+### Bug Fixes
+
+* **mobile:** 安卓检查更新误报与兜底直达 ([6107e4b](https://github.com/pandaymx/lanchat/commit/6107e4b7a87023895dcf3106aa83ed7b0a6dfa1e))
+* **mobile:** 检查更新超时放宽至 20s ([e9c1e9d](https://github.com/pandaymx/lanchat/commit/e9c1e9d38be4b8ee499f6f1668e68d51e7f21bfd))
+* **mobile:** 输入区改 QQ/微信式三件套布局 ([5d367dc](https://github.com/pandaymx/lanchat/commit/5d367dc3a9495149e5d666bfe12b280891bdfa2c))
+
 ## [2.1.3](https://github.com/pandaymx/lanchat/compare/v2.1.2...v2.1.3) (2026-09-13)
 
 ### Bug Fixes

@@ -1,3 +1,9 @@
+## [1.56.0](https://github.com/pandaymx/lanchat/compare/v1.55.0...v1.56.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 设置页项目主页入口（url_launcher） ([fe28465](https://github.com/pandaymx/lanchat/commit/fe284653718f402daff3d303524ad3ed5526249e))
+
 ## [1.55.0](https://github.com/pandaymx/lanchat/compare/v1.54.0...v1.55.0) (2026-09-13)
 
 ### Features

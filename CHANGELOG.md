@@ -1,3 +1,16 @@
+## [2.0.0](https://github.com/pandaymx/lanchat/compare/v1.73.1...v2.0.0) (2026-09-13)
+
+### ⚠ BREAKING CHANGES
+
+* hub -db/-files 与 tui 附件下载目录默认改为平台
+可写数据目录（Windows %LOCALAPPDATA%、Linux XDG_DATA_HOME、
+macOS ~/Library/Application Support），不再使用安装目录下的相对
+路径；可通过 -db / -files / -download-dir flag 显式覆盖。
+
+### Features
+
+* v2.0.0 里程碑：四端齐备（移动端 + 平台数据目录） ([0da8cf3](https://github.com/pandaymx/lanchat/commit/0da8cf37617292560622d09699e9d088fbb97faf))
+
 ## [1.73.1](https://github.com/pandaymx/lanchat/compare/v1.73.0...v1.73.1) (2026-09-13)
 
 ### Bug Fixes

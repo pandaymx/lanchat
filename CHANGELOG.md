@@ -1,3 +1,9 @@
+## [1.61.0](https://github.com/pandaymx/lanchat/compare/v1.60.0...v1.61.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 引用回复点击定位到原消息 ([650b88a](https://github.com/pandaymx/lanchat/commit/650b88a3b917cf9ee9967f237d52c38b50eecd11))
+
 ## [1.60.0](https://github.com/pandaymx/lanchat/compare/v1.59.0...v1.60.0) (2026-09-13)
 
 ### Features

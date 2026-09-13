@@ -223,6 +223,39 @@ CI=true GITHUB_TOKEN=$(gh auth token) bun run release
 
 版本号不写入源码，构建时通过 ldflags 注入，`bin/hub --version` / `bin/tui --version` 读的是 git tag。
 
+## 移动端构建（Android / iOS）
+
+移动端在 `apps/mobile/`（Flutter）。Android 由 CI 自动出 APK；iOS 因签名
+必须在 macOS + Xcode 上做，CI 用 `--no-codesign` 产出**未签名 ipa**
+（`lanchat-mobile-<版本>-ios-unsigned.ipa`）。
+
+```bash
+cd apps/mobile
+flutter pub get
+
+# Android
+flutter build apk --release
+
+# iOS（需 macOS + Xcode；--no-codesign 跳过签名）
+flutter build ios --release --no-codesign
+flutter build ipa --release --no-codesign   # 产出未签名 ipa
+```
+
+### iOS 自行签名安装
+
+未签名 ipa 不能直接安装，任选一种方式：
+
+1. **Xcode（推荐）**：`open ios/Runner.xcworkspace` → Signing & Capabilities
+   选自己的 Apple ID Team → 连接 iPhone → Run。免费 Apple ID 也可（7 天
+   有效，重新运行即续期）。
+2. **命令行**：`flutter build ios --release`（有证书时自动签名）后
+   `flutter build ipa --release`。
+3. **第三方侧载**（如 Sideloadly）：导入 `lanchat-mobile-<版本>-ios-unsigned.ipa`，
+   填 Apple ID 签名后安装。
+
+> iOS 首次连接局域网 hub 会弹「本地网络」权限，允许即可。
+> 语音消息需要麦克风权限、保存图片需要相册权限（首次使用时系统询问）。
+
 ## 环境要求
 
 - Go 1.27+

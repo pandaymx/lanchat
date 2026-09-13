@@ -287,10 +287,50 @@ jobs:
           cp "apps/mobile/build/app/outputs/flutter-apk/app-release.apk" "dist/lanchat-mobile-$ver-android.apk"
           gh release upload "$tag" "dist/lanchat-mobile-$ver-android.apk" --clobber
 
+  # Flutter iOS（2026-09-13）：macOS runner 出未签名 ipa。
+  # iOS 构建/签名必须在 macOS + Xcode 上做；项目暂无 Apple Developer
+  # 证书 secrets，用 --no-codesign 产出未签名 ipa（用户自行签名安装，
+  # 见 README「iOS 安装」）。有证书后加 secrets 并去掉 --no-codesign。
+  ios:
+    name: mobile (ios)
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) && needs.release.outputs.released == 'true' }}
+    needs: release
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      LANCHAT_VERSION: ${{ needs.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build iOS ipa (unsigned)
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
+          flutter pub get
+          flutter build ipa --release --no-codesign --build-name="${LANCHAT_VERSION#v}" --build-number=1
+      - name: Upload release asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ver="$LANCHAT_VERSION"
+          tag="$ver"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI ios job 补建的 Release 页面。"
+          mkdir -p dist
+          ipa=$(find apps/mobile/build/ios/ipa -name '*.ipa' | head -1)
+          cp "$ipa" "dist/lanchat-mobile-$ver-ios-unsigned.ipa"
+          gh release upload "$tag" "dist/lanchat-mobile-$ver-ios-unsigned.ipa" --clobber
+
   checksums:
     name: checksums
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dryRun) && needs.release.outputs.released == 'true' }}
-    needs: [release, package, desktop, mobile]
+    needs: [release, package, desktop, mobile, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:

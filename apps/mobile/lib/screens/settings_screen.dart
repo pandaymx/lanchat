@@ -132,7 +132,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             Uri.parse('https://api.github.com/repos/pandaymx/lanchat/releases/latest'),
             headers: _ghHeaders,
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 20));
       if (resp.statusCode == 200) {
         final json = jsonDecode(resp.body) as Map<String, dynamic>;
         return (json['tag_name'] as String?) ?? '';
@@ -150,7 +150,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               'Accept': 'text/html',
             },
           )
-          .timeout(const Duration(seconds: 12));
+          .timeout(const Duration(seconds: 20));
       final uri = resp.request?.url.toString() ?? '';
       final tag = RegExp(r'/releases/tag/([^\s/?]+)').firstMatch(uri);
       if (tag != null) return tag.group(1);

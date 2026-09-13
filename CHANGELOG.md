@@ -1,3 +1,9 @@
+## [2.9.2](https://github.com/pandaymx/lanchat/compare/v2.9.1...v2.9.2) (2026-09-13)
+
+### Bug Fixes
+
+* **desktop:** 测试 hub 改用预分配随机端口——消除 CI 偶发 503 ([9a7629e](https://github.com/pandaymx/lanchat/commit/9a7629eeaa99926258e1b1a5a55c9aad45191d05))
+
 ## [2.9.1](https://github.com/pandaymx/lanchat/compare/v2.9.0...v2.9.1) (2026-09-13)
 
 ### Bug Fixes

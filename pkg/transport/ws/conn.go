@@ -15,6 +15,7 @@ package ws
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
+	"github.com/pandaymx/lanchat/pkg/secure"
 )
 
 // connLog 是 ws.Conn 收发帧的 logger。包级单例，不引入注入。
@@ -54,6 +56,12 @@ type conn struct {
 	readMu  sync.Mutex
 	writeMu sync.Mutex
 
+	// enc 是会话加密状态；nil = 明文连接（握手完成前/未启用）。
+	// 启用后 Send/Recv 对整帧 wire body（长度前缀之后的 JSON）加解密，
+	// 上层（Router/client 业务逻辑）无感知。
+	encMu sync.RWMutex
+	enc   *encState
+
 	closeOnce sync.Once
 	closeErr  error
 	closedCh  chan struct{}
@@ -73,6 +81,55 @@ func newConn(c *websocket.Conn, deviceID string) *conn {
 // 没有它，一个对端不读的连接会让 Send 永久阻塞，进而卡死整条广播链。
 // 超时的连接会被判死并关闭 —— 这是必要的止损，宁可误杀也不能拖垮 Hub。
 const writeTimeout = 10 * time.Second
+
+// encState 是一条已加密连接的状态（会话密钥 + AAD）。
+type encState struct {
+	key []byte
+	aad []byte
+}
+
+// EnableEncryption 启用会话加密。必须在连接上的业务帧（FKHello 等）
+// 发出之前调用；之后本连接的所有帧都整体加密。
+func (c *conn) EnableEncryption(key, aad []byte) {
+	c.encMu.Lock()
+	c.enc = &encState{key: append([]byte(nil), key...), aad: append([]byte(nil), aad...)}
+	c.encMu.Unlock()
+}
+
+// isEncrypted 返回本连接是否已启用加密。
+func (c *conn) isEncrypted() bool {
+	c.encMu.RLock()
+	defer c.encMu.RUnlock()
+	return c.enc != nil
+}
+
+// sealBody 加密一帧的 wire body（长度前缀之后的部分）。
+func (c *conn) sealBody(body []byte) ([]byte, error) {
+	c.encMu.RLock()
+	defer c.encMu.RUnlock()
+	if c.enc == nil {
+		return body, nil
+	}
+	s, err := secure.NewSessionFromKey(c.enc.key, c.enc.aad)
+	if err != nil {
+		return nil, err
+	}
+	return s.Seal(body)
+}
+
+// openBody 解密一帧的 wire body。
+func (c *conn) openBody(data []byte) ([]byte, error) {
+	c.encMu.RLock()
+	defer c.encMu.RUnlock()
+	if c.enc == nil {
+		return data, nil
+	}
+	s, err := secure.NewSessionFromKey(c.enc.key, c.enc.aad)
+	if err != nil {
+		return nil, err
+	}
+	return s.Open(data)
+}
 
 // Send 编码并写出一帧。并发安全（内部串行化）。
 //
@@ -101,8 +158,21 @@ func (c *conn) Send(ctx context.Context, f protocol.Frame) error {
 		connLog.Error("encode frame failed", "kind", f.Kind, "err", err)
 		return err
 	}
-	connLog.Debug("send frame", "kind", f.Kind, "len", buf.Len(), "dev", c.devID)
-	if err := c.ws.Write(writeCtx, websocket.MessageBinary, buf.Bytes()); err != nil {
+	// 加密在长度前缀之外：wire body 整体 Seal，对端 openBody 后再
+	// DecodeFrame，帧类型与内容对线缆不可见。
+	body := buf.Bytes()[4:] // 去掉 4 字节长度前缀，用明文长度重算
+	sealed, err := c.sealBody(body)
+	if err != nil {
+		connLog.Error("seal frame failed", "kind", f.Kind, "err", err)
+		return err
+	}
+	var sealedBuf [4]byte
+	binary.BigEndian.PutUint32(sealedBuf[:], uint32(len(sealed)))
+	wireMsg := make([]byte, 0, 4+len(sealed))
+	wireMsg = append(wireMsg, sealedBuf[:]...)
+	wireMsg = append(wireMsg, sealed...)
+	connLog.Debug("send frame", "kind", f.Kind, "len", len(wireMsg), "dev", c.devID)
+	if err := c.ws.Write(writeCtx, websocket.MessageBinary, wireMsg); err != nil {
 		// 写失败意味着连接已不可用，直接关掉避免后续重试
 		connLog.Error("ws write failed", "kind", f.Kind, "err", err)
 		_ = c.Close()
@@ -138,7 +208,20 @@ func (c *conn) Recv(ctx context.Context) (protocol.Frame, error) {
 		return protocol.Frame{}, err
 	}
 
-	frame, err := protocol.DecodeFrame(bytes.NewReader(data))
+	// data = 4 字节长度前缀 + body；长度前缀始终明文（Send 侧设计），
+	// body 可能已加密。剥前缀 → 解密 → 按明文长度重建前缀 →
+	// 交给 DecodeFrame（它期望的是「长度前缀 + body」完整帧）。
+	if len(data) < 4 {
+		return protocol.Frame{}, io.ErrUnexpectedEOF
+	}
+	body, err := c.openBody(data[4:])
+	if err != nil {
+		connLog.Error("open frame failed", "len", len(data), "err", err)
+		return protocol.Frame{}, err
+	}
+	var lenBuf [4]byte
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(body)))
+	frame, err := protocol.DecodeFrame(io.MultiReader(bytes.NewReader(lenBuf[:]), bytes.NewReader(body)))
 	if err != nil {
 		connLog.Error("decode frame failed", "len", len(data), "err", err)
 		return frame, err

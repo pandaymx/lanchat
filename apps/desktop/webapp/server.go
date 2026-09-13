@@ -14,14 +14,17 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/internal/webui"
+	"github.com/pandaymx/lanchat/pkg/appdir"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
+	"github.com/pandaymx/lanchat/pkg/secure"
 	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
 )
 
@@ -82,7 +85,13 @@ func Start(opts Options) (*Server, error) {
 		opts.ConvID = webui.DefaultConversationID
 	}
 	if opts.Transport == nil {
-		opts.Transport = wstransport.New()
+		// wire v2 传输加密：TOFU 信任 hub 公钥（首次连接记录、变化拒绝）。
+		hubTrust, trustErr := secure.TrustForURL(opts.HubURL,
+			filepath.Join(appdir.DataDir("lanchat"), "known_hubs.json"))
+		if trustErr != nil {
+			return nil, fmt.Errorf("信任存储初始化失败: %w", trustErr)
+		}
+		opts.Transport = wstransport.New().WithClientTrust(hubTrust)
 	}
 	if opts.DialTimeout <= 0 {
 		opts.DialTimeout = 0 // 交给 webui 默认

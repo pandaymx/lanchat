@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"syscall"
 	"time"
@@ -31,7 +32,9 @@ import (
 	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/internal/webui"
+	"github.com/pandaymx/lanchat/pkg/appdir"
 	"github.com/pandaymx/lanchat/pkg/logging"
+	"github.com/pandaymx/lanchat/pkg/secure"
 	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
 )
 
@@ -156,11 +159,18 @@ func run(opts runOptions) error {
 	// Manager 按 cookie 惰性拨号：首个请求才建立到 hub 的 client 连接，
 	// 多 tab 共享同一份 Session；退出时 CloseAll 按 cli.Close → store.Close
 	// 顺序释放全部 Session（顺序铁律见 webui.DialClient 注释）。
+	// wire v2 传输加密：TOFU 信任 hub 公钥（首次连接记录、变化拒绝）。
+	hubTrust, trustErr := secure.TrustForURL(opts.HubURL,
+		filepath.Join(appdir.DataDir("lanchat"), "known_hubs.json"))
+	if trustErr != nil {
+		return fmt.Errorf("信任存储初始化失败: %w", trustErr)
+	}
+
 	mgr := webui.NewManager(webui.ManagerConfig{
 		HubURL:     opts.HubURL,
 		User:       opts.User,
 		ConvID:     opts.ConvID,
-		Transport:  wstransport.New(),
+		Transport:  wstransport.New().WithClientTrust(hubTrust),
 		Translator: opts.Translator,
 	}, nil)
 	defer mgr.CloseAll()

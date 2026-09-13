@@ -2,9 +2,12 @@ package webapp
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/pandaymx/lanchat/pkg/event"
 	"github.com/pandaymx/lanchat/pkg/hubstate"
 	"github.com/pandaymx/lanchat/pkg/protocol"
+	"github.com/pandaymx/lanchat/pkg/secure"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
 	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
 )
@@ -72,10 +76,17 @@ func newTestHub(t *testing.T) string {
 		return nil
 	}
 
+	// 真实 hub 强制传输加密（wire v2）：测试 hub 也带服务端身份。
+	hubKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for port := 19000; port < 19100; port++ {
 		addr := fmt.Sprintf("127.0.0.1:%d", port)
 		errCh := make(chan error, 1)
-		go func(a string) { errCh <- wstransport.New().Listen(ctx, a, onConn) }(addr)
+		go func(a string) {
+			errCh <- wstransport.New().WithServerKey(hubKey).Listen(ctx, a, onConn)
+		}(addr)
 		select {
 		case err := <-errCh:
 			if err != nil {
@@ -88,6 +99,17 @@ func newTestHub(t *testing.T) string {
 	}
 	t.Fatal("no free hub port")
 	return ""
+}
+
+// encryptedTransport 返回连 hub 的加密 Transport，TOFU 落在隔离临时目录
+// （测试 hub 每次随机身份，避免与全局 known_hubs.json 冲突）。
+func encryptedTransport(t *testing.T, hubURL string) core.Transport {
+	t.Helper()
+	trust, err := secure.TrustForURL(hubURL, filepath.Join(t.TempDir(), "known_hubs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wstransport.New().WithClientTrust(trust)
 }
 
 func TestServer_ServeAndClose(t *testing.T) {
@@ -118,9 +140,10 @@ func TestServer_WithHub(t *testing.T) {
 	hubURL := newTestHub(t)
 
 	s, err := Start(Options{
-		HubURL:  hubURL,
-		User:    "tester",
-		Version: "test",
+		HubURL:    hubURL,
+		User:      "tester",
+		Version:   "test",
+		Transport: encryptedTransport(t, hubURL),
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
@@ -164,9 +187,10 @@ func TestServer_OnMessage(t *testing.T) {
 
 	got := make(chan *protocol.StoredMessage, 4)
 	s, err := Start(Options{
-		HubURL:  hubURL,
-		User:    "tester",
-		Version: "test",
+		HubURL:    hubURL,
+		User:      "tester",
+		Version:   "test",
+		Transport: encryptedTransport(t, hubURL),
 		OnMessage: func(m *protocol.StoredMessage) {
 			select {
 			case got <- m:
@@ -189,7 +213,7 @@ func TestServer_OnMessage(t *testing.T) {
 	// peer 用真实 ws 连接发消息到 lobby（与桌面端同一会话）。
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := wstransport.New().Dial(ctx, hubURL, protocol.Hello{ProtocolVersion: protocol.ProtocolVersion, DeviceID: "peer-dev", UserID: "peer"})
+	conn, err := encryptedTransport(t, hubURL).Dial(ctx, hubURL, protocol.Hello{ProtocolVersion: protocol.ProtocolVersion, DeviceID: "peer-dev", UserID: "peer"})
 	if err != nil {
 		t.Fatalf("peer dial: %v", err)
 	}

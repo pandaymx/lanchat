@@ -23,7 +23,7 @@ func TestTwoClientsExchange(t *testing.T) {
 	defer cancel()
 
 	alice := dial(t, fx.addr, protocol.Hello{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		DeviceID:        "alice-laptop",
 		UserID:          "alice",
 	})
@@ -31,7 +31,7 @@ func TestTwoClientsExchange(t *testing.T) {
 	alice.awaitReady()
 
 	bob := dial(t, fx.addr, protocol.Hello{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		DeviceID:        "bob-desktop",
 		UserID:          "bob",
 	})
@@ -80,7 +80,7 @@ func TestReconnectHistory(t *testing.T) {
 
 	// 第一个连接：发 3 条消息，记下 ServerSeq。
 	first := dial(t, fx.addr, protocol.Hello{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		DeviceID:        "alice-laptop",
 		UserID:          "alice",
 	})
@@ -108,7 +108,7 @@ func TestReconnectHistory(t *testing.T) {
 
 	// 第二个连接：ResumeFrom=0 应拉到全部 3 条。
 	second := dial(t, fx.addr, protocol.Hello{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		DeviceID:        "alice-laptop",
 		UserID:          "alice",
 		ResumeFrom:      0,
@@ -168,7 +168,7 @@ func TestPingPong(t *testing.T) {
 	defer cancel()
 
 	c := dial(t, fx.addr, protocol.Hello{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		DeviceID:        "alice-laptop",
 		UserID:          "alice",
 	})
@@ -204,7 +204,7 @@ func TestReplyToAndSearch(t *testing.T) {
 	defer cancel()
 
 	alice := dial(t, fx.addr, protocol.Hello{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		DeviceID:        "alice-laptop",
 		UserID:          "alice",
 	})
@@ -212,7 +212,7 @@ func TestReplyToAndSearch(t *testing.T) {
 	alice.awaitReady()
 
 	bob := dial(t, fx.addr, protocol.Hello{
-		ProtocolVersion: 1,
+		ProtocolVersion: 2,
 		DeviceID:        "bob-desktop",
 		UserID:          "bob",
 	})

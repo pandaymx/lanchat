@@ -68,6 +68,15 @@ const (
 	// FKSyncResp 对等节点 → 对等节点：同步响应（载荷 SyncResponse，
 	// 批量 StoredMessage，按 ServerSeq 升序）。
 	FKSyncResp
+	// FKHandshake Client → Hub：请求启用传输加密（v2）。
+	// 明文帧，载荷 Handshake：客户端临时 X25519 公钥。
+	// 这是 v2 破坏性变更：旧 Hub 不认识此帧，旧客户端不发此帧——
+	// 双向都因超时/未知帧被拒，提示升级（见 doc.go ProtocolVersion）。
+	FKHandshake
+	// FKHandshakeAck Hub → Client：接受加密，返回 hub 公钥与加密挑战。
+	// 明文帧，载荷 HandshakeAck：hub 公钥 + 会话密钥加密的挑战
+	// （客户端解密比对即证明 hub 持有持久私钥）。
+	FKHandshakeAck
 )
 
 // String 实现 Stringer，仅用于日志和 CLI 输出，不参与 wire 协议。
@@ -115,6 +124,10 @@ func (k FrameKind) String() string {
 		return "sync_req"
 	case FKSyncResp:
 		return "sync_resp"
+	case FKHandshake:
+		return "handshake"
+	case FKHandshakeAck:
+		return "handshake_ack"
 	default:
 		return fmt.Sprintf("frame_kind(%d)", uint8(k))
 	}
@@ -136,6 +149,29 @@ type Frame struct {
 	// Payload 是该 Kind 对应的类型化负载的 JSON 编码。
 	// 客户端/服务端按 Kind 解码，匹配规则见 wire.md（暂未生成文档，见各 kind 注释）。
 	Payload []byte `json:"p,omitempty"`
+}
+
+// Handshake 是 Client → Hub 的加密握手帧（v2，明文）。
+//
+// 连接建立后第一件事是发 Handshake（在业务 Hello 之前）：
+// 客户端生成一次性 X25519 密钥对，把公钥发来；Hub 用持久身份私钥
+// 与之做 ECDH 派生会话密钥，返回 HandshakeAck。之后所有帧（含业务
+// Hello）都用该会话密钥 AES-256-GCM 加密。
+type Handshake struct {
+	ProtocolVersion uint8 `json:"v"`
+	// ClientKey 是客户端一次性公钥（base64，32B）。
+	ClientKey string `json:"c"`
+}
+
+// HandshakeAck 是 Hub → Client 的握手响应（明文）。
+type HandshakeAck struct {
+	// HubKey 是 hub 持久公钥（base64，32B）——客户端的 TOFU 依据。
+	HubKey string `json:"h"`
+	// Nonce 是挑战密文的 nonce（base64，12B）。
+	Nonce string `json:"n"`
+	// Cipher 是挑战密文（base64）：AES-256-GCM 加密固定挑战串，
+	// 客户端解密比对，证明 hub 持有与 HubKey 配对的私钥。
+	Cipher string `json:"c"`
 }
 
 // Hello 是 Client → Hub 的首帧，连接建立后第一件事就是发它。

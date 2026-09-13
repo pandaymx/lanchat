@@ -184,6 +184,16 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	var meshStore mesh.SourceStore
 	var meshID *mesh.Identity
 	var meshKnown *mesh.KnownKeys
+
+	// 传输加密（wire v2）：无论是否开启 mesh，都加载节点 X25519 身份，
+	// 供 WS 服务端握手用——client↔hub 与 mesh 同步共用同一把身份。
+	meshID, err = mesh.LoadOrCreateIdentity(filepath.Join(dataDir, "mesh_identity.bin"))
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("node identity: %w", err)
+	}
+	tr = tr.WithServerKey(meshID.ECDHPrivateKey())
+
 	if cfg.Mesh {
 		ls, ok := store.(mesh.SourceStore)
 		if !ok {
@@ -191,11 +201,6 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("mesh mode requires persistent store (DBPath != memory)")
 		}
 		meshStore = ls
-		meshID, err = mesh.LoadOrCreateIdentity(filepath.Join(dataDir, "mesh_identity.bin"))
-		if err != nil {
-			_ = store.Close()
-			return nil, fmt.Errorf("mesh identity: %w", err)
-		}
 		meshKnown, err = mesh.LoadKnownKeys(filepath.Join(dataDir, "mesh_known_keys.json"))
 		if err != nil {
 			_ = store.Close()

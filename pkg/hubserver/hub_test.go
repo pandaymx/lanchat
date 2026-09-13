@@ -14,6 +14,7 @@ func TestStartSmoke(t *testing.T) {
 
 	srv, err := Start(ctx, Config{
 		Addr:        "127.0.0.1:19123",
+		DataDir:     t.TempDir(),
 		DBPath:      "memory",
 		FilesDir:    t.TempDir(),
 		MDNS:        false,
@@ -52,6 +53,7 @@ func TestStartDataDir(t *testing.T) {
 	// 目录解析失败。
 	srv, err := Start(ctx, Config{
 		Addr:        "127.0.0.1:19124",
+		DataDir:     t.TempDir(),
 		DBPath:      "memory",
 		MDNS:        false,
 		MaxFileSize: 1 << 20,

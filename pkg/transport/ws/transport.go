@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"crypto/ecdh"
 	"errors"
 	"fmt"
 	"net"
@@ -33,6 +34,13 @@ type Transport struct {
 	path string
 	// handlers 是 WithHandler 注册的额外 HTTP 路由（M9 文件传输用）。
 	handlers []handler
+	// clientTrust 是客户端侧 TOFU 校验（nil = 不启用客户端加密握手）。
+	// 传入后 Dial 会在连接建立时先完成 FKHandshake 密钥协商，
+	// 之后所有帧加密（wire v2，ProtocolVersion=2）。
+	clientTrust trustFunc
+	// serverKey 是 hub 侧持久身份私钥（nil = 不启用服务端加密握手）。
+	// 传入后 Listen accept 的连接先做服务端握手，未握手/旧协议拒绝。
+	serverKey *ecdh.PrivateKey
 }
 
 // handler 是 WithHandler 注册的一条额外 HTTP 路由。
@@ -49,6 +57,27 @@ func New() *Transport { return &Transport{} }
 func (t *Transport) WithPath(path string) *Transport {
 	cp := *t
 	cp.path = path
+	return &cp
+}
+
+// WithClientTrust 启用客户端侧传输加密（wire v2）。
+//
+// trust 用于 TOFU 校验 hub 公钥（首次信任、变化拒绝，实现通常持久化）。
+// 返回新的 Transport。所有经 Dial 建立的连接都会先完成握手再加密。
+func (t *Transport) WithClientTrust(trust trustFunc) *Transport {
+	cp := *t
+	cp.clientTrust = trust
+	return &cp
+}
+
+// WithServerKey 启用服务端侧传输加密（wire v2）。
+//
+// key 是 hub 持久 X25519 身份私钥（复用 mesh_identity.bin）。
+// 返回新的 Transport。accept 的连接必须先完成 FKHandshake，
+// 否则被拒——旧客户端（v1 明文）将无法连接。
+func (t *Transport) WithServerKey(key *ecdh.PrivateKey) *Transport {
+	cp := *t
+	cp.serverKey = key
 	return &cp
 }
 
@@ -103,8 +132,16 @@ func (t *Transport) Dial(ctx context.Context, target string, hello protocol.Hell
 		transLog.Error("dial failed", "url", u, "err", err)
 		return nil, fmt.Errorf("dial %s: %w", u, err)
 	}
-	transLog.Info("dial ok", "url", u, "device", hello.DeviceID)
-	return newConn(wsConn, hello.DeviceID), nil
+	c := newConn(wsConn, hello.DeviceID)
+	if t.clientTrust != nil {
+		if err := clientHandshake(ctx, c, t.clientTrust); err != nil {
+			transLog.Error("client handshake failed", "url", u, "err", err)
+			_ = c.Close()
+			return nil, err
+		}
+	}
+	transLog.Info("dial ok", "url", u, "device", hello.DeviceID, "encrypted", c.isEncrypted())
+	return c, nil
 }
 
 // normalizeTarget 把 target 补成完整的 ws:// URL。
@@ -163,7 +200,14 @@ func (t *Transport) Listen(ctx context.Context, addr string, onConn func(core.Co
 			return
 		}
 		c := newConn(wsConn, "")
-		transLog.Debug("ws accepted", "remote", r.RemoteAddr)
+		if t.serverKey != nil {
+			if err := serverHandshake(r.Context(), c, t.serverKey); err != nil {
+				transLog.Debug("server handshake rejected", "remote", r.RemoteAddr, "err", err)
+				_ = c.Close()
+				return
+			}
+		}
+		transLog.Debug("ws accepted", "remote", r.RemoteAddr, "encrypted", c.isEncrypted())
 		go func() {
 			if err := onConn(c, protocol.Hello{}); err != nil {
 				transLog.Debug("onConn returned err, closing", "remote", r.RemoteAddr, "err", err)

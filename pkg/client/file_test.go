@@ -81,7 +81,7 @@ func itoa(n int) string {
 
 func TestUploadFile_RoundTrip(t *testing.T) {
 	tr, _, store := newTransportWithHub(t, "memory://lanchat-test")
-	hello := protocol.Hello{ProtocolVersion: 1, DeviceID: "d1", UserID: "alice"}
+	hello := protocol.Hello{ProtocolVersion: protocol.ProtocolVersion, DeviceID: "d1", UserID: "alice"}
 	c := newClient(t, tr, store, hello, 0)
 
 	content := []byte("payload-123")

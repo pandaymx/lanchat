@@ -17,6 +17,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -24,7 +25,9 @@ import (
 
 	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/internal/i18n"
+	"github.com/pandaymx/lanchat/pkg/appdir"
 	"github.com/pandaymx/lanchat/pkg/logging"
+	"github.com/pandaymx/lanchat/pkg/secure"
 	"github.com/pandaymx/lanchat/pkg/transport/ws"
 	"github.com/pandaymx/lanchat/pkg/tui"
 )
@@ -222,8 +225,15 @@ func dialSession(opts runOptions) (*tui.Session, context.Context, context.Cancel
 	dialCtx, dialCancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer dialCancel()
 
+	// wire v2 传输加密：TOFU 信任 hub 公钥（首次连接记录、变化拒绝）。
+	hubTrust, trustErr := secure.TrustForURL(opts.HubURL,
+		filepath.Join(appdir.DataDir("lanchat"), "known_hubs.json"))
+	if trustErr != nil {
+		return nil, nil, nil, fmt.Errorf("信任存储初始化失败: %w", trustErr)
+	}
+
 	session, err := tui.Dial(dialCtx, tui.DialOptions{
-		Transport:    &ws.Transport{},
+		Transport:    ws.New().WithClientTrust(hubTrust),
 		HubURL:       opts.HubURL,
 		User:         opts.User,
 		Device:       opts.Device,

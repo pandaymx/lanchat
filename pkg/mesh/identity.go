@@ -59,6 +59,10 @@ func LoadOrCreateIdentity(path string) (*Identity, error) {
 // PublicKey 返回本节点公钥（raw 32B）。
 func (i *Identity) PublicKey() []byte { return i.priv.PublicKey().Bytes() }
 
+// ECDHPrivateKey 返回底层 X25519 私钥（client↔hub 传输加密服务端用，
+// 与 mesh 复用同一把身份）。调用方不得修改返回对象。
+func (i *Identity) ECDHPrivateKey() *ecdh.PrivateKey { return i.priv }
+
 // SharedKey 计算本节点与 peerPub 的 ECDH 共享密钥（32B）。
 func (i *Identity) SharedKey(peerPub []byte) ([]byte, error) {
 	pub, err := ecdh.X25519().NewPublicKey(peerPub)

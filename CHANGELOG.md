@@ -1,3 +1,9 @@
+## [1.33.0](https://github.com/pandaymx/lanchat/compare/v1.32.0...v1.33.0) (2026-09-13)
+
+### Features
+
+* **mobile:** emoji 最近使用（prefs 最多 12 个，面板顶栏） ([40ccbfc](https://github.com/pandaymx/lanchat/commit/40ccbfc82faae38c54192e9e0022d9f0fb3bbfbd))
+
 ## [1.32.0](https://github.com/pandaymx/lanchat/compare/v1.31.0...v1.32.0) (2026-09-13)
 
 ### Features

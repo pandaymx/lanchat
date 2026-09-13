@@ -2,8 +2,15 @@
 
 局域网即时通讯，Go 优先，面向程序员用户，覆盖 Hub / TUI / Web / 桌面四端。
 
-> 当前状态：**v1.0.0 已发布**（M12 群聊完成）。支持已读回执、Markdown/代码高亮、
-> 文件传输、多会话群聊、桌面端安装包矩阵。
+> 当前状态：**v2.0.0 已发布**。四端齐备：Hub / TUI / Web / 桌面
+> （Windows、macOS、Linux 安装包，多架构）+ 移动端（Flutter，Android）。
+>
+> 功能：已读回执、Markdown/代码高亮、文件传输（图片/文件/视频）、多会话群聊、
+> 消息搜索/转发/引用/表情/@提及、系统通知、会话内搜索、图片保存相册。
+> 数据与下载目录自动落到平台可写位置（Windows %LOCALAPPDATA%、
+> Linux ~/.local/share、macOS ~/Library/Application Support），
+> 安装到 Program Files 等只读目录也能正常运行。
+>
 > 完整里程碑定义与子任务拆解见 [`AGENTS.md`](./AGENTS.md) §1.1。
 
 ## 架构（极简版）

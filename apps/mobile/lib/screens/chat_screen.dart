@@ -237,6 +237,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _onMessageLongPress(StoredMessage m) {
+    HapticFeedback.mediumImpact();
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF20232A),

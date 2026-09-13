@@ -124,9 +124,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirmed != true) return;
     client.close();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('host');
-    await prefs.remove('port');
-    await prefs.remove('user_id');
+    await prefs.remove('hub_host');
+    await prefs.remove('hub_port');
+    await prefs.remove('hub_user');
+    await prefs.remove('hub_device');
     if (context.mounted) {
       Navigator.of(context).popUntil((r) => r.isFirst);
     }

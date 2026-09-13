@@ -121,45 +121,73 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  /// 拉取最新 release 的 tag：api.github.com 失败后回退到
-  /// github.com/releases/latest 页面（302/跟随重定向的 URL 里带 tag），
-  /// 兼容部分网络下 api 子域不可达的情况。
+  /// 拉取最新 release 的 tag。三源并行（每源 10s 超时，先成功者胜）：
+  ///  1) releases.atom（github.com 域，大陆可达性好、无 API 限额、不重定向）
+  ///  2) api.github.com（标准 API，部分网络被阻断时超时）
+  ///  3) github.com/releases/latest 页面（302 重定向 URL 里带 tag，兜底）
   Future<String?> _fetchLatestRelease() async {
-    // 1) 标准 API。
-    try {
-      final resp = await http
-          .get(
-            Uri.parse('https://api.github.com/repos/pandaymx/lanchat/releases/latest'),
-            headers: _ghHeaders,
-          )
-          .timeout(const Duration(seconds: 20));
-      if (resp.statusCode == 200) {
-        final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        return (json['tag_name'] as String?) ?? '';
+    Future<String?> safe(Future<String?> f) async {
+      try {
+        return await f.timeout(const Duration(seconds: 10));
+      } catch (_) {
+        return null;
       }
-    } catch (_) {
-      // 网络失败/超时 → 走页面 fallback。
     }
-    // 2) 页面重定向解析 tag（跟随到 /releases/tag/<tag> 后从最终 URL 提取）。
-    try {
-      final resp = await http
-          .get(
-            Uri.parse('https://github.com/pandaymx/lanchat/releases/latest'),
-            headers: const {
-              'User-Agent': 'lanchat-mobile (github.com/pandaymx/lanchat)',
-              'Accept': 'text/html',
-            },
-          )
-          .timeout(const Duration(seconds: 20));
-      final uri = resp.request?.url.toString() ?? '';
-      final tag = RegExp(r'/releases/tag/([^\s/?]+)').firstMatch(uri);
-      if (tag != null) return tag.group(1);
-      final bodyTag = RegExp(r'/releases/tag/([^"<]+)').firstMatch(resp.body);
-      if (bodyTag != null) return bodyTag.group(1);
-      // 兜底：release 页 <meta property="og:url" content=".../releases/tag/vX.Y.Z">。
-      final og = RegExp(r'og:url\" content=\"[^\"]*?/releases/tag/([^\"/]+)').firstMatch(resp.body);
-      if (og != null) return og.group(1);
-    } catch (_) {}
+
+    final results = await Future.wait([
+      safe(_latestFromAtom()),
+      safe(_latestFromApi()),
+      safe(_latestFromPage()),
+    ]);
+    for (final t in results) {
+      if (t != null && t.isNotEmpty) return t;
+    }
+    return null;
+  }
+
+  /// 源 1：releases.atom feed，第一个 <entry> 的 <title> 即最新 tag（vX.Y.Z）。
+  Future<String?> _latestFromAtom() async {
+    final resp = await http.get(
+      Uri.parse('https://github.com/pandaymx/lanchat/releases.atom'),
+      headers: const {'User-Agent': 'lanchat-mobile (github.com/pandaymx/lanchat)'},
+    );
+    if (resp.statusCode != 200) return null;
+    final entry = RegExp(
+      r'<entry>.*?<title>([^<]+)</title>',
+      dotAll: true,
+    ).firstMatch(resp.body);
+    final title = entry?.group(1)?.trim();
+    return (title == null || title.isEmpty) ? null : title;
+  }
+
+  /// 源 2：标准 API。
+  Future<String?> _latestFromApi() async {
+    final resp = await http.get(
+      Uri.parse('https://api.github.com/repos/pandaymx/lanchat/releases/latest'),
+      headers: _ghHeaders,
+    );
+    if (resp.statusCode != 200) return null;
+    final json = jsonDecode(resp.body) as Map<String, dynamic>;
+    return (json['tag_name'] as String?) ?? '';
+  }
+
+  /// 源 3：页面重定向解析 tag（跟随到 /releases/tag/<tag> 后从最终 URL 提取）。
+  Future<String?> _latestFromPage() async {
+    final resp = await http.get(
+      Uri.parse('https://github.com/pandaymx/lanchat/releases/latest'),
+      headers: const {
+        'User-Agent': 'lanchat-mobile (github.com/pandaymx/lanchat)',
+        'Accept': 'text/html',
+      },
+    );
+    final uri = resp.request?.url.toString() ?? '';
+    final tag = RegExp(r'/releases/tag/([^\s/?]+)').firstMatch(uri);
+    if (tag != null) return tag.group(1);
+    final bodyTag = RegExp(r'/releases/tag/([^"<]+)').firstMatch(resp.body);
+    if (bodyTag != null) return bodyTag.group(1);
+    // 兜底：release 页 <meta property="og:url" content=".../releases/tag/vX.Y.Z">。
+    final og = RegExp(r'og:url\" content=\"[^\"]*?/releases/tag/([^\"/]+)').firstMatch(resp.body);
+    if (og != null) return og.group(1);
     return null;
   }
 

@@ -1,11 +1,17 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 网络权限：debug/profile 由 Flutter 模板注入，release 必须显式声明，
+         否则发布版 APK 完全无法联网（连 hub / 检查更新全失败）。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <!-- usesCleartextTraffic：局域网 hub 走 ws:// 明文（Android 9+ 默认禁止明文流量），
+         局域网场景无需 TLS（本地 hub 无鉴权）。 -->
     <application
         android:label="lanchat"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"

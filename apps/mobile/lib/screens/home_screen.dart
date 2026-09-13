@@ -20,20 +20,27 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   HubClient get client => widget.client;
   int _tab = 0;
   final Set<String> _pinned = {};
   final Set<String> _muted = {};
+  bool _appForeground = true; // 前台不弹系统通知
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     client.addListener(_onChanged);
     client.start(widget.startCursor);
     _loadConvPrefs();
     _loadNotifyPref();
     WidgetsBinding.instance.addPostFrameCallback((_) => _openNotifyConv());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appForeground = state == AppLifecycleState.resumed;
   }
 
   /// 通知点击跳转：App 从后台打开后进入对应会话。
@@ -138,6 +145,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     client.removeListener(_onChanged);
     _saveCursor();
     client.close();
@@ -158,8 +166,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _notifyEnabled = prefs.getBool('notify_enabled') ?? true);
   }
 
-  /// 未读增量 → 系统通知（免打扰会话、通知开关关闭时不弹）。
+  /// 未读增量 → 系统通知（前台、免打扰会话、通知开关关闭时不弹）。
   void _maybeNotifyNewMessages() {
+    if (_appForeground) return;
     if (_muted.isEmpty && _lastUnread.isEmpty) return;
     if (!_notifyEnabled) return;
     final now = <String, int>{};

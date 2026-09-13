@@ -1,3 +1,9 @@
+## [2.4.0](https://github.com/pandaymx/lanchat/compare/v2.3.0...v2.4.0) (2026-09-13)
+
+### Features
+
+* **proto:** wire v2 mesh 同步地基（ADR-014） ([23916bd](https://github.com/pandaymx/lanchat/commit/23916bd55dcfbca8f60d1ca98e35a4447a4df153))
+
 ## [2.3.0](https://github.com/pandaymx/lanchat/compare/v2.2.1...v2.3.0) (2026-09-13)
 
 ### Features

@@ -1,3 +1,9 @@
+## [1.55.0](https://github.com/pandaymx/lanchat/compare/v1.54.0...v1.55.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 会话列表消息摘要区分图片/视频/语音/文件 ([8a2741a](https://github.com/pandaymx/lanchat/commit/8a2741a36138edba8f70be53892b6e8f9698cd96))
+
 ## [1.54.0](https://github.com/pandaymx/lanchat/compare/v1.53.0...v1.54.0) (2026-09-13)
 
 ### Features

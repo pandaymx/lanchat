@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
-/// 视频全屏播放页（黑底 + 播放/暂停 + 进度）。
+/// 视频全屏播放页（黑底 + 播放/暂停 + 进度 + 强制横屏）。
 class VideoPlayerScreen extends StatefulWidget {
   final String url;
   final String name;
@@ -20,6 +21,10 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     _controller = VideoPlayerController.networkUrl(Uri.parse(widget.url));
     _controller.initialize().then((_) {
       if (!mounted) return;
@@ -38,6 +43,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   @override
   void dispose() {
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _controller.removeListener(_onTick);
     _controller.dispose();
     super.dispose();

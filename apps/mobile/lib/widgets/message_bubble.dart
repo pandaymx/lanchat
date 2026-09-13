@@ -30,6 +30,12 @@ class MessageBubble extends StatelessWidget {
 
   bool get isMine => message.senderUserId == selfUserId;
 
+  /// 自己发的消息是否已被（任意设备）读过：serverSeq <= 会话已读游标。
+  bool get _isRead =>
+      isMine &&
+      message.serverSeq > 0 &&
+      client.readSeqOf(message.conversationId) >= message.serverSeq;
+
   /// @提及高亮：`@名字` 用品牌蓝渲染，其余文本保持基础色。
   TextSpan _bodySpan(String body, Color base) {
     // 先按 @提及 与 URL 切分：URL 高亮可点击，@ 提及主题色。
@@ -344,9 +350,20 @@ class MessageBubble extends StatelessWidget {
                               style: TextStyle(fontSize: 13, color: textColor),
                             ),
                           const SizedBox(height: 2),
-                          Text(
-                            _formatTime(message.createdAt),
-                            style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.6)),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _formatTime(message.createdAt),
+                                style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.6)),
+                              ),
+                              if (isMine && _isRead)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 3),
+                                  child: Icon(Icons.check_circle,
+                                      size: 11, color: textColor.withValues(alpha: 0.75)),
+                                ),
+                            ],
                           ),
                         ],
                       ),

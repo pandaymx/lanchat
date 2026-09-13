@@ -84,6 +84,9 @@ class HubClient extends ChangeNotifier {
     return list.isEmpty ? null : list.last;
   }
 
+  /// 某会话已读游标（自己或他人设备推进，广播同步）。
+  int readSeqOf(String convId) => _readCursors[convId] ?? 0;
+
   /// 某会话未读数：他人发、seq 大于本地已读游标的消息数。
   int unreadCount(String convId) {
     final readSeq = _readCursors[convId] ?? 0;
@@ -270,6 +273,16 @@ class HubClient extends ChangeNotifier {
               notifyListeners();
             }
           });
+          notifyListeners();
+        }
+      case kRead:
+        // hub 盖戳广播：其他设备已读推进游标（自己发的消息据此显示已读）。
+        final convId = (p?['c'] as String?) ?? '';
+        final seq = (p?['s'] as num?)?.toInt() ?? 0;
+        if (convId.isNotEmpty && seq > 0) {
+          if (seq > (_readCursors[convId] ?? 0)) {
+            _readCursors[convId] = seq;
+          }
           notifyListeners();
         }
       case kSearchResp:

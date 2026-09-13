@@ -14,6 +14,7 @@ class MessageBubble extends StatelessWidget {
   final String selfUserId;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
+  final VoidCallback? onReplyTap;
   final Set<String> playedVoiceIds;
   final void Function(String id)? onVoicePlayed;
 
@@ -24,6 +25,7 @@ class MessageBubble extends StatelessWidget {
     required this.selfUserId,
     this.onTap,
     this.onLongPress,
+    this.onReplyTap,
     this.playedVoiceIds = const {},
     this.onVoicePlayed,
   });
@@ -406,7 +408,9 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _replyBlock(Color textColor) {
-    return Container(
+    return GestureDetector(
+      onTap: onReplyTap,
+      child: Container(
       margin: const EdgeInsets.only(bottom: 4),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
@@ -428,6 +432,7 @@ class MessageBubble extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.6)),
           ),
         ],
+      ),
       ),
     );
   }

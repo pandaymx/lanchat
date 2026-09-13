@@ -578,6 +578,26 @@ class _ChatScreenState extends State<ChatScreen> {
     return items;
   }
 
+  /// 点击引用块：滚动定位到原消息。
+  void _jumpToMessage(String targetId) {
+    final msgs = client.messagesOf(convId);
+    final idx = msgs.indexWhere((m) => m.id == targetId);
+    if (idx < 0) {
+      _toast('原消息不在本地缓存中');
+      return;
+    }
+    final items = _buildItems(msgs);
+    var listIdx = items.indexWhere((it) => it is StoredMessage && it.id == targetId);
+    if (listIdx < 0) return;
+    if (client.loadingEarlier) listIdx += 1;
+    final offset = listIdx * 64.0;
+    _scrollCtrl.animateTo(
+      offset < 0 ? 0 : offset,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
   void _openFullImage(StoredMessage m) {
     final url = 'http://${client.host}:${client.port}/api/files/${m.file!.fileId}';
     Navigator.of(context).push(
@@ -890,6 +910,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                                 : null,
                                 onLongPress: () =>
                                     _multiSelect ? _toggleSelect(m) : _onMessageLongPress(m),
+                                onReplyTap: m.reply != null ? () => _jumpToMessage(m.reply!.id) : null,
                               ),
                               if (_multiSelect)
                                 Positioned(

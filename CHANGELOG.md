@@ -1,3 +1,9 @@
+## [1.35.0](https://github.com/pandaymx/lanchat/compare/v1.34.0...v1.35.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 设置页显示版本号（package_info_plus） ([759704f](https://github.com/pandaymx/lanchat/commit/759704f13ef17501f08a969ce3b58aefa3272018))
+
 ## [1.34.0](https://github.com/pandaymx/lanchat/compare/v1.33.0...v1.34.0) (2026-09-13)
 
 ### Features

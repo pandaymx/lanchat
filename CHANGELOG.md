@@ -1,3 +1,9 @@
+## [2.2.1](https://github.com/pandaymx/lanchat/compare/v2.2.0...v2.2.1) (2026-09-13)
+
+### Bug Fixes
+
+* **ci:** 安卓签名 storeFile 相对路径修正 ([945dc93](https://github.com/pandaymx/lanchat/commit/945dc937d1066bb804dea8a7b906602118d051ed))
+
 ## [2.2.0](https://github.com/pandaymx/lanchat/compare/v2.1.3...v2.2.0) (2026-09-13)
 
 ### Features

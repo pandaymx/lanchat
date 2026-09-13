@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -78,24 +79,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _checking = false;
 
+  /// GitHub API 请求头：GitHub 要求非空 User-Agent，否则 403。
+  static const _ghHeaders = {
+    'User-Agent': 'lanchat-mobile (github.com/pandaymx/lanchat)',
+    'Accept': 'application/vnd.github+json',
+  };
+
   /// 检查 GitHub Releases 最新版本（移动端版本跟随仓库 tag）。
   Future<void> _checkUpdate() async {
     if (_checking) return;
     setState(() => _checking = true);
     String msg = '已是最新版本';
     try {
-      final resp = await http
-          .get(Uri.parse('https://api.github.com/repos/pandaymx/lanchat/releases/latest'))
-          .timeout(const Duration(seconds: 8));
-      if (resp.statusCode == 200) {
-        final json = jsonDecode(resp.body) as Map<String, dynamic>;
-        final latest = (json['tag_name'] as String?) ?? '';
-        if (latest.isNotEmpty && latest != 'v$_version' && latest != _version) {
-          msg = '发现新版本 $latest，请到项目主页下载';
-        }
-      } else {
-        msg = '获取更新信息失败（${resp.statusCode}）';
+      final latest = await _fetchLatestRelease();
+      if (latest == null || latest.isEmpty) {
+        msg = '获取更新信息失败';
+      } else if (latest != 'v$_version' && latest != _version) {
+        msg = '发现新版本 $latest，请到项目主页下载';
       }
+    } on TimeoutException {
+      msg = '连接 GitHub 超时，请稍后再试';
     } catch (_) {
       msg = '网络异常，检查更新失败';
     }
@@ -104,6 +107,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
     );
+  }
+
+  /// 拉取最新 release 的 tag：api.github.com 失败后回退到
+  /// github.com/releases/latest 页面（302/跟随重定向的 URL 里带 tag），
+  /// 兼容部分网络下 api 子域不可达的情况。
+  Future<String?> _fetchLatestRelease() async {
+    // 1) 标准 API。
+    try {
+      final resp = await http
+          .get(
+            Uri.parse('https://api.github.com/repos/pandaymx/lanchat/releases/latest'),
+            headers: _ghHeaders,
+          )
+          .timeout(const Duration(seconds: 12));
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        return (json['tag_name'] as String?) ?? '';
+      }
+    } catch (_) {
+      // 网络失败/超时 → 走页面 fallback。
+    }
+    // 2) 页面重定向解析 tag（跟随到 /releases/tag/<tag> 后从最终 URL 提取）。
+    try {
+      final resp = await http
+          .get(
+            Uri.parse('https://github.com/pandaymx/lanchat/releases/latest'),
+            headers: const {
+              'User-Agent': 'lanchat-mobile (github.com/pandaymx/lanchat)',
+              'Accept': 'text/html',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      final uri = resp.request?.url.toString() ?? '';
+      final tag = RegExp(r'/releases/tag/([^\s/?]+)').firstMatch(uri);
+      if (tag != null) return tag.group(1);
+      final bodyTag = RegExp(r'/releases/tag/([^"<]+)').firstMatch(resp.body);
+      if (bodyTag != null) return bodyTag.group(1);
+    } catch (_) {}
+    return null;
   }
 
   Future<void> _clearData(BuildContext context) async {    final confirmed = await showDialog<bool>(

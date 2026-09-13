@@ -1,3 +1,9 @@
+## [1.72.0](https://github.com/pandaymx/lanchat/compare/v1.71.0...v1.72.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 会话内消息搜索 ([0f9d73a](https://github.com/pandaymx/lanchat/commit/0f9d73a5a552aa8eda8d762c8cbca92d2779998c))
+
 ## [1.71.0](https://github.com/pandaymx/lanchat/compare/v1.70.0...v1.71.0) (2026-09-13)
 
 ### Features

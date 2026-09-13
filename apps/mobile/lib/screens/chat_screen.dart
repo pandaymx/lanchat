@@ -36,6 +36,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _uploading = false;
   bool _emojiOpen = false;
   bool _showJumpDown = false;
+  bool _multiSelect = false;
+  final Set<String> _selectedIds = {};
   StoredMessage? _replyTo;
 
   final AudioRecorder _recorder = AudioRecorder();
@@ -230,10 +232,83 @@ class _ChatScreenState extends State<ChatScreen> {
                 _onForward(m);
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.checklist, color: Color(0xFFE6E8EC)),
+              title: const Text('多选', style: TextStyle(color: Color(0xFFE6E8EC))),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                setState(() {
+                  _multiSelect = true;
+                  _selectedIds.add(m.id);
+                });
+              },
+            ),
           ],
         ),
       ),
     );
+  }
+
+  /// 多选批量转发：选会话 → 逐条重发（文本原样；文件复用 fileId）。
+  Future<void> _forwardSelected() async {
+    final selected = client.messagesOf(convId)
+        .where((m) => _selectedIds.contains(m.id))
+        .toList();
+    if (selected.isEmpty) {
+      _toast('未选择消息');
+      return;
+    }
+    final convs = client.sortedConversations
+        .where((c) => c.id != convId)
+        .toList();
+    if (convs.isEmpty) {
+      _toast('没有可转发到的会话');
+      return;
+    }
+    final picked = await showModalBottomSheet<ConversationSnapshot>(
+      context: context,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('转发 ${selected.length} 条到…',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFFE6E8EC))),
+            ),
+            ...convs.map((c) {
+              final isLobby = c.id == lobbyConversationId;
+              return ListTile(
+                leading: Icon(isLobby ? Icons.forum : Icons.group, color: const Color(0xFF2B6BFF)),
+                title: Text(
+                  isLobby ? '大厅' : (c.title.isEmpty ? '群聊' : c.title),
+                  style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15),
+                ),
+                onTap: () => Navigator.of(ctx).pop(c),
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    for (final m in selected) {
+      if (m.file != null) {
+        client.sendFileMessage(picked.id, m.file!, body: m.body);
+      } else {
+        client.sendMessage(picked.id, m.body);
+      }
+    }
+    setState(() {
+      _multiSelect = false;
+      _selectedIds.clear();
+    });
+    _toast('已转发 ${selected.length} 条');
   }
 
   /// 转发：选会话 → 重发原消息（文本原样；文件复用 fileId，hub 已有存储）。
@@ -432,37 +507,51 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF20232A),
         foregroundColor: const Color(0xFFE6E8EC),
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title.isEmpty ? '群聊' : title,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
-            Text(
-              typer != null
-                  ? '$typer 正在输入…'
-                  : (client.connected ? '在线 $onlineCount 人' : client.connectionStatus),
-              style: TextStyle(
-                fontSize: 11,
-                color: typer != null
-                    ? const Color(0xFF2B6BFF)
-                    : (client.connected ? const Color(0xFF07C160) : const Color(0xFFE86452)),
+        title: _multiSelect
+            ? Text('已选 ${_selectedIds.length} 条',
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600))
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title.isEmpty ? '群聊' : title,
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+                  Text(
+                    typer != null
+                        ? '$typer 正在输入…'
+                        : (client.connected ? '在线 $onlineCount 人' : client.connectionStatus),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: typer != null
+                          ? const Color(0xFF2B6BFF)
+                          : (client.connected ? const Color(0xFF07C160) : const Color(0xFFE86452)),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
-        actions: [
-          if (!_isLobby)
-            PopupMenuButton<String>(
-              color: const Color(0xFF2B2D33),
-              icon: const Icon(Icons.more_vert, size: 20),
-              onSelected: (v) {
-                if (v == 'info') _openGroupInfo();
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'info', child: Text('群信息', style: TextStyle(color: Color(0xFFE6E8EC)))),
+        actions: _multiSelect
+            ? [
+                IconButton(
+                  tooltip: '取消多选',
+                  icon: const Icon(Icons.close),
+                  onPressed: () => setState(() {
+                    _multiSelect = false;
+                    _selectedIds.clear();
+                  }),
+                ),
+              ]
+            : [
+                if (!_isLobby)
+                  PopupMenuButton<String>(
+                    color: const Color(0xFF2B2D33),
+                    icon: const Icon(Icons.more_vert, size: 20),
+                    onSelected: (v) {
+                      if (v == 'info') _openGroupInfo();
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'info', child: Text('群信息', style: TextStyle(color: Color(0xFFE6E8EC)))),
+                    ],
+                  ),
               ],
-            ),
-        ],
       ),
       body: Column(
         children: [
@@ -504,12 +593,43 @@ class _ChatScreenState extends State<ChatScreen> {
                           final item = items[i - (client.loadingEarlier ? 1 : 0)];
                           if (item is DateTime) return _dateDivider(item);
                           final m = item as StoredMessage;
-                          return MessageBubble(
-                            message: m,
-                            client: client,
-                            selfUserId: client.userId,
-                            onTap: m.file != null && (m.file!.mime.startsWith('image/')) ? () => _openFullImage(m) : null,
-                            onLongPress: () => _onMessageLongPress(m),
+                          final selected = _selectedIds.contains(m.id);
+                          return Stack(
+                            children: [
+                              MessageBubble(
+                                message: m,
+                                client: client,
+                                selfUserId: client.userId,
+                                onTap: _multiSelect
+                                    ? () => _toggleSelect(m)
+                                    : (m.file != null && (m.file!.mime.startsWith('image/')))
+                                        ? () => _openFullImage(m)
+                                        : null,
+                                onLongPress: () =>
+                                    _multiSelect ? _toggleSelect(m) : _onMessageLongPress(m),
+                              ),
+                              if (_multiSelect)
+                                Positioned(
+                                  top: 2,
+                                  left: m.senderUserId == client.userId ? 2 : null,
+                                  right: m.senderUserId == client.userId ? null : 2,
+                                  child: Container(
+                                    width: 20,
+                                    height: 20,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: selected ? const Color(0xFF2B6BFF) : const Color(0x66000000),
+                                      border: selected
+                                          ? null
+                                          : Border.all(color: Colors.white70, width: 1.5),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: selected
+                                        ? const Icon(Icons.check, size: 14, color: Colors.white)
+                                        : null,
+                                  ),
+                                ),
+                            ],
                           );
                         },
                       ),
@@ -536,10 +656,43 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           if (_replyTo != null) _replyBar(),
           if (_recording) _recordingBar(),
-          _composer(),
+          if (_multiSelect)
+            Container(
+              color: const Color(0xFF20232A),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextButton(
+                    onPressed: () => setState(() {
+                      _multiSelect = false;
+                      _selectedIds.clear();
+                    }),
+                    child: const Text('取消', style: TextStyle(color: Color(0xFF8B919C))),
+                  ),
+                  FilledButton.icon(
+                    onPressed: _selectedIds.isEmpty ? null : _forwardSelected,
+                    icon: const Icon(Icons.forward, size: 16),
+                    label: Text('转发 (${_selectedIds.length})'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF2B6BFF),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            _composer(),
         ],
       ),
     );
+  }
+
+  void _toggleSelect(StoredMessage m) {
+    setState(() {
+      if (!_selectedIds.remove(m.id)) _selectedIds.add(m.id);
+    });
   }
 
   Widget _dateDivider(DateTime day) {

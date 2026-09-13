@@ -1,3 +1,9 @@
+## [1.31.0](https://github.com/pandaymx/lanchat/compare/v1.30.0...v1.31.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 自绘 App 图标（渐变蓝底+白色气泡，tools/gen_icon.py 可再生成） ([34b5d5d](https://github.com/pandaymx/lanchat/commit/34b5d5d9cc8418945d24d4124f3807a9eae9a779))
+
 ## [1.30.0](https://github.com/pandaymx/lanchat/compare/v1.29.0...v1.30.0) (2026-09-13)
 
 ### Features

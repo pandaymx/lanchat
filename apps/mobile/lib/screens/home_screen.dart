@@ -370,12 +370,25 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// 下拉刷新：断开重连（保留当前游标），重新拉取会话。
+  Future<void> _refresh() async {
+    try {
+      await client.start(client.cursor);
+    } catch (_) {}
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+  }
+
   Widget _messagesTab(List<ConversationSnapshot> convs) {
-    return client.connected && convs.isEmpty
-        ? const Center(
-            child: Text('加载中…', style: TextStyle(color: Color(0xFF8B919C))),
-          )
-        : ListView.separated(
+    if (client.connected && convs.isEmpty) {
+      return const Center(
+        child: Text('加载中…', style: TextStyle(color: Color(0xFF8B919C))),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      color: const Color(0xFF2B6BFF),
+      backgroundColor: const Color(0xFF2B2D33),
+      child: ListView.separated(
             itemCount: convs.length,
             separatorBuilder: (_, __) => const Divider(
               height: 1,
@@ -410,7 +423,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: _convTile(conv),
               );
             },
-          );
+          ),
+    );
   }
 
   Widget _convTile(ConversationSnapshot conv) {

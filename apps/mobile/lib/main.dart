@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'notifier.dart';
 import 'screens/connect_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 深色沉浸：状态栏/导航栏图标白色，与深色主题一致。
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      statusBarBrightness: Brightness.dark,
+      systemNavigationBarColor: Color(0xFF17181C),
+      systemNavigationBarIconBrightness: Brightness.light,
+    ),
+  );
   await Notifier.instance.init();
   runApp(const LanchatApp());
 }

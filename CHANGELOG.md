@@ -1,3 +1,9 @@
+## [1.67.0](https://github.com/pandaymx/lanchat/compare/v1.66.0...v1.67.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 输入框一键清空按钮 ([aec6a43](https://github.com/pandaymx/lanchat/commit/aec6a43cf804c1e6b8d7525ff5577d0102af6a65))
+
 ## [1.66.0](https://github.com/pandaymx/lanchat/compare/v1.65.0...v1.66.0) (2026-09-13)
 
 ### Features

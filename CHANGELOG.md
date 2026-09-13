@@ -1,3 +1,9 @@
+## [1.38.0](https://github.com/pandaymx/lanchat/compare/v1.37.0...v1.38.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 系统通知仅后台弹出（前台静默） ([fbc8625](https://github.com/pandaymx/lanchat/commit/fbc86256c5f155e793281e118b165244d03a0f01))
+
 ## [1.37.0](https://github.com/pandaymx/lanchat/compare/v1.36.0...v1.37.0) (2026-09-13)
 
 ### Features

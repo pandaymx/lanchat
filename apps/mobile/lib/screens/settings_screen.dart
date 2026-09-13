@@ -36,7 +36,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     String v = '';
     try {
       final info = await PackageInfo.fromPlatform();
-      v = '${info.version}+${info.buildNumber}';
+      // 只取语义版本号（去 buildNumber），与 GitHub tag vX.Y.Z 直接比较。
+      v = info.version;
     } catch (_) {}
     if (!mounted) return;
     setState(() => _version = v);
@@ -104,8 +105,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
     if (!mounted) return;
     setState(() => _checking = false);
+    // 无论结果如何都提供浏览器兜底：用户网络可达 GitHub 时可直接打开 Releases 页。
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: '打开 Releases',
+          onPressed: () => launchUrl(
+            Uri.parse('https://github.com/pandaymx/lanchat/releases'),
+            mode: LaunchMode.externalApplication,
+          ),
+        ),
+      ),
     );
   }
 
@@ -144,6 +156,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (tag != null) return tag.group(1);
       final bodyTag = RegExp(r'/releases/tag/([^"<]+)').firstMatch(resp.body);
       if (bodyTag != null) return bodyTag.group(1);
+      // 兜底：release 页 <meta property="og:url" content=".../releases/tag/vX.Y.Z">。
+      final og = RegExp(r'og:url\" content=\"[^\"]*?/releases/tag/([^\"/]+)').firstMatch(resp.body);
+      if (og != null) return og.group(1);
     } catch (_) {}
     return null;
   }

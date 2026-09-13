@@ -1,3 +1,9 @@
+## [1.73.0](https://github.com/pandaymx/lanchat/compare/v1.72.0...v1.73.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 会话搜索结果列表与点击定位 ([fda166b](https://github.com/pandaymx/lanchat/commit/fda166b0d2ffd0e771571681d75581bbe4385830))
+
 ## [1.72.0](https://github.com/pandaymx/lanchat/compare/v1.71.0...v1.72.0) (2026-09-13)
 
 ### Features

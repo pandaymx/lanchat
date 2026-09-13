@@ -104,7 +104,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.chat_bubble, size: 56, color: Color(0xFF2B6BFF)),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.asset(
+                      'assets/icon_512.png',
+                      width: 56,
+                      height: 56,
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   const Text(
                     'lanchat',

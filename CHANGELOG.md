@@ -1,3 +1,9 @@
+## [1.57.0](https://github.com/pandaymx/lanchat/compare/v1.56.0...v1.57.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 消息内 URL 高亮可点击（外部浏览器打开） ([2aea8e1](https://github.com/pandaymx/lanchat/commit/2aea8e1eceaf7c9b8bfc964c3ec8a0e9c4ddcb37))
+
 ## [1.56.0](https://github.com/pandaymx/lanchat/compare/v1.55.0...v1.56.0) (2026-09-13)
 
 ### Features

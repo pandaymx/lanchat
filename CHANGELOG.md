@@ -1,3 +1,9 @@
+## [1.26.0](https://github.com/pandaymx/lanchat/compare/v1.25.0...v1.26.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 通知点击直达会话 + 会话滑动快捷操作 ([777a5ad](https://github.com/pandaymx/lanchat/commit/777a5adea7e402894ebcc317c793b610e794f501))
+
 ## [1.25.0](https://github.com/pandaymx/lanchat/compare/v1.24.0...v1.25.0) (2026-09-13)
 
 ### Features

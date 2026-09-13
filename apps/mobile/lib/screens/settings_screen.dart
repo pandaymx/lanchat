@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../hub_client.dart';
@@ -16,11 +17,23 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   HubClient get client => widget.client;
   bool _notifyOn = true;
+  String _version = '';
 
   @override
   void initState() {
     super.initState();
     _load();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    String v = '';
+    try {
+      final info = await PackageInfo.fromPlatform();
+      v = '${info.version}+${info.buildNumber}';
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() => _version = v);
   }
 
   Future<void> _load() async {
@@ -119,6 +132,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             title: Text('lanchat 移动端', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
             subtitle: Text('局域网即时通讯 · 直连 hub', style: TextStyle(color: Color(0xFF8B919C), fontSize: 13)),
           ),
+          if (_version.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: Text(
+                '版本 $_version',
+                style: const TextStyle(fontSize: 12, color: Color(0xFF6A707A)),
+              ),
+            ),
         ],
       ),
     );

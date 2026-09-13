@@ -1,3 +1,9 @@
+## [1.25.0](https://github.com/pandaymx/lanchat/compare/v1.24.0...v1.25.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 消息多选批量转发 ([bbe736b](https://github.com/pandaymx/lanchat/commit/bbe736b120bc0f1dbea1636d8b30152d238615ae))
+
 ## [1.24.0](https://github.com/pandaymx/lanchat/compare/v1.23.0...v1.24.0) (2026-09-12)
 
 ### Features

@@ -1,3 +1,9 @@
+## [2.5.0](https://github.com/pandaymx/lanchat/compare/v2.4.0...v2.5.0) (2026-09-13)
+
+### Features
+
+* **core:** mesh 同步引擎（ADR-014 M-b：收敛/幂等/分批） ([01976d1](https://github.com/pandaymx/lanchat/commit/01976d1ec710a79caecc903c114ed4897fe3a948))
+
 ## [2.4.0](https://github.com/pandaymx/lanchat/compare/v2.3.0...v2.4.0) (2026-09-13)
 
 ### Features

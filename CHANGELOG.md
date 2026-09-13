@@ -1,3 +1,9 @@
+## [1.44.0](https://github.com/pandaymx/lanchat/compare/v1.43.0...v1.44.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 图片查看器右上角保存到相册 ([e34b044](https://github.com/pandaymx/lanchat/commit/e34b0447a32ce098dec2c0b31c00892ee89bd72e))
+
 ## [1.43.0](https://github.com/pandaymx/lanchat/compare/v1.42.0...v1.43.0) (2026-09-13)
 
 ### Features

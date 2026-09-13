@@ -1,3 +1,9 @@
+## [1.39.0](https://github.com/pandaymx/lanchat/compare/v1.38.0...v1.39.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 多选批量转发支持全选/取消全选 ([e6877d2](https://github.com/pandaymx/lanchat/commit/e6877d2b4cc6c4b520396788f47e58e1c595767b))
+
 ## [1.38.0](https://github.com/pandaymx/lanchat/compare/v1.37.0...v1.38.0) (2026-09-13)
 
 ### Features

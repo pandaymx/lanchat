@@ -8,14 +8,19 @@ package protocol
 //   - ClientNonce 由发送设备生成，Hub 必须保留。投递回环、重复检测、ack 跟踪都靠它。
 //   - CreatedAt 是 Unix 毫秒，Hub 接收时间（不是设备本地时间）。
 type StoredMessage struct {
-	ID             string `json:"id"`          // 服务端去重键（ClientNonce + ServerSeq 派生）
-	ClientNonce    string `json:"nonce"`       // 客户端去重用
-	ConversationID string `json:"conv"`        // 属于哪个会话
-	SenderUserID   string `json:"suid"`        // 发送者用户
-	SenderDeviceID string `json:"sdid"`        // 发送者设备
-	Body           string `json:"body"`        // 纯文本（M4 可扩展到 MIME）
-	ServerSeq      uint64 `json:"seq"`         // Hub 单调递增
-	CreatedAt      int64  `json:"at,omitzero"` // Unix 毫秒；零值省略便于显示
+	ID             string `json:"id"`    // 服务端去重键（ClientNonce + ServerSeq 派生）
+	ClientNonce    string `json:"nonce"` // 客户端去重用
+	ConversationID string `json:"conv"`  // 属于哪个会话
+	SenderUserID   string `json:"suid"`  // 发送者用户
+	SenderDeviceID string `json:"sdid"`  // 发送者设备
+	Body           string `json:"body"`  // 纯文本（M4 可扩展到 MIME）
+	ServerSeq      uint64 `json:"seq"`   // 源节点单调递增（见 NodeID）
+	// NodeID 源节点 ID（ADR-014 wire v2）：去中心化 mesh 没有全局 hub，
+	// ServerSeq 是「每源节点局部单调」，(NodeID, ServerSeq) 构成全局唯一
+	// 消息坐标——同步去重与 per-source 游标都靠它。v1 旧数据为空串
+	//（不迁移，见 ADR-014）。
+	NodeID    string `json:"node,omitzero"`
+	CreatedAt int64  `json:"at,omitzero"` // Unix 毫秒；零值省略便于显示
 	// File 非空表示该消息携带一个文件附件（M9）。附件数据面走 hub 的
 	// HTTP 端点（POST/GET /api/files），FileID 由 hub 生成、消息里只带
 	// 引用与展示用元信息；历史补发 / 已读 / 去重全走消息原有管线。

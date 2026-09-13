@@ -62,6 +62,12 @@ const (
 	FKSearchReq
 	// FKSearchResp Hub → Client：搜索结果（v1.1）。
 	FKSearchResp
+	// FKSyncReq 对等节点 → 对等节点：请求同步（ADR-014 wire v2 mesh）。
+	// 载荷 SyncRequest：per-source 游标，对方补发游标之后的增量。
+	FKSyncReq
+	// FKSyncResp 对等节点 → 对等节点：同步响应（载荷 SyncResponse，
+	// 批量 StoredMessage，按 ServerSeq 升序）。
+	FKSyncResp
 )
 
 // String 实现 Stringer，仅用于日志和 CLI 输出，不参与 wire 协议。
@@ -105,6 +111,10 @@ func (k FrameKind) String() string {
 		return "search_req"
 	case FKSearchResp:
 		return "search_resp"
+	case FKSyncReq:
+		return "sync_req"
+	case FKSyncResp:
+		return "sync_resp"
 	default:
 		return fmt.Sprintf("frame_kind(%d)", uint8(k))
 	}

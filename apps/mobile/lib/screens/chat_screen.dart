@@ -38,6 +38,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final _inputFocus = FocusNode();
   final _scrollCtrl = ScrollController();
   bool _uploading = false;
+  int _fontScale = 15; // 消息字体大小（设置页调节）
   bool _emojiOpen = false;
   bool _showJumpDown = false;
   bool _multiSelect = false;
@@ -65,6 +66,15 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => client.markRead(convId));
     _restoreDraft();
     _loadPlayedVoices();
+    _loadFontScale();
+  }
+
+  /// 读取全局消息字体大小（设置页调节，prefs 持久化）。
+  Future<void> _loadFontScale() async {
+    final prefs = await SharedPreferences.getInstance();
+    final v = prefs.getInt('font_scale') ?? 15;
+    if (!mounted) return;
+    setState(() => _fontScale = v.clamp(12, 20));
   }
 
   /// 恢复已播放语音标记（本地 prefs）。
@@ -898,6 +908,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                 client: client,
                                 selfUserId: client.userId,
                                 playedVoiceIds: _playedVoices,
+                                fontSize: _fontScale.toDouble(),
                                 onVoicePlayed: _markVoicePlayed,
                                 onTap: _multiSelect
                                     ? () => _toggleSelect(m)

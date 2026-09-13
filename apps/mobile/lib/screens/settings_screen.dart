@@ -19,6 +19,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   HubClient get client => widget.client;
   bool _notifyOn = true;
   String _version = '';
+  int _fontScale = 15;
 
   @override
   void initState() {
@@ -40,7 +41,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
-    setState(() => _notifyOn = prefs.getBool('notify_enabled') ?? true);
+    setState(() {
+      _notifyOn = prefs.getBool('notify_enabled') ?? true;
+      _fontScale = prefs.getInt('font_scale') ?? 15;
+    });
+  }
+
+  Future<void> _setFontScale(int v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('font_scale', v);
   }
 
   Future<void> _setNotify(bool v) async {
@@ -130,6 +139,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _notifyOn,
             activeTrackColor: const Color(0xFF2B6BFF),
             onChanged: _setNotify,
+          ),
+          const Divider(height: 1, color: Color(0xFF26282E)),
+          ListTile(
+            leading: const Icon(Icons.format_size, color: Color(0xFF8B919C)),
+            title: const Text('消息字体大小', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+            subtitle: Text('${_fontScale.toInt()}', style: const TextStyle(color: Color(0xFF8B919C), fontSize: 12)),
+            trailing: SizedBox(
+              width: 140,
+              child: Slider(
+                value: _fontScale.clamp(12, 20).toDouble(),
+                min: 12,
+                max: 20,
+                divisions: 8,
+                activeColor: const Color(0xFF2B6BFF),
+                inactiveColor: const Color(0xFF2B2D33),
+                label: '${_fontScale.toInt()}',
+                onChanged: (v) => setState(() => _fontScale = v.round()),
+                onChangeEnd: (v) => _setFontScale(v.round()),
+              ),
+            ),
           ),
           const Divider(height: 1, color: Color(0xFF26282E)),
           ListTile(

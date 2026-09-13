@@ -17,6 +17,7 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback? onReplyTap;
   final Set<String> playedVoiceIds;
   final void Function(String id)? onVoicePlayed;
+  final double fontSize;
 
   const MessageBubble({
     super.key,
@@ -28,6 +29,7 @@ class MessageBubble extends StatelessWidget {
     this.onReplyTap,
     this.playedVoiceIds = const {},
     this.onVoicePlayed,
+    this.fontSize = 15,
   });
 
   bool get isMine => message.senderUserId == selfUserId;
@@ -344,7 +346,7 @@ class MessageBubble extends StatelessWidget {
                           if (message.body.isNotEmpty)
                             SelectableText.rich(
                               _bodySpan(message.body, textColor),
-                              style: TextStyle(fontSize: 15, color: textColor, height: 1.4),
+                              style: TextStyle(fontSize: fontSize, color: textColor, height: 1.4),
                             ),
                           if (message.file != null)
                             Text(

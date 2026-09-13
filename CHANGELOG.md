@@ -1,3 +1,9 @@
+## [1.69.0](https://github.com/pandaymx/lanchat/compare/v1.68.0...v1.69.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 会话长按菜单标记已读 ([cda07d8](https://github.com/pandaymx/lanchat/commit/cda07d87e08c396e0d74a379934c7073083fd6b6))
+
 ## [1.68.0](https://github.com/pandaymx/lanchat/compare/v1.67.0...v1.68.0) (2026-09-13)
 
 ### Features

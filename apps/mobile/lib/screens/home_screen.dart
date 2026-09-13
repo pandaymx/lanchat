@@ -32,6 +32,24 @@ class _HomeScreenState extends State<HomeScreen> {
     client.addListener(_onChanged);
     client.start(widget.startCursor);
     _loadConvPrefs();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _openNotifyConv());
+  }
+
+  /// 通知点击跳转：App 从后台打开后进入对应会话。
+  Future<void> _openNotifyConv() async {
+    final prefs = await SharedPreferences.getInstance();
+    final convId = prefs.getString('notify_conv');
+    if (convId == null || convId.isEmpty) return;
+    await prefs.remove('notify_conv');
+    if (!mounted || !client.connected) return;
+    final conv = client.conversations[convId];
+    if (conv == null) return; // 会话尚未加载（首屏拉取中），跳过自动跳转
+    client.markRead(convId);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(client: client, conversationId: convId, title: conv.title),
+      ),
+    );
   }
 
   Future<void> _loadConvPrefs() async {
@@ -146,7 +164,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final title = isLobby ? '大厅' : (c.title.isEmpty ? '群聊' : c.title);
         final preview = _preview(last);
         if (preview.isNotEmpty) {
-          Notifier.instance.show('$title：$preview', '来自 ${last?.senderUserId ?? ''}');
+          Notifier.instance.show('$title：$preview', '来自 ${last?.senderUserId ?? ''}', payload: c.id);
         }
       }
     }
@@ -357,7 +375,31 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             itemBuilder: (context, i) {
               final conv = convs[i];
-              return _convTile(conv);
+              return Dismissible(
+                key: ValueKey('conv_${conv.id}'),
+                direction: DismissDirection.horizontal,
+                background: Container(
+                  color: const Color(0xFF2B6BFF),
+                  padding: const EdgeInsets.only(left: 20),
+                  alignment: Alignment.centerLeft,
+                  child: const Icon(Icons.push_pin, color: Colors.white),
+                ),
+                secondaryBackground: Container(
+                  color: const Color(0xFFE86452),
+                  padding: const EdgeInsets.only(right: 20),
+                  alignment: Alignment.centerRight,
+                  child: const Icon(Icons.notifications_off, color: Colors.white),
+                ),
+                confirmDismiss: (direction) async {
+                  if (direction == DismissDirection.startToEnd) {
+                    _togglePin(conv);
+                  } else {
+                    _toggleMute(conv);
+                  }
+                  return false; // 不真正移除，仅触发动作
+                },
+                child: _convTile(conv),
+              );
             },
           );
   }

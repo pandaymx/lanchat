@@ -305,8 +305,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _preview(StoredMessage? m) {
     if (m == null) return '暂无消息';
     if (m.file != null) {
-      if (m.file!.mime.startsWith('image/')) return '[图片] ${m.file!.name}';
-      return '[文件] ${m.file!.name}';
+      final f = m.file!;
+      final lower = f.name.toLowerCase();
+      if (f.mime.startsWith('image/')) return '[图片] ${f.name}';
+      if (f.mime.startsWith('video/') || lower.endsWith('.mp4') || lower.endsWith('.mov') || lower.endsWith('.webm')) {
+        return '[视频] ${f.name}';
+      }
+      if (f.mime.startsWith('audio/') || lower.endsWith('.m4a') || lower.endsWith('.aac') || lower.endsWith('.mp3') || lower.endsWith('.wav')) {
+        return '[语音] ${f.name}';
+      }
+      return '[文件] ${f.name}';
     }
     if (m.body.isEmpty) return '';
     final one = m.body.replaceAll('\n', ' ');

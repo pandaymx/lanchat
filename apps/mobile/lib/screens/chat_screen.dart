@@ -41,6 +41,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _multiSelect = false;
   final Set<String> _selectedIds = {};
   final Set<String> _playedVoices = {}; // 已播放的语音消息 id
+  List<String> _recentEmoji = const [];
   StoredMessage? _replyTo;
 
   final AudioRecorder _recorder = AudioRecorder();
@@ -1021,7 +1022,10 @@ class _ChatScreenState extends State<ChatScreen> {
             tooltip: _recording ? '停止录音并发送' : '录音',
           ),
           IconButton(
-            onPressed: () => setState(() => _emojiOpen = !_emojiOpen),
+            onPressed: () => setState(() {
+              _emojiOpen = !_emojiOpen;
+              if (_emojiOpen) _loadRecentEmoji();
+            }),
             icon: Icon(
               _emojiOpen ? Icons.keyboard : Icons.emoji_emotions_outlined,
               color: _emojiOpen ? const Color(0xFF2B6BFF) : const Color(0xFF8B919C),
@@ -1073,6 +1077,13 @@ class _ChatScreenState extends State<ChatScreen> {
     '📱', '💻', '🕐', '❓', '❗', '✅', '❌', '⚠️', '🔒', '📌',
   ];
 
+  Future<void> _loadRecentEmoji() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList('recent_emoji') ?? const [];
+    if (!mounted || !_emojiOpen) return;
+    setState(() => _recentEmoji = list);
+  }
+
   Widget _emojiPanel() {
     return Container(
       height: 190,
@@ -1081,22 +1092,60 @@ class _ChatScreenState extends State<ChatScreen> {
         color: Color(0xFF2B2D33),
         borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
       ),
-      child: GridView.count(
-        crossAxisCount: 8,
-        children: _emojiList.map((e) {
-          return InkWell(
-            onTap: () => _insertEmoji(e),
-            borderRadius: BorderRadius.circular(8),
-            child: Center(
-              child: Text(e, style: const TextStyle(fontSize: 22)),
+      child: Column(
+        children: [
+          if (_recentEmoji.isNotEmpty) ...[
+            SizedBox(
+              height: 40,
+              child: Row(
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(right: 6),
+                    child: Icon(Icons.history, size: 14, color: Color(0xFF8B919C)),
+                  ),
+                  Expanded(
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: _recentEmoji.map((e) {
+                        return InkWell(
+                          onTap: () => _insertEmoji(e),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Center(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 3),
+                              child: Text(e, style: const TextStyle(fontSize: 20)),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          );
-        }).toList(),
+            const Divider(height: 8, color: Color(0x14FFFFFF)),
+          ],
+          Expanded(
+            child: GridView.count(
+              crossAxisCount: 8,
+              children: _emojiList.map((e) {
+                return InkWell(
+                  onTap: () => _insertEmoji(e),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Center(
+                    child: Text(e, style: const TextStyle(fontSize: 22)),
+                  ),
+                );
+              }).toList(),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   void _insertEmoji(String emoji) {
+    _rememberEmoji(emoji);
     final ctrl = _inputCtrl;
     final sel = ctrl.selection;
     final text = ctrl.text;
@@ -1106,6 +1155,16 @@ class _ChatScreenState extends State<ChatScreen> {
       text: next,
       selection: TextSelection.collapsed(offset: start + emoji.length),
     );
+  }
+
+  /// 最近使用 emoji（prefs 最多 12 个，插入顺序倒序）。
+  Future<void> _rememberEmoji(String emoji) async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = prefs.getStringList('recent_emoji') ?? [];
+    list.remove(emoji);
+    list.insert(0, emoji);
+    if (list.length > 12) list.removeRange(12, list.length);
+    await prefs.setStringList('recent_emoji', list);
   }
 }
 

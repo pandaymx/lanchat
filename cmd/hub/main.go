@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/pandaymx/lanchat/pkg/hubserver"
@@ -39,6 +40,10 @@ func main() {
 	filesDir := flag.String("files", "", "文件传输（M9）的 blob 存储目录；文件存 <dir>/<FileID>；留空用平台默认数据目录")
 	maxFileSize := flag.Int64("max-file-size", hubserver.DefaultMaxFileSize, "单文件上传上限（字节，默认 512MiB）；<=0 不限制")
 	mDNS := flag.Bool("mdns", true, "通过 mDNS/DNS-SD 在局域网广播 hub（_lanchat._tcp）；-mdns=false 关闭")
+	// mesh：ADR-014 去中心化同步。需要持久化库（-db 不能是 memory）。
+	meshMode := flag.Bool("mesh", false, "启用去中心化 mesh 同步（ADR-014 wire v2；需持久化库）")
+	meshPeers := flag.String("peers", "", "mesh 邻居 base URL 列表，逗号分隔（如 http://192.168.1.5:9000,http://192.168.1.6:9000）")
+	nodeID := flag.String("node-id", "", "本节点 mesh 标识（默认主机名；持久化后不可随意更改，消息坐标依赖它稳定）")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
 	logFile := flag.String("log-file", "", "日志文件路径；空走 stderr")
@@ -70,6 +75,9 @@ func main() {
 		MaxHistory:  *maxHistory,
 		MaxFileSize: *maxFileSize,
 		MDNS:        *mDNS,
+		Mesh:        *meshMode,
+		MeshPeers:   splitPeers(*meshPeers),
+		NodeID:      *nodeID,
 		Version:     version,
 	}
 	srv, err := hubserver.Start(ctx, cfg)
@@ -84,6 +92,17 @@ func main() {
 		logging.New("hub").Error("hub exited with error", "err", err)
 	}
 	logging.New("hub").Info("hub stopped gracefully")
+}
+
+// splitPeers 把逗号分隔的邻居 URL 列表拆成 slice（去空白与空项）。
+func splitPeers(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // wstransportDefaultPath 取 WS 默认路径，避免 main 直接 import transport

@@ -1,3 +1,9 @@
+## [1.27.0](https://github.com/pandaymx/lanchat/compare/v1.26.0...v1.27.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 视频发送 + 全屏播放（video_player） ([8499e72](https://github.com/pandaymx/lanchat/commit/8499e727a64b99eb894487abc7da904a77d086d8))
+
 ## [1.26.0](https://github.com/pandaymx/lanchat/compare/v1.25.0...v1.26.0) (2026-09-13)
 
 ### Features

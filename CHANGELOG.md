@@ -1,3 +1,9 @@
+## [1.41.0](https://github.com/pandaymx/lanchat/compare/v1.40.0...v1.41.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 点击聊天空白收起键盘 ([fc9505e](https://github.com/pandaymx/lanchat/commit/fc9505ea56d0f6a218edb676ab177b74f6864a63))
+
 ## [1.40.0](https://github.com/pandaymx/lanchat/compare/v1.39.0...v1.40.0) (2026-09-13)
 
 ### Features

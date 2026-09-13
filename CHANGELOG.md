@@ -1,3 +1,9 @@
+## [2.1.3](https://github.com/pandaymx/lanchat/compare/v2.1.2...v2.1.3) (2026-09-13)
+
+### Bug Fixes
+
+* **ci:** iOS 用 build ios --no-codesign 手动打包 ipa ([d8a73ee](https://github.com/pandaymx/lanchat/commit/d8a73ee016cbdaee7f780c40a561d758c310b35a))
+
 ## [2.1.2](https://github.com/pandaymx/lanchat/compare/v2.1.1...v2.1.2) (2026-09-13)
 
 ### Bug Fixes

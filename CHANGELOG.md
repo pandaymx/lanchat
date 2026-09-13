@@ -1,3 +1,9 @@
+## [1.50.0](https://github.com/pandaymx/lanchat/compare/v1.49.0...v1.50.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 主页双击返回退出确认 ([6ba7361](https://github.com/pandaymx/lanchat/commit/6ba7361d061910a1114f792838f7203254bde13e))
+
 ## [1.49.0](https://github.com/pandaymx/lanchat/compare/v1.48.0...v1.49.0) (2026-09-13)
 
 ### Features

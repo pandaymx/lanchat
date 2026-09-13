@@ -1,3 +1,10 @@
+## [2.3.0](https://github.com/pandaymx/lanchat/compare/v2.2.1...v2.3.0) (2026-09-13)
+
+### Features
+
+* **hub:** 嵌入式 hub（pkg/hubserver，ADR-014 M-a） ([2f51171](https://github.com/pandaymx/lanchat/commit/2f51171bb48cd18acd0bdbdd51644bac14c96e48))
+* **hub:** 嵌入式 hub（pkg/hubserver，ADR-014 M-a） ([e43ebed](https://github.com/pandaymx/lanchat/commit/e43ebede85e33bbba20bdda613c34aa3d7d216fa))
+
 ## [2.2.1](https://github.com/pandaymx/lanchat/compare/v2.2.0...v2.2.1) (2026-09-13)
 
 ### Bug Fixes

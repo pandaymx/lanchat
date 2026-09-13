@@ -279,7 +279,8 @@ jobs:
           mkdir -p android/app
           echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > android/app/lanchat-release.jks
           cat > android/key.properties <<'EOF'
-          storeFile=app/lanchat-release.jks
+          # build.gradle.kts 的 file() 相对 android/app/ 目录，keystore 就放在那。
+          storeFile=lanchat-release.jks
           storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
           keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}

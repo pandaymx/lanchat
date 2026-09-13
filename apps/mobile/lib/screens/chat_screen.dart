@@ -1106,6 +1106,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             tooltip: '表情',
           ),
+          IconButton(
+            onPressed: _openMentionPicker,
+            icon: const Icon(Icons.alternate_email, color: Color(0xFF8B919C)),
+            tooltip: '@成员',
+          ),
           Expanded(
             child: TextField(
               controller: _inputCtrl,

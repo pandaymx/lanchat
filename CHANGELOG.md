@@ -1,3 +1,9 @@
+## [1.64.0](https://github.com/pandaymx/lanchat/compare/v1.63.0...v1.64.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 应用名改为 lanchat ([9c19c12](https://github.com/pandaymx/lanchat/commit/9c19c12810e295e206d0aeffea80448f502027d1))
+
 ## [1.63.0](https://github.com/pandaymx/lanchat/compare/v1.62.0...v1.63.0) (2026-09-13)
 
 ### Features

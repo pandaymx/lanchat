@@ -796,12 +796,15 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     : Stack(
                     children: [
-                      ListView.builder(
-                        controller: _scrollCtrl,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        itemCount: items.length + (client.loadingEarlier ? 1 : 0),
-                        itemBuilder: (context, i) {
-                          if (client.loadingEarlier && i == 0) {
+                      GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onTap: () => _inputFocus.unfocus(),
+                        child: ListView.builder(
+                          controller: _scrollCtrl,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          itemCount: items.length + (client.loadingEarlier ? 1 : 0),
+                          itemBuilder: (context, i) {
+                            if (client.loadingEarlier && i == 0) {
                             return const Padding(
                               padding: EdgeInsets.symmetric(vertical: 10),
                               child: Center(
@@ -860,6 +863,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             ],
                           );
                         },
+                      ),
                       ),
                       if (_showJumpDown)
                         Positioned(

@@ -32,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> {
     client.addListener(_onChanged);
     client.start(widget.startCursor);
     _loadConvPrefs();
+    _loadNotifyPref();
     WidgetsBinding.instance.addPostFrameCallback((_) => _openNotifyConv());
   }
 
@@ -149,10 +150,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   final Map<String, int> _lastUnread = {};
+  bool _notifyEnabled = true;
 
-  /// 未读增量 → 系统通知（免打扰会话不弹）。
+  Future<void> _loadNotifyPref() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _notifyEnabled = prefs.getBool('notify_enabled') ?? true);
+  }
+
+  /// 未读增量 → 系统通知（免打扰会话、通知开关关闭时不弹）。
   void _maybeNotifyNewMessages() {
     if (_muted.isEmpty && _lastUnread.isEmpty) return;
+    if (!_notifyEnabled) return;
     final now = <String, int>{};
     for (final c in client.sortedConversations) {
       final u = client.unreadCount(c.id);

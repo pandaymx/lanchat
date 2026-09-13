@@ -3,11 +3,37 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../hub_client.dart';
 
-/// 设置页：连接信息、清除本地数据、关于。
-class SettingsScreen extends StatelessWidget {
+/// 设置页：连接信息、通知开关、清除本地数据、关于。
+class SettingsScreen extends StatefulWidget {
   final HubClient client;
 
   const SettingsScreen({super.key, required this.client});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  HubClient get client => widget.client;
+  bool _notifyOn = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() => _notifyOn = prefs.getBool('notify_enabled') ?? true);
+  }
+
+  Future<void> _setNotify(bool v) async {
+    setState(() => _notifyOn = v);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('notify_enabled', v);
+  }
 
   Future<void> _clearData(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -67,6 +93,15 @@ class SettingsScreen extends StatelessWidget {
             leading: const Icon(Icons.phone_android, color: Color(0xFF8B919C)),
             title: const Text('设备', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
             subtitle: Text(client.deviceId, style: const TextStyle(color: Color(0xFF8B919C), fontSize: 13)),
+          ),
+          const Divider(height: 1, color: Color(0xFF26282E)),
+          SwitchListTile(
+            secondary: const Icon(Icons.notifications_outlined, color: Color(0xFF8B919C)),
+            title: const Text('消息通知', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+            subtitle: const Text('新消息到达时在通知栏提醒', style: TextStyle(color: Color(0xFF8B919C), fontSize: 12)),
+            value: _notifyOn,
+            activeTrackColor: const Color(0xFF2B6BFF),
+            onChanged: _setNotify,
           ),
           const Divider(height: 1, color: Color(0xFF26282E)),
           ListTile(

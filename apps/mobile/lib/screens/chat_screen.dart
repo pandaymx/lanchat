@@ -877,7 +877,7 @@ class _ChatScreenState extends State<ChatScreen> {
                                         : (m.file != null && (m.file!.mime.startsWith('image/')))
                                             ? () => _openFullImage(m)
                                             : _isPlainFile(m)
-                                                ? () => _copyFileLink(m)
+                                                ? () => _downloadFile(m)
                                                 : null,
                                 onLongPress: () =>
                                     _multiSelect ? _toggleSelect(m) : _onMessageLongPress(m),
@@ -1011,12 +1011,23 @@ class _ChatScreenState extends State<ChatScreen> {
     return !isMedia;
   }
 
-  /// 复制文件下载链接。
-  void _copyFileLink(StoredMessage m) {
+  /// 下载文件到本地（系统保存对话框）。
+  Future<void> _downloadFile(StoredMessage m) async {
     final f = m.file!;
-    final url = 'http://${client.host}:${client.port}/api/files/${f.fileId}';
-    Clipboard.setData(ClipboardData(text: url));
-    _toast('下载链接已复制');
+    _toast('开始下载 ${f.name}');
+    try {
+      final api = HubApi(host: client.host, port: client.port);
+      final bytes = await api.downloadBytes(f.fileId);
+      final uri = await FilePicker.saveFile(
+        fileName: f.name,
+        bytes: Uint8List.fromList(bytes),
+      );
+      if (uri != null) {
+        _toast('已保存到 ${uri.path}');
+      }
+    } catch (e) {
+      _toast('下载失败: $e');
+    }
   }
 
   Widget _systemMsg(ConvEventMsg e) {

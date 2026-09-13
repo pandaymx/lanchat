@@ -1,3 +1,9 @@
+## [1.37.0](https://github.com/pandaymx/lanchat/compare/v1.36.0...v1.37.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 会话列表下拉刷新（断开重连保留游标） ([b1da18d](https://github.com/pandaymx/lanchat/commit/b1da18d004a0de2a2f04b5d3a0d62a13c6c1d629))
+
 ## [1.36.0](https://github.com/pandaymx/lanchat/compare/v1.35.0...v1.36.0) (2026-09-13)
 
 ### Features

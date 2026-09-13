@@ -1,3 +1,9 @@
+## [1.46.0](https://github.com/pandaymx/lanchat/compare/v1.45.0...v1.46.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 新消息横幅「查看」直达会话 ([2b1e2a1](https://github.com/pandaymx/lanchat/commit/2b1e2a104bd25307384f333ef19c5d56667c764a))
+
 ## [1.45.0](https://github.com/pandaymx/lanchat/compare/v1.44.0...v1.45.0) (2026-09-13)
 
 ### Features

@@ -1,3 +1,9 @@
+## [1.49.0](https://github.com/pandaymx/lanchat/compare/v1.48.0...v1.49.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 会话列表草稿预览（橙色高亮） ([e4b37e0](https://github.com/pandaymx/lanchat/commit/e4b37e0804a63c4b7e07172902c7ce30d8937ca6))
+
 ## [1.48.0](https://github.com/pandaymx/lanchat/compare/v1.47.0...v1.48.0) (2026-09-13)
 
 ### Features

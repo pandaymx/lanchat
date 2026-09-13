@@ -1,3 +1,9 @@
+## [1.71.0](https://github.com/pandaymx/lanchat/compare/v1.70.0...v1.71.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 设置页检查更新（GitHub Releases） ([00c4fd3](https://github.com/pandaymx/lanchat/commit/00c4fd3af9e2ae33a823914fb008046bf40e52a5))
+
 ## [1.70.0](https://github.com/pandaymx/lanchat/compare/v1.69.0...v1.70.0) (2026-09-13)
 
 ### Features

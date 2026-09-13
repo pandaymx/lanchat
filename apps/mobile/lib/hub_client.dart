@@ -9,11 +9,14 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'protocol.dart';
+import 'secure_client.dart';
 
 class HubClient extends ChangeNotifier {
   final String host;
@@ -28,6 +31,11 @@ class HubClient extends ChangeNotifier {
   Timer? _reconnectTimer;
   bool _closed = false;
   int _attempts = 0;
+
+  /// 已建立的会话加密（wire v2）。null = 握手未完成（明文期）。
+  WsSecureSession? _session;
+  Uint8List? _ephPriv;
+  Uint8List? _ephPub;
 
   final List<StoredMessage> messages = [];
   final Map<String, bool> onlineUsers = {}; // userID -> online
@@ -119,8 +127,10 @@ class HubClient extends ChangeNotifier {
     try {
       final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
       _channel = channel;
+      _session = null;
+      final handshakeDone = Completer<void>();
       _sub = channel.stream.listen(
-        _onData,
+        (raw) => _onRaw(raw, handshakeDone),
         onDone: _onDisconnected,
         onError: (Object e) {
           lastError = e.toString();
@@ -129,6 +139,12 @@ class HubClient extends ChangeNotifier {
         cancelOnError: true,
       );
       await channel.ready;
+      // wire v2：连接建立后第一帧必须是明文 FKHandshake。
+      await _sendHandshake(channel);
+      await handshakeDone.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => throw TimeoutException('hub handshake timeout'),
+      );
       _attempts = 0;
       _sendHello();
       _flushPending();
@@ -139,6 +155,84 @@ class HubClient extends ChangeNotifier {
     } catch (e) {
       lastError = e.toString();
       _onDisconnected();
+    }
+  }
+
+  /// 发送明文握手帧：客户端临时 X25519 公钥（base64）。
+  Future<void> _sendHandshake(WebSocketChannel channel) async {
+    final (priv, pub) = await WsSecureSession.newClientKeyPair();
+    _ephPriv = priv;
+    _ephPub = pub;
+    final payload = <String, dynamic>{
+      'v': protocolVersion,
+      'c': base64Encode(pub),
+    };
+    channel.sink.add(Frame(kind: kHandshake, payload: payload).encode());
+  }
+
+  /// 处理握手期收到的 FKHandshakeAck（明文）并启用加密。
+  Future<void> _finalizeHandshake(Uint8List raw) async {
+    final frame = Frame.decode(raw);
+    if (frame.kind != kHandshakeAck) {
+      throw FormatException('expected handshake ack, got kind ${frame.kind}');
+    }
+    final p = frame.payload ?? const {};
+    final hubPub = base64Decode(p['h'] as String);
+    final nonce = base64Decode(p['n'] as String);
+    final cipher = base64Decode(p['c'] as String);
+    if (hubPub.length != 32) {
+      throw const FormatException('invalid hub public key');
+    }
+    final session = await WsSecureSession.derive(
+      clientPriv: _ephPriv!,
+      clientPub: _ephPub!,
+      hubPub: hubPub,
+    );
+    await session.verifyChallenge(nonce, cipher);
+    await _trustHub(hubPub);
+    _session = session;
+  }
+
+  /// TOFU 记录 hub 公钥：首次信任并持久化，变化拒绝（防中间人）。
+  Future<void> _trustHub(Uint8List hubPub) async {
+    final key = 'known_hub_${host}_$port';
+    final b64 = base64Encode(hubPub);
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(key);
+    if (saved != null && saved != b64) {
+      throw StateError('hub public key changed (TOFU violation)');
+    }
+    if (saved == null) {
+      await prefs.setString(key, b64);
+    }
+  }
+
+  /// 统一收流入口：握手期明文，握手后解密。
+  void _onRaw(dynamic raw, Completer<void> handshakeDone) {
+    try {
+      final bytes = raw is List<int>
+          ? Uint8List.fromList(raw)
+          : Uint8List.fromList((raw as String).codeUnits);
+      if (_session == null) {
+        if (handshakeDone.isCompleted) {
+          // 握手完成后的明文帧：v2 下不应出现，容错丢弃。
+          debugPrint('unexpected plaintext frame after handshake');
+          return;
+        }
+        _finalizeHandshake(bytes).then((_) {
+          if (!handshakeDone.isCompleted) handshakeDone.complete();
+        }).catchError((Object e) {
+          if (!handshakeDone.isCompleted) handshakeDone.completeError(e);
+        });
+        return;
+      }
+      _session!.openFrame(bytes).then((plain) {
+        _handleFrame(Frame.decode(plain));
+      }).catchError((Object e) {
+        debugPrint('frame decrypt error: $e');
+      });
+    } catch (e) {
+      debugPrint('frame decode error: $e');
     }
   }
 
@@ -167,7 +261,17 @@ class HubClient extends ChangeNotifier {
       return;
     }
     try {
-      _channel?.sink.add(frame.encode());
+      final wire = frame.encode();
+      final s = _session;
+      if (s == null) {
+        _channel?.sink.add(wire);
+      } else {
+        s.sealFrame(wire).then((sealed) {
+          _channel?.sink.add(sealed);
+        }).catchError((_) {
+          _pending.add(frame);
+        });
+      }
     } catch (_) {
       _pending.add(frame);
     }
@@ -179,20 +283,20 @@ class HubClient extends ChangeNotifier {
     _pending.clear();
     for (final f in frames) {
       try {
-        _channel?.sink.add(f.encode());
+        final wire = f.encode();
+        final s = _session;
+        if (s == null) {
+          _channel?.sink.add(wire);
+        } else {
+          s.sealFrame(wire).then((sealed) {
+            _channel?.sink.add(sealed);
+          }).catchError((_) {
+            _pending.add(f);
+          });
+        }
       } catch (_) {
         _pending.add(f);
       }
-    }
-  }
-
-  void _onData(dynamic raw) {
-    try {
-      final bytes = raw is List<int> ? raw : (raw as String).codeUnits;
-      final frame = Frame.decode(Uint8List.fromList(bytes));
-      _handleFrame(frame);
-    } catch (e) {
-      debugPrint('frame decode error: $e');
     }
   }
 
@@ -200,7 +304,13 @@ class HubClient extends ChangeNotifier {
     final p = frame.payload;
     switch (frame.kind) {
       case kConvList:
-        final list = ((p?['s'] as List?) ?? (p?['convs'] as List?) ?? []);
+        // Go 侧载荷是裸数组（sendConvSnapshot json.Marshal(snaps)）：
+        // 兼容数组与 {s:[...]}/{convs:[...]} 两种形态。
+        final list = switch (p) {
+          List l => l,
+          Map m => (m['s'] ?? m['convs'] ?? const []),
+          _ => const [],
+        };
         for (final e in list) {
           final snap = ConversationSnapshot.fromJson(e as Map<String, dynamic>);
           conversations[snap.id] = snap;
@@ -426,6 +536,9 @@ class HubClient extends ChangeNotifier {
   void _onDisconnected() {
     final wasConnected = connected;
     connected = false;
+    _session = null;
+    _ephPriv = null;
+    _ephPub = null;
     _pingTimer?.cancel();
     _sub?.cancel();
     try {

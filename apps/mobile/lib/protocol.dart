@@ -1,4 +1,4 @@
-/// lanchat wire 协议 v1 的 Dart 复刻。
+/// lanchat wire 协议 v2 的 Dart 复刻（v2 = 传输加密握手 + 加密帧）。
 ///
 /// 线缆格式：4 字节大端长度前缀 + JSON Frame。
 /// 与 Go 侧 pkg/protocol/wire.go 保持一致；帧枚举值不可变（线缆协议一部分）。
@@ -27,25 +27,34 @@ const int kPong = 16;
 const int kError = 17;
 const int kSearchReq = 18;
 const int kSearchResp = 19;
+// 注意：20/21 被 mesh 同步帧（FKSyncReq/FKSyncResp，ADR-014）占用，
+// 握手帧从 22 起（Go pkg/protocol/wire.go 枚举尾部）。
+const int kHandshake = 22;
+const int kHandshakeAck = 23;
 
-/// 线缆协议当前版本（Go: pkg/protocol/doc.go ProtocolVersion = 1）。
-const int protocolVersion = 1;
+/// 线缆协议当前版本（Go: pkg/protocol/doc.go ProtocolVersion = 2，
+/// v2 起 client↔hub 强制传输加密：连接后先 FKHandshake，之后全部帧加密）。
+const int protocolVersion = 2;
 
 /// 大厅会话 ID（Go: pkg/tui/session.go DefaultConversationID = ""）。
 const String lobbyConversationId = '';
 
 /// 一条帧：k = kind，a = ack（可选），p = 类型化负载的 JSON 字符串。
+/// 注意：payload 解码后可能是 Map（多数帧）或 List（FKConvList 裸数组）。
 class Frame {
   final int kind;
   final int ack;
-  final Map<String, dynamic>? payload;
+  final dynamic payload;
 
   Frame({required this.kind, this.ack = 0, this.payload});
 
   Uint8List encode() {
+    // 与 Go 对齐：encoding/json 对 []byte 字段自动 base64，故 p 也是 base64(JSON)。
     final map = <String, dynamic>{'k': kind};
     if (ack != 0) map['a'] = ack;
-    if (payload != null) map['p'] = jsonEncode(payload);
+    if (payload != null) {
+      map['p'] = base64Encode(utf8.encode(jsonEncode(payload)));
+    }
     final body = utf8.encode(jsonEncode(map));
     final out = BytesBuilder();
     final len = ByteData(4)..setUint32(0, body.length);
@@ -62,10 +71,15 @@ class Frame {
     final body = Uint8List.sublistView(bytes, 4);
     final map = jsonDecode(utf8.decode(body)) as Map<String, dynamic>;
     final p = map['p'];
+    dynamic payload;
+    if (p is String && p.isNotEmpty) {
+      final decoded = base64Decode(p);
+      payload = jsonDecode(utf8.decode(decoded));
+    }
     return Frame(
       kind: (map['k'] as num).toInt(),
       ack: ((map['a'] as num?) ?? 0).toInt(),
-      payload: p is String ? jsonDecode(p) as Map<String, dynamic> : null,
+      payload: payload,
     );
   }
 }

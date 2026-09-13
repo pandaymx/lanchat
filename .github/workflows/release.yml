@@ -308,11 +308,17 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Build iOS ipa (unsigned)
+      - name: Install pods
         working-directory: apps/mobile
         run: |
           set -euo pipefail
           flutter pub get
+          cd ios
+          pod install
+      - name: Build iOS ipa (unsigned)
+        working-directory: apps/mobile
+        run: |
+          set -euo pipefail
           flutter build ipa --release --no-codesign --build-name="${LANCHAT_VERSION#v}" --build-number=1
       - name: Upload release asset
         env:

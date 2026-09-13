@@ -32,6 +32,7 @@ class HubClient extends ChangeNotifier {
   final List<StoredMessage> messages = [];
   final Map<String, bool> onlineUsers = {}; // userID -> online
   final Map<String, ConversationSnapshot> conversations = {};
+  final Map<String, List<ConvEventMsg>> convEvents = {}; // convID -> 成员变动系统消息
   final Map<String, int> _readCursors = {}; // convID -> 已读 ServerSeq
   final Map<String, String> typingUsers = {}; // convID -> 正在输入的 userID
   final Map<String, Timer> _typingTimers = {};
@@ -225,6 +226,22 @@ class HubClient extends ChangeNotifier {
             title: ev.snapshot.title,
             members: ev.members.isNotEmpty ? ev.members : (existing?.members ?? const []),
           );
+        }
+        // 群成员变动系统消息（实时，不持久化）。
+        if (ev.event == 'joined' || ev.event == 'left') {
+          final isSelf = ev.byUserId == userId;
+          final who = isSelf ? '你' : ev.byUserId;
+          final text = ev.event == 'joined'
+              ? (isSelf ? '你加入了群聊' : '$who 加入了群聊')
+              : (isSelf ? '你退出了群聊' : '$who 退出了群聊');
+          convEvents[ev.snapshot.id] = [
+            ...?convEvents[ev.snapshot.id],
+            ConvEventMsg(
+              convId: ev.snapshot.id,
+              text: text,
+              createdAt: DateTime.now().millisecondsSinceEpoch,
+            ),
+          ];
         }
         if (ev.event == 'left' && ev.snapshot.id != lobbyConversationId &&
             ev.snapshot.id.isNotEmpty) {

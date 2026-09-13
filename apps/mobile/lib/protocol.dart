@@ -109,6 +109,19 @@ class ReplyRef {
       );
 }
 
+/// 群成员变动系统消息（实时渲染，不持久化）。
+class ConvEventMsg {
+  final String convId;
+  final String text;
+  final int createdAt;
+
+  const ConvEventMsg({
+    required this.convId,
+    required this.text,
+    required this.createdAt,
+  });
+}
+
 /// 一条已落库消息（Go: StoredMessage）。
 class StoredMessage {
   final String id;

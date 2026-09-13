@@ -497,10 +497,20 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// 按天分组：相邻同一天的消息之间不插条，跨天插日期分隔条。
   List<Object> _buildItems(List<StoredMessage> messages) {
+    // 合并系统消息（群成员变动）与普通消息，按时间升序。
+    final all = <Object>[
+      ...messages,
+      ...?client.convEvents[convId],
+    ]..sort((a, b) {
+        final ta = a is StoredMessage ? a.createdAt : (a as ConvEventMsg).createdAt;
+        final tb = b is StoredMessage ? b.createdAt : (b as ConvEventMsg).createdAt;
+        return ta - tb;
+      });
     final items = <Object>[];
     DateTime? prevDay;
-    for (final m in messages) {
-      final t = DateTime.fromMillisecondsSinceEpoch(m.createdAt);
+    for (final m in all) {
+      final t = DateTime.fromMillisecondsSinceEpoch(
+          m is StoredMessage ? m.createdAt : (m as ConvEventMsg).createdAt);
       final day = DateTime(t.year, t.month, t.day);
       if (prevDay == null || day != prevDay) {
         items.add(day);
@@ -734,6 +744,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           }
                           final item = items[i - (client.loadingEarlier ? 1 : 0)];
                           if (item is DateTime) return _dateDivider(item);
+                          if (item is ConvEventMsg) return _systemMsg(item);
                           final m = item as StoredMessage;
                           final selected = _selectedIds.contains(m.id);
                           return Stack(
@@ -848,6 +859,25 @@ class _ChatScreenState extends State<ChatScreen> {
         lower.endsWith('.mov') ||
         lower.endsWith('.webm') ||
         lower.endsWith('.mkv');
+  }
+
+  Widget _systemMsg(ConvEventMsg e) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 40),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: const Color(0x143B3F47),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Text(
+            e.text,
+            style: const TextStyle(fontSize: 11, color: Color(0xFF8B919C)),
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _dateDivider(DateTime day) {

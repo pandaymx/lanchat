@@ -1,3 +1,9 @@
+## [1.40.0](https://github.com/pandaymx/lanchat/compare/v1.39.0...v1.40.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 消息长按触感反馈（HapticFeedback） ([b574876](https://github.com/pandaymx/lanchat/commit/b574876d2ab90eb9b7c02091d3dba642d7836191))
+
 ## [1.39.0](https://github.com/pandaymx/lanchat/compare/v1.38.0...v1.39.0) (2026-09-13)
 
 ### Features

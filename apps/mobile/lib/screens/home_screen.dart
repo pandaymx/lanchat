@@ -470,7 +470,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _messagesTab(List<ConversationSnapshot> convs) {
     if (client.connected && convs.isEmpty) {
       return const Center(
-        child: Text('加载中…', style: TextStyle(color: Color(0xFF8B919C))),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 26,
+              height: 26,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
+            ),
+            SizedBox(height: 12),
+            Text('加载中…', style: TextStyle(color: Color(0xFF8B919C), fontSize: 13)),
+          ],
+        ),
       );
     }
     return RefreshIndicator(

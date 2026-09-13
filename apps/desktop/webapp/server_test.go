@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -81,24 +82,27 @@ func newTestHub(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for port := 19000; port < 19100; port++ {
-		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		errCh := make(chan error, 1)
-		go func(a string) {
-			errCh <- wstransport.New().WithServerKey(hubKey).Listen(ctx, a, onConn)
-		}(addr)
-		select {
-		case err := <-errCh:
-			if err != nil {
-				continue // 端口占用等，试下一个
-			}
-		case <-time.After(150 * time.Millisecond):
-			// Listen 阻塞运行中 = 成功绑定
-			return "ws://" + addr + wstransport.DefaultPath
-		}
+	// 预分配随机回环端口：旧实现从 19000 固定段逐个尝试 + 150ms 超时判断
+	// 绑定成功，CI 慢环境下会假阳性返回无人监听的地址（webapp 连它 → 503）。
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("no free hub port")
-	return ""
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close() // 立即重绑；测试场景毫秒窗口内被抢的概率可忽略
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	errCh := make(chan error, 1)
+	go func(a string) {
+		errCh <- wstransport.New().WithServerKey(hubKey).Listen(ctx, a, onConn)
+	}(addr)
+	select {
+	case err := <-errCh:
+		t.Fatalf("listen %s: %v", addr, err)
+	case <-time.After(2 * time.Second):
+		// Listen 阻塞运行中 = 成功绑定
+		return "ws://" + addr + wstransport.DefaultPath
+	}
+	return "" // unreachable: Fatalf Goexit
 }
 
 // encryptedTransport 返回连 hub 的加密 Transport，TOFU 落在隔离临时目录

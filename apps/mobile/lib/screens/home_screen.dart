@@ -173,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!_notifyEnabled) return;
     final now = <String, int>{};
     String? banner;
+    String? bannerConv;
     for (final c in client.sortedConversations) {
       final u = client.unreadCount(c.id);
       now[c.id] = u;
@@ -185,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (preview.isNotEmpty) {
           if (_appForeground) {
             banner ??= '$title：$preview';
+            bannerConv ??= c.id;
           } else {
             Notifier.instance.show('$title：$preview', '来自 ${last?.senderUserId ?? ''}', payload: c.id);
           }
@@ -194,13 +196,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _lastUnread
       ..clear()
       ..addAll(now);
-    if (banner != null) _showBanner(banner);
+    if (banner != null) _showBanner(banner, bannerConv);
   }
 
-  /// 前台新消息横幅（SnackBar，弱提示）。
-  void _showBanner(String text) {
+  /// 前台新消息横幅（SnackBar，弱提示；「查看」直达会话）。
+  void _showBanner(String text, String? convId) {
     if (!mounted || _bannerShowing) return;
     _bannerShowing = true;
+    final conv = convId == null ? null : client.conversations[convId];
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
@@ -211,6 +214,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             Expanded(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis)),
           ],
         ),
+        action: conv == null
+            ? null
+            : SnackBarAction(
+                label: '查看',
+                textColor: const Color(0xFF2B6BFF),
+                onPressed: () => _openChat(conv),
+              ),
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
         margin: const EdgeInsets.only(bottom: 76, left: 12, right: 12),

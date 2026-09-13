@@ -742,7 +742,31 @@ class _ChatScreenState extends State<ChatScreen> {
                 ? const Center(
                     child: Text('连接中…', style: TextStyle(color: Color(0xFF8B919C))),
                   )
-                : Stack(
+                : messages.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 64,
+                              height: 64,
+                              decoration: BoxDecoration(
+                                color: const Color(0x142B6BFF),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              alignment: Alignment.center,
+                              child: const Icon(Icons.chat_bubble_outline,
+                                  color: Color(0xFF2B6BFF), size: 32),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              _isLobby ? '大厅还没有消息，来打个招呼吧' : '还没有消息，打个招呼吧',
+                              style: const TextStyle(fontSize: 13, color: Color(0xFF8B919C)),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Stack(
                     children: [
                       ListView.builder(
                         controller: _scrollCtrl,

@@ -1,3 +1,9 @@
+## [1.52.0](https://github.com/pandaymx/lanchat/compare/v1.51.0...v1.52.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 联系人页搜索过滤（用户/群聊） ([559572b](https://github.com/pandaymx/lanchat/commit/559572bd0ff1f654c1b027d1a169c4fb836e9a46))
+
 ## [1.51.0](https://github.com/pandaymx/lanchat/compare/v1.50.0...v1.51.0) (2026-09-13)
 
 ### Features

@@ -21,19 +21,21 @@ import (
 // 又不至于在空闲时制造过多流量。
 const meshSyncInterval = 5 * time.Second
 
-// httpRemote 把 base URL 适配成 mesh.Remote（HTTP POST 一轮同步）。
+// httpRemote 把 base URL 适配成 mesh.Remote（加密 HTTP POST 一轮同步）。
 type httpRemote struct {
 	baseURL string
+	id      *mesh.Identity
+	known   *mesh.KnownKeys
 }
 
-// Sync 实现 mesh.Remote：把请求发往远端 mesh 端点。
+// Sync 实现 mesh.Remote：加密后把请求发往远端 mesh 端点。
 func (r httpRemote) Sync(ctx context.Context, req protocol.SyncRequest) ([]protocol.SyncResponse, error) {
-	return mesh.SyncPeer(ctx, r.baseURL, req)
+	return mesh.SyncPeer(ctx, r.baseURL, r.id, r.known, req)
 }
 
 // meshLoop 周期性向邻居同步。peerURLs 是显式邻居；mDNS 发现的
 // mesh 实例在启动时并入，后续周期不刷新（邻居列表变化下一版做）。
-func (s *Server) meshLoop(ctx context.Context, peerURLs []string) {
+func (s *Server) meshLoop(ctx context.Context, peerURLs []string, id *mesh.Identity, known *mesh.KnownKeys) {
 	peers := map[string]bool{}
 	for _, u := range peerURLs {
 		peers[u] = true
@@ -62,7 +64,7 @@ func (s *Server) meshLoop(ctx context.Context, peerURLs []string) {
 
 	syncAll := func() {
 		for u := range peers {
-			if err := s.syncOnce(ctx, u); err != nil {
+			if err := s.syncOnce(ctx, u, httpRemote{baseURL: u, id: id, known: known}); err != nil {
 				s.logger.Warn("mesh sync failed", "peer", u, "err", err)
 			}
 		}
@@ -82,8 +84,8 @@ func (s *Server) meshLoop(ctx context.Context, peerURLs []string) {
 }
 
 // syncOnce 对单个邻居执行一轮 PullOnce。
-func (s *Server) syncOnce(ctx context.Context, peerURL string) error {
-	n, err := mesh.PullOnce(ctx, s.meshStore, httpRemote{baseURL: peerURL})
+func (s *Server) syncOnce(ctx context.Context, peerURL string, remote mesh.Remote) error {
+	n, err := mesh.PullOnce(ctx, s.meshStore, remote)
 	if err != nil {
 		return err
 	}

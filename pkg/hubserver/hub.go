@@ -58,7 +58,10 @@ type Config struct {
 	Addr string
 	// Path WS upgrade 路径（默认 wstransport.DefaultPath）。
 	Path string
-	// DBPath 持久化库路径；空 → 平台默认数据目录；"memory" → 纯内存。
+	// DataDir 数据根目录（身份密钥/TOFU 表/默认 DB 与 files 落在这里）。
+	// 空 → 平台默认数据目录。多实例/测试需隔离时显式指定。
+	DataDir string
+	// DBPath 持久化库路径；空 → DataDir；"memory" → 纯内存。
 	DBPath string
 	// FilesDir 文件 blob 存储目录；空 → 平台默认数据目录。
 	FilesDir string
@@ -95,6 +98,8 @@ type Server struct {
 	done      chan error
 	nodeID    string
 	meshStore mesh.SourceStore
+	meshID    *mesh.Identity
+	meshKnown *mesh.KnownKeys
 }
 
 // Start 库内启动 hub。ctx 取消或 Close 触发优雅关停；
@@ -109,7 +114,10 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	// 数据目录：-db / -files 未指定时落到平台可写目录（Windows
 	// %LOCALAPPDATA%、Linux XDG、macOS Application Support），避免
 	// 安装在只读目录（如 C:\Program Files\...）时无法写库和文件。
-	dataDir := appdir.DataDir(appdir.AppName())
+	dataDir := cfg.DataDir
+	if dataDir == "" {
+		dataDir = appdir.DataDir(appdir.AppName())
+	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = filepath.Join(dataDir, "lanchat.db")
 	}
@@ -170,9 +178,12 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		WithHandler("GET /api/export", exportAPI)
 	logger.Info("file service ready", "dir", cfg.FilesDir, "maxFileSize", cfg.MaxFileSize)
 
-	// 去中心化 mesh（ADR-014）：挂载同步端点 + 后台同步循环。
+	// 去中心化 mesh（ADR-014）：挂载加密同步端点 + 后台同步循环。
 	// 要求持久化 store（memory 不提供源节点枚举/幂等同步写入）。
+	// 传输加密（v2）：每节点 X25519 身份 + TOFU 公钥信任，端点全加密。
 	var meshStore mesh.SourceStore
+	var meshID *mesh.Identity
+	var meshKnown *mesh.KnownKeys
 	if cfg.Mesh {
 		ls, ok := store.(mesh.SourceStore)
 		if !ok {
@@ -180,8 +191,20 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("mesh mode requires persistent store (DBPath != memory)")
 		}
 		meshStore = ls
-		tr = tr.WithHandler("POST "+mesh.MeshPath, mesh.SyncHandler{Store: meshStore})
-		logger.Info("mesh endpoint mounted", "path", mesh.MeshPath)
+		meshID, err = mesh.LoadOrCreateIdentity(filepath.Join(dataDir, "mesh_identity.bin"))
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("mesh identity: %w", err)
+		}
+		meshKnown, err = mesh.LoadKnownKeys(filepath.Join(dataDir, "mesh_known_keys.json"))
+		if err != nil {
+			_ = store.Close()
+			return nil, fmt.Errorf("mesh known keys: %w", err)
+		}
+		tr = tr.
+			WithHandler("POST "+mesh.MeshPath, mesh.SyncHandler{Store: meshStore, ID: meshID, Known: meshKnown}).
+			WithHandler("GET "+mesh.PubKeyPath, mesh.PubKeyHandler{ID: meshID})
+		logger.Info("mesh endpoint mounted (encrypted)", "path", mesh.MeshPath, "pubkeyPath", mesh.PubKeyPath)
 	}
 
 	var mdnsShutdown func()
@@ -221,11 +244,13 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		done:      make(chan error, 1),
 		nodeID:    nodeID,
 		meshStore: meshStore,
+		meshID:    meshID,
+		meshKnown: meshKnown,
 	}
 
 	// 起监听；ctx 取消 → 优雅关停（含 mDNS 停止）。
 	if cfg.Mesh {
-		go s.meshLoop(ctx, cfg.MeshPeers)
+		go s.meshLoop(ctx, cfg.MeshPeers, meshID, meshKnown)
 	}
 
 	go func() {

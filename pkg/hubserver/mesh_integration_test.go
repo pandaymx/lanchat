@@ -1,6 +1,6 @@
 // mesh_integration_test.go 验证两个嵌入式 hub 通过真实 HTTP 端点
-// 互相同步（ADR-014 wire v2）：A 发消息落库（盖上 node-a），B 从
-// A 拉增量后消息一致；反向同理。
+// 互相同步（ADR-014 wire v2，传输加密）：A 发消息落库（盖上 node-a），
+// B 从 A 拉增量后消息一致；反向同理。同步通道全程 Envelope 加密。
 package hubserver
 
 import (
@@ -30,15 +30,17 @@ func freePort(t *testing.T) int {
 }
 
 // startMeshHub 起一个启用 mesh 的嵌入式 hub（libsql 临时库、无 mDNS、
-// 固定空闲端口），返回 Server 与 base URL。
+// 固定空闲端口、独立身份密钥），返回 Server 与 base URL。
 func startMeshHub(t *testing.T, nodeID string, peers []string) (*Server, string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 
 	port := freePort(t)
+	dataDir := t.TempDir()
 	srv, err := Start(ctx, Config{
 		Addr:      "127.0.0.1:" + strconv.Itoa(port),
-		DBPath:    filepath.Join(t.TempDir(), "mesh.db"),
+		DataDir:   dataDir,
+		DBPath:    filepath.Join(dataDir, "mesh.db"),
 		MDNS:      false,
 		Mesh:      true,
 		MeshPeers: peers,
@@ -48,14 +50,14 @@ func startMeshHub(t *testing.T, nodeID string, peers []string) (*Server, string)
 		cancel()
 		t.Fatalf("start mesh hub %s: %v", nodeID, err)
 	}
-	// LIFO：cancel 后注册 → 先执行 cancel（meshLoop/run 靠 ctx 退出），
-	// 再执行 Close（空操作，幂等）。
+	// LIFO：cancel 后注册 → 先执行 cancel（meshLoop/run 靠 ctx 退出）。
 	t.Cleanup(cancel)
 	t.Cleanup(func() { _ = srv.Close() })
 	return srv, "http://" + srv.Addr()
 }
 
-// TestMeshTwoHubsSync：A/B 互指为邻居，各自发消息后收敛一致。
+// TestMeshTwoHubsSync：A/B 互指为邻居，各自发消息后收敛一致
+// （后台 meshLoop 走加密通道）。
 func TestMeshTwoHubsSync(t *testing.T) {
 	ctx := context.Background()
 
@@ -101,7 +103,8 @@ func TestMeshTwoHubsSync(t *testing.T) {
 	t.Fatal("B did not converge with A within 10s")
 }
 
-// TestMeshEndpointDirect：不经后台循环，直接 HTTP 调 mesh 端点一轮同步。
+// TestMeshEndpointDirect：不经后台循环，客户端侧直连加密端点
+// 一轮同步（TOFU 首连取公钥 → 加密请求 → 解密响应）。
 func TestMeshEndpointDirect(t *testing.T) {
 	ctx := context.Background()
 	srvA, urlA := startMeshHub(t, "node-a", nil)
@@ -121,8 +124,18 @@ func TestMeshEndpointDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// 客户端独立身份 + TOFU 表（走完整加密流程）。
+	id, err := mesh.LoadOrCreateIdentity(filepath.Join(t.TempDir(), "cid.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	known, err := mesh.LoadKnownKeys(filepath.Join(t.TempDir(), "cknown.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	storeB, _ := srvB.store.(*libsql.Store)
-	resps, err := mesh.SyncPeer(ctx, urlA, protocol.SyncRequest{Limit: mesh.DefaultLimit})
+	resps, err := mesh.SyncPeer(ctx, urlA, id, known, protocol.SyncRequest{Limit: mesh.DefaultLimit})
 	if err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
@@ -134,4 +147,34 @@ func TestMeshEndpointDirect(t *testing.T) {
 	if err != nil || len(msgs) != 1 || msgs[0].Body != "direct sync" {
 		t.Fatalf("B after direct sync: %+v err=%v", msgs, err)
 	}
+
+	// 第二轮（同 TOFU 表，公钥已信任；游标已推进到 1）：空增量。
+	resps2, err := mesh.SyncPeer(ctx, urlA, id, known,
+		protocol.SyncRequest{Cursor: map[string]uint64{"node-a": 1}, Limit: mesh.DefaultLimit})
+	if err != nil {
+		t.Fatalf("second SyncPeer: %v", err)
+	}
+	if n2, _ := mesh.Apply(ctx, storeB, resps2); n2 != 0 {
+		t.Fatalf("second pull got %d messages, want 0", n2)
+	}
+}
+
+// TestMeshTOFUReject：客户端 TOFU 表里已有不同公钥 → 拒绝。
+func TestMeshTOFUReject(t *testing.T) {
+	ctx := context.Background()
+	srvA, urlA := startMeshHub(t, "node-a", nil)
+
+	// 客户端先 TOFU 记一个假公钥，再同步 → 必须被拒。
+	id, _ := mesh.LoadOrCreateIdentity(filepath.Join(t.TempDir(), "cid.bin"))
+	known, _ := mesh.LoadKnownKeys(filepath.Join(t.TempDir(), "cknown.json"))
+	fake, _ := mesh.LoadOrCreateIdentity(filepath.Join(t.TempDir(), "fake.bin"))
+	if err := known.Trust(urlA, fake.PublicKey()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := mesh.SyncPeer(ctx, urlA, id, known, protocol.SyncRequest{Limit: mesh.DefaultLimit})
+	if err == nil {
+		t.Fatal("SyncPeer with mismatched TOFU key succeeded, want error")
+	}
+	_ = srvA
 }

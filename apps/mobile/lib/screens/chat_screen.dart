@@ -897,6 +897,19 @@ class _ChatScreenState extends State<ChatScreen> {
                     }),
                     child: const Text('取消', style: TextStyle(color: Color(0xFF8B919C))),
                   ),
+                  TextButton(
+                    onPressed: () => setState(() {
+                      if (_selectedIds.length == client.messagesOf(convId).length) {
+                        _selectedIds.clear();
+                      } else {
+                        _selectedIds.addAll(client.messagesOf(convId).map((m) => m.id));
+                      }
+                    }),
+                    child: Text(
+                      _selectedIds.length == client.messagesOf(convId).length ? '取消全选' : '全选',
+                      style: const TextStyle(color: Color(0xFF2B6BFF)),
+                    ),
+                  ),
                   FilledButton.icon(
                     onPressed: _selectedIds.isEmpty ? null : _forwardSelected,
                     icon: const Icon(Icons.forward, size: 16),

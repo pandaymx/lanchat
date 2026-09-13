@@ -1,3 +1,9 @@
+## [1.47.0](https://github.com/pandaymx/lanchat/compare/v1.46.0...v1.47.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 连接页品牌图标（资产化 icon_512） ([9449ec1](https://github.com/pandaymx/lanchat/commit/9449ec15c956df6a9f949361fff4f896b8d81d26))
+
 ## [1.46.0](https://github.com/pandaymx/lanchat/compare/v1.45.0...v1.46.0) (2026-09-13)
 
 ### Features

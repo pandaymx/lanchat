@@ -1,3 +1,9 @@
+## [2.1.0](https://github.com/pandaymx/lanchat/compare/v2.0.0...v2.1.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 添加 iOS 打包（未签名 ipa + 工程补齐） ([0a35e82](https://github.com/pandaymx/lanchat/commit/0a35e822a3bacddb0e9912197b550807cf7397ae))
+
 ## [2.0.0](https://github.com/pandaymx/lanchat/compare/v1.73.1...v2.0.0) (2026-09-13)
 
 ### ⚠ BREAKING CHANGES

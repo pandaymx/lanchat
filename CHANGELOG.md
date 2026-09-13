@@ -1,3 +1,9 @@
+## [2.1.1](https://github.com/pandaymx/lanchat/compare/v2.1.0...v2.1.1) (2026-09-13)
+
+### Bug Fixes
+
+* **mobile:** 检查更新支持 GitHub 页面回退并区分错误 ([f965677](https://github.com/pandaymx/lanchat/commit/f96567723ffa17357c60fbc5803f38679b5712fb))
+
 ## [2.1.0](https://github.com/pandaymx/lanchat/compare/v2.0.0...v2.1.0) (2026-09-13)
 
 ### Features

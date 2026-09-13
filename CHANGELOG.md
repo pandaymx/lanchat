@@ -1,3 +1,9 @@
+## [2.9.0](https://github.com/pandaymx/lanchat/compare/v2.8.0...v2.9.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 移动端 wire v2 传输加密——X25519 握手 + AES-256-GCM ([17ad9f4](https://github.com/pandaymx/lanchat/commit/17ad9f4a2912662dbf70173d1d5c876b781636ed))
+
 ## [2.8.0](https://github.com/pandaymx/lanchat/compare/v2.7.0...v2.8.0) (2026-09-13)
 
 ### Features

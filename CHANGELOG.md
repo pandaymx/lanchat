@@ -1,3 +1,9 @@
+## [1.70.0](https://github.com/pandaymx/lanchat/compare/v1.69.0...v1.70.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 图片发送前预览确认 ([f041a5c](https://github.com/pandaymx/lanchat/commit/f041a5c08c82abd3e29eba50de8fdc3bf649ba5b))
+
 ## [1.69.0](https://github.com/pandaymx/lanchat/compare/v1.68.0...v1.69.0) (2026-09-13)
 
 ### Features

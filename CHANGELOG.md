@@ -1,3 +1,9 @@
+## [1.59.0](https://github.com/pandaymx/lanchat/compare/v1.58.0...v1.59.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 发送前连接检查与失败提示 ([3ab024d](https://github.com/pandaymx/lanchat/commit/3ab024d87139393f9409e2a6d7e0739de581c74d))
+
 ## [1.58.0](https://github.com/pandaymx/lanchat/compare/v1.57.0...v1.58.0) (2026-09-13)
 
 ### Features

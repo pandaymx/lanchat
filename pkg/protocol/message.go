@@ -15,6 +15,12 @@ type StoredMessage struct {
 	SenderDeviceID string `json:"sdid"`  // 发送者设备
 	Body           string `json:"body"`  // 纯文本（M4 可扩展到 MIME）
 	ServerSeq      uint64 `json:"seq"`   // 源节点单调递增（见 NodeID）
+	// LocalSeq 是**本地视图序**（ADR-014 M-c）：每个节点对自己 store 里
+	// 全部消息（本地 + mesh 同步）按落库顺序分配的单调递增序号。客户端
+	// 排序、History 补发、分页游标都用它——ServerSeq 在多节点下是源节点
+	// 局部的，不能作为跨节点视图顺序。mesh 同步时接收节点忽略源节点此值
+	// 并重新分配。
+	LocalSeq uint64 `json:"ls,omitzero"`
 	// NodeID 源节点 ID（ADR-014 wire v2）：去中心化 mesh 没有全局 hub，
 	// ServerSeq 是「每源节点局部单调」，(NodeID, ServerSeq) 构成全局唯一
 	// 消息坐标——同步去重与 per-source 游标都靠它。v1 旧数据为空串

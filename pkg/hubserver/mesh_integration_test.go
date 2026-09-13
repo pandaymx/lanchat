@@ -79,7 +79,7 @@ func TestMeshTwoHubsSync(t *testing.T) {
 	if !ok {
 		t.Fatalf("store type %T, want *libsql.Store", srvA.store)
 	}
-	err := storeA.AppendMessage(ctx, protocol.StoredMessage{
+	_, err := storeA.AppendMessage(ctx, protocol.StoredMessage{
 		ID:             "m-a-1",
 		ConversationID: "conv-1",
 		SenderUserID:   "alice",
@@ -120,7 +120,7 @@ func TestMeshEndpointDirect(t *testing.T) {
 	srvB, _ := startMeshHub(t, "node-b", nil)
 
 	storeA, _ := srvA.store.(*libsql.Store)
-	err := storeA.AppendMessage(ctx, protocol.StoredMessage{
+	_, err := storeA.AppendMessage(ctx, protocol.StoredMessage{
 		ID:             "m-a-2",
 		ConversationID: "conv-9",
 		SenderUserID:   "alice",
@@ -226,7 +226,7 @@ func TestMeshBidirectionalConverge(t *testing.T) {
 
 	now := time.Now().UnixMilli()
 	for i, body := range []string{"a offline 1", "a offline 2"} {
-		if err := storeA.AppendMessage(ctx, protocol.StoredMessage{
+		if _, err := storeA.AppendMessage(ctx, protocol.StoredMessage{
 			ID: fmt.Sprintf("a-%d", i+1), ConversationID: "conv-1",
 			SenderUserID: "alice", SenderDeviceID: "dev-a",
 			Body: body, ServerSeq: uint64(i + 1), CreatedAt: now + int64(i), NodeID: "node-a",
@@ -234,7 +234,7 @@ func TestMeshBidirectionalConverge(t *testing.T) {
 			t.Fatalf("A append %d: %v", i, err)
 		}
 	}
-	if err := storeB.AppendMessage(ctx, protocol.StoredMessage{
+	if _, err := storeB.AppendMessage(ctx, protocol.StoredMessage{
 		ID: "b-1", ConversationID: "conv-1",
 		SenderUserID: "bob", SenderDeviceID: "dev-b",
 		Body: "b offline 1", ServerSeq: 1, CreatedAt: now, NodeID: "node-b",
@@ -279,6 +279,26 @@ func TestMeshBidirectionalConverge(t *testing.T) {
 		}
 		if !bodies["b"][want] {
 			t.Fatalf("node-b missing %q (bodies=%v)", want, bodies["b"])
+		}
+	}
+
+	// M-c：每个节点上所有消息的 LocalSeq 必须非零且互不重复（本地视图序
+	// 单调）——mesh 同步消息由接收节点重新分配，广播闭环（DeliverSynced
+	// 推给客户端）用的就是这条权威值，源节点的 LocalSeq 不得泄漏到本地。
+	for node, s := range map[string]*libsql.Store{"a": storeA, "b": storeB} {
+		seen := map[uint64]bool{}
+		cursor, _ := s.SourceCursor(ctx)
+		for src := range cursor {
+			msgs, _ := s.SyncMessages(ctx, src, 0, 0)
+			for _, m := range msgs {
+				if m.LocalSeq == 0 {
+					t.Fatalf("node-%s message %q: LocalSeq == 0", node, m.Body)
+				}
+				if seen[m.LocalSeq] {
+					t.Fatalf("node-%s: duplicate LocalSeq %d (message %q)", node, m.LocalSeq, m.Body)
+				}
+				seen[m.LocalSeq] = true
+			}
 		}
 	}
 }
@@ -326,7 +346,7 @@ func TestMeshDeliverToLocalClient(t *testing.T) {
 	if !ok {
 		t.Fatalf("store type %T, want *libsql.Store", srvA.store)
 	}
-	if err := storeA.AppendMessage(ctx, protocol.StoredMessage{
+	if _, err := storeA.AppendMessage(ctx, protocol.StoredMessage{
 		ID: "a-1", ConversationID: "", // 大厅
 		SenderUserID: "alice", SenderDeviceID: "dev-a",
 		Body: "mesh deliver hello", ServerSeq: 1, CreatedAt: time.Now().UnixMilli(), NodeID: "node-a",

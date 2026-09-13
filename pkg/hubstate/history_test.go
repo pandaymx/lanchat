@@ -7,11 +7,14 @@ import (
 )
 
 // msg 构造一条测试消息，只填 Query 关心的字段。
+// 注意：Query 按 LocalSeq（本地视图序）分页，因此测试里让 LocalSeq 与
+// 传入的 seq 相同，保持"第 i 条消息的视图序 = i"的直观语义。
 func msg(conv string, seq uint64) protocol.StoredMessage {
 	return protocol.StoredMessage{
 		ID:             "m",
 		ConversationID: conv,
 		ServerSeq:      seq,
+		LocalSeq:       seq,
 		Body:           "body",
 	}
 }

@@ -107,7 +107,14 @@ func (s *Server) syncOnce(ctx context.Context, peerURL string, remote mesh.Remot
 			}
 			pulled++
 			// 广播闭环：实时推给本地已连接客户端（按会话成员过滤）。
-			s.router.DeliverSynced(ctx, m)
+			// 必须用落库后的权威消息——AppendSyncedMessage 落库时本地强制
+			// 重新分配了 LocalSeq，源节点的值对本地客户端无意义（补发护栏
+			// 与本地视图序都依赖这条权威值）。
+			stored, err := s.meshStore.GetSyncedMessage(ctx, m.NodeID, m.ServerSeq)
+			if err != nil {
+				return err
+			}
+			s.router.DeliverSynced(ctx, stored)
 		}
 	}
 	if pulled > 0 {

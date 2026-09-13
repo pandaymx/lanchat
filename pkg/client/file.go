@@ -115,7 +115,7 @@ func (c *Client) SendFileMessage(ctx context.Context, convID string, ref protoco
 		cliLog.Error("send file message failed", "conv", convID, "err", err)
 		return err
 	}
-	_ = c.store.AppendMessage(ctx, msg)
+	_, _ = c.store.AppendMessage(ctx, msg)
 	return nil
 }
 

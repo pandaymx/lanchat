@@ -343,7 +343,7 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 		Convs:   convs, ConvID: convID, ConvTitle: convTitle, ConvMember: convMember,
 	}
 	if data.HasMore {
-		data.OldestSeq = int64(msgs[0].ServerSeq)
+		data.OldestSeq = int64(msgs[0].LocalSeq)
 	}
 	if histErr != nil {
 		data.Error = templates.T(h.cfg.Translator, "web.history.error")
@@ -389,7 +389,7 @@ func (h *Handler) handleHistory(w http.ResponseWriter, r *http.Request) {
 	// 下一页游标：本批最老一条的 seq（resp.Messages 升序，首条即最老）。
 	var nextBefore int64
 	if resp.HasMore && len(resp.Messages) > 0 {
-		nextBefore = int64(resp.Messages[0].ServerSeq)
+		nextBefore = int64(resp.Messages[0].LocalSeq)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

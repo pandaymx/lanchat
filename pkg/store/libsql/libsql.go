@@ -109,10 +109,12 @@ func (s *Store) migrate(ctx context.Context) error {
 			sender_device TEXT NOT NULL DEFAULT '',
 			body          TEXT NOT NULL DEFAULT '',
 			created_at    INTEGER NOT NULL,
+			local_seq     INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (conv_id, id)
 		)`,
-		// 补发查询的固定模式：WHERE conv_id=? AND server_seq>? ORDER BY server_seq
+		// 补发查询的固定模式：WHERE conv_id=? AND local_seq>? ORDER BY local_seq
 		`CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages (conv_id, server_seq)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_local_seq ON messages (local_seq)`,
 
 		`CREATE TABLE IF NOT EXISTS read_cursors (
 			device_id TEXT NOT NULL,
@@ -157,6 +159,22 @@ func (s *Store) migrate(ctx context.Context) error {
 				`ALTER TABLE messages ADD COLUMN `+col+` TEXT NOT NULL DEFAULT ''`); err != nil {
 				return fmt.Errorf("libsql: migrate add column %s: %w", col, err)
 			}
+		}
+	}
+	// local_seq（ADR-014 M-c）：本地视图序，跨节点统一排序/补发/分页。
+	// 老库（无此列）幂等补加，并把既有消息按 rowid（插入序）回填，
+	// 保证「本地视图序单调」不变式从迁移完成起成立。回填发生在任何
+	// 新写入之前（Open 阶段），新消息的 MAX+1 分配不会与回填值冲突。
+	if has, err := s.hasColumn(ctx, "messages", "local_seq"); err != nil {
+		return err
+	} else if !has {
+		if _, err := s.db.ExecContext(ctx,
+			`ALTER TABLE messages ADD COLUMN local_seq INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("libsql: migrate add column local_seq: %w", err)
+		}
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE messages SET local_seq = rowid WHERE local_seq = 0`); err != nil {
+			return fmt.Errorf("libsql: migrate backfill local_seq: %w", err)
 		}
 	}
 	// wire v2（ADR-014）：(node_id, server_seq) 全局唯一——去中心化 mesh
@@ -357,7 +375,7 @@ func (s *Store) DeleteConversationMember(ctx context.Context, convID, userID str
 //
 // 与 memory 实现同为 upsert 语义：客户端乐观写入 (ID=local-x, seq=0) 后
 // Hub 回 FKDeliver (同 ID, seq=N)，覆盖更新而不是插成两条。
-func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) error {
+func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) (protocol.StoredMessage, error) {
 	if m.CreatedAt == 0 {
 		m.CreatedAt = nowMillis()
 	}
@@ -374,11 +392,15 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) err
 			replyJSON = string(b)
 		}
 	}
+	// local_seq：m.LocalSeq>0 保留（hub 已定序 / 权威值），==0 由库分配
+	// （本地新建，MAX+1 在同一语句内原子）。upsert 时新值 >0 才覆盖，
+	// 否则保留原值——避免本地消息重复送达时视图序漂移。
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO messages
 		   (conv_id, id, server_seq, client_nonce, sender_user, sender_device, body, created_at,
-		    file_id, file_name, file_size, file_mime, reply_to, node_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		    file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		         COALESCE(NULLIF(?, 0), (SELECT COALESCE(MAX(local_seq), 0) + 1 FROM messages)))
 		 ON CONFLICT(conv_id, id) DO UPDATE SET
 		   server_seq    = excluded.server_seq,
 		   client_nonce  = excluded.client_nonce,
@@ -391,17 +413,36 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) err
 		   file_size     = excluded.file_size,
 		   file_mime     = excluded.file_mime,
 		   reply_to      = excluded.reply_to,
-		   node_id       = excluded.node_id`,
+		   node_id       = excluded.node_id,
+		   local_seq     = CASE WHEN excluded.local_seq > 0 THEN excluded.local_seq ELSE messages.local_seq END`,
 		m.ConversationID, m.ID, int64(m.ServerSeq), m.ClientNonce,
 		m.SenderUserID, m.SenderDeviceID, m.Body, m.CreatedAt,
-		fileID, fileName, fileSize, fileMime, replyJSON, m.NodeID)
+		fileID, fileName, fileSize, fileMime, replyJSON, m.NodeID, int64(m.LocalSeq))
 	if err != nil {
-		return fmt.Errorf("libsql: append message %q/%q: %w", m.ConversationID, m.ID, err)
+		return protocol.StoredMessage{}, fmt.Errorf("libsql: append message %q/%q: %w", m.ConversationID, m.ID, err)
 	}
-	return nil
+	// 返回落库后的完整消息（含分配的 LocalSeq），供补发/广播使用。
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
+		 FROM messages WHERE conv_id = ? AND id = ?`,
+		m.ConversationID, m.ID)
+	if err != nil {
+		return protocol.StoredMessage{}, fmt.Errorf("libsql: re-select message %q/%q: %w", m.ConversationID, m.ID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	msgs, err := scanMessages(rows)
+	if err != nil {
+		return protocol.StoredMessage{}, err
+	}
+	if len(msgs) != 1 {
+		return protocol.StoredMessage{}, fmt.Errorf("libsql: re-select message %q/%q: got %d rows", m.ConversationID, m.ID, len(msgs))
+	}
+	return msgs[0], nil
 }
 
-// History 返回 (convID, after) 之后按 ServerSeq 升序的消息，最多 limit 条。
+// History 返回 (convID, after) 之后按 LocalSeq 升序的消息，最多 limit 条。
+// after 是客户端本地视图游标（LocalSeq），多节点下由各节点本地维护。
 // limit<=0 时取 maxHistoryLimit 硬上限（与 memory 实现一致防 OOM）。
 func (s *Store) History(ctx context.Context, convID string, after uint64, limit int) ([]protocol.StoredMessage, error) {
 	if limit <= 0 || limit > maxHistoryLimit {
@@ -409,10 +450,10 @@ func (s *Store) History(ctx context.Context, convID string, after uint64, limit 
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
-		        file_id, file_name, file_size, file_mime, reply_to, node_id
+		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages
-		 WHERE conv_id = ? AND server_seq > ?
-		 ORDER BY server_seq ASC
+		 WHERE conv_id = ? AND local_seq > ?
+		 ORDER BY local_seq ASC
 		 LIMIT ?`,
 		convID, int64(after), limit)
 	if err != nil {
@@ -447,9 +488,9 @@ func (s *Store) RecentMessages(ctx context.Context, limit int) ([]protocol.Store
 	// 先 DESC 取最近 N 条，再在 Go 侧反转成升序——补发缓冲要求升序追加。
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
-		        file_id, file_name, file_size, file_mime, reply_to, node_id
+		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages
-		 ORDER BY server_seq DESC
+		 ORDER BY local_seq DESC
 		 LIMIT ?`,
 		limit)
 	if err != nil {
@@ -542,7 +583,7 @@ func (s *Store) ExportAll(ctx context.Context) (*protocol.Backup, error) {
 	// 消息（全量升序）
 	msgRows, err := s.db.QueryContext(ctx,
 		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
-		        file_id, file_name, file_size, file_mime, reply_to, node_id
+		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages ORDER BY server_seq ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("libsql: export messages: %w", err)
@@ -616,19 +657,19 @@ func (s *Store) SearchMessages(ctx context.Context, query, convID string, limit 
 	if convID != "" {
 		rows, err = s.db.QueryContext(ctx,
 			`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
-			        file_id, file_name, file_size, file_mime, reply_to, node_id
+			        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 			 FROM messages
 			 WHERE conv_id = ? AND body LIKE ? ESCAPE '\'
-			 ORDER BY server_seq DESC
+			 ORDER BY local_seq DESC
 			 LIMIT ?`,
 			convID, like, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
 			`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
-			        file_id, file_name, file_size, file_mime, reply_to, node_id
+			        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 			 FROM messages
 			 WHERE body LIKE ? ESCAPE '\'
-			 ORDER BY server_seq DESC
+			 ORDER BY local_seq DESC
 			 LIMIT ?`,
 			like, limit)
 	}
@@ -645,7 +686,7 @@ func scanMessages(rows *sql.Rows) ([]protocol.StoredMessage, error) {
 	var out []protocol.StoredMessage
 	for rows.Next() {
 		var m protocol.StoredMessage
-		var seq int64
+		var seq, localSeq int64
 		var fileID, fileName, fileMime string
 		var fileSize int64
 		var replyTo string
@@ -654,11 +695,12 @@ func scanMessages(rows *sql.Rows) ([]protocol.StoredMessage, error) {
 			&m.SenderUserID, &m.SenderDeviceID, &m.Body,
 			&seq, &m.CreatedAt,
 			&fileID, &fileName, &fileSize, &fileMime,
-			&replyTo, &m.NodeID,
+			&replyTo, &m.NodeID, &localSeq,
 		); err != nil {
 			return nil, fmt.Errorf("libsql: scan message: %w", err)
 		}
 		m.ServerSeq = uint64(seq)
+		m.LocalSeq = uint64(localSeq)
 		if fileID != "" {
 			m.File = &protocol.FileRef{FileID: fileID, Name: fileName, Size: fileSize, Mime: fileMime}
 		}

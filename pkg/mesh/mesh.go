@@ -30,6 +30,10 @@ type SourceStore interface {
 	// AppendSyncedMessage 幂等写入一条同步消息（去重键 (node_id, seq)）。
 	// 返回是否新插入（false = 已存在，同步重复送达时跳过）。
 	AppendSyncedMessage(ctx context.Context, m protocol.StoredMessage) (bool, error)
+	// GetSyncedMessage 按 (node_id, server_seq) 取回落库后的权威消息。
+	// 广播闭环用：AppendSyncedMessage 只返回是否新插入，而落库时接收节点
+	// 强制重新分配了 LocalSeq，推送客户端必须用这条权威值而非源节点值。
+	GetSyncedMessage(ctx context.Context, nodeID string, serverSeq uint64) (protocol.StoredMessage, error)
 }
 
 // Remote 是同步对端的最小抽象：执行一轮拉取并返回各源节点增量。

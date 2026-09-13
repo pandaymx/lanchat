@@ -405,13 +405,16 @@ func (r *Router) handleMessage(ctx context.Context, peerID uint64, p Peer, f pro
 		m.NodeID = r.nodeID
 	}
 	if r.store != nil {
-		if err := r.store.AppendMessage(ctx, m); err != nil {
+		// 落库返回权威消息（含 Store 分配的 LocalSeq），补发/广播都用它。
+		stored, err := r.store.AppendMessage(ctx, m)
+		if err != nil {
 			routerLog.Error("store append failed", "seq", m.ServerSeq, "err", err)
 			// 落库失败也不关连接，但**不广播**——
 			// 宁可让客户端补发时拉到，也不能广播一条没存住的消息（重启就消失）
 			//nolint:nilerr // 故意丢弃：断连会让整条会话的后续消息全丢，代价更大
 			return nil
 		}
+		m = stored
 	}
 	r.hist.Append(m)
 
@@ -775,13 +778,13 @@ func (r *Router) broadcast(ctx context.Context, f protocol.Frame) {
 	})
 }
 
-// DeliverSynced 把一条 mesh 同步来的消息实时推送给本地会话成员（ADR-014 M-b）。
-//
-// 与 handleMessage 的广播路径不同：同步消息的坐标 (NodeID, ServerSeq) 属于
-// 源节点，不能进本地补发缓冲（History 按本地 ServerSeq 有序）；这里只做
-// 实时 FKDeliver。离线期间漏推的消息由 mesh 全量复制模型保证落库，重连
-// 补发与多节点历史视图（M-c）另行补齐。
+// DeliverSynced 把一条 mesh 同步来的消息实时推送给本地会话成员（ADR-014
+// M-b/M-c）。同步消息落库时已由接收节点分配 LocalSeq，可进补发缓冲
+// （History 按 LocalSeq 有序），因此这里同时做：
+//   - hist.Append：断线重连的客户端经 FKHistoryReq 能补到这条消息；
+//   - broadcastToConv FKDeliver：在线客户端实时收到。
 func (r *Router) DeliverSynced(ctx context.Context, m protocol.StoredMessage) {
+	r.hist.Append(m)
 	payload, err := json.Marshal(m)
 	if err != nil {
 		//nolint:nilerr // 序列化 StoredMessage 不可能失败；失败了也无补救动作

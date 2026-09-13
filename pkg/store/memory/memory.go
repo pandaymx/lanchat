@@ -43,6 +43,9 @@ type MemoryStore struct {
 
 	// cursors[deviceID+"\x00"+convID] = ServerSeq
 	cursors map[string]uint64
+	// maxLocalSeq 是本地视图序分配器（ADR-014 M-c）：全局单调，每次
+	// 本地新建消息 +1；mesh 同步消息由调用方带值落库（不经过分配）。
+	maxLocalSeq uint64
 
 	// files[fileID] = FileMeta（M9）
 	files map[string]protocol.FileMeta
@@ -225,11 +228,11 @@ func (s *MemoryStore) DeleteConversationMember(_ context.Context, convID, userID
 // 限制：
 //   - m.ConversationID 必填；为空返回 error。
 //   - 同 ID 已存在则覆盖；ConversationID 不一致会强制修正到 m 给的值（Hub 的版本为准）。
-func (s *MemoryStore) AppendMessage(_ context.Context, m protocol.StoredMessage) error {
+func (s *MemoryStore) AppendMessage(_ context.Context, m protocol.StoredMessage) (protocol.StoredMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return core.ErrClosed
+		return protocol.StoredMessage{}, core.ErrClosed
 	}
 	if m.CreatedAt == 0 {
 		m.CreatedAt = time.Now().UnixMilli()
@@ -237,17 +240,28 @@ func (s *MemoryStore) AppendMessage(_ context.Context, m protocol.StoredMessage)
 	list := s.messages[m.ConversationID]
 	for i := range list {
 		if list[i].ID == m.ID {
-			list[i] = m // 覆盖（同 ID）：典型场景是 ServerSeq 由 Hub 补齐
-			return nil
+			// 覆盖（同 ID）：典型场景是 ServerSeq / LocalSeq 由 Hub 补齐。
+			// 新值 LocalSeq>0（hub 权威）则采纳，==0（重复乐观写）保留原值。
+			if m.LocalSeq == 0 {
+				m.LocalSeq = list[i].LocalSeq
+			}
+			list[i] = m
+			return m, nil
 		}
 	}
+	// 本地新建：LocalSeq==0 时分配本地视图序；>0（mesh 同步/已定序）保留。
+	if m.LocalSeq == 0 {
+		s.maxLocalSeq++
+		m.LocalSeq = s.maxLocalSeq
+	}
 	list = append(list, m)
-	// 保持升序插入。M1 假设调用方传入的 seq 已经单调。
+	// 保持升序：按 LocalSeq（本地视图序）排序，与 memory store 的
+	// History 语义一致（见 History 注释）。
 	sort.SliceStable(list, func(i, j int) bool {
-		return list[i].ServerSeq < list[j].ServerSeq
+		return list[i].LocalSeq < list[j].LocalSeq
 	})
 	s.messages[m.ConversationID] = list
-	return nil
+	return m, nil
 }
 
 type errInvalidInput string
@@ -258,8 +272,9 @@ func (e errInvalidInput) Error() string { return string(e) }
 // limit<=0 表示不限制（实际受限于 maxHistoryLimit）。
 const maxHistoryLimit = 5000
 
-// History 返回 (convID, after) 之后按 ServerSeq 升序的消息，最多 limit 条。
-// limit<=0 表示不限制（实际受限于 maxHistoryLimit）。
+// History 返回 (convID, after) 之后按 LocalSeq 升序的消息，最多 limit 条。
+// after 是客户端本地视图游标（LocalSeq）。limit<=0 表示不限制（实际
+// 受限于 maxHistoryLimit）。
 func (s *MemoryStore) History(_ context.Context, convID string, after uint64, limit int) ([]protocol.StoredMessage, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -268,7 +283,7 @@ func (s *MemoryStore) History(_ context.Context, convID string, after uint64, li
 	}
 	list := s.messages[convID]
 	lo := sort.Search(len(list), func(i int) bool {
-		return list[i].ServerSeq > after
+		return list[i].LocalSeq > after
 	})
 	end := len(list)
 	if limit > 0 && limit < end-lo {

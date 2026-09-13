@@ -31,8 +31,8 @@ var cliLog = logging.New("client")
 
 // ConnectOptions 是 Connect 的可选项。
 type ConnectOptions struct {
-	// ResumeFrom 决定本次连接之后 Hub 应补发的 ServerSeq 起点。
-	// 0 = 完整重放；>0 = 仅补发此值之后的消息。
+	// ResumeFrom 决定本次连接之后 Hub 应补发的 LocalSeq 起点
+	// （本地视图序，ADR-014 M-c）。0 = 完整重放；>0 = 仅补发此值之后的消息。
 	ResumeFrom uint64
 	// RequestHistory 控制是否在 Hello 之后主动发一次 FKHistoryReq 请求。
 	// M1 默认开。生产可关闭，让 Hub 自带此逻辑。
@@ -105,7 +105,7 @@ type Client struct {
 	// 内部字段都在 pendingMu 保护下读写，包含与 timer goroutine (forceFlushPending) 的同步。
 	pendingMu      sync.Mutex
 	pendingDeliver []protocol.StoredMessage
-	lastHistorySeq uint64
+	lastLocalSeq   uint64
 
 	// peers 是当前在线成员名单（M7.2），按 DeviceID 索引。
 	// Hub 握手后发 roster + 上下线广播，dispatch 里 upsert；offline 直接删除。
@@ -275,7 +275,7 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 		}
 		// 幂等持久化，upsert-by-ID 保证 ServerSeq 由 Hub 补齐；
 		// 入事件总线走 deliverMessage 入口，受 catch-up 缓冲护栏约束。
-		_ = c.store.AppendMessage(ctx, msg)
+		_, _ = c.store.AppendMessage(ctx, msg)
 		c.deliverMessage(&msg)
 
 	case protocol.FKHistoryResp:
@@ -296,7 +296,7 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 		c.histMu.Unlock()
 		if wait != nil {
 			for i := range resp.Messages {
-				_ = c.store.AppendMessage(ctx, resp.Messages[i])
+				_, _ = c.store.AppendMessage(ctx, resp.Messages[i])
 			}
 			c.histMu.Lock()
 			if c.historyDone != nil {
@@ -310,15 +310,15 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 
 		// history resp 的内容必须按 Hub 给的顺序直送 publishMessageOnce，
 		// 不能走 deliverMessage——后者在 awaitingHistory 时会全部进 buffer，
-		// 而 buffer 在 flushPendingDeliver 里又会被 lastHistorySeq 过滤掉，
+		// 而 buffer 在 flushPendingDeliver 里又会被 lastLocalSeq 过滤掉，
 		// 就把 history 自己的消息也丢了。
-		// 这里走直送：先按 Hub 给的升序把 history 推入事件总线，期间累计最大 ServerSeq；
+		// 这里走直送：先按 Hub 给的升序把 history 推入事件总线，期间累计最大 LocalSeq；
 		// 然后 flushPendingDeliver 把 catch-up 窗口里抢着到达、且比 history 更新的 FKDeliver 补发。
 		for i := range resp.Messages {
 			m := resp.Messages[i]
-			_ = c.store.AppendMessage(ctx, m)
+			_, _ = c.store.AppendMessage(ctx, m)
 			c.publishMessageOnce(&m)
-			// 通过 pendingMu 保护下写入 lastHistorySeq；
+			// 通过 pendingMu 保护下写入 lastLocalSeq；
 			// flushPendingDeliver 紧随其后读，forceFlushPending 的 timer goroutine 也通过同一把锁读，
 			// 这样不依赖 happens-before 也能让 race detector 通过。
 			c.setLastHistorySeq(m.ServerSeq)
@@ -719,9 +719,9 @@ func (c *Client) flushPendingDeliver() {
 
 	for i := range pending {
 		m := &pending[i]
-		// ServerSeq <= lastHistorySeq 的已经在 FKHistoryResp 里走过 publishMessageOnce，
+		// LocalSeq <= lastLocalSeq 的已经在 FKHistoryResp 里走过 publishMessageOnce，
 		// 这里再走也只是命中 seen 集合，但省去一次哈希查找更稳。
-		if m.ServerSeq != 0 && m.ServerSeq <= last {
+		if m.LocalSeq != 0 && m.LocalSeq <= last {
 			continue
 		}
 		c.publishMessageOnce(m)
@@ -744,21 +744,21 @@ func (c *Client) forceFlushPending() {
 	}
 }
 
-// peekLastHistorySeq / setLastHistorySeq 把 lastHistorySeq 的访问串行化到 pendingMu 上：
+// peekLastHistorySeq / setLastHistorySeq 把 lastLocalSeq 的访问串行化到 pendingMu 上：
 // setLastHistorySeq 由 dispatch FKHistoryResp goroutine 写，
 // peekLastHistorySeq 由 flushPendingDeliver / forceFlushPending（timer goroutine 也在内）读，
 // 跨 goroutine 读写不加锁 race detector 会报警。
 func (c *Client) peekLastHistorySeq() uint64 {
 	c.pendingMu.Lock()
-	v := c.lastHistorySeq
+	v := c.lastLocalSeq
 	c.pendingMu.Unlock()
 	return v
 }
 
 func (c *Client) setLastHistorySeq(seq uint64) {
 	c.pendingMu.Lock()
-	if seq > c.lastHistorySeq {
-		c.lastHistorySeq = seq
+	if seq > c.lastLocalSeq {
+		c.lastLocalSeq = seq
 	}
 	c.pendingMu.Unlock()
 }
@@ -803,7 +803,7 @@ func (c *Client) SendMessage(ctx context.Context, convID, body string, replyTo .
 	}
 	// 乐观本地缓存（FKDeliver 到达时同 ID upsert，会把 ServerSeq 从 0 更新成 Hub 分配值）。
 	// 错误仍然忽略：本地落库失败不应阻断发消息。
-	_ = c.store.AppendMessage(ctx, msg)
+	_, _ = c.store.AppendMessage(ctx, msg)
 	return nil
 }
 

@@ -35,7 +35,7 @@ func TestMigration_AddsFileColumnsToLegacyDB(t *testing.T) {
 		t.Fatalf("reopen: %v", err)
 	}
 	defer s2.Close()
-	if err := s2.AppendMessage(ctx, protocol.StoredMessage{
+	if _, err := s2.AppendMessage(ctx, protocol.StoredMessage{
 		ID: "m1", ConversationID: "lobby", Body: "", ServerSeq: 1, CreatedAt: 1,
 		File: &protocol.FileRef{FileID: "f1", Name: "a.bin", Size: 5, Mime: "application/octet-stream"},
 	}); err != nil {

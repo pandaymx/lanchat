@@ -602,6 +602,7 @@ func TestHandleMessages_DialFailure503(t *testing.T) {
 // ---- handleHistory ---------------------------------------------------------
 
 // olderMsgs 构造一页"更早"的消息（按 seq 升序）。
+// olderMsgs 构造一页"更早"的消息（按 LocalSeq 升序；分页游标是 LocalSeq）。
 func olderMsgs(seqs ...uint64) []protocol.StoredMessage {
 	out := make([]protocol.StoredMessage, 0, len(seqs))
 	for _, s := range seqs {
@@ -609,6 +610,7 @@ func olderMsgs(seqs ...uint64) []protocol.StoredMessage {
 			ID:             "m" + strconv.FormatUint(s, 10),
 			ConversationID: "lobby",
 			ServerSeq:      s,
+			LocalSeq:       s,
 			SenderUserID:   "alice",
 			Body:           "older-" + strconv.FormatUint(s, 10),
 		})
@@ -704,7 +706,8 @@ func TestHandleHome_LoadMoreButton(t *testing.T) {
 	for i := range msgs {
 		seq := uint64(100 + i)
 		msgs[i] = protocol.StoredMessage{
-			ID: "m", ConversationID: "lobby", ServerSeq: seq,
+			ID: "m" + strconv.FormatUint(seq, 10), ConversationID: "lobby",
+			ServerSeq: seq, LocalSeq: seq,
 			SenderUserID: "alice", Body: "x",
 		}
 	}
@@ -865,7 +868,7 @@ func replayMsgs(seqs ...uint64) []protocol.StoredMessage {
 	out := make([]protocol.StoredMessage, 0, len(seqs))
 	for _, s := range seqs {
 		out = append(out, protocol.StoredMessage{
-			ID: "m" + strconv.FormatUint(s, 10), ServerSeq: s,
+			ID: "m" + strconv.FormatUint(s, 10), ServerSeq: s, LocalSeq: s,
 			ConversationID: "lobby", SenderUserID: "bob",
 			Body: "missed-" + strconv.FormatUint(s, 10),
 		})

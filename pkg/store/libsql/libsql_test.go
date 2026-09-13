@@ -116,7 +116,7 @@ func TestStore_AppendAndHistory(t *testing.T) {
 	s := newTestStore(t)
 
 	for i := uint64(1); i <= 5; i++ {
-		if err := s.AppendMessage(ctx, msg(i, string(rune('a'+i-1)), "lobby")); err != nil {
+		if _, err := s.AppendMessage(ctx, msg(i, string(rune('a'+i-1)), "lobby")); err != nil {
 			t.Fatalf("AppendMessage %d: %v", i, err)
 		}
 	}
@@ -170,13 +170,13 @@ func TestStore_AppendMessage_UpsertByID(t *testing.T) {
 	// 乐观写入：seq=0
 	opt := msg(0, "local-1", "lobby")
 	opt.Body = "pending"
-	if err := s.AppendMessage(ctx, opt); err != nil {
+	if _, err := s.AppendMessage(ctx, opt); err != nil {
 		t.Fatalf("AppendMessage optimistic: %v", err)
 	}
 	// Hub 回环：同 ID 补齐 seq
 	confirmed := msg(42, "local-1", "lobby")
 	confirmed.Body = "confirmed"
-	if err := s.AppendMessage(ctx, confirmed); err != nil {
+	if _, err := s.AppendMessage(ctx, confirmed); err != nil {
 		t.Fatalf("AppendMessage confirmed: %v", err)
 	}
 
@@ -196,7 +196,7 @@ func TestStore_AppendMessage_EmptyConv(t *testing.T) {
 	// M12-A：空 conv = 大厅，是合法会话桶。
 	s := newTestStore(t)
 	m := msg(1, "x", "")
-	if err := s.AppendMessage(t.Context(), m); err != nil {
+	if _, err := s.AppendMessage(t.Context(), m); err != nil {
 		t.Fatalf("AppendMessage with empty convID (lobby): %v", err)
 	}
 	got, err := s.History(t.Context(), "", 0, 10)
@@ -263,7 +263,7 @@ func TestStore_MaxSeqAndRecentMessages(t *testing.T) {
 		if i%2 == 0 {
 			conv = "random"
 		}
-		if err := s.AppendMessage(ctx, msg(i, string(rune('a'+i-1)), conv)); err != nil {
+		if _, err := s.AppendMessage(ctx, msg(i, string(rune('a'+i-1)), conv)); err != nil {
 			t.Fatalf("AppendMessage %d: %v", i, err)
 		}
 	}
@@ -298,7 +298,7 @@ func TestStore_PersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first open: %v", err)
 	}
-	if err := s.AppendMessage(ctx, msg(7, "persist-1", "lobby")); err != nil {
+	if _, err := s.AppendMessage(ctx, msg(7, "persist-1", "lobby")); err != nil {
 		t.Fatalf("AppendMessage: %v", err)
 	}
 	if err := s.SetCursor(ctx, "d1", "lobby", 7); err != nil {
@@ -382,7 +382,7 @@ func TestStore_MessageWithFileRef_RoundTrip(t *testing.T) {
 		ServerSeq: 1, CreatedAt: 1000,
 		File: &protocol.FileRef{FileID: "f9", Name: "shot.png", Size: 8888, Mime: "image/png"},
 	}
-	if err := s.AppendMessage(ctx, m); err != nil {
+	if _, err := s.AppendMessage(ctx, m); err != nil {
 		t.Fatalf("AppendMessage(with file): %v", err)
 	}
 	msgs, err := s.History(ctx, "lobby", 0, 0)
@@ -401,7 +401,7 @@ func TestStore_MessageWithFileRef_RoundTrip(t *testing.T) {
 	}
 
 	// 纯文本消息：File 保持 nil（老数据兼容）。
-	if err := s.AppendMessage(ctx, protocol.StoredMessage{
+	if _, err := s.AppendMessage(ctx, protocol.StoredMessage{
 		ID: "m2", ConversationID: "lobby", Body: "hello", ServerSeq: 2, CreatedAt: 1001,
 	}); err != nil {
 		t.Fatalf("AppendMessage(text): %v", err)
@@ -431,7 +431,7 @@ func TestStore_SearchMessages(t *testing.T) {
 	for i, mm := range msgs {
 		m := msg(uint64(i+1), ids[i], mm.conv)
 		m.Body = mm.body
-		if err := s.AppendMessage(ctx, m); err != nil {
+		if _, err := s.AppendMessage(ctx, m); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
 	}
@@ -500,7 +500,7 @@ func TestStore_AppendMessage_ReplyToRoundTrip(t *testing.T) {
 
 	orig := msg(1, "hello", "lobby")
 	orig.ReplyTo = &protocol.ReplyRef{ID: "m0", SenderUserID: "alice", Body: "被引用内容"}
-	if err := s.AppendMessage(ctx, orig); err != nil {
+	if _, err := s.AppendMessage(ctx, orig); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	hist, err := s.History(ctx, "lobby", 0, 0)
@@ -528,7 +528,7 @@ func TestStore_ExportAll(t *testing.T) {
 	m := msg(1, "m1", "g1")
 	m.ReplyTo = &protocol.ReplyRef{ID: "m0", SenderUserID: "bob", Body: "原消息"}
 	m.File = &protocol.FileRef{FileID: "f1", Name: "x.png", Size: 3, Mime: "image/png"}
-	_ = s.AppendMessage(ctx, m)
+	_, _ = s.AppendMessage(ctx, m)
 	_ = s.SetCursor(ctx, "d1", "g1", 1)
 	_ = s.SaveFileMeta(ctx, protocol.FileMeta{FileID: "f1", Name: "x.png", Size: 3, Mime: "image/png", CreatedAt: 2})
 

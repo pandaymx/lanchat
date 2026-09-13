@@ -19,7 +19,7 @@ func TestExportAPI_RoundTrip(t *testing.T) {
 	_ = store.SaveDevice(t.Context(), protocol.Device{ID: "d1", UserID: "u1", Name: "laptop"})
 	_ = store.SaveConversation(t.Context(), protocol.Conversation{ID: "g1", Kind: "group", Title: "team"})
 	_ = store.SaveConversationMember(t.Context(), "g1", "u1")
-	_ = store.AppendMessage(t.Context(), protocol.StoredMessage{
+	_, _ = store.AppendMessage(t.Context(), protocol.StoredMessage{
 		ID: "m1", ConversationID: "g1", SenderUserID: "u1", Body: "hi", ServerSeq: 1, CreatedAt: 1,
 	})
 	_ = store.SetCursor(t.Context(), "d1", "g1", 1)

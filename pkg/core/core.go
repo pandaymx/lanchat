@@ -166,9 +166,11 @@ type Store interface {
 	// AppendMessage 由 Hub 在接收 FKMessage 后调用：
 	//   - Hub 分配 ServerSeq；
 	//   - Hub 设置 CreatedAt 为接收时刻；
-	//   - Store 持久化。
-	// M1 Store 不分配序号，调用方负责传入；M2 SQLite Store 会自动分配。
-	AppendMessage(ctx context.Context, m protocol.StoredMessage) error
+	//   - 落库时分配本地视图序 LocalSeq（m.LocalSeq==0 时按库内 MAX+1）；
+	//   - 若同 (conv_id, id) 已存在则覆盖（upsert）。
+	// 返回落库后的完整消息（含分配的 ServerSeq / LocalSeq），供调用方
+	// 补发与广播使用。
+	AppendMessage(ctx context.Context, m protocol.StoredMessage) (protocol.StoredMessage, error)
 
 	// History 返回 (convID, after) 之后、按 ServerSeq 升序的消息，最多 limit 条。
 	// limit<=0 表示无限（实现可设上限防 OOM）。

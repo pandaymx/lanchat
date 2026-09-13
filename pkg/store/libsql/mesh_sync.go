@@ -37,8 +37,11 @@ func (s *Store) SyncMessages(ctx context.Context, nodeID string, after uint64, l
 		limit = maxHistoryLimit
 	}
 	rows, err := s.db.QueryContext(ctx,
+		// 注：local_seq 是接收节点本地视图序，源节点的此值对接收方无意义
+		// （接收方 AppendSyncedMessage 会强制重新分配），因此查询带出
+		// 但被 scanMessages 填充后由接收方忽略。
 		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
-		        file_id, file_name, file_size, file_mime, reply_to, node_id
+		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages
 		 WHERE node_id = ? AND server_seq > ?
 		 ORDER BY server_seq ASC
@@ -72,11 +75,15 @@ func (s *Store) AppendSyncedMessage(ctx context.Context, m protocol.StoredMessag
 			replyJSON = string(b)
 		}
 	}
+	// local_seq 由接收节点强制重新分配（源节点的 LocalSeq 是源节点本地
+	// 视图序，对接收节点无意义）；INSERT OR IGNORE 冲突时整条忽略，
+	// 子查询不执行，无副作用。
 	res, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO messages
 		   (conv_id, id, server_seq, client_nonce, sender_user, sender_device, body, created_at,
-		    file_id, file_name, file_size, file_mime, reply_to, node_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		    file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		         (SELECT COALESCE(MAX(local_seq), 0) + 1 FROM messages))`,
 		m.ConversationID, m.ID, int64(m.ServerSeq), m.ClientNonce,
 		m.SenderUserID, m.SenderDeviceID, m.Body, m.CreatedAt,
 		fileID, fileName, fileSize, fileMime, replyJSON, m.NodeID)
@@ -89,4 +96,26 @@ func (s *Store) AppendSyncedMessage(ctx context.Context, m protocol.StoredMessag
 		return false, fmt.Errorf("libsql: append synced message %q/%d: rows affected: %w", m.NodeID, m.ServerSeq, err)
 	}
 	return affected > 0, nil
+}
+
+// GetSyncedMessage 按 (node_id, server_seq) 取回落库后的权威消息
+// （含接收节点分配的 LocalSeq），供 mesh_loop 广播闭环使用。
+func (s *Store) GetSyncedMessage(ctx context.Context, nodeID string, serverSeq uint64) (protocol.StoredMessage, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
+		 FROM messages WHERE node_id = ? AND server_seq = ?`,
+		nodeID, int64(serverSeq))
+	if err != nil {
+		return protocol.StoredMessage{}, fmt.Errorf("libsql: get synced message %q/%d: %w", nodeID, serverSeq, err)
+	}
+	defer func() { _ = rows.Close() }()
+	msgs, err := scanMessages(rows)
+	if err != nil {
+		return protocol.StoredMessage{}, err
+	}
+	if len(msgs) != 1 {
+		return protocol.StoredMessage{}, fmt.Errorf("libsql: get synced message %q/%d: got %d rows", nodeID, serverSeq, len(msgs))
+	}
+	return msgs[0], nil
 }

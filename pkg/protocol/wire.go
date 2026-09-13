@@ -180,8 +180,8 @@ type Hello struct {
 	DeviceID        string `json:"d"`           // 设备唯一 ID（UUID / 自建）
 	UserID          string `json:"u"`           // 用户 ID
 	Token           string `json:"t,omitempty"` // 鉴权令牌（M8 才会用）
-	// ResumeFrom 是客户端希望 Hub 从哪个 ServerSeq 之后开始补发。
-	// 首次连接填 0，断线重连时填 GetCursor(DeviceID, ConversationID) 返回的最大值。
+	// ResumeFrom 是客户端希望 Hub 从哪个 LocalSeq（本地视图序，M-c）之后
+	// 开始补发。首次连接填 0，断线重连时填本地已见的最大 LocalSeq。
 	ResumeFrom uint64 `json:"r,omitempty"`
 }
 
@@ -191,9 +191,9 @@ type Delivered = StoredMessage
 
 // HistoryRequest 用于补发请求。
 //
-// 分页方向二选一：
-//   - After>0：增量补发，返回 ServerSeq 严格大于 After 的最早一批（升序）；
-//   - Before>0：向更早翻页，返回 ServerSeq 严格小于 Before 的最晚一批（仍按升序）。
+// 分页方向二选一（序号均为 LocalSeq，本地视图序，ADR-014 M-c）：
+//   - After>0：增量补发，返回 LocalSeq 严格大于 After 的最早一批（升序）；
+//   - Before>0：向更早翻页，返回 LocalSeq 严格小于 Before 的最晚一批（仍按升序）。
 //
 // Before 优先（>0 时 After 被忽略）；两者都为 0 表示从最老的消息开始。
 type HistoryRequest struct {

@@ -77,11 +77,11 @@ func TestTwoNodesConverge(t *testing.T) {
 		localMsg("node-a", 1, "conv-1", "a1", "hello from a1"),
 		localMsg("node-a", 2, "conv-1", "a2", "hello from a2"),
 	} {
-		if err := a.AppendMessage(ctx, m); err != nil {
+		if _, err := a.AppendMessage(ctx, m); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := b.AppendMessage(ctx, localMsg("node-b", 1, "conv-1", "b1", "hello from b1")); err != nil {
+	if _, err := b.AppendMessage(ctx, localMsg("node-b", 1, "conv-1", "b1", "hello from b1")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -116,7 +116,7 @@ func TestPullOnceIdempotent(t *testing.T) {
 	a := openMeshStore(t)
 	b := openMeshStore(t)
 
-	if err := b.AppendMessage(ctx, localMsg("node-b", 1, "conv-1", "b1", "hi")); err != nil {
+	if _, err := b.AppendMessage(ctx, localMsg("node-b", 1, "conv-1", "b1", "hi")); err != nil {
 		t.Fatal(err)
 	}
 	// 第一轮拉到 1 条。
@@ -143,7 +143,7 @@ func TestRespondBatchLimit(t *testing.T) {
 		m := localMsg("node-a", uint64(i), "conv-1", "m", "batch")
 		m.ID = "m" + string(rune('0'+i))
 		m.Body = "batch " + string(rune('0'+i))
-		if err := a.AppendMessage(ctx, m); err != nil {
+		if _, err := a.AppendMessage(ctx, m); err != nil {
 			t.Fatal(err)
 		}
 	}

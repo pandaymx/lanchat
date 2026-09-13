@@ -23,9 +23,9 @@ import (
 type History struct {
 	mu sync.RWMutex
 
-	// buckets[convID] = 按 ServerSeq 升序排列的消息。
-	// 约定：Append 时调用方保证 ServerSeq 递增（由 Sequencer 分配），
-	// 因此桶内天然有序，不需要每次插入都排序。
+	// buckets[convID] = 按 LocalSeq（本地视图序）升序排列的消息。
+	// Append 时按 LocalSeq 有序插入：本地消息（handleMessage）与 mesh
+	// 同步消息（DeliverSynced）可能交错到达，不能假设追加有序。
 	buckets map[string][]protocol.StoredMessage
 }
 
@@ -46,17 +46,20 @@ func NewHistory() *History {
 	return &History{buckets: make(map[string][]protocol.StoredMessage)}
 }
 
-// Append 记录一条已分配 ServerSeq 的消息。
+// Append 记录一条消息，按 LocalSeq（本地视图序）升序插入。
 //
-// 调用方必须**按顺序**追加（ServerSeq 递增）。如果乱序追加，
-// 桶内不再有序，二分定位会给出错误结果——这是调用契约，不是运行时能兜住的错。
-// Router 的写路径天然满足这一点（seq 由同一个 Sequencer 现分配现追加）。
+// 调用方无需保证追加顺序：本地消息与 mesh 同步消息可能交错到达。
+// 桶内始终保持 LocalSeq 有序，Query 的二分定位依赖这个不变式。
+// 桶最大 maxHistoryPerConv 条，超限丢弃 LocalSeq 最小（最旧）的一批。
 func (h *History) Append(m protocol.StoredMessage) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	b := h.buckets[m.ConversationID]
-	b = append(b, m)
+	i := sort.Search(len(b), func(i int) bool { return b[i].LocalSeq >= m.LocalSeq })
+	b = append(b, protocol.StoredMessage{})
+	copy(b[i+1:], b[i:])
+	b[i] = m
 
 	// 超限时丢弃最旧的一批（一次性砍到 90%，避免每来一条都做一次 copy）
 	if len(b) > maxHistoryPerConv {
@@ -69,14 +72,14 @@ func (h *History) Append(m protocol.StoredMessage) {
 	h.buckets[m.ConversationID] = b
 }
 
-// Query 返回历史消息，按 ServerSeq 升序，最多 limit 条。
+// Query 返回历史消息，按 LocalSeq（本地视图序）升序，最多 limit 条。
 //
 // 分页方向（before 优先）：
-//   - before>0：向更早翻页，返回 ServerSeq 严格小于 before 的最晚一批；
+//   - before>0：向更早翻页，返回 LocalSeq 严格小于 before 的最晚一批；
 //     HasMore=true 表示 before 之前还有更老的消息，客户端用本批第一条
-//     的 ServerSeq 作为新的 before 继续翻。
-//   - before==0 且 after>0：增量补发，返回 ServerSeq 严格大于 after 的最早一批；
-//     HasMore=true 时用本批最后一条的 ServerSeq 作为新的 after 续传。
+//     的 LocalSeq 作为新的 before 继续翻。
+//   - before==0 且 after>0：增量补发，返回 LocalSeq 严格大于 after 的最早一批；
+//     HasMore=true 时用本批最后一条的 LocalSeq 作为新的 after 续传。
 //   - 两者都为 0：从最老的消息开始。
 //
 // 其余参数语义：
@@ -90,7 +93,7 @@ func (h *History) Query(convID string, after, before uint64, limit int) protocol
 	if convID != "" {
 		list = h.buckets[convID]
 	} else {
-		// 跨会话：合并后按 ServerSeq 排序。
+		// 跨会话：合并后按 LocalSeq 排序。
 		// 这里必须排序，因为各桶之间是独立的序列。
 		total := 0
 		for _, b := range h.buckets {
@@ -104,14 +107,14 @@ func (h *History) Query(convID string, after, before uint64, limit int) protocol
 			list = append(list, b...)
 		}
 		sort.SliceStable(list, func(i, j int) bool {
-			return list[i].ServerSeq < list[j].ServerSeq
+			return list[i].LocalSeq < list[j].LocalSeq
 		})
 	}
 
-	// 向更早翻页：hi 是第一个 ServerSeq >= before 的下标，[0,hi) 即全部更老消息。
+	// 向更早翻页：hi 是第一个 LocalSeq >= before 的下标，[0,hi) 即全部更老消息。
 	// 取其中最晚的 limit 条（窗口 [lo,hi)），返回仍是升序。
 	if before > 0 {
-		hi := sort.Search(len(list), func(i int) bool { return list[i].ServerSeq >= before })
+		hi := sort.Search(len(list), func(i int) bool { return list[i].LocalSeq >= before })
 		lo := 0
 		if limit > 0 && hi-limit > 0 {
 			lo = hi - limit
@@ -125,8 +128,8 @@ func (h *History) Query(convID string, after, before uint64, limit int) protocol
 		return protocol.HistoryResponse{Messages: out, HasMore: lo > 0}
 	}
 
-	// 二分找第一个 ServerSeq > after 的下标
-	lo := sort.Search(len(list), func(i int) bool { return list[i].ServerSeq > after })
+	// 二分找第一个 LocalSeq > after 的下标
+	lo := sort.Search(len(list), func(i int) bool { return list[i].LocalSeq > after })
 	end := len(list)
 	if limit > 0 && lo+limit < end {
 		end = lo + limit
@@ -153,10 +156,11 @@ func (h *History) Len(convID string) int {
 	return len(h.buckets[convID])
 }
 
-// MaxSeq 返回已缓存的最大 ServerSeq；无消息时返回 0。
+// MaxSeq 返回已缓存的最大 **ServerSeq**；无消息时返回 0。
 //
-// 用途是 Hub 启动时的灾后恢复：把 Sequencer 的起点抬到这个值之上，
-// 避免重启后新消息的序号与缓存里的历史撞车。
+// 语义与 LocalSeq 无关：用途是 Hub 启动时的灾后恢复，把本节点 Sequencer
+// 的起点抬到这个值之上，避免重启后新消息的 server_seq 与历史撞车。
+// 桶内按 LocalSeq 排序，取最后一条（最新）的 ServerSeq 即可；跨桶取最大。
 func (h *History) MaxSeq() uint64 {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

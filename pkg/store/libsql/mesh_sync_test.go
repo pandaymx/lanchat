@@ -49,7 +49,7 @@ func TestWire2Schema(t *testing.T) {
 
 	// 列存在：写一条带 node_id 的消息能成功。
 	m := msg("node-a", 1, "conv-1", "m1")
-	if err := s.AppendMessage(ctx, m); err != nil {
+	if _, err := s.AppendMessage(ctx, m); err != nil {
 		t.Fatalf("AppendMessage with node_id: %v", err)
 	}
 }
@@ -65,7 +65,7 @@ func TestSyncMessagesAndCursor(t *testing.T) {
 		msg("node-b", 1, "conv-1", "b1"),
 		msg("node-a", 3, "conv-1", "a3"),
 	} {
-		if err := s.AppendMessage(ctx, m); err != nil {
+		if _, err := s.AppendMessage(ctx, m); err != nil {
 			t.Fatalf("append: %v", err)
 		}
 	}
@@ -140,11 +140,11 @@ func TestAppendSyncedMessageIdempotent(t *testing.T) {
 		CreatedAt:      1,
 		NodeID:         "node-a",
 	}
-	if err := s.AppendMessage(ctx, local); err != nil {
+	if _, err := s.AppendMessage(ctx, local); err != nil {
 		t.Fatalf("local seq=0 append: %v", err)
 	}
 	local.ServerSeq = 6
-	if err := s.AppendMessage(ctx, local); err != nil {
+	if _, err := s.AppendMessage(ctx, local); err != nil {
 		t.Fatalf("local seq=6 upsert: %v", err)
 	}
 	maxA, _ := s.MaxSeqOfNode(ctx, "node-a")

@@ -3,6 +3,7 @@ package hubstate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -293,7 +294,7 @@ func TestRouterHistoryReqPerDevice(t *testing.T) {
 
 	// 先灌 3 条消息
 	for i := 1; i <= 3; i++ {
-		msg := protocol.StoredMessage{ID: "m", ConversationID: "", ServerSeq: uint64(i)}
+		msg := protocol.StoredMessage{ID: fmt.Sprintf("m-%d", i), ConversationID: "", ServerSeq: uint64(i)}
 		// 直接走 handleMessage 的等价路径：通过 frame
 		_ = r.HandleFrame(ctx, id1, p1,
 			protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg)})
@@ -331,7 +332,7 @@ func TestRouterHistoryReqBefore(t *testing.T) {
 	p, id := addPeer(t, r, "dev-1", "u-1")
 
 	for i := 1; i <= 5; i++ {
-		msg := protocol.StoredMessage{ID: "m", ConversationID: "", ServerSeq: uint64(i)}
+		msg := protocol.StoredMessage{ID: fmt.Sprintf("m-%d", i), ConversationID: "", ServerSeq: uint64(i)}
 		_ = r.HandleFrame(ctx, id, p,
 			protocol.Frame{Kind: protocol.FKMessage, Payload: mustPayload(t, msg)})
 	}

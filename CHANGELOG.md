@@ -1,3 +1,9 @@
+## [1.42.0](https://github.com/pandaymx/lanchat/compare/v1.41.0...v1.42.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 视频播放页强制横屏（退出恢复竖屏） ([cbc10e2](https://github.com/pandaymx/lanchat/commit/cbc10e27076e7bd21c7caf1cff810886e658622d))
+
 ## [1.41.0](https://github.com/pandaymx/lanchat/compare/v1.40.0...v1.41.0) (2026-09-13)
 
 ### Features

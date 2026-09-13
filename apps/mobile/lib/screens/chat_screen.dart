@@ -10,6 +10,7 @@ import '../api.dart';
 import '../hub_client.dart';
 import '../protocol.dart';
 import '../widgets/message_bubble.dart';
+import 'video_player_screen.dart';
 
 /// 聊天页：指定会话（大厅 conv="" 或群聊）。
 /// 历史加载 → 实时消息 → 文本/图片发送 → 已读 → 断线重连。
@@ -494,6 +495,122 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  void _openFullVideo(StoredMessage m) {
+    final url = 'http://${client.host}:${client.port}/api/files/${m.file!.fileId}';
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(url: url, name: m.file!.name),
+      ),
+    );
+  }
+
+  /// 「+」更多菜单：相册 / 拍摄 / 视频。
+  void _showMoreMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('发送', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFFE6E8EC))),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _moreItem(ctx, Icons.photo_library_outlined, '相册', () {
+                  Navigator.of(ctx).pop();
+                  _pickAndSendImage();
+                }),
+                _moreItem(ctx, Icons.photo_camera_outlined, '拍摄', () {
+                  Navigator.of(ctx).pop();
+                  _pickAndSendCamera();
+                }),
+                _moreItem(ctx, Icons.videocam_outlined, '视频', () {
+                  Navigator.of(ctx).pop();
+                  _pickAndSendVideo();
+                }),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _moreItem(BuildContext ctx, IconData icon, String label, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: const Color(0xFF2B2D33),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: const Color(0xFFE6E8EC), size: 26),
+            ),
+            const SizedBox(height: 6),
+            Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFF8B919C))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAndSendCamera() async {
+    final picker = ImagePicker();
+    final XFile? picked;
+    try {
+      picked = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+    } catch (e) {
+      _toast('无法打开相机: $e');
+      return;
+    }
+    if (picked == null) return;
+    await _uploadAndSendFile(File(picked.path), 'image/jpeg');
+  }
+
+  Future<void> _pickAndSendVideo() async {
+    final picker = ImagePicker();
+    final XFile? picked;
+    try {
+      picked = await picker.pickVideo(source: ImageSource.gallery);
+    } catch (e) {
+      _toast('无法打开视频: $e');
+      return;
+    }
+    if (picked == null) return;
+    await _uploadAndSendFile(File(picked.path), 'video/mp4');
+  }
+
+  Future<void> _uploadAndSendFile(File file, String mime) async {
+    setState(() => _uploading = true);
+    try {
+      final api = HubApi(host: client.host, port: client.port);
+      final ref = await api.uploadFile(file, mime: mime);
+      if (!mounted) return;
+      client.sendFileMessage(convId, ref);
+      _scrollToBottom();
+    } catch (e) {
+      _toast('上传失败: $e');
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final messages = client.messagesOf(convId);
@@ -602,9 +719,11 @@ class _ChatScreenState extends State<ChatScreen> {
                                 selfUserId: client.userId,
                                 onTap: _multiSelect
                                     ? () => _toggleSelect(m)
-                                    : (m.file != null && (m.file!.mime.startsWith('image/')))
-                                        ? () => _openFullImage(m)
-                                        : null,
+                                    : _isVideo(m)
+                                        ? () => _openFullVideo(m)
+                                        : (m.file != null && (m.file!.mime.startsWith('image/')))
+                                            ? () => _openFullImage(m)
+                                            : null,
                                 onLongPress: () =>
                                     _multiSelect ? _toggleSelect(m) : _onMessageLongPress(m),
                               ),
@@ -693,6 +812,17 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() {
       if (!_selectedIds.remove(m.id)) _selectedIds.add(m.id);
     });
+  }
+
+  bool _isVideo(StoredMessage m) {
+    final f = m.file;
+    if (f == null) return false;
+    if (f.mime.startsWith('video/')) return true;
+    final lower = f.name.toLowerCase();
+    return lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.webm') ||
+        lower.endsWith('.mkv');
   }
 
   Widget _dateDivider(DateTime day) {
@@ -798,7 +928,7 @@ class _ChatScreenState extends State<ChatScreen> {
           Row(
         children: [
           IconButton(
-            onPressed: _uploading ? null : _pickAndSendImage,
+            onPressed: _uploading ? null : _showMoreMenu,
             icon: _uploading
                 ? const SizedBox(
                     width: 20,
@@ -806,7 +936,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
                   )
                 : const Icon(Icons.add_circle_outline, color: Color(0xFF8B919C)),
-            tooltip: '发送图片',
+            tooltip: '发送图片/视频',
           ),
           IconButton(
             onPressed: _toggleRecord,

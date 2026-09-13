@@ -86,6 +86,77 @@ class MessageBubble extends StatelessWidget {
         lower.endsWith('.ogg');
   }
 
+  bool get _isVideo {
+    final f = message.file;
+    if (f == null) return false;
+    if (f.mime.startsWith('video/')) return true;
+    final lower = f.name.toLowerCase();
+    return lower.endsWith('.mp4') ||
+        lower.endsWith('.mov') ||
+        lower.endsWith('.webm') ||
+        lower.endsWith('.mkv');
+  }
+
+  /// 视频消息卡片：黑底缩略图标 + 文件名 + 时长（若有）。
+  Widget _videoBubble(Color textColor, BorderRadius radius) {
+    final f = message.file!;
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        width: 220,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: isMine ? const Color(0xFF2B6BFF) : const Color(0xFF2B2D33),
+          borderRadius: radius,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.35),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  alignment: Alignment.center,
+                  child: const Icon(Icons.play_circle_fill, color: Colors.white70, size: 30),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        f.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13, color: textColor, fontWeight: FontWeight.w600),
+                      ),
+                      const SizedBox(height: 3),
+                      Text('[视频]', style: TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.7))),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                _formatTime(message.createdAt),
+                style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.6)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bubbleColor = isMine ? const Color(0xFF2B6BFF) : const Color(0xFF2B2D33);
@@ -124,6 +195,8 @@ class MessageBubble extends StatelessWidget {
                   _imageBubble(textColor, radius)
                 else if (_isAudio)
                   _audioBubble(textColor, radius)
+                else if (_isVideo)
+                  _videoBubble(textColor, radius)
                 else
                   GestureDetector(
                     onLongPress: onLongPress,

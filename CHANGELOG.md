@@ -1,3 +1,9 @@
+## [1.34.0](https://github.com/pandaymx/lanchat/compare/v1.33.0...v1.34.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 空会话欢迎占位（大厅/单聊/群聊文案） ([b6e870c](https://github.com/pandaymx/lanchat/commit/b6e870ca3a0408dad1c84b0a2ba090b1f632a159))
+
 ## [1.33.0](https://github.com/pandaymx/lanchat/compare/v1.32.0...v1.33.0) (2026-09-13)
 
 ### Features

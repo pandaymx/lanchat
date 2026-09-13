@@ -1,3 +1,9 @@
+## [1.36.0](https://github.com/pandaymx/lanchat/compare/v1.35.0...v1.36.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 图片消息保存到相册（gal） ([45ee03f](https://github.com/pandaymx/lanchat/commit/45ee03f01d786555e1ea8539e62a8252bad0cc20))
+
 ## [1.35.0](https://github.com/pandaymx/lanchat/compare/v1.34.0...v1.35.0) (2026-09-13)
 
 ### Features

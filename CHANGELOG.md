@@ -1,3 +1,9 @@
+## [2.6.1](https://github.com/pandaymx/lanchat/compare/v2.6.0...v2.6.1) (2026-09-13)
+
+### Bug Fixes
+
+* **ci:** 安卓只打 arm64-v8a，安装包体积减半 ([a7687e0](https://github.com/pandaymx/lanchat/commit/a7687e0f73d49bb8a8b993bd7ffb3c3270b4333d))
+
 ## [2.6.0](https://github.com/pandaymx/lanchat/compare/v2.5.0...v2.6.0) (2026-09-13)
 
 ### Features

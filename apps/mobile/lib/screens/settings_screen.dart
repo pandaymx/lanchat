@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../hub_client.dart';
 
@@ -48,8 +49,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setBool('notify_enabled', v);
   }
 
-  Future<void> _clearData(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
+  /// 打开 GitHub 项目主页。
+  Future<void> _openRepo() async {
+    const url = 'https://github.com/pandaymx/lanchat';
+    try {
+      final ok = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!ok) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('无法打开浏览器'), behavior: SnackBarBehavior.floating),
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _clearData(BuildContext context) async {    final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF20232A),
@@ -131,6 +146,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             leading: Icon(Icons.info_outline, color: Color(0xFF8B919C)),
             title: Text('lanchat 移动端', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
             subtitle: Text('局域网即时通讯 · 直连 hub', style: TextStyle(color: Color(0xFF8B919C), fontSize: 13)),
+          ),
+          ListTile(
+            leading: const Icon(Icons.link, color: Color(0xFF8B919C)),
+            title: const Text('项目主页', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+            subtitle: const Text('github.com/pandaymx/lanchat', style: TextStyle(color: Color(0xFF8B919C), fontSize: 13)),
+            trailing: const Icon(Icons.open_in_new, size: 16, color: Color(0xFF6A707A)),
+            onTap: _openRepo,
           ),
           if (_version.isNotEmpty)
             Padding(

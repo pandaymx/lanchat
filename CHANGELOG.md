@@ -1,3 +1,9 @@
+## [1.48.0](https://github.com/pandaymx/lanchat/compare/v1.47.0...v1.48.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 输入框 @ 快捷按钮（打开成员面板） ([7b342ef](https://github.com/pandaymx/lanchat/commit/7b342ef0508734c087f9640341af000a4f2e5c8e))
+
 ## [1.47.0](https://github.com/pandaymx/lanchat/compare/v1.46.0...v1.47.0) (2026-09-13)
 
 ### Features

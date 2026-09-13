@@ -1,3 +1,13 @@
+## [1.68.0](https://github.com/pandaymx/lanchat/compare/v1.67.0...v1.68.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 设置页退出登录返回连接页 ([314f3ad](https://github.com/pandaymx/lanchat/commit/314f3ad4f2b47dee2c5810e38b5552dc4fe486cb))
+
+### Bug Fixes
+
+* **mobile:** 退出登录清除正确的连接参数 key ([404043e](https://github.com/pandaymx/lanchat/commit/404043e39ab85056b37dea47d81394500f0b4fb4))
+
 ## [1.67.0](https://github.com/pandaymx/lanchat/compare/v1.66.0...v1.67.0) (2026-09-13)
 
 ### Features

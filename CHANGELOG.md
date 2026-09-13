@@ -1,3 +1,9 @@
+## [1.43.0](https://github.com/pandaymx/lanchat/compare/v1.42.0...v1.43.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 前台新消息横幅提示（SnackBar 弱提醒） ([11b71d1](https://github.com/pandaymx/lanchat/commit/11b71d108a9a16d3404e5a30a60ada28d12007fa))
+
 ## [1.42.0](https://github.com/pandaymx/lanchat/compare/v1.41.0...v1.42.0) (2026-09-13)
 
 ### Features

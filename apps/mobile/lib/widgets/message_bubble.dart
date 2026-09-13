@@ -101,6 +101,105 @@ class MessageBubble extends StatelessWidget {
         lower.endsWith('.mkv');
   }
 
+  /// 是否普通文件（非图片/音频/视频）。
+  bool get _isPlainFile {
+    final f = message.file;
+    if (f == null) return false;
+    return !f.mime.startsWith('image/') &&
+        !f.mime.startsWith('audio/') &&
+        !f.mime.startsWith('video/') &&
+        !_isAudio &&
+        !_isVideo;
+  }
+
+  /// 文件消息卡片：类型图标 + 文件名 + 大小 + 点击复制链接。
+  Widget _fileBubble(Color textColor, BorderRadius radius) {
+    final file = message.file!;
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        width: 230,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: isMine ? const Color(0xFF2B6BFF) : const Color(0xFF2B2D33),
+          borderRadius: radius,
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              alignment: Alignment.center,
+              child: Icon(_fileIcon(file.name),
+                  color: const Color(0xFF8FC0FF), size: 22),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    file.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: textColor, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '文件 · ${_fmtSize(file.size)} · 点击获取链接',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.7)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  IconData _fileIcon(String name) {
+    final lower = name.toLowerCase();
+    if (lower.endsWith('.zip') || lower.endsWith('.tar') || lower.endsWith('.gz') || lower.endsWith('.rar') || lower.endsWith('.7z')) {
+      return Icons.folder_zip_outlined;
+    }
+    if (lower.endsWith('.pdf')) return Icons.picture_as_pdf_outlined;
+    if (lower.endsWith('.doc') || lower.endsWith('.docx')) return Icons.description_outlined;
+    if (lower.endsWith('.xls') || lower.endsWith('.xlsx')) return Icons.table_chart_outlined;
+    if (lower.endsWith('.ppt') || lower.endsWith('.pptx')) return Icons.slideshow_outlined;
+    if (lower.endsWith('.go') ||
+        lower.endsWith('.dart') ||
+        lower.endsWith('.py') ||
+        lower.endsWith('.js') ||
+        lower.endsWith('.ts') ||
+        lower.endsWith('.java') ||
+        lower.endsWith('.c') ||
+        lower.endsWith('.cpp') ||
+        lower.endsWith('.rs') ||
+        lower.endsWith('.sh') ||
+        lower.endsWith('.md') ||
+        lower.endsWith('.json') ||
+        lower.endsWith('.yaml') ||
+        lower.endsWith('.yml')) {
+      return Icons.code;
+    }
+    return Icons.insert_drive_file_outlined;
+  }
+
+  String _fmtSize(int? bytes) {
+    if (bytes == null || bytes <= 0) return '未知大小';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+
   /// 视频消息卡片：黑底缩略图标 + 文件名 + 时长（若有）。
   Widget _videoBubble(Color textColor, BorderRadius radius) {
     final f = message.file!;
@@ -201,6 +300,8 @@ class MessageBubble extends StatelessWidget {
                   _audioBubble(textColor, radius)
                 else if (_isVideo)
                   _videoBubble(textColor, radius)
+                else if (_isPlainFile)
+                  _fileBubble(textColor, radius)
                 else
                   GestureDetector(
                     onLongPress: onLongPress,

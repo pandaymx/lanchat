@@ -21,6 +21,7 @@ dependencies:
   video_player: ^2.14.0
   package_info_plus: ^10.2.1
   gal: ^2.3.3
+  file_picker: ^12.3.0
 
 dev_dependencies:
   flutter_test:

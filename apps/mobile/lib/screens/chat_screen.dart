@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gal/gal.dart';
@@ -622,6 +623,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   Navigator.of(ctx).pop();
                   _pickAndSendVideo();
                 }),
+                _moreItem(ctx, Icons.insert_drive_file_outlined, '文件', () {
+                  Navigator.of(ctx).pop();
+                  _pickAndSendFile();
+                }),
               ],
             ),
             const SizedBox(height: 16),
@@ -655,6 +660,37 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+  }
+
+  /// 选择并发送任意文件（file_picker）。
+  Future<void> _pickAndSendFile() async {
+    try {
+      final picked = await FilePicker.pickFile();
+      if (picked == null) return;
+      final path = picked.path;
+      if (path == null) {
+        _toast('无法读取文件路径');
+        return;
+      }
+      final f = File(path);
+      if (!await f.exists()) {
+        _toast('文件不存在');
+        return;
+      }
+      setState(() => _uploading = true);
+      try {
+        final api = HubApi(host: client.host, port: client.port);
+        final ref = await api.uploadFile(f, mime: 'application/octet-stream');
+        client.sendFileMessage(convId, ref, body: picked.name);
+        _scrollToBottom();
+      } catch (e) {
+        _toast('上传失败: $e');
+      } finally {
+        if (mounted) setState(() => _uploading = false);
+      }
+    } catch (e) {
+      _toast('选择文件失败: $e');
+    }
   }
 
   Future<void> _pickAndSendCamera() async {
@@ -840,7 +876,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                         ? () => _openFullVideo(m)
                                         : (m.file != null && (m.file!.mime.startsWith('image/')))
                                             ? () => _openFullImage(m)
-                                            : null,
+                                            : _isPlainFile(m)
+                                                ? () => _copyFileLink(m)
+                                                : null,
                                 onLongPress: () =>
                                     _multiSelect ? _toggleSelect(m) : _onMessageLongPress(m),
                               ),
@@ -954,6 +992,31 @@ class _ChatScreenState extends State<ChatScreen> {
         lower.endsWith('.mov') ||
         lower.endsWith('.webm') ||
         lower.endsWith('.mkv');
+  }
+
+  /// 普通文件（非图片/音频/视频）。
+  bool _isPlainFile(StoredMessage m) {
+    final f = m.file;
+    if (f == null) return false;
+    final lower = f.name.toLowerCase();
+    final isMedia = f.mime.startsWith('image/') ||
+        f.mime.startsWith('audio/') ||
+        f.mime.startsWith('video/') ||
+        lower.endsWith('.mp4') ||
+        lower.endsWith('.m4a') ||
+        lower.endsWith('.aac') ||
+        lower.endsWith('.mp3') ||
+        lower.endsWith('.wav') ||
+        lower.endsWith('.ogg');
+    return !isMedia;
+  }
+
+  /// 复制文件下载链接。
+  void _copyFileLink(StoredMessage m) {
+    final f = m.file!;
+    final url = 'http://${client.host}:${client.port}/api/files/${f.fileId}';
+    Clipboard.setData(ClipboardData(text: url));
+    _toast('下载链接已复制');
   }
 
   Widget _systemMsg(ConvEventMsg e) {

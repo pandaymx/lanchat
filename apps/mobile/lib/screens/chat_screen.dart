@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:gal/gal.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:record/record.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -277,6 +278,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 _onForward(m);
               },
             ),
+            if (m.file != null &&
+                (m.file!.mime.startsWith('image/') ||
+                    m.file!.name.toLowerCase().endsWith('.png') ||
+                    m.file!.name.toLowerCase().endsWith('.jpg') ||
+                    m.file!.name.toLowerCase().endsWith('.jpeg')))
+              ListTile(
+                leading: const Icon(Icons.download, color: Color(0xFFE6E8EC)),
+                title: const Text('保存到相册', style: TextStyle(color: Color(0xFFE6E8EC))),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  _saveImageToGallery(m);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.checklist, color: Color(0xFFE6E8EC)),
               title: const Text('多选', style: TextStyle(color: Color(0xFFE6E8EC))),
@@ -292,6 +306,19 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
     );
+  }
+
+  /// 下载图片并保存到系统相册。
+  Future<void> _saveImageToGallery(StoredMessage m) async {
+    final file = m.file!;
+    try {
+      final api = HubApi(host: client.host, port: client.port);
+      final bytes = await api.downloadBytes(file.fileId);
+      await Gal.putImageBytes(Uint8List.fromList(bytes), name: file.name);
+      if (mounted) _toast('已保存到相册');
+    } catch (e) {
+      if (mounted) _toast('保存失败: $e');
+    }
   }
 
   /// 多选批量转发：选会话 → 逐条重发（文本原样；文件复用 fileId）。

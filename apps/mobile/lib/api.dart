@@ -22,6 +22,15 @@ class HubApi {
   /// 文件下载 URL（图片/附件）。
   String fileUrl(String fileId) => '$httpBase/api/files/$fileId';
 
+  /// 下载文件原始字节（用于保存图片等）。
+  Future<List<int>> downloadBytes(String fileId) async {
+    final resp = await http.get(Uri.parse(fileUrl(fileId)));
+    if (resp.statusCode != 200) {
+      throw HttpException('download ${resp.statusCode}');
+    }
+    return resp.bodyBytes;
+  }
+
   /// 上传文件（multipart POST /api/files），返回 hub 分配的 FileRef。
   Future<FileRef> uploadFile(File file, {String? mime}) async {
     final uri = Uri.parse('$httpBase/api/files');

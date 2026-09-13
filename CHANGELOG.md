@@ -1,3 +1,9 @@
+## [1.45.0](https://github.com/pandaymx/lanchat/compare/v1.44.0...v1.45.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 语音气泡整体点击播放/暂停 ([735b4cd](https://github.com/pandaymx/lanchat/commit/735b4cdc95369fa4bc53eb43d8b33d6231e8478d))
+
 ## [1.44.0](https://github.com/pandaymx/lanchat/compare/v1.43.0...v1.44.0) (2026-09-13)
 
 ### Features

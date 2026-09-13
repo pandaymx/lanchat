@@ -312,6 +312,19 @@ class _ChatScreenState extends State<ChatScreen> {
                   _saveImageToGallery(m);
                 },
               ),
+            if (m.file != null &&
+                !(m.file!.mime.startsWith('image/') ||
+                    m.file!.name.toLowerCase().endsWith('.png') ||
+                    m.file!.name.toLowerCase().endsWith('.jpg') ||
+                    m.file!.name.toLowerCase().endsWith('.jpeg')))
+              ListTile(
+                leading: const Icon(Icons.save_alt, color: Color(0xFFE6E8EC)),
+                title: const Text('保存文件', style: TextStyle(color: Color(0xFFE6E8EC))),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  _downloadFile(m);
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.checklist, color: Color(0xFFE6E8EC)),
               title: const Text('多选', style: TextStyle(color: Color(0xFFE6E8EC))),

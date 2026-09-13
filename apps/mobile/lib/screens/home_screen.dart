@@ -26,6 +26,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Set<String> _pinned = {};
   final Set<String> _muted = {};
   bool _appForeground = true; // 前台不弹系统通知
+  DateTime? _lastBackAt; // 双击返回退出
 
   @override
   void initState() {
@@ -323,7 +324,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       });
     final totalUnread = convs.fold<int>(0, (acc, c) => acc + client.unreadCount(c.id));
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final now = DateTime.now();
+        if (_lastBackAt != null && now.difference(_lastBackAt!) < const Duration(seconds: 2)) {
+          client.close();
+          Navigator.of(context).pop();
+          return;
+        }
+        _lastBackAt = now;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('再按一次退出 lanchat'),
+            duration: Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Color(0xFF2B2D33),
+          ),
+        );
+      },
+      child: Scaffold(
       backgroundColor: const Color(0xFF17181C),
       appBar: AppBar(
         backgroundColor: const Color(0xFF20232A),
@@ -433,6 +454,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             label: '联系人',
           ),
         ],
+      ),
       ),
     );
   }

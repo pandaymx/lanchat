@@ -1,3 +1,9 @@
+## [1.28.0](https://github.com/pandaymx/lanchat/compare/v1.27.0...v1.28.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 设置页「消息通知」开关（prefs 持久化） ([e695b48](https://github.com/pandaymx/lanchat/commit/e695b48f756a6f607b4df23d45674bd7ae2eaced))
+
 ## [1.27.0](https://github.com/pandaymx/lanchat/compare/v1.26.0...v1.27.0) (2026-09-13)
 
 ### Features

@@ -1,3 +1,9 @@
+## [1.58.0](https://github.com/pandaymx/lanchat/compare/v1.57.0...v1.58.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 断线横幅点击重连 ([e1b4619](https://github.com/pandaymx/lanchat/commit/e1b46190c23a1b1ba9639ea7710d56c1d6081963))
+
 ## [1.57.0](https://github.com/pandaymx/lanchat/compare/v1.56.0...v1.57.0) (2026-09-13)
 
 ### Features

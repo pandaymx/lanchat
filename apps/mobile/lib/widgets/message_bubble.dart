@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../hub_client.dart';
 import '../protocol.dart';
@@ -30,23 +32,42 @@ class MessageBubble extends StatelessWidget {
 
   /// @提及高亮：`@名字` 用品牌蓝渲染，其余文本保持基础色。
   TextSpan _bodySpan(String body, Color base) {
-    final mention = RegExp(r'@([^\s@，。！？,.!?]+)');
+    // 先按 @提及 与 URL 切分：URL 高亮可点击，@ 提及主题色。
+    final pattern = RegExp(r'(@[^\s@，。！？,.!?]+|https?://[^\s]+)');
     final out = <TextSpan>[];
     var start = 0;
-    for (final m in mention.allMatches(body)) {
+    for (final m in pattern.allMatches(body)) {
       if (m.start > start) {
         out.add(TextSpan(text: body.substring(start, m.start)));
       }
-      out.add(TextSpan(
-        text: m.group(0),
-        style: const TextStyle(color: Color(0xFF2B6BFF), fontWeight: FontWeight.w600),
-      ));
+      final text = m.group(0)!;
+      if (text.startsWith('@')) {
+        out.add(TextSpan(
+          text: text,
+          style: const TextStyle(color: Color(0xFF2B6BFF), fontWeight: FontWeight.w600),
+        ));
+      } else {
+        out.add(TextSpan(
+          text: text,
+          style: const TextStyle(color: Color(0xFF6FA8FF), decoration: TextDecoration.underline),
+          recognizer: TapGestureRecognizer()..onTap = () => _openUrl(text),
+        ));
+      }
       start = m.end;
     }
     if (start < body.length) {
       out.add(TextSpan(text: body.substring(start)));
     }
     return TextSpan(children: out, style: TextStyle(color: base, height: 1.4));
+  }
+
+  /// 打开消息中的链接（外部浏览器）。
+  void _openUrl(String raw) {
+    var url = raw.trim();
+    if (url.endsWith(')')) url = url.substring(0, url.length - 1);
+    launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication).then((ok) {
+      if (!ok) debugPrint('打开链接失败: $url');
+    });
   }
 
   String _formatTime(int atMs) {

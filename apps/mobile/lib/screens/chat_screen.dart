@@ -670,6 +670,47 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  /// 会话内搜索：输入关键词，hub 检索后跳转定位。
+  Future<void> _openConvSearch() async {
+    final ctrl = TextEditingController();
+    final q = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF20232A),
+        title: const Text('搜索会话消息', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 16)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 15),
+          decoration: InputDecoration(
+            hintText: '输入关键词…',
+            hintStyle: const TextStyle(color: Color(0xFF6B7078)),
+            filled: true,
+            fillColor: const Color(0xFF2B2D33),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide.none,
+            ),
+          ),
+          onSubmitted: (v) => Navigator.of(ctx).pop(v.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消', style: TextStyle(color: Color(0xFF8B919C))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(ctrl.text.trim()),
+            child: const Text('搜索', style: TextStyle(color: Color(0xFF2B6BFF))),
+          ),
+        ],
+      ),
+    );
+    if (q == null || q.isEmpty || !mounted) return;
+    client.search(q, conversationId: convId);
+    _toast('搜索中…');
+  }
+
   void _openFullImage(StoredMessage m) {
     // 会话内全部图片消息（按时间顺序），供查看器左右滑动。
     final imgs = client.messagesOf(convId)
@@ -884,6 +925,11 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ]
             : [
+                IconButton(
+                  tooltip: '搜索会话消息',
+                  icon: const Icon(Icons.search, size: 20),
+                  onPressed: _openConvSearch,
+                ),
                 if (!_isLobby)
                   PopupMenuButton<String>(
                     color: const Color(0xFF2B2D33),

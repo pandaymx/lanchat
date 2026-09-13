@@ -315,11 +315,18 @@ jobs:
           flutter pub get
           cd ios
           pod install
-      - name: Build iOS ipa (unsigned)
+      - name: Build iOS app + package unsigned ipa
         working-directory: apps/mobile
         run: |
           set -euo pipefail
-          flutter build ipa --release --no-codesign --build-name="${LANCHAT_VERSION#v}" --build-number=1
+          # flutter build ipa --no-codesign 会跳过 IPA 生成（只 archive）；
+          # 改用 build ios --no-codesign 产出 .app 后按 Payload 结构打包，
+          # 得到未签名 ipa（用户用 Xcode / Sideloadly 自行签名安装）。
+          flutter build ios --release --no-codesign --build-name="${LANCHAT_VERSION#v}" --build-number=1
+          mkdir -p build/ipa/Payload
+          cp -r build/ios/iphoneos/Runner.app build/ipa/Payload/
+          cd build/ipa
+          zip -qry "lanchat-mobile-${LANCHAT_VERSION#v}-ios-unsigned.ipa" Payload/
       - name: Upload release asset
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -328,10 +335,7 @@ jobs:
           ver="$LANCHAT_VERSION"
           tag="$ver"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI ios job 补建的 Release 页面。"
-          mkdir -p dist
-          ipa=$(find apps/mobile/build/ios/ipa -name '*.ipa' | head -1)
-          cp "$ipa" "dist/lanchat-mobile-$ver-ios-unsigned.ipa"
-          gh release upload "$tag" "dist/lanchat-mobile-$ver-ios-unsigned.ipa" --clobber
+          gh release upload "$tag" "apps/mobile/build/ipa/lanchat-mobile-${ver#v}-ios-unsigned.ipa" --clobber
 
   checksums:
     name: checksums

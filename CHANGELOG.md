@@ -1,3 +1,9 @@
+## [2.1.2](https://github.com/pandaymx/lanchat/compare/v2.1.1...v2.1.2) (2026-09-13)
+
+### Bug Fixes
+
+* **ci:** iOS job 构建前显式 pod install ([fd3e3d8](https://github.com/pandaymx/lanchat/commit/fd3e3d8b3e43562664747b98b35ae69036e59c5c))
+
 ## [2.1.1](https://github.com/pandaymx/lanchat/compare/v2.1.0...v2.1.1) (2026-09-13)
 
 ### Bug Fixes

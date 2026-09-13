@@ -825,6 +825,27 @@ class _ChatScreenState extends State<ChatScreen> {
                   Navigator.of(ctx).pop();
                   _pickAndSendFile();
                 }),
+                _moreItem(ctx, Icons.mic_none, '录音', () {
+                  Navigator.of(ctx).pop();
+                  _toggleRecord();
+                }),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _moreItem(ctx, Icons.emoji_emotions_outlined, '表情', () {
+                  Navigator.of(ctx).pop();
+                  setState(() {
+                    _emojiOpen = !_emojiOpen;
+                    if (_emojiOpen) _loadRecentEmoji();
+                  });
+                }),
+                _moreItem(ctx, Icons.alternate_email, '@成员', () {
+                  Navigator.of(ctx).pop();
+                  _openMentionPicker();
+                }),
               ],
             ),
             const SizedBox(height: 16),
@@ -1356,8 +1377,12 @@ class _ChatScreenState extends State<ChatScreen> {
           if (_emojiOpen) _emojiPanel(),
           Row(
         children: [
+          // QQ/微信式输入行：只留 [＋] [输入框] [发送]，其余功能收纳进「＋」菜单，
+          // 避免窄屏下输入框被图标挤成扁平。
           IconButton(
             onPressed: _uploading ? null : _showMoreMenu,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(6),
             icon: _uploading
                 ? const SizedBox(
                     width: 20,
@@ -1365,30 +1390,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
                   )
                 : const Icon(Icons.add_circle_outline, color: Color(0xFF8B919C)),
-            tooltip: '发送图片/视频',
-          ),
-          IconButton(
-            onPressed: _toggleRecord,
-            icon: _recording
-                ? const Icon(Icons.mic, color: Color(0xFFE86452))
-                : const Icon(Icons.mic_none, color: Color(0xFF8B919C)),
-            tooltip: _recording ? '停止录音并发送' : '录音',
-          ),
-          IconButton(
-            onPressed: () => setState(() {
-              _emojiOpen = !_emojiOpen;
-              if (_emojiOpen) _loadRecentEmoji();
-            }),
-            icon: Icon(
-              _emojiOpen ? Icons.keyboard : Icons.emoji_emotions_outlined,
-              color: _emojiOpen ? const Color(0xFF2B6BFF) : const Color(0xFF8B919C),
-            ),
-            tooltip: '表情',
-          ),
-          IconButton(
-            onPressed: _openMentionPicker,
-            icon: const Icon(Icons.alternate_email, color: Color(0xFF8B919C)),
-            tooltip: '@成员',
+            tooltip: '更多',
           ),
           Expanded(
             child: TextField(
@@ -1424,6 +1426,8 @@ class _ChatScreenState extends State<ChatScreen> {
           const SizedBox(width: 8),
           IconButton.filled(
             onPressed: _send,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.all(6),
             style: IconButton.styleFrom(backgroundColor: const Color(0xFF2B6BFF)),
             icon: const Icon(Icons.send, color: Colors.white, size: 20),
             tooltip: '发送',

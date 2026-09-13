@@ -1,3 +1,9 @@
+## [1.54.0](https://github.com/pandaymx/lanchat/compare/v1.53.0...v1.54.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 文件消息点击下载保存到本地 ([cce3145](https://github.com/pandaymx/lanchat/commit/cce3145f6e2bc81f7c947db97edcdf4a41e82eb0))
+
 ## [1.53.0](https://github.com/pandaymx/lanchat/compare/v1.52.0...v1.53.0) (2026-09-13)
 
 ### Features

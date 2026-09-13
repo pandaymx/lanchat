@@ -35,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     client.start(widget.startCursor);
     _loadConvPrefs();
     _loadNotifyPref();
+    _loadDrafts();
     WidgetsBinding.instance.addPostFrameCallback((_) => _openNotifyConv());
   }
 
@@ -160,6 +161,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, int> _lastUnread = {};
   bool _notifyEnabled = true;
   bool _bannerShowing = false;
+  final Map<String, String> _drafts = {}; // convId -> 未发送草稿
+
+  /// 读取全部会话草稿（prefs 前缀 draft_）。
+  Future<void> _loadDrafts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final next = <String, String>{};
+    for (final k in prefs.getKeys()) {
+      if (k.startsWith('draft_')) {
+        final v = prefs.getString(k) ?? '';
+        if (v.isNotEmpty) next[k.substring(6)] = v;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _drafts
+      ..clear()
+      ..addAll(next));
+  }
 
   Future<void> _loadNotifyPref() async {
     final prefs = await SharedPreferences.getInstance();
@@ -238,11 +256,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   void _openChat(ConversationSnapshot conv) {
     client.markRead(conv.id);
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ChatScreen(client: client, conversationId: conv.id, title: conv.title),
-      ),
-    );
+    Navigator.of(context)
+        .push(
+          MaterialPageRoute(
+            builder: (_) => ChatScreen(client: client, conversationId: conv.id, title: conv.title),
+          ),
+        )
+        .then((_) => _loadDrafts());
   }
 
   void _openCreateGroup() {
@@ -482,6 +502,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final isMuted = _muted.contains(conv.id);
     final title = isLobby ? '大厅' : (conv.title.isEmpty ? '群聊' : conv.title);
     final subtitle = isLobby ? '所有人' : '${conv.members.length} 人';
+    final draft = _drafts[conv.id];
 
     return ListTile(
       onTap: () => _openChat(conv),
@@ -515,11 +536,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         ],
       ),
-      subtitle: Text(
-        '${_preview(last)} · $subtitle',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Color(0xFF8B919C), fontSize: 12),
+      subtitle: draft != null
+          ? Text(
+              '草稿: $draft',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFE0A23E), fontSize: 12),
+            )
+          : Text(
+              '${_preview(last)} · $subtitle',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFF8B919C), fontSize: 12),
       ),
       trailing: Column(
         mainAxisAlignment: MainAxisAlignment.center,

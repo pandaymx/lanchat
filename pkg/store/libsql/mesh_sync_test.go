@@ -101,14 +101,22 @@ func TestAppendSyncedMessageIdempotent(t *testing.T) {
 	s, _ := openTestStore(t)
 
 	m := msg("node-a", 5, "conv-1", "m5")
-	if err := s.AppendSyncedMessage(ctx, m); err != nil {
+	inserted, err := s.AppendSyncedMessage(ctx, m)
+	if err != nil {
 		t.Fatalf("first sync append: %v", err)
+	}
+	if !inserted {
+		t.Fatal("first sync append reported not inserted, want true")
 	}
 	// 重复送达（同 (node_id, seq)，不同 id 也不应插入）。
 	dup := m
 	dup.ID = "m5-dup"
-	if err := s.AppendSyncedMessage(ctx, dup); err != nil {
+	inserted, err = s.AppendSyncedMessage(ctx, dup)
+	if err != nil {
 		t.Fatalf("dup sync append: %v", err)
+	}
+	if inserted {
+		t.Fatal("duplicate sync append reported inserted, want false")
 	}
 
 	got, err := s.SyncMessages(ctx, "node-a", 0, 0)

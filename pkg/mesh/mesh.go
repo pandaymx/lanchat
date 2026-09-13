@@ -28,7 +28,8 @@ type SourceStore interface {
 	// SyncMessages 返回某源节点 after 之后的增量（升序，最多 limit 条）。
 	SyncMessages(ctx context.Context, nodeID string, after uint64, limit int) ([]protocol.StoredMessage, error)
 	// AppendSyncedMessage 幂等写入一条同步消息（去重键 (node_id, seq)）。
-	AppendSyncedMessage(ctx context.Context, m protocol.StoredMessage) error
+	// 返回是否新插入（false = 已存在，同步重复送达时跳过）。
+	AppendSyncedMessage(ctx context.Context, m protocol.StoredMessage) (bool, error)
 }
 
 // Remote 是同步对端的最小抽象：执行一轮拉取并返回各源节点增量。
@@ -75,21 +76,24 @@ func Respond(ctx context.Context, store SourceStore, req protocol.SyncRequest) (
 	return out, nil
 }
 
-// Apply 是请求侧逻辑：把远端响应幂等落库，返回落库条数。
+// Apply 是请求侧逻辑：把远端响应幂等落库，返回新插入条数。
 func Apply(ctx context.Context, store SourceStore, resps []protocol.SyncResponse) (int, error) {
 	pulled := 0
 	for _, resp := range resps {
 		for _, m := range resp.Messages {
-			if err := store.AppendSyncedMessage(ctx, m); err != nil {
+			inserted, err := store.AppendSyncedMessage(ctx, m)
+			if err != nil {
 				return pulled, err
 			}
-			pulled++
+			if inserted {
+				pulled++
+			}
 		}
 	}
 	return pulled, nil
 }
 
-// PullOnce 执行一轮同步：本地游标 → 远端 → 落库，返回拉取条数。
+// PullOnce 执行一轮同步：本地游标 → 远端 → 落库，返回新插入条数。
 // 这是引擎的主循环步进；对每个邻居周期性调用。
 func PullOnce(ctx context.Context, store SourceStore, remote Remote) (int, error) {
 	cursor, err := store.SourceCursor(ctx)

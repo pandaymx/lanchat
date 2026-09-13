@@ -775,6 +775,21 @@ func (r *Router) broadcast(ctx context.Context, f protocol.Frame) {
 	})
 }
 
+// DeliverSynced 把一条 mesh 同步来的消息实时推送给本地会话成员（ADR-014 M-b）。
+//
+// 与 handleMessage 的广播路径不同：同步消息的坐标 (NodeID, ServerSeq) 属于
+// 源节点，不能进本地补发缓冲（History 按本地 ServerSeq 有序）；这里只做
+// 实时 FKDeliver。离线期间漏推的消息由 mesh 全量复制模型保证落库，重连
+// 补发与多节点历史视图（M-c）另行补齐。
+func (r *Router) DeliverSynced(ctx context.Context, m protocol.StoredMessage) {
+	payload, err := json.Marshal(m)
+	if err != nil {
+		//nolint:nilerr // 序列化 StoredMessage 不可能失败；失败了也无补救动作
+		return
+	}
+	r.broadcastToConv(ctx, m.ConversationID, protocol.Frame{Kind: protocol.FKDeliver, Payload: payload})
+}
+
 // broadcastToConv 把一帧广播给某会话的全部成员（M12-A）。
 //
 //   - 大厅（空 conv）：发给所有已握手连接（含发送者，客户端按 ID 去重）；

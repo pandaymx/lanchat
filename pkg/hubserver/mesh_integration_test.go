@@ -5,6 +5,8 @@ package hubserver
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -14,6 +16,7 @@ import (
 	"github.com/pandaymx/lanchat/pkg/mesh"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/store/libsql"
+	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
 )
 
 // freePort 分配一个空闲端口（测试用：监听 :0 拿端口后立即释放，
@@ -33,9 +36,15 @@ func freePort(t *testing.T) int {
 // 固定空闲端口、独立身份密钥），返回 Server 与 base URL。
 func startMeshHub(t *testing.T, nodeID string, peers []string) (*Server, string) {
 	t.Helper()
+	return startMeshHubOn(t, nodeID, peers, freePort(t))
+}
+
+// startMeshHubOn 与 startMeshHub 相同，但端口由调用方指定——双向互指
+// 测试需要在启动前确定对端 URL。
+func startMeshHubOn(t *testing.T, nodeID string, peers []string, port int) (*Server, string) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	port := freePort(t)
 	dataDir := t.TempDir()
 	srv, err := Start(ctx, Config{
 		Addr:      "127.0.0.1:" + strconv.Itoa(port),
@@ -177,4 +186,184 @@ func TestMeshTOFUReject(t *testing.T) {
 		t.Fatal("SyncPeer with mismatched TOFU key succeeded, want error")
 	}
 	_ = srvA
+}
+
+// storeLen 返回 store 里全部消息条数（跨源节点）。
+func storeLen(ctx context.Context, s *libsql.Store) (int, error) {
+	cursor, err := s.SourceCursor(ctx)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for node := range cursor {
+		msgs, err := s.SyncMessages(ctx, node, 0, 0)
+		if err != nil {
+			return 0, err
+		}
+		total += len(msgs)
+	}
+	return total, nil
+}
+
+// TestMeshBidirectionalConverge：A/B 互指为邻居，各自离线期间写本地
+// 消息，上线后经后台 meshLoop 双向收敛，互不丢帧、不重复（M-b 验收）。
+func TestMeshBidirectionalConverge(t *testing.T) {
+	ctx := context.Background()
+	portA, portB := freePort(t), freePort(t)
+	urlA := "http://127.0.0.1:" + strconv.Itoa(portA)
+	urlB := "http://127.0.0.1:" + strconv.Itoa(portB)
+	srvA, _ := startMeshHubOn(t, "node-a", []string{urlB}, portA)
+	srvB, _ := startMeshHubOn(t, "node-b", []string{urlA}, portB)
+
+	storeA, ok := srvA.store.(*libsql.Store)
+	if !ok {
+		t.Fatalf("store type %T, want *libsql.Store", srvA.store)
+	}
+	storeB, ok := srvB.store.(*libsql.Store)
+	if !ok {
+		t.Fatalf("store type %T, want *libsql.Store", srvB.store)
+	}
+
+	now := time.Now().UnixMilli()
+	for i, body := range []string{"a offline 1", "a offline 2"} {
+		if err := storeA.AppendMessage(ctx, protocol.StoredMessage{
+			ID: fmt.Sprintf("a-%d", i+1), ConversationID: "conv-1",
+			SenderUserID: "alice", SenderDeviceID: "dev-a",
+			Body: body, ServerSeq: uint64(i + 1), CreatedAt: now + int64(i), NodeID: "node-a",
+		}); err != nil {
+			t.Fatalf("A append %d: %v", i, err)
+		}
+	}
+	if err := storeB.AppendMessage(ctx, protocol.StoredMessage{
+		ID: "b-1", ConversationID: "conv-1",
+		SenderUserID: "bob", SenderDeviceID: "dev-b",
+		Body: "b offline 1", ServerSeq: 1, CreatedAt: now, NodeID: "node-b",
+	}); err != nil {
+		t.Fatalf("B append: %v", err)
+	}
+
+	// 等双方都收敛到 3 条（各自 2 条 + 对方 1 条，无重复）。
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		na, errA := storeLen(ctx, storeA)
+		nb, errB := storeLen(ctx, storeB)
+		if errA == nil && errB == nil && na == 3 && nb == 3 {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	na, _ := storeLen(ctx, storeA)
+	nb, _ := storeLen(ctx, storeB)
+	if na != 3 {
+		t.Fatalf("node-a has %d messages, want 3", na)
+	}
+	if nb != 3 {
+		t.Fatalf("node-b has %d messages, want 3", nb)
+	}
+
+	// 内容集合一致：A 有 b-offline-1，B 有两条 a-offline。
+	bodies := map[string]map[string]bool{}
+	for node, s := range map[string]*libsql.Store{"a": storeA, "b": storeB} {
+		bodies[node] = map[string]bool{}
+		cursor, _ := s.SourceCursor(ctx)
+		for src := range cursor {
+			msgs, _ := s.SyncMessages(ctx, src, 0, 0)
+			for _, m := range msgs {
+				bodies[node][m.Body] = true
+			}
+		}
+	}
+	for _, want := range []string{"a offline 1", "a offline 2", "b offline 1"} {
+		if !bodies["a"][want] {
+			t.Fatalf("node-a missing %q (bodies=%v)", want, bodies["a"])
+		}
+		if !bodies["b"][want] {
+			t.Fatalf("node-b missing %q (bodies=%v)", want, bodies["b"])
+		}
+	}
+}
+
+// TestMeshDeliverToLocalClient：广播闭环——A 的本地消息经 mesh 同步到 B
+// 落库后，B 上已连接的 WS 客户端实时收到 FKDeliver，且重复同步不重复推送。
+func TestMeshDeliverToLocalClient(t *testing.T) {
+	ctx := context.Background()
+	portA, portB := freePort(t), freePort(t)
+	urlA := "http://127.0.0.1:" + strconv.Itoa(portA)
+	urlB := "http://127.0.0.1:" + strconv.Itoa(portB)
+	srvA, _ := startMeshHubOn(t, "node-a", []string{urlB}, portA)
+	_, _ = startMeshHubOn(t, "node-b", []string{urlA}, portB)
+
+	// B 上连一个 WS 客户端并完成应用层握手（测试信任一切公钥）。
+	tr := wstransport.New().WithClientTrust(func([]byte) error { return nil })
+	connB, err := tr.Dial(ctx, urlB, protocol.Hello{DeviceID: "dev-b"})
+	if err != nil {
+		t.Fatalf("dial B hub: %v", err)
+	}
+	defer func() { _ = connB.Close() }()
+	hello, _ := json.Marshal(protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "dev-b",
+		UserID:          "bob",
+	})
+	if err := connB.Send(ctx, protocol.Frame{Kind: protocol.FKHello, Payload: hello}); err != nil {
+		t.Fatalf("send hello: %v", err)
+	}
+
+	// 收帧循环（握手后 hub 会推 presence/read/conv 快照，全部消费掉）。
+	recvCh := make(chan protocol.Frame, 32)
+	go func() {
+		for {
+			f, err := connB.Recv(ctx)
+			if err != nil {
+				return
+			}
+			recvCh <- f
+		}
+	}()
+
+	// A 本地直写一条大厅消息（模拟 A 客户端已发送并落库）。
+	storeA, ok := srvA.store.(*libsql.Store)
+	if !ok {
+		t.Fatalf("store type %T, want *libsql.Store", srvA.store)
+	}
+	if err := storeA.AppendMessage(ctx, protocol.StoredMessage{
+		ID: "a-1", ConversationID: "", // 大厅
+		SenderUserID: "alice", SenderDeviceID: "dev-a",
+		Body: "mesh deliver hello", ServerSeq: 1, CreatedAt: time.Now().UnixMilli(), NodeID: "node-a",
+	}); err != nil {
+		t.Fatalf("A append: %v", err)
+	}
+
+	// 等 B 客户端在 mesh 周期内收到 FKDeliver。
+	deadline := time.Now().Add(15 * time.Second)
+	got := 0
+	for time.Now().Before(deadline) {
+		select {
+		case f := <-recvCh:
+			if f.Kind == protocol.FKDeliver {
+				var m protocol.StoredMessage
+				if err := json.Unmarshal(f.Payload, &m); err == nil && m.Body == "mesh deliver hello" {
+					got++
+				}
+			}
+		case <-time.After(200 * time.Millisecond):
+		}
+		if got >= 1 {
+			break
+		}
+	}
+	if got != 1 {
+		t.Fatalf("B client received %d deliveries, want exactly 1", got)
+	}
+
+	// 再等一个完整 meshLoop 周期（5s）+ 余量：重复同步不得重复推送。
+	time.Sleep(6500 * time.Millisecond)
+	select {
+	case f := <-recvCh:
+		var m protocol.StoredMessage
+		if f.Kind == protocol.FKDeliver && json.Unmarshal(f.Payload, &m) == nil && m.Body == "mesh deliver hello" {
+			t.Fatal("duplicate FKDeliver after extra mesh cycle")
+		}
+	case <-time.After(200 * time.Millisecond):
+	}
 }

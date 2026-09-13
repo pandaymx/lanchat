@@ -57,7 +57,7 @@ func (s *Store) SyncMessages(ctx context.Context, nodeID string, after uint64, l
 // 并发双插由 idx_messages_node_seq 唯一索引兜底，冲突时忽略。
 // 与 AppendMessage 的区别：本地消息走 upsert（乐观 seq=0 → hub 回
 // seq=N 覆盖）；同步消息只进一次，不改已落库的本地消息。
-func (s *Store) AppendSyncedMessage(ctx context.Context, m protocol.StoredMessage) error {
+func (s *Store) AppendSyncedMessage(ctx context.Context, m protocol.StoredMessage) (bool, error) {
 	if m.CreatedAt == 0 {
 		m.CreatedAt = nowMillis()
 	}
@@ -72,7 +72,7 @@ func (s *Store) AppendSyncedMessage(ctx context.Context, m protocol.StoredMessag
 			replyJSON = string(b)
 		}
 	}
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT OR IGNORE INTO messages
 		   (conv_id, id, server_seq, client_nonce, sender_user, sender_device, body, created_at,
 		    file_id, file_name, file_size, file_mime, reply_to, node_id)
@@ -81,7 +81,12 @@ func (s *Store) AppendSyncedMessage(ctx context.Context, m protocol.StoredMessag
 		m.SenderUserID, m.SenderDeviceID, m.Body, m.CreatedAt,
 		fileID, fileName, fileSize, fileMime, replyJSON, m.NodeID)
 	if err != nil {
-		return fmt.Errorf("libsql: append synced message %q/%d: %w", m.NodeID, m.ServerSeq, err)
+		return false, fmt.Errorf("libsql: append synced message %q/%d: %w", m.NodeID, m.ServerSeq, err)
 	}
-	return nil
+	// INSERT OR IGNORE：RowsAffected=1 表示新插入，0 表示已存在（幂等跳过）。
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("libsql: append synced message %q/%d: rows affected: %w", m.NodeID, m.ServerSeq, err)
+	}
+	return affected > 0, nil
 }

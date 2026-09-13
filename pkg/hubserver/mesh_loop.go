@@ -83,14 +83,35 @@ func (s *Server) meshLoop(ctx context.Context, peerURLs []string, id *mesh.Ident
 	}
 }
 
-// syncOnce 对单个邻居执行一轮 PullOnce。
+// syncOnce 对单个邻居执行一轮同步：拉取 → 幂等落库 → 新消息实时推送给
+// 本地已连接客户端（M-b 广播闭环）。不直接用 mesh.PullOnce——这里需要
+// 逐条拿到新落库的消息，才能决定是否广播。
 func (s *Server) syncOnce(ctx context.Context, peerURL string, remote mesh.Remote) error {
-	n, err := mesh.PullOnce(ctx, s.meshStore, remote)
+	cursor, err := s.meshStore.SourceCursor(ctx)
 	if err != nil {
 		return err
 	}
-	if n > 0 {
-		s.logger.Info("mesh pulled", "peer", peerURL, "messages", n)
+	resps, err := remote.Sync(ctx, protocol.SyncRequest{Cursor: cursor, Limit: mesh.DefaultLimit})
+	if err != nil {
+		return err
+	}
+	pulled := 0
+	for _, resp := range resps {
+		for _, m := range resp.Messages {
+			inserted, err := s.meshStore.AppendSyncedMessage(ctx, m)
+			if err != nil {
+				return err
+			}
+			if !inserted {
+				continue // 已存在（重复同步），不重复推送
+			}
+			pulled++
+			// 广播闭环：实时推给本地已连接客户端（按会话成员过滤）。
+			s.router.DeliverSynced(ctx, m)
+		}
+	}
+	if pulled > 0 {
+		s.logger.Info("mesh pulled", "peer", peerURL, "messages", pulled)
 	}
 	return nil
 }

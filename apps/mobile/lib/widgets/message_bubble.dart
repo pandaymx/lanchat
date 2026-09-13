@@ -297,7 +297,15 @@ class MessageBubble extends StatelessWidget {
     final file = message.file!;
     final url = 'http://${client.host}:${client.port}/api/files/${file.fileId}';
     final unplayed = !isMine && !playedVoiceIds.contains(message.id);
+    void play() {
+      if (unplayed && onVoicePlayed != null) {
+        onVoicePlayed!(message.id);
+      }
+      AudioCtl.toggle(url);
+    }
+
     return GestureDetector(
+      onTap: play,
       onLongPress: onLongPress,
       child: Stack(
         children: [
@@ -317,12 +325,7 @@ class MessageBubble extends StatelessWidget {
                     final isThis = playing && AudioCtl.currentUrl == url;
                     return IconButton(
                       visualDensity: VisualDensity.compact,
-                      onPressed: () {
-                        if (unplayed && onVoicePlayed != null) {
-                          onVoicePlayed!(message.id);
-                        }
-                        AudioCtl.toggle(url);
-                      },
+                      onPressed: play,
                       icon: Icon(
                         isThis ? Icons.pause_circle_filled : Icons.play_circle_filled,
                         color: textColor,

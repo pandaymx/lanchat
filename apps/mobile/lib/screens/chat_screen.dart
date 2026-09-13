@@ -158,15 +158,24 @@ class _ChatScreenState extends State<ChatScreen> {
   void _send() {
     final body = _inputCtrl.text.trim();
     if (body.isEmpty) return;
-    if (_replyTo != null) {
-      client.sendMessage(convId, body,
-          replyTo: ReplyRef(
-            id: _replyTo!.id,
-            senderUserId: _replyTo!.senderUserId,
-            body: _replyTo!.body,
-          ));
-    } else {
-      client.sendMessage(convId, body);
+    if (!client.connected) {
+      _toast('未连接，无法发送');
+      return;
+    }
+    try {
+      if (_replyTo != null) {
+        client.sendMessage(convId, body,
+            replyTo: ReplyRef(
+              id: _replyTo!.id,
+              senderUserId: _replyTo!.senderUserId,
+              body: _replyTo!.body,
+            ));
+      } else {
+        client.sendMessage(convId, body);
+      }
+    } catch (e) {
+      _toast('发送失败: $e');
+      return;
     }
     _inputCtrl.clear();
     _saveDraft();

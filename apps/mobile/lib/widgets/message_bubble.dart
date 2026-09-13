@@ -12,6 +12,8 @@ class MessageBubble extends StatelessWidget {
   final String selfUserId;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
+  final Set<String> playedVoiceIds;
+  final void Function(String id)? onVoicePlayed;
 
   const MessageBubble({
     super.key,
@@ -20,6 +22,8 @@ class MessageBubble extends StatelessWidget {
     required this.selfUserId,
     this.onTap,
     this.onLongPress,
+    this.playedVoiceIds = const {},
+    this.onVoicePlayed,
   });
 
   bool get isMine => message.senderUserId == selfUserId;
@@ -292,55 +296,78 @@ class MessageBubble extends StatelessWidget {
   Widget _audioBubble(Color textColor, BorderRadius radius) {
     final file = message.file!;
     final url = 'http://${client.host}:${client.port}/api/files/${file.fileId}';
+    final unplayed = !isMine && !playedVoiceIds.contains(message.id);
     return GestureDetector(
       onLongPress: onLongPress,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 220, minWidth: 120),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: isMine ? const Color(0xFF2B6BFF) : const Color(0xFF2B2D33),
-          borderRadius: radius,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ValueListenableBuilder<bool>(
-              valueListenable: AudioCtl.playing,
-              builder: (context, playing, _) {
-                final isThis = playing && AudioCtl.currentUrl == url;
-                return IconButton(
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => AudioCtl.toggle(url),
-                  icon: Icon(
-                    isThis ? Icons.pause_circle_filled : Icons.play_circle_filled,
-                    color: textColor,
-                    size: 30,
-                  ),
-                );
-              },
+      child: Stack(
+        children: [
+          Container(
+            constraints: const BoxConstraints(maxWidth: 220, minWidth: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: isMine ? const Color(0xFF2B6BFF) : const Color(0xFF2B2D33),
+              borderRadius: radius,
             ),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '语音 ${_formatTime(message.createdAt)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.9)),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ValueListenableBuilder<bool>(
+                  valueListenable: AudioCtl.playing,
+                  builder: (context, playing, _) {
+                    final isThis = playing && AudioCtl.currentUrl == url;
+                    return IconButton(
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () {
+                        if (unplayed && onVoicePlayed != null) {
+                          onVoicePlayed!(message.id);
+                        }
+                        AudioCtl.toggle(url);
+                      },
+                      icon: Icon(
+                        isThis ? Icons.pause_circle_filled : Icons.play_circle_filled,
+                        color: textColor,
+                        size: 30,
+                      ),
+                    );
+                  },
+                ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '语音 ${_formatTime(message.createdAt)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.9)),
+                      ),
+                      Text(
+                        file.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.6)),
+                      ),
+                    ],
                   ),
-                  Text(
-                    file.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.6)),
-                  ),
-                ],
+                ),
+              ],
+            ),
+          ),
+          if (unplayed)
+            Positioned(
+              top: 4,
+              right: 4,
+              child: Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE86452),
+                  shape: BoxShape.circle,
+                ),
               ),
             ),
-          ],
-        ),
+        ],
       ),
     );
   }

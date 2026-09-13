@@ -40,6 +40,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _showJumpDown = false;
   bool _multiSelect = false;
   final Set<String> _selectedIds = {};
+  final Set<String> _playedVoices = {}; // 已播放的语音消息 id
   StoredMessage? _replyTo;
 
   final AudioRecorder _recorder = AudioRecorder();
@@ -60,6 +61,23 @@ class _ChatScreenState extends State<ChatScreen> {
     // 进入会话即已读（列表页已 markRead，这里兜底新消息）。
     WidgetsBinding.instance.addPostFrameCallback((_) => client.markRead(convId));
     _restoreDraft();
+    _loadPlayedVoices();
+  }
+
+  /// 恢复已播放语音标记（本地 prefs）。
+  Future<void> _loadPlayedVoices() async {
+    final prefs = await SharedPreferences.getInstance();
+    final ids = prefs.getStringList('voice_played') ?? const [];
+    if (!mounted) return;
+    setState(() => _playedVoices.addAll(ids));
+  }
+
+  void _markVoicePlayed(String id) {
+    if (_playedVoices.contains(id)) return;
+    setState(() => _playedVoices.add(id));
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setStringList('voice_played', _playedVoices.toList());
+    });
   }
 
   /// 恢复上次未发送的草稿（prefs per-conversation）。
@@ -753,6 +771,8 @@ class _ChatScreenState extends State<ChatScreen> {
                                 message: m,
                                 client: client,
                                 selfUserId: client.userId,
+                                playedVoiceIds: _playedVoices,
+                                onVoicePlayed: _markVoicePlayed,
                                 onTap: _multiSelect
                                     ? () => _toggleSelect(m)
                                     : _isVideo(m)

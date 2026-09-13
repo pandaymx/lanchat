@@ -1,3 +1,9 @@
+## [2.6.0](https://github.com/pandaymx/lanchat/compare/v2.5.0...v2.6.0) (2026-09-13)
+
+### Features
+
+* **hub:** mesh 网络接入与后台同步循环（ADR-014 M-b） ([f56bcf6](https://github.com/pandaymx/lanchat/commit/f56bcf6c35f71bfa21463c64d237e97c884361ab))
+
 ## [2.5.0](https://github.com/pandaymx/lanchat/compare/v2.4.0...v2.5.0) (2026-09-13)
 
 ### Features

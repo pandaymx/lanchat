@@ -1,3 +1,9 @@
+## [2.8.0](https://github.com/pandaymx/lanchat/compare/v2.7.0...v2.8.0) (2026-09-13)
+
+### Features
+
+* **core:** client↔hub 传输加密——X25519 握手 + AES-256-GCM（wire v2） ([67b4fcd](https://github.com/pandaymx/lanchat/commit/67b4fcd5b8ca25335c952382bbe7f402ab2bde65))
+
 ## [2.7.0](https://github.com/pandaymx/lanchat/compare/v2.6.1...v2.7.0) (2026-09-13)
 
 ### Features

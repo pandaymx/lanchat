@@ -1,3 +1,9 @@
+## [1.73.1](https://github.com/pandaymx/lanchat/compare/v1.73.0...v1.73.1) (2026-09-13)
+
+### Bug Fixes
+
+* **hub/tui:** 默认数据与下载目录改平台可写目录 ([bfe5ff4](https://github.com/pandaymx/lanchat/commit/bfe5ff48dafddcbe596562d1561cfe861ba58677))
+
 ## [1.73.0](https://github.com/pandaymx/lanchat/compare/v1.72.0...v1.73.0) (2026-09-13)
 
 ### Features

@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -71,6 +74,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
         }
       }
     } catch (_) {}
+  }
+
+  bool _checking = false;
+
+  /// 检查 GitHub Releases 最新版本（移动端版本跟随仓库 tag）。
+  Future<void> _checkUpdate() async {
+    if (_checking) return;
+    setState(() => _checking = true);
+    String msg = '已是最新版本';
+    try {
+      final resp = await http
+          .get(Uri.parse('https://api.github.com/repos/pandaymx/lanchat/releases/latest'))
+          .timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        final latest = (json['tag_name'] as String?) ?? '';
+        if (latest.isNotEmpty && latest != 'v$_version' && latest != _version) {
+          msg = '发现新版本 $latest，请到项目主页下载';
+        }
+      } else {
+        msg = '获取更新信息失败（${resp.statusCode}）';
+      }
+    } catch (_) {
+      msg = '网络异常，检查更新失败';
+    }
+    if (!mounted) return;
+    setState(() => _checking = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+    );
   }
 
   Future<void> _clearData(BuildContext context) async {    final confirmed = await showDialog<bool>(
@@ -220,6 +253,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: const Text('github.com/pandaymx/lanchat', style: TextStyle(color: Color(0xFF8B919C), fontSize: 13)),
             trailing: const Icon(Icons.open_in_new, size: 16, color: Color(0xFF6A707A)),
             onTap: _openRepo,
+          ),
+          ListTile(
+            leading: const Icon(Icons.system_update_alt, color: Color(0xFF8B919C)),
+            title: const Text('检查更新', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+            subtitle: Text(_version.isEmpty ? '获取版本信息中…' : '当前版本 $_version',
+                style: const TextStyle(color: Color(0xFF8B919C), fontSize: 13)),
+            trailing: _checking
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
+                  )
+                : const Icon(Icons.chevron_right, size: 18, color: Color(0xFF6A707A)),
+            onTap: _checkUpdate,
           ),
           if (_version.isNotEmpty)
             Padding(

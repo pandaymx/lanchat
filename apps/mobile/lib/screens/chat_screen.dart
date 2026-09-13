@@ -1257,6 +1257,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 filled: true,
                 fillColor: const Color(0xFF2B2D33),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                suffixIcon: ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _inputCtrl,
+                  builder: (context, value, _) => value.text.isEmpty
+                      ? const SizedBox.shrink()
+                      : IconButton(
+                          icon: const Icon(Icons.cancel, size: 17, color: Color(0xFF6B7078)),
+                          onPressed: () => _inputCtrl.clear(),
+                        ),
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(20),
                   borderSide: BorderSide.none,

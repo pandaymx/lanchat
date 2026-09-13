@@ -138,6 +138,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 _toggleMute(conv);
               },
             ),
+            if (client.unreadCount(conv.id) > 0)
+              ListTile(
+                leading: const Icon(Icons.done_all, color: Color(0xFF2B6BFF)),
+                title: const Text('标记已读', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  client.markRead(conv.id);
+                },
+              ),
             const SizedBox(height: 8),
           ],
         ),

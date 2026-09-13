@@ -1,3 +1,9 @@
+## [1.60.0](https://github.com/pandaymx/lanchat/compare/v1.59.0...v1.60.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 已读回执（接收 hub 广播游标 + 气泡已读对勾） ([7cba8b3](https://github.com/pandaymx/lanchat/commit/7cba8b381d3d46a2e0a299e4cd1a69bbba492617))
+
 ## [1.59.0](https://github.com/pandaymx/lanchat/compare/v1.58.0...v1.59.0) (2026-09-13)
 
 ### Features

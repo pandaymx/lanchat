@@ -66,6 +66,7 @@ func main() {
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
 	logFile := flag.String("log-file", defaultLogFile(), "日志文件路径；默认走 $TMPDIR/lanchat-tui-$$.log（TUI AltScreen 占用 stderr）")
+	downloadDir := flag.String("download-dir", "", "附件下载目录；留空用平台下载目录（Windows ~/Downloads、Linux/macOS ~/Downloads/lanchat）")
 	lang := flag.String("lang", "", "界面语言（en / zh-CN ...）；留空自动探测 $LC_ALL / $LANG / $LANGUAGE")
 	langList := flag.Bool("lang-list", false, "列出已加载的 locale 并退出")
 	flag.Parse()
@@ -99,13 +100,14 @@ func main() {
 	logger.Info("i18n resolved", "locale", resolvedLocale)
 
 	if err := run(runOptions{
-		User:       *user,
-		Device:     *device,
-		HubURL:     *hubURL,
-		ConvID:     *convID,
-		MaxHist:    *maxHist,
-		NoConnect:  *noConnect,
-		Translator: bundle.ForLocale(resolvedLocale),
+		User:        *user,
+		Device:      *device,
+		HubURL:      *hubURL,
+		ConvID:      *convID,
+		MaxHist:     *maxHist,
+		NoConnect:   *noConnect,
+		DownloadDir: *downloadDir,
+		Translator:  bundle.ForLocale(resolvedLocale),
 	}); err != nil {
 		logger.Error("tui exited with error", "err", err)
 		fmt.Fprintln(os.Stderr, "lanchat-tui:", err)
@@ -133,6 +135,7 @@ type runOptions struct {
 	User, Device, HubURL, ConvID string
 	MaxHist                      int
 	NoConnect                    bool
+	DownloadDir                  string
 	Translator                   tui.Translator
 }
 
@@ -226,6 +229,7 @@ func dialSession(opts runOptions) (*tui.Session, context.Context, context.Cancel
 		Device:       opts.Device,
 		ConvID:       opts.ConvID,
 		HistoryLimit: opts.MaxHist,
+		DownloadDir:  opts.DownloadDir,
 	})
 	if err != nil {
 		return nil, nil, nil, err

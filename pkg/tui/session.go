@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/pandaymx/lanchat/pkg/appdir"
 	"github.com/pandaymx/lanchat/pkg/client"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/event"
@@ -105,6 +107,10 @@ type Session struct {
 	store  core.Store
 	convID string
 
+	// downloadDir 是收到的附件默认保存目录（平台下载目录，可被
+	// DialOptions.DownloadDir 覆盖）；SaveFile 会自动创建。
+	downloadDir string
+
 	done      chan struct{}
 	closeOnce sync.Once
 }
@@ -123,6 +129,9 @@ type DialOptions struct {
 	ConvID string
 	// HistoryLimit 是首屏历史拉取条数，<=0 用 client 默认值。
 	HistoryLimit int
+	// DownloadDir 是附件保存目录；空则用平台下载目录
+	// （Windows ~/Downloads、Linux/macOS ~/Downloads）。
+	DownloadDir string
 }
 
 // Dial 建立连接并完成握手（Hello + 可选历史补发）。
@@ -167,12 +176,19 @@ func Dial(ctx context.Context, opts DialOptions) (*Session, error) {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
 
+	downloadDir := opts.DownloadDir
+	if downloadDir == "" {
+		downloadDir = appdir.DownloadDir(appdir.AppName())
+	}
+
 	return &Session{
 		cli:    cli,
 		sub:    cli.Subscribe(eventBuf),
 		store:  store,
 		convID: convID,
-		done:   make(chan struct{}),
+		// 附件默认落平台下载目录；取不到时 appdir 已回退可写目录。
+		downloadDir: downloadDir,
+		done:        make(chan struct{}),
 	}, nil
 }
 
@@ -297,7 +313,8 @@ func (s *Session) SendFile(ctx context.Context, path string) error {
 	return s.cli.UploadFile(ctx, s.convID, path, "")
 }
 
-// SaveFile 实现 FileReceiver：把消息附件保存到本地 lanchat-files/<name>。
+// SaveFile 实现 FileReceiver：把消息附件保存到本地下载目录
+// （默认平台下载目录下的 lanchat/，见 appdir.DownloadDir）。
 //
 // 文件名来自 hub 的 FileRef.Name（hubfile 已 Base+255 截断清洗），
 // 这里再用 filepath.Base 兜一层，绝不入目录路径。
@@ -305,7 +322,10 @@ func (s *Session) SaveFile(ctx context.Context, m protocol.StoredMessage) (strin
 	if m.File == nil {
 		return "", errors.New("tui: save file: message has no file ref")
 	}
-	dest := filepath.Join("lanchat-files", filepath.Base(m.File.Name))
+	if err := os.MkdirAll(s.downloadDir, 0o755); err != nil {
+		return "", fmt.Errorf("tui: mkdir download dir: %w", err)
+	}
+	dest := filepath.Join(s.downloadDir, filepath.Base(m.File.Name))
 	if err := s.cli.DownloadFile(ctx, m.File.FileID, dest); err != nil {
 		return "", err
 	}

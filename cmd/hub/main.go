@@ -23,6 +23,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -30,6 +32,7 @@ import (
 
 	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/internal/hubapi"
+	"github.com/pandaymx/lanchat/pkg/appdir"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/hubfile"
 	"github.com/pandaymx/lanchat/pkg/hubstate"
@@ -62,8 +65,11 @@ func main() {
 	addr := flag.String("addr", ":9000", "监听地址，例如 :9000 或 127.0.0.1:9000")
 	path := flag.String("path", wstransport.DefaultPath, "WebSocket upgrade 路径")
 	maxHistory := flag.Int("max-history", 500, "单次 FKHistoryReq 补发的最大条数")
-	dbPath := flag.String("db", "lanchat.db", "持久化库文件路径（libSQL/SQLite 格式）；填 memory 用纯内存不落盘")
-	filesDir := flag.String("files", "lanchat-files", "文件传输（M9）的 blob 存储目录；文件存 <dir>/<FileID>")
+	// -db / -files 留空表示用平台默认数据目录（Windows %LOCALAPPDATA%、Linux
+	// ~/.local/share、macOS ~/Library/Application Support），避免安装在
+	// 只读目录（如 C:\Program Files\LAN Chat Hub）时无法写库和文件。
+	dbPath := flag.String("db", "", "持久化库文件路径（libSQL/SQLite 格式）；填 memory 用纯内存不落盘；留空用平台默认数据目录")
+	filesDir := flag.String("files", "", "文件传输（M9）的 blob 存储目录；文件存 <dir>/<FileID>；留空用平台默认数据目录")
 	maxFileSize := flag.Int64("max-file-size", 512<<20, "单文件上传上限（字节，默认 512MiB）；<=0 不限制")
 	mDNS := flag.Bool("mdns", true, "通过 mDNS/DNS-SD 在局域网广播 hub（_lanchat._tcp）；-mdns=false 关闭")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
@@ -85,6 +91,23 @@ func main() {
 		logging.New("hub").Warn("invalid -log-format, fallback to text", "input", *logFormat, "err", fmtErr)
 	}
 	logger := logging.New("hub")
+
+	// 解析默认数据目录：-db / -files 未显式指定时落到平台可写目录。
+	dataDir := appdir.DataDir(appdir.AppName())
+	if *dbPath == "" {
+		*dbPath = filepath.Join(dataDir, "lanchat.db")
+	}
+	if *filesDir == "" {
+		*filesDir = filepath.Join(dataDir, "files")
+	}
+	// 数据库父目录可能不存在（如首次在 %LOCALAPPDATA% 下运行）：
+	// 先建目录，失败则留给 openStore 报错退出。
+	if dir := filepath.Dir(*dbPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			logger.Warn("mkdir db dir failed", "dir", dir, "err", err)
+		}
+	}
+	logger.Info("data dir resolved", "os", runtime.GOOS, "db", *dbPath, "files", *filesDir)
 
 	// signal.NotifyContext：SIGINT/SIGTERM 触发 ctx 取消 与 run 关停联动。
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

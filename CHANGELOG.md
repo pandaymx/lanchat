@@ -1,3 +1,9 @@
+## [1.66.0](https://github.com/pandaymx/lanchat/compare/v1.65.0...v1.66.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 图片查看器左右滑动切换会话图片 ([4bcacd1](https://github.com/pandaymx/lanchat/commit/4bcacd1c87c90ad69c4477c41f38812713fc3842))
+
 ## [1.65.0](https://github.com/pandaymx/lanchat/compare/v1.64.0...v1.65.0) (2026-09-13)
 
 ### Features

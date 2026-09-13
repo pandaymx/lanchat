@@ -1,3 +1,9 @@
+## [1.30.0](https://github.com/pandaymx/lanchat/compare/v1.29.0...v1.30.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 群成员变动系统消息（加入/退出实时提示条） ([5acafbe](https://github.com/pandaymx/lanchat/commit/5acafbea2a2e64a9be106c56032d9eedf13d2d9b))
+
 ## [1.29.0](https://github.com/pandaymx/lanchat/compare/v1.28.0...v1.29.0) (2026-09-13)
 
 ### Features

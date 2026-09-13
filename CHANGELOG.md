@@ -1,3 +1,9 @@
+## [1.63.0](https://github.com/pandaymx/lanchat/compare/v1.62.0...v1.63.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 语音/文件长按菜单保存到本地 ([5280493](https://github.com/pandaymx/lanchat/commit/5280493689361c89d0bba4c208791681f4817159))
+
 ## [1.62.0](https://github.com/pandaymx/lanchat/compare/v1.61.0...v1.62.0) (2026-09-13)
 
 ### Features

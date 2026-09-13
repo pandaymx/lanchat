@@ -708,7 +708,60 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     if (q == null || q.isEmpty || !mounted) return;
     client.search(q, conversationId: convId);
-    _toast('搜索中…');
+    // 等待搜索结果（上限 3 秒），展示列表供点击定位。
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
+    while (client.searching && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    if (!mounted) return;
+    final results = client.searchResults.toList();
+    if (results.isEmpty) {
+      _toast(client.searchError ?? '未找到相关消息');
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF20232A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('找到 ${results.length} 条消息',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Color(0xFFE6E8EC))),
+            ),
+            Flexible(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: results.length,
+                itemBuilder: (_, i) {
+                  final r = results[i];
+                  return ListTile(
+                    leading: const Icon(Icons.chat_bubble_outline, size: 20, color: Color(0xFF2B6BFF)),
+                    title: Text(
+                      r.body.isEmpty ? '[文件] ${r.file?.name ?? ''}' : r.body,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 14),
+                    ),
+                    subtitle: Text(r.senderUserId, style: const TextStyle(color: Color(0xFF8B919C), fontSize: 12)),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _jumpToMessage(r.id);
+                    },
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   void _openFullImage(StoredMessage m) {

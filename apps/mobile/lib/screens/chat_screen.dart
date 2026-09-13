@@ -622,13 +622,16 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _openFullImage(StoredMessage m) {
-    final url = 'http://${client.host}:${client.port}/api/files/${m.file!.fileId}';
+    // 会话内全部图片消息（按时间顺序），供查看器左右滑动。
+    final imgs = client.messagesOf(convId)
+        .where((x) => x.file != null && x.file!.mime.startsWith('image/'))
+        .toList();
+    final start = imgs.indexWhere((x) => x.id == m.id).clamp(0, imgs.length - 1);
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => _FullImageViewer(
-          url: url,
-          name: m.file!.name,
-          fileId: m.file!.fileId,
+          images: imgs,
+          initialIndex: start,
           client: client,
         ),
       ),
@@ -1375,17 +1378,15 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-/// 图片全屏查看页（黑底 + 双指缩放 + 点击关闭 + 保存相册）。
+/// 图片全屏查看页（黑底 + 双指缩放 + 左右滑动切换 + 点击关闭 + 保存相册）。
 class _FullImageViewer extends StatefulWidget {
-  final String url;
-  final String name;
-  final String fileId;
+  final List<StoredMessage> images;
+  final int initialIndex;
   final HubClient client;
 
   const _FullImageViewer({
-    required this.url,
-    required this.name,
-    required this.fileId,
+    required this.images,
+    required this.initialIndex,
     required this.client,
   });
 
@@ -1395,14 +1396,32 @@ class _FullImageViewer extends StatefulWidget {
 
 class _FullImageViewerState extends State<_FullImageViewer> {
   bool _saving = false;
+  late final PageController _pageCtrl;
+  late int _index;
+
+  @override
+  void initState() {
+    super.initState();
+    _index = widget.initialIndex;
+    _pageCtrl = PageController(initialPage: _index);
+  }
+
+  @override
+  void dispose() {
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  StoredMessage get _current => widget.images[_index];
 
   Future<void> _save() async {
     if (_saving) return;
+    final cur = _current;
     setState(() => _saving = true);
     try {
       final api = HubApi(host: widget.client.host, port: widget.client.port);
-      final bytes = await api.downloadBytes(widget.fileId);
-      await Gal.putImageBytes(Uint8List.fromList(bytes), name: widget.name);
+      final bytes = await api.downloadBytes(cur.file!.fileId);
+      await Gal.putImageBytes(Uint8List.fromList(bytes), name: cur.file!.name);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('已保存到相册'), duration: Duration(seconds: 2)),
@@ -1426,7 +1445,10 @@ class _FullImageViewerState extends State<_FullImageViewer> {
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
-        title: Text(widget.name, style: const TextStyle(fontSize: 14)),
+        title: Text(
+          widget.images.length > 1 ? '${_index + 1}/${widget.images.length}' : _current.file!.name,
+          style: const TextStyle(fontSize: 14),
+        ),
         actions: [
           IconButton(
             tooltip: '保存到相册',
@@ -1441,25 +1463,34 @@ class _FullImageViewerState extends State<_FullImageViewer> {
           ),
         ],
       ),
-      body: GestureDetector(
-        onTap: () => Navigator.of(context).pop(),
-        child: Center(
-          child: InteractiveViewer(
-            maxScale: 5,
-            child: Image.network(
-              widget.url,
-              fit: BoxFit.contain,
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) return child;
-                return const CircularProgressIndicator(color: Colors.white54);
-              },
-              errorBuilder: (context, error, stack) => const Text(
-                '图片加载失败',
-                style: TextStyle(color: Colors.white54),
+      body: PageView.builder(
+        controller: _pageCtrl,
+        itemCount: widget.images.length,
+        onPageChanged: (i) => setState(() => _index = i),
+        itemBuilder: (context, i) {
+          final cur = widget.images[i];
+          final url = 'http://${widget.client.host}:${widget.client.port}/api/files/${cur.file!.fileId}';
+          return GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            child: Center(
+              child: InteractiveViewer(
+                maxScale: 5,
+                child: Image.network(
+                  url,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return const CircularProgressIndicator(color: Colors.white54);
+                  },
+                  errorBuilder: (context, error, stack) => const Text(
+                    '图片加载失败',
+                    style: TextStyle(color: Colors.white54),
+                  ),
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }

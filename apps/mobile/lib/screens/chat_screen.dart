@@ -572,7 +572,12 @@ class _ChatScreenState extends State<ChatScreen> {
     final url = 'http://${client.host}:${client.port}/api/files/${m.file!.fileId}';
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _FullImageViewer(url: url, name: m.file!.name),
+        builder: (_) => _FullImageViewer(
+          url: url,
+          name: m.file!.name,
+          fileId: m.file!.fileId,
+          client: client,
+        ),
       ),
     );
   }
@@ -1237,12 +1242,49 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-/// 图片全屏查看页（黑底 + 双指缩放 + 点击关闭）。
-class _FullImageViewer extends StatelessWidget {
+/// 图片全屏查看页（黑底 + 双指缩放 + 点击关闭 + 保存相册）。
+class _FullImageViewer extends StatefulWidget {
   final String url;
   final String name;
+  final String fileId;
+  final HubClient client;
 
-  const _FullImageViewer({required this.url, required this.name});
+  const _FullImageViewer({
+    required this.url,
+    required this.name,
+    required this.fileId,
+    required this.client,
+  });
+
+  @override
+  State<_FullImageViewer> createState() => _FullImageViewerState();
+}
+
+class _FullImageViewerState extends State<_FullImageViewer> {
+  bool _saving = false;
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      final api = HubApi(host: widget.client.host, port: widget.client.port);
+      final bytes = await api.downloadBytes(widget.fileId);
+      await Gal.putImageBytes(Uint8List.fromList(bytes), name: widget.name);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('已保存到相册'), duration: Duration(seconds: 2)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存失败: $e'), duration: const Duration(seconds: 2)),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1251,7 +1293,20 @@ class _FullImageViewer extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
-        title: Text(name, style: const TextStyle(fontSize: 14)),
+        title: Text(widget.name, style: const TextStyle(fontSize: 14)),
+        actions: [
+          IconButton(
+            tooltip: '保存到相册',
+            onPressed: _saving ? null : _save,
+            icon: _saving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white54),
+                  )
+                : const Icon(Icons.download, color: Colors.white),
+          ),
+        ],
       ),
       body: GestureDetector(
         onTap: () => Navigator.of(context).pop(),
@@ -1259,7 +1314,7 @@ class _FullImageViewer extends StatelessWidget {
           child: InteractiveViewer(
             maxScale: 5,
             child: Image.network(
-              url,
+              widget.url,
               fit: BoxFit.contain,
               loadingBuilder: (context, child, progress) {
                 if (progress == null) return child;

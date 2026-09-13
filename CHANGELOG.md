@@ -1,3 +1,9 @@
+## [1.53.0](https://github.com/pandaymx/lanchat/compare/v1.52.0...v1.53.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 文件消息发送与渲染（file_picker 文件卡片） ([bb17fae](https://github.com/pandaymx/lanchat/commit/bb17fae7d979f3c1773f3c0f5431cef358d41de9))
+
 ## [1.52.0](https://github.com/pandaymx/lanchat/compare/v1.51.0...v1.52.0) (2026-09-13)
 
 ### Features

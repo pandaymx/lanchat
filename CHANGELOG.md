@@ -1,3 +1,9 @@
+## [2.7.0](https://github.com/pandaymx/lanchat/compare/v2.6.1...v2.7.0) (2026-09-13)
+
+### Features
+
+* **hub:** 传输加密——X25519 + AES-256-GCM + TOFU（ADR-014） ([f170b20](https://github.com/pandaymx/lanchat/commit/f170b203641cec0d06c1add2d71687e6c8d82372))
+
 ## [2.6.1](https://github.com/pandaymx/lanchat/compare/v2.6.0...v2.6.1) (2026-09-13)
 
 ### Bug Fixes

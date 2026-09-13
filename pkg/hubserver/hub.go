@@ -32,6 +32,7 @@ import (
 	"github.com/pandaymx/lanchat/pkg/hubfile"
 	"github.com/pandaymx/lanchat/pkg/hubstate"
 	"github.com/pandaymx/lanchat/pkg/logging"
+	"github.com/pandaymx/lanchat/pkg/mesh"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/store/libsql"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
@@ -71,16 +72,29 @@ type Config struct {
 	Version string
 	// Logger 复用调用方日志组件；nil 时自建 "hub" logger。
 	Logger *logging.ComponentLogger
+	// Mesh 是否启用去中心化 mesh 同步（ADR-014 wire v2）。开启后：
+	// 挂载 POST /api/v1/mesh/sync 端点，后台周期向邻居拉增量并
+	// 幂等落库。要求持久化 store（DBPath 非 "memory"）——memory
+	// 不提供源节点枚举，Start 会报错。
+	Mesh bool
+	// MeshPeers 是显式邻居 base URL 列表（如 "http://192.168.1.5:9000"）。
+	// 与 mDNS 发现合并去重；测试与手动组网用。
+	MeshPeers []string
+	// NodeID 是本节点的 mesh 标识；空时用主机名。持久化后不可随意
+	// 更改（消息坐标 (NodeID, ServerSeq) 依赖它稳定）。
+	NodeID string
 }
 
 // Server 是运行中的嵌入式 hub。
 type Server struct {
-	cfg    Config
-	logger *logging.ComponentLogger
-	router *hubstate.Router
-	store  core.Store
-	addr   string
-	done   chan error
+	cfg       Config
+	logger    *logging.ComponentLogger
+	router    *hubstate.Router
+	store     core.Store
+	addr      string
+	done      chan error
+	nodeID    string
+	meshStore mesh.SourceStore
 }
 
 // Start 库内启动 hub。ctx 取消或 Close 触发优雅关停；
@@ -114,10 +128,19 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
+	nodeID := cfg.NodeID
+	if nodeID == "" {
+		if h, err := os.Hostname(); err == nil && h != "" {
+			nodeID = h
+		} else {
+			nodeID = "node"
+		}
+	}
 	router := hubstate.NewRouter(ctx, &hubstate.RouterConfig{
 		Store:           store,
 		StartSeq:        startSeq,
 		MaxHistoryLimit: cfg.MaxHistory,
+		NodeID:          nodeID,
 	})
 	// 持久化模式下把最近消息灌回内存补发缓冲。
 	if ls, ok := store.(*libsql.Store); ok {
@@ -147,6 +170,20 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		WithHandler("GET /api/export", exportAPI)
 	logger.Info("file service ready", "dir", cfg.FilesDir, "maxFileSize", cfg.MaxFileSize)
 
+	// 去中心化 mesh（ADR-014）：挂载同步端点 + 后台同步循环。
+	// 要求持久化 store（memory 不提供源节点枚举/幂等同步写入）。
+	var meshStore mesh.SourceStore
+	if cfg.Mesh {
+		ls, ok := store.(mesh.SourceStore)
+		if !ok {
+			_ = store.Close()
+			return nil, fmt.Errorf("mesh mode requires persistent store (DBPath != memory)")
+		}
+		meshStore = ls
+		tr = tr.WithHandler("POST "+mesh.MeshPath, mesh.SyncHandler{Store: meshStore})
+		logger.Info("mesh endpoint mounted", "path", mesh.MeshPath)
+	}
+
 	var mdnsShutdown func()
 	if cfg.MDNS {
 		_, portStr, err := net.SplitHostPort(cfg.Addr)
@@ -159,10 +196,14 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 			_ = store.Close()
 			return nil, fmt.Errorf("mdns: port %q invalid: %w", portStr, err)
 		}
-		shutdown, err := discovery.Broadcast(discovery.InstanceName, port, map[string]string{
+		meta := map[string]string{
 			discovery.MetaPath:    cfg.Path,
 			discovery.MetaVersion: cfg.Version,
-		})
+		}
+		if cfg.Mesh {
+			meta["mesh"] = "1"
+		}
+		shutdown, err := discovery.Broadcast(discovery.InstanceName, port, meta)
 		if err != nil {
 			_ = store.Close()
 			return nil, fmt.Errorf("mdns broadcast: %w", err)
@@ -172,15 +213,21 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:    cfg,
-		logger: logger,
-		router: router,
-		store:  store,
-		addr:   cfg.Addr,
-		done:   make(chan error, 1),
+		cfg:       cfg,
+		logger:    logger,
+		router:    router,
+		store:     store,
+		addr:      cfg.Addr,
+		done:      make(chan error, 1),
+		nodeID:    nodeID,
+		meshStore: meshStore,
 	}
 
 	// 起监听；ctx 取消 → 优雅关停（含 mDNS 停止）。
+	if cfg.Mesh {
+		go s.meshLoop(ctx, cfg.MeshPeers)
+	}
+
 	go func() {
 		err := s.run(ctx, tr)
 		if mdnsShutdown != nil {
@@ -195,7 +242,10 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	}()
 
 	// 给监听一个启动宽限期：端口占用 / 权限拒绝在这里暴露。
-	if err := waitForListener(ctx, probeableAddr(cfg.Addr), readyTimeout); err != nil {
+	// 端口 0（自动分配）无法预先探测——监听地址未知，跳过。
+	if _, portStr, err := net.SplitHostPort(cfg.Addr); err == nil && portStr == "0" {
+		logger.Info("listening", "addr", probeableAddr(cfg.Addr), "portAuto", true)
+	} else if err := waitForListener(ctx, probeableAddr(cfg.Addr), readyTimeout); err != nil {
 		logger.Warn("ready probe skipped", "err", err)
 	} else {
 		logger.Info("listening", "addr", probeableAddr(cfg.Addr))

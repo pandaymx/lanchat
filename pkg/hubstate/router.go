@@ -31,11 +31,12 @@ var routerLog = logging.New("hubstate.router")
 //   - Router 自身的字段全部并发安全（Sequencer 是 atomic，Registry/History 自带锁）
 //   - Store 由调用方注入，其实现必须是并发安全的（memory / sqlite 都满足）
 type Router struct {
-	seq   *Sequencer
-	reg   *Registry
-	hist  *History
-	convs *Convs
-	store core.Store
+	seq    *Sequencer
+	reg    *Registry
+	hist   *History
+	convs  *Convs
+	store  core.Store
+	nodeID string
 
 	// maxHistoryLimit 是单次补发返回的最大条数上限。
 	// 客户端请求的 limit 超过它时按它截断，防止一个请求把整个历史拖出来打爆内存。
@@ -53,6 +54,10 @@ type RouterConfig struct {
 
 	// MaxHistoryLimit 是单次补发的条数上限，<=0 时取 defaultMaxHistoryLimit。
 	MaxHistoryLimit int
+	// NodeID 是本 hub 在去中心化 mesh（ADR-014）中的节点标识。
+	// 非空时，落库消息若未带源节点（v1 客户端不传 node_id），
+	// 盖上本节点 ID——消息坐标 (NodeID, ServerSeq) 由此成立。
+	NodeID string
 }
 
 // defaultMaxHistoryLimit 是单次补发的默认条数上限。
@@ -73,6 +78,7 @@ func NewRouter(ctx context.Context, cfg *RouterConfig) *Router {
 		hist:            NewHistory(),
 		convs:           NewConvs(),
 		store:           cfg.Store,
+		nodeID:          cfg.NodeID,
 		maxHistoryLimit: limit,
 	}
 	// M12-A：hub 重启后从 store 恢复群与会话成员。
@@ -395,6 +401,9 @@ func (r *Router) handleMessage(ctx context.Context, peerID uint64, p Peer, f pro
 	routerLog.Info("message received",
 		"seq", m.ServerSeq, "from", m.SenderUserID, "dev", m.SenderDeviceID, "conv", m.ConversationID)
 
+	if r.nodeID != "" && m.NodeID == "" {
+		m.NodeID = r.nodeID
+	}
 	if r.store != nil {
 		if err := r.store.AppendMessage(ctx, m); err != nil {
 			routerLog.Error("store append failed", "seq", m.ServerSeq, "err", err)

@@ -1,3 +1,10 @@
+## [1.65.0](https://github.com/pandaymx/lanchat/compare/v1.64.0...v1.65.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 深色启动背景消除白闪 ([d459df5](https://github.com/pandaymx/lanchat/commit/d459df526d88c93b9436854598123054e35118a5))
+* **mobile:** 深色沉浸状态栏/导航栏 ([f3e38e9](https://github.com/pandaymx/lanchat/commit/f3e38e9a7cd4cfa20535697d4f6c94e7044d7320))
+
 ## [1.64.0](https://github.com/pandaymx/lanchat/compare/v1.63.0...v1.64.0) (2026-09-13)
 
 ### Features

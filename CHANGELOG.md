@@ -1,3 +1,9 @@
+## [1.62.0](https://github.com/pandaymx/lanchat/compare/v1.61.0...v1.62.0) (2026-09-13)
+
+### Features
+
+* **mobile:** 消息字体大小调节（设置页滑块持久化） ([2847971](https://github.com/pandaymx/lanchat/commit/2847971cdce5370ae12f03fe7cc356aeea4ab9b9))
+
 ## [1.61.0](https://github.com/pandaymx/lanchat/compare/v1.60.0...v1.61.0) (2026-09-13)
 
 ### Features

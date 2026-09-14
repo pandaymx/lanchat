@@ -22,6 +22,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   HubClient get client => widget.client;
   bool _notifyOn = true;
+  bool _vibrateOn = true;
   String _version = '';
   int _fontScale = 15;
 
@@ -48,6 +49,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!mounted) return;
     setState(() {
       _notifyOn = prefs.getBool('notify_enabled') ?? true;
+      _vibrateOn = prefs.getBool('notify_vibrate') ?? true;
       _fontScale = prefs.getInt('font_scale') ?? 15;
     });
   }
@@ -61,6 +63,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     setState(() => _notifyOn = v);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('notify_enabled', v);
+  }
+
+  Future<void> _setVibrate(bool v) async {
+    setState(() => _vibrateOn = v);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('notify_vibrate', v);
   }
 
   /// 打开 GitHub 项目主页。
@@ -289,6 +297,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _notifyOn,
             activeTrackColor: const Color(0xFF2B6BFF),
             onChanged: _setNotify,
+          ),
+          const Divider(height: 1, color: Color(0xFF26282E)),
+          SwitchListTile(
+            secondary: const Icon(Icons.vibration, color: Color(0xFF8B919C)),
+            title: const Text('通知震动', style: TextStyle(color: Color(0xFFE6E8EC), fontSize: 15)),
+            subtitle: const Text('新消息通知到达时震动提醒', style: TextStyle(color: Color(0xFF8B919C), fontSize: 12)),
+            value: _vibrateOn,
+            activeTrackColor: const Color(0xFF2B6BFF),
+            onChanged: _setVibrate,
           ),
           const Divider(height: 1, color: Color(0xFF26282E)),
           ListTile(

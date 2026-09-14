@@ -34,12 +34,15 @@ class Notifier {
 
   Future<void> show(String title, String body, {String? payload}) async {
     if (!_ready) return;
+    // 通知震动开关（设置页 notify_vibrate，默认开）。
+    final prefs = await SharedPreferences.getInstance();
+    final vibrate = prefs.getBool('notify_vibrate') ?? true;
     await _plugin.show(
       id: 1,
       title: title,
       body: body,
       payload: payload,
-      notificationDetails: const NotificationDetails(
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           'lanchat_messages',
           '新消息',
@@ -47,7 +50,7 @@ class Notifier {
           importance: Importance.high,
           priority: Priority.high,
           playSound: true,
-          enableVibration: true,
+          enableVibration: vibrate,
         ),
         iOS: DarwinNotificationDetails(),
       ),

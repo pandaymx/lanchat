@@ -15,6 +15,8 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
   final VoidCallback? onReplyTap;
+  /// 点他人头像/用户名回调（大厅用户信息卡，P2）。
+  final VoidCallback? onUserTap;
   final Set<String> playedVoiceIds;
   final void Function(String id)? onVoicePlayed;
   final double fontSize;
@@ -27,6 +29,7 @@ class MessageBubble extends StatelessWidget {
     this.onTap,
     this.onLongPress,
     this.onReplyTap,
+    this.onUserTap,
     this.playedVoiceIds = const {},
     this.onVoicePlayed,
     this.fontSize = 15,
@@ -309,7 +312,11 @@ class MessageBubble extends StatelessWidget {
             isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (!isMine) _avatar(),
+          if (!isMine)
+            GestureDetector(
+              onTap: onUserTap,
+              child: _avatar(),
+            ),
           const SizedBox(width: 8),
           Flexible(
             child: Column(
@@ -319,9 +326,12 @@ class MessageBubble extends StatelessWidget {
                 if (!isMine)
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 3),
-                    child: Text(
-                      message.senderUserId,
-                      style: const TextStyle(fontSize: 11, color: Color(0xFF8B919C)),
+                    child: GestureDetector(
+                      onTap: onUserTap,
+                      child: Text(
+                        message.senderUserId,
+                        style: const TextStyle(fontSize: 11, color: Color(0xFF8B919C)),
+                      ),
                     ),
                   ),
                 if (message.reply != null) _replyBlock(textColor),

@@ -259,6 +259,103 @@ class _ChatScreenState extends State<ChatScreen> {
     _inputFocus.requestFocus();
   }
 
+  /// 大厅用户信息卡（P2）：头像 / 名字 / 在线状态 / @提及。
+  /// 点他人头像或用户名触发；自己与群聊不展示（大厅才是全员场景）。
+  void _showUserCard(String userId) {
+    if (userId.isEmpty) return;
+    final online = client.onlineUsers[userId] ?? false;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF2B2D33),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(
+                radius: 32,
+                backgroundColor: _avatarColorOf(userId),
+                child: Text(
+                  userId.isEmpty ? '?' : userId[0].toUpperCase(),
+                  style: const TextStyle(fontSize: 26, color: Color(0xFFE6E8EC)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                userId,
+                style: const TextStyle(
+                  color: Color(0xFFE6E8EC),
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: online ? const Color(0xFF34C759) : const Color(0xFF8B919C),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    online ? '在线' : '离线',
+                    style: const TextStyle(fontSize: 13, color: Color(0xFF8B919C)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      _mentionUser(userId);
+                    },
+                    icon: const Icon(Icons.alternate_email, size: 16),
+                    label: const Text('提到 TA'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF2B6BFF),
+                      side: const BorderSide(color: Color(0xFF2B6BFF)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 头像底色（与气泡内他人头像同款色板）。
+  Color _avatarColorOf(String id) {
+    const palette = [
+      Color(0xFF5B8DEF), Color(0xFF6BB59A), Color(0xFFD29B6B),
+      Color(0xFF9B7EDE), Color(0xFFE078A0), Color(0xFF6BB3C9),
+    ];
+    if (id.isEmpty) return palette[0];
+    return palette[id.codeUnitAt(0) % palette.length];
+  }
+
+  /// 把 @名字 插入输入框并聚焦（用户信息卡操作）。
+  void _mentionUser(String userId) {
+    final cur = _inputCtrl.text;
+    final needSpace = cur.isNotEmpty && !cur.endsWith(' ');
+    _inputCtrl.text = '$cur${needSpace ? ' ' : ''}@$userId ';
+    _inputCtrl.selection = TextSelection.collapsed(offset: _inputCtrl.text.length);
+    _inputFocus.requestFocus();
+  }
+
   void _onMessageLongPress(StoredMessage m) {
     HapticFeedback.mediumImpact();
     showModalBottomSheet<void>(
@@ -1110,6 +1207,9 @@ class _ChatScreenState extends State<ChatScreen> {
                                 onLongPress: () =>
                                     _multiSelect ? _toggleSelect(m) : _onMessageLongPress(m),
                                 onReplyTap: m.reply != null ? () => _jumpToMessage(m.reply!.id) : null,
+                                onUserTap: _isLobby && m.senderUserId != client.userId
+                                    ? () => _showUserCard(m.senderUserId)
+                                    : null,
                               ),
                               if (_multiSelect)
                                 Positioned(

@@ -16,8 +16,10 @@
 E2E 与广播闭环已合入（v2.4–v2.9），`cmd/hub` 已暴露 `-mesh/-peers/-node-id`；
 M-c 体验对齐（文件全节点同步、presence、群成员一致性、多节点历史视图）已完成
 （v2.10：LocalSeq 本地视图序 `7dfdaf7`、群成员一致性 `d64d86b`、presence 广播
-`0a0f669`、文件 fetch-through `ce01db4`）。P1/M-c 收尾后进入 P2（v3.0：移动端
-四项 + 桌面端会话列表数据层，未开始）。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
+`0a0f669`、文件 fetch-through `ce01db4`）。P2（v3.0：移动端 4 项 + 桌面端会话
+列表数据层）已完成（移动端 `940cf6b` 震动开关 / `324ac74` 表情搜索 /
+`29d606b` 用户信息卡；桌面端 `b81ab13` 会话列表数据层——最后消息预览/时间列/
+未读角标）。P3 方向未定，待用户拍板。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 

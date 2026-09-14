@@ -40,6 +40,8 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _uploading = false;
   int _fontScale = 15; // 消息字体大小（设置页调节）
   bool _emojiOpen = false;
+  final TextEditingController _emojiSearchCtrl = TextEditingController();
+  String _emojiQuery = '';
   bool _showJumpDown = false;
   bool _multiSelect = false;
   final Set<String> _selectedIds = {};
@@ -133,6 +135,7 @@ class _ChatScreenState extends State<ChatScreen> {
     client.removeListener(_onClientChanged);
     _inputCtrl.dispose();
     _inputFocus.dispose();
+    _emojiSearchCtrl.dispose();
     _scrollCtrl.dispose();
     _recordTimer?.cancel();
     _typingTimer?.cancel();
@@ -1448,6 +1451,38 @@ class _ChatScreenState extends State<ChatScreen> {
     '📱', '💻', '🕐', '❓', '❗', '✅', '❌', '⚠️', '🔒', '📌',
   ];
 
+  /// 表情搜索关键词表（与 _emojiList 一一对应）：中文/英文/拼音均匹配。
+  static const List<String> _emojiKeywords = [
+    '大笑 smile happy', '坏笑 grin', '咧嘴 laugh', '笑哭 cry laugh',
+    '爆笑 rolling', '微笑 smile', '花痴 love heart eyes', '飞吻 kiss',
+    '酷 cool sunglasses', '思考 think hmm', '尴尬 sweat', '大哭 cry sad',
+    '生气 angry mad', '庆祝 party celebrate', '天使 angel', '拥抱 hug',
+    '敬礼 salute', '比心 love hand', '击掌 handshake', '点赞 like thumbs up',
+    '点踩 dislike thumbs down', '鼓掌 clap', '祈祷 pray please',
+    '肌肉 flex strong', '胜利 peace v', '交叉手指 cross fingers',
+    '烟花 fireworks', '蛋糕 birthday cake', '礼物 gift present',
+    '爱心 heart love', '心碎 broken heart', '一百 100 perfect',
+    '火焰 fire hot', '闪烁 sparkle', '星星 star', '火箭 rocket',
+    '月亮 moon night', '太阳 sun day', '星星 star2', '彩虹 rainbow',
+    '苹果 apple', '啤酒 beer drink', '咖啡 coffee tea', '面条 noodle food',
+    '蛋糕 cake dessert', '足球 soccer football', '篮球 basketball',
+    '游戏 game video', '耳机 headphone music', '音符 music note',
+    '手机 phone mobile', '电脑 computer laptop', '时钟 clock time',
+    '问号 question', '感叹 exclaim', '对勾 check ok', '叉 wrong no',
+    '警告 warning', '锁 lock secure', '图钉 pin bookmark',
+  ];
+
+  /// 表情搜索过滤：空查询返回全量；否则按关键词表匹配（中文/英文/拼音）。
+  List<String> _filteredEmoji() {
+    final q = _emojiQuery;
+    if (q.isEmpty) return _emojiList;
+    final out = <String>[];
+    for (var i = 0; i < _emojiList.length; i++) {
+      if (_emojiKeywords[i].contains(q)) out.add(_emojiList[i]);
+    }
+    return out;
+  }
+
   Future<void> _loadRecentEmoji() async {
     final prefs = await SharedPreferences.getInstance();
     final list = prefs.getStringList('recent_emoji') ?? const [];
@@ -1465,6 +1500,37 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: TextField(
+              controller: _emojiSearchCtrl,
+              onChanged: (v) => setState(() => _emojiQuery = v.trim().toLowerCase()),
+              style: const TextStyle(color: Color(0xFFE6E8EC), fontSize: 13),
+              cursorColor: const Color(0xFF2B6BFF),
+              decoration: InputDecoration(
+                hintText: '搜索表情（如 开心 / smile）',
+                hintStyle: const TextStyle(color: Color(0xFF5C616B), fontSize: 13),
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                filled: true,
+                fillColor: const Color(0xFF1F2126),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF5C616B)),
+                suffixIcon: _emojiQuery.isEmpty
+                    ? null
+                    : InkWell(
+                        onTap: () {
+                          _emojiSearchCtrl.clear();
+                          setState(() => _emojiQuery = '');
+                        },
+                        child: const Icon(Icons.close, size: 16, color: Color(0xFF5C616B)),
+                      ),
+              ),
+            ),
+          ),
           if (_recentEmoji.isNotEmpty) ...[
             SizedBox(
               height: 40,
@@ -1499,7 +1565,7 @@ class _ChatScreenState extends State<ChatScreen> {
           Expanded(
             child: GridView.count(
               crossAxisCount: 8,
-              children: _emojiList.map((e) {
+              children: _filteredEmoji().map((e) {
                 return InkWell(
                   onTap: () => _insertEmoji(e),
                   borderRadius: BorderRadius.circular(8),

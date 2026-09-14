@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -24,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
 
@@ -33,6 +35,10 @@ const MeshPath = "/api/v1/mesh/sync"
 // MeshPresencePath 是 mesh presence 即时推送端点（M-c）：本地用户
 // 上线/下线时把单条 presence 变化推给邻居，不等 5s 同步周期。
 const MeshPresencePath = "/api/v1/mesh/presence"
+
+// MeshFilePath 是 mesh 文件 fetch-through 端点（M-c 文件全节点同步）：
+// 邻居本地无 blob 时从这里按 FileID 拉取（meta 在响应头，body 是流）。
+const MeshFilePath = "/api/v1/mesh/file"
 
 // PubKeyPath 是 mesh 公钥端点（TOFU 首连取公钥）。
 const PubKeyPath = "/api/v1/mesh/pubkey"
@@ -320,4 +326,132 @@ func PushPresence(ctx context.Context, baseURL string, id *Identity, known *Know
 		return fmt.Errorf("mesh presence push: status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// FileFetchHandler 是 mesh 文件 fetch-through 的服务端（POST，Envelope
+// 加密）：邻居下载文件本地未命中时，按 FileID 打开本地 blob 并流式
+// 返回（meta 放 X-Mesh-File-Meta 响应头，body 为纯 blob）。
+type FileFetchHandler struct {
+	ID *Identity
+	// Known 是 TOFU 公钥表；nil 时跳过记录（纯内存模式）。
+	Known *KnownKeys
+	// Open 按 FileID 打开本地文件（hubfile.Service.Open），由 hubserver 注入。
+	Open func(ctx context.Context, fileID string) (protocol.FileMeta, io.ReadCloser, error)
+}
+
+// ServeHTTP 实现 http.Handler（method+path 由 mux 匹配）。
+func (h FileFetchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var env Envelope
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&env); err != nil {
+		http.Error(w, "bad envelope: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if h.ID == nil || h.Open == nil {
+		http.Error(w, "mesh file fetch not configured", http.StatusInternalServerError)
+		return
+	}
+	if h.Known != nil {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		if err := h.Known.Trust(host, env.Key); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+	}
+	plain, err := Open(h.ID, &env)
+	if err != nil {
+		http.Error(w, "decrypt failed", http.StatusForbidden)
+		return
+	}
+	var req struct {
+		FileID string `json:"fid"`
+	}
+	if err := json.Unmarshal(plain, &req); err != nil || req.FileID == "" {
+		http.Error(w, "bad fetch request", http.StatusBadRequest)
+		return
+	}
+	meta, rc, err := h.Open(r.Context(), req.FileID)
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "open failed", http.StatusInternalServerError)
+		return
+	}
+	defer func() { _ = rc.Close() }()
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		http.Error(w, "marshal meta", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("X-Mesh-File-Meta", base64.RawURLEncoding.EncodeToString(metaJSON))
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, rc)
+}
+
+// FetchFile 是 mesh 文件 fetch-through 的客户端：TOFU 取/校公钥 →
+// 加密请求 → POST 邻居端点 → 返回 meta 与可读流（调用方负责 Close）。
+// meta 从响应头解析，body 是纯 blob，流式转发不占内存。
+func FetchFile(ctx context.Context, baseURL string, id *Identity, known *KnownKeys, fileID string) (protocol.FileMeta, io.ReadCloser, error) {
+	peerPub := known.PeerKey(baseURL)
+	if peerPub == nil {
+		pub, err := fetchPeerPubKey(ctx, baseURL)
+		if err != nil {
+			return protocol.FileMeta{}, nil, err
+		}
+		if err := known.Trust(baseURL, pub); err != nil {
+			return protocol.FileMeta{}, nil, err
+		}
+		peerPub = pub
+	}
+	reqJSON, err := json.Marshal(struct {
+		FileID string `json:"fid"`
+	}{FileID: fileID})
+	if err != nil {
+		return protocol.FileMeta{}, nil, err
+	}
+	env, err := Seal(id, peerPub, reqJSON)
+	if err != nil {
+		return protocol.FileMeta{}, nil, err
+	}
+	envJSON, err := json.Marshal(env)
+	if err != nil {
+		return protocol.FileMeta{}, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+MeshFilePath, bytes.NewReader(envJSON))
+	if err != nil {
+		return protocol.FileMeta{}, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return protocol.FileMeta{}, nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		defer func() { _ = resp.Body.Close() }()
+		return protocol.FileMeta{}, nil, fmt.Errorf("mesh file fetch: status %d", resp.StatusCode)
+	}
+	metaB64 := resp.Header.Get("X-Mesh-File-Meta")
+	if metaB64 == "" {
+		defer func() { _ = resp.Body.Close() }()
+		return protocol.FileMeta{}, nil, errors.New("mesh file fetch: missing meta header")
+	}
+	metaJSON, err := base64.RawURLEncoding.DecodeString(metaB64)
+	if err != nil {
+		defer func() { _ = resp.Body.Close() }()
+		return protocol.FileMeta{}, nil, fmt.Errorf("mesh file fetch: bad meta: %w", err)
+	}
+	var meta protocol.FileMeta
+	if err := json.Unmarshal(metaJSON, &meta); err != nil {
+		defer func() { _ = resp.Body.Close() }()
+		return protocol.FileMeta{}, nil, fmt.Errorf("mesh file fetch: bad meta json: %w", err)
+	}
+	return meta, resp.Body, nil
 }

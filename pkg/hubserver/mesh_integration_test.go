@@ -4,10 +4,14 @@
 package hubserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -581,4 +585,86 @@ func waitPresence(t *testing.T, recvCh <-chan protocol.Frame, timeout time.Durat
 		}
 	}
 	return false
+}
+
+// TestMeshFileFetch：文件全节点同步闭环（M-c 第 4 项，fetch-through）——
+// A 上传文件 → B 上文件消息已同步但本地无 blob → B 的下载端点本地未
+// 命中时经 mesh 从 A 拉取并落本地；再次下载本地直接命中（不再走网络）。
+func TestMeshFileFetch(t *testing.T) {
+	ctx := context.Background()
+	portA, portB := freePort(t), freePort(t)
+	urlA := "http://127.0.0.1:" + strconv.Itoa(portA)
+	urlB := "http://127.0.0.1:" + strconv.Itoa(portB)
+	startMeshHubOn(t, "node-a", []string{urlB}, portA)
+	srvB, _ := startMeshHubOn(t, "node-b", []string{urlA}, portB)
+	waitMeshPeers(t, srvB, 1)
+
+	// A 上通过真实上传端点传一个文件（multipart）。
+	body := "mesh file content 0123456789"
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "hello.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fw.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlA+"/api/files", &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("upload to A: %v", err)
+	}
+	var up struct {
+		FileID string `json:"fid"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&up); err != nil {
+		_ = resp.Body.Close()
+		t.Fatalf("decode upload response: %v", err)
+	}
+	_ = resp.Body.Close()
+	if up.FileID == "" {
+		t.Fatal("upload returned empty file id")
+	}
+
+	// B 上首次下载：本地未命中 → mesh fetch-through → 200 + 内容一致。
+	got := fetchFile(ctx, t, urlB, up.FileID)
+	if got != body {
+		t.Fatalf("first fetch body = %q, want %q", got, body)
+	}
+
+	// B 上再次下载：本地已落盘，直接命中（内容一致即验证通过）。
+	got2 := fetchFile(ctx, t, urlB, up.FileID)
+	if got2 != body {
+		t.Fatalf("second fetch body = %q, want %q", got2, body)
+	}
+}
+
+// fetchFile 走真实 HTTP 下载端点并返回 body 字符串（失败即 t.Fatal）。
+func fetchFile(ctx context.Context, t *testing.T, baseURL, fileID string) string {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/files/"+fileID, nil)
+	if err != nil {
+		t.Fatalf("build download req: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("download %s: %v", fileID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download %s: status %d", fileID, resp.StatusCode)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return string(b)
 }

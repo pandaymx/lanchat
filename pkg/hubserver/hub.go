@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -185,6 +186,12 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("file service init: %w", err)
 	}
 	filesAPI := hubapi.NewFilesAPI(fileSvc)
+	if cfg.Mesh {
+		// M-c 文件全节点同步：下载本地未命中时经 mesh 从邻居 fetch-through。
+		filesAPI.FetchRemote = func(ctx context.Context, fileID string) (protocol.FileMeta, io.ReadCloser, bool) {
+			return srv.fetchFileFromPeers(ctx, fileSvc, fileID)
+		}
+	}
 	exportAPI := hubapi.NewExportAPI(store)
 	tr := wstransport.New().WithPath(cfg.Path)
 	tr = tr.
@@ -237,6 +244,10 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 			WithHandler("POST "+mesh.MeshPresencePath, mesh.PresenceHandler{
 				ID: meshID, Known: meshKnown,
 				Apply: func(pr protocol.Presence) { router.ApplyRemotePresence(ctx, pr) },
+			}).
+			WithHandler("POST "+mesh.MeshFilePath, mesh.FileFetchHandler{
+				ID: meshID, Known: meshKnown,
+				Open: fileSvc.Open,
 			}).
 			WithHandler("GET "+mesh.PubKeyPath, mesh.PubKeyHandler{ID: meshID})
 		logger.Info("mesh endpoint mounted (encrypted)", "path", mesh.MeshPath, "pubkeyPath", mesh.PubKeyPath)
@@ -448,4 +459,39 @@ func (s *Server) pushPresence(ctx context.Context, pr protocol.Presence) error {
 		}
 	}
 	return firstErr
+}
+
+// fetchFileFromPeers 实现 FilesAPI.FetchRemote（M-c 文件全节点同步）：
+// 遍历 mesh 邻居按 FileID 拉取 blob + meta，命中后落本地（此后本地
+// 直接命中，无需再走网络）。找不到文件返回 (_, _, false)，调用方回
+// 404。失败只记日志继续试下一个邻居（文件只在产生它的节点上）。
+func (s *Server) fetchFileFromPeers(ctx context.Context, fileSvc *hubfile.Service, fileID string) (protocol.FileMeta, io.ReadCloser, bool) {
+	s.meshPeersMu.Lock()
+	peers := make([]string, 0, len(s.meshPeers))
+	for u := range s.meshPeers {
+		peers = append(peers, u)
+	}
+	s.meshPeersMu.Unlock()
+	if len(peers) == 0 || s.meshID == nil || s.meshKnown == nil {
+		return protocol.FileMeta{}, nil, false
+	}
+	for _, u := range peers {
+		meta, rc, err := mesh.FetchFile(ctx, u, s.meshID, s.meshKnown, fileID)
+		if err != nil {
+			s.logger.Debug("mesh file fetch miss", "peer", u, "file", fileID, "err", err)
+			continue
+		}
+		// 落本地（幂等）：成功后本地直接命中；失败则本次也拿不到可复用流。
+		if serr := fileSvc.Store(ctx, fileID, meta, rc); serr != nil {
+			_ = rc.Close()
+			s.logger.Warn("mesh file store failed", "file", fileID, "err", serr)
+			continue
+		}
+		_ = rc.Close()
+		if m, lrc, oerr := fileSvc.Open(ctx, fileID); oerr == nil {
+			return m, lrc, true
+		}
+		return protocol.FileMeta{}, nil, false
+	}
+	return protocol.FileMeta{}, nil, false
 }

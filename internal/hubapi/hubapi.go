@@ -11,6 +11,7 @@
 package hubapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/hubfile"
 	"github.com/pandaymx/lanchat/pkg/logging"
+	"github.com/pandaymx/lanchat/pkg/protocol"
 )
 
 // FilesAPI 是文件上传/下载端点（无鉴权，与 WS 现状一致；FileID 是
@@ -28,6 +30,10 @@ import (
 type FilesAPI struct {
 	svc    *hubfile.Service
 	logger *logging.ComponentLogger
+	// FetchRemote 可选（M-c 文件全节点同步）：本地未命中时尝试从 mesh
+	// 邻居按 FileID 拉取（fetch-through）。返回 meta、可读流与是否命中；
+	// 实现方负责把远端 blob 落本地（此后本地直接命中）。
+	FetchRemote func(ctx context.Context, fileID string) (protocol.FileMeta, io.ReadCloser, bool)
 }
 
 // NewFilesAPI 构造文件 API。svc 必填。
@@ -118,6 +124,13 @@ func (a *FilesAPI) handleUpload(w http.ResponseWriter, r *http.Request) {
 func (a *FilesAPI) handleDownload(w http.ResponseWriter, r *http.Request) {
 	fileID := r.PathValue("fileID")
 	meta, rc, err := a.svc.Open(r.Context(), fileID)
+	if errors.Is(err, core.ErrNotFound) && a.FetchRemote != nil {
+		// M-c 文件全节点同步：本地无此文件（远端节点消息同步来的附件），
+		// 经 mesh 从邻居 fetch-through。命中后本地已落盘，返回本地流。
+		if fmeta, frc, ok := a.FetchRemote(r.Context(), fileID); ok {
+			meta, rc, err = fmeta, frc, nil
+		}
+	}
 	if err != nil {
 		if errors.Is(err, core.ErrNotFound) {
 			http.NotFound(w, r)

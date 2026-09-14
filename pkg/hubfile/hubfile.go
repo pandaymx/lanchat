@@ -63,6 +63,43 @@ func New(dir string, store MetaStore, maxSize int64) (*Service, error) {
 // MaxSize 返回单文件大小上限（字节）；<=0 表示不限制。
 func (s *Service) MaxSize() int64 { return s.maxSize }
 
+// Store 按指定 FileID 落盘 blob 并记录元信息（mesh fetch-through 用：
+// 从邻居拉回远端文件后按原 ID 落本地，此后本地直接命中）。
+// 与 Save 的差异：Save 由 hub 生成新 FileID；Store 接受调用方给的 ID
+// （必须是 32 hex，否则拒绝，与 Open 的校验对称）。写半成品失败即删。
+func (s *Service) Store(ctx context.Context, fileID string, m protocol.FileMeta, src io.Reader) error {
+	if !validID(fileID) {
+		return errors.New("hubfile: invalid file id")
+	}
+	if s.maxSize > 0 && m.Size > s.maxSize {
+		return ErrTooLarge
+	}
+	tmp := filepath.Join(s.dir, fileID+".tmp")
+	f, err := os.Create(tmp)
+	if err != nil {
+		return fmt.Errorf("hubfile: create tmp: %w", err)
+	}
+	_, copyErr := io.Copy(f, src)
+	closeErr := f.Close()
+	if copyErr != nil || closeErr != nil {
+		_ = os.Remove(tmp)
+		if copyErr != nil {
+			return fmt.Errorf("hubfile: write blob: %w", copyErr)
+		}
+		return fmt.Errorf("hubfile: close tmp: %w", closeErr)
+	}
+	if err := os.Rename(tmp, filepath.Join(s.dir, fileID)); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("hubfile: commit blob: %w", err)
+	}
+	if err := s.store.SaveFileMeta(ctx, m); err != nil {
+		// 元信息失败不留孤儿 blob（与 Save 的清理语义一致）。
+		_ = os.Remove(filepath.Join(s.dir, fileID))
+		return fmt.Errorf("hubfile: save meta: %w", err)
+	}
+	return nil
+}
+
 // Dir 返回 blob 存储目录（运维查看/清理用）。
 func (s *Service) Dir() string { return s.dir }
 

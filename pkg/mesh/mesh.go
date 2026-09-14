@@ -34,6 +34,16 @@ type SourceStore interface {
 	// 广播闭环用：AppendSyncedMessage 只返回是否新插入，而落库时接收节点
 	// 强制重新分配了 LocalSeq，推送客户端必须用这条权威值而非源节点值。
 	GetSyncedMessage(ctx context.Context, nodeID string, serverSeq uint64) (protocol.StoredMessage, error)
+	// ConvEventNodes 返回本地存储中有会话事件的源节点 ID（远端侧枚举用）。
+	ConvEventNodes(ctx context.Context) ([]string, error)
+	// ConvEventCursor 返回各源节点最大会话事件 seq（请求侧游标快照）。
+	ConvEventCursor(ctx context.Context) (map[string]uint64, error)
+	// ListConvEvents 返回某源节点 after 之后的会话事件（按 seq 升序、
+	// 含幂等坐标，最多 limit 条）。
+	ListConvEvents(ctx context.Context, nodeID string, after uint64, limit int) ([]protocol.ConvEventEntry, error)
+	// StoreSyncedConvEvent 把远端事件按原 (node_id, seq) 坐标落库
+	// （全量复制：每节点存所有源的事件，per-source 游标才能推进）。
+	StoreSyncedConvEvent(ctx context.Context, nodeID string, seq uint64, ev protocol.ConversationEvent) error
 }
 
 // Remote 是同步对端的最小抽象：执行一轮拉取并返回各源节点增量。
@@ -60,6 +70,22 @@ func Respond(ctx context.Context, store SourceStore, req protocol.SyncRequest) (
 	if err != nil {
 		return nil, err
 	}
+	// 会话事件源节点可能独立于消息源节点（群刚建好还没有消息）——
+	// 单独枚举，并去重合并。
+	convNodes, err := store.ConvEventNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool, len(nodes)+len(convNodes))
+	for _, n := range nodes {
+		seen[n] = true
+	}
+	for _, n := range convNodes {
+		if !seen[n] {
+			nodes = append(nodes, n)
+			seen[n] = true
+		}
+	}
 	sort.Strings(nodes) // 确定性输出（测试与日志友好）
 	var out []protocol.SyncResponse
 	for _, node := range nodes {
@@ -68,13 +94,19 @@ func Respond(ctx context.Context, store SourceStore, req protocol.SyncRequest) (
 		if err != nil {
 			return nil, err
 		}
-		if len(msgs) == 0 {
+		convAfter := req.ConvCursor[node]
+		events, err := store.ListConvEvents(ctx, node, convAfter, limit)
+		if err != nil {
+			return nil, err
+		}
+		if len(msgs) == 0 && len(events) == 0 {
 			continue // 该源无增量，不出响应
 		}
 		out = append(out, protocol.SyncResponse{
-			From:     node,
-			Messages: msgs,
-			More:     len(msgs) == limit,
+			From:       node,
+			Messages:   msgs,
+			ConvEvents: events,
+			More:       len(msgs) == limit,
 		})
 	}
 	return out, nil

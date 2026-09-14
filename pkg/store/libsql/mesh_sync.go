@@ -98,6 +98,111 @@ func (s *Store) AppendSyncedMessage(ctx context.Context, m protocol.StoredMessag
 	return affected > 0, nil
 }
 
+// AppendConvEvent 记录一条本节点产生的会话变更事件（建群/邀请/退群），
+// 供 mesh 邻居按 per-source 游标拉取（M-c 群成员一致性）。
+// nodeID 是本节点身份（事件源）；seq 在 (node_id, seq) 内单调分配
+// （MAX+1）。同 (node_id, seq) 重复写入幂等忽略（同步去重）。
+func (s *Store) AppendConvEvent(ctx context.Context, nodeID string, ev protocol.ConversationEvent) error {
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Errorf("libsql: marshal conv event: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO conv_events (node_id, seq, ev_type, payload, created_at)
+		 VALUES (?, (SELECT COALESCE(MAX(seq), 0) + 1 FROM conv_events WHERE node_id = ?), ?, ?, ?)`,
+		nodeID, nodeID, ev.Event, string(payload), nowMillis())
+	if err != nil {
+		return fmt.Errorf("libsql: append conv event %q/%s: %w", nodeID, ev.Event, err)
+	}
+	return nil
+}
+
+// ConvEventNodes 返回本地存储中有会话事件的源节点 ID。
+func (s *Store) ConvEventNodes(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT node_id FROM conv_events ORDER BY node_id`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: conv event nodes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, fmt.Errorf("libsql: scan conv event node: %w", err)
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// ConvEventCursor 返回各源节点最大会话事件 seq（请求侧游标快照）。
+func (s *Store) ConvEventCursor(ctx context.Context) (map[string]uint64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT node_id, MAX(seq) FROM conv_events GROUP BY node_id`)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: conv event cursor: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[string]uint64)
+	for rows.Next() {
+		var n string
+		var mx int64
+		if err := rows.Scan(&n, &mx); err != nil {
+			return nil, fmt.Errorf("libsql: scan conv event cursor: %w", err)
+		}
+		out[n] = uint64(mx)
+	}
+	return out, rows.Err()
+}
+
+// StoreSyncedConvEvent 把一条 mesh 同步来的会话事件按原 (node_id, seq)
+// 坐标落库（全量复制模型：每节点存所有源的事件，游标才能跨节点推进）。
+// 与 AppendConvEvent 的区别：seq 由源节点分配，这里原样保留；
+// 同 (node_id, seq) 重复同步幂等忽略。
+func (s *Store) StoreSyncedConvEvent(ctx context.Context, nodeID string, seq uint64, ev protocol.ConversationEvent) error {
+	payload, err := json.Marshal(ev)
+	if err != nil {
+		return fmt.Errorf("libsql: marshal synced conv event: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO conv_events (node_id, seq, ev_type, payload, created_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		nodeID, int64(seq), ev.Event, string(payload), nowMillis())
+	if err != nil {
+		return fmt.Errorf("libsql: store synced conv event %q/%d: %w", nodeID, seq, err)
+	}
+	return nil
+}
+
+// ListConvEvents 返回某源节点 after 之后的会话事件（按 seq 升序，
+// 含幂等坐标 seq，最多 limit 条）。limit<=0 时返回全部（调用方负责设上限）。
+func (s *Store) ListConvEvents(ctx context.Context, nodeID string, after uint64, limit int) ([]protocol.ConvEventEntry, error) {
+	q := `SELECT seq, payload FROM conv_events WHERE node_id = ? AND seq > ? ORDER BY seq ASC`
+	args := []any{nodeID, int64(after)}
+	if limit > 0 {
+		q += ` LIMIT ?`
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("libsql: list conv events %q/%d: %w", nodeID, after, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []protocol.ConvEventEntry
+	for rows.Next() {
+		var seq int64
+		var payload string
+		if err := rows.Scan(&seq, &payload); err != nil {
+			return nil, fmt.Errorf("libsql: scan conv event: %w", err)
+		}
+		var ev protocol.ConversationEvent
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			return nil, fmt.Errorf("libsql: unmarshal conv event: %w", err)
+		}
+		out = append(out, protocol.ConvEventEntry{Seq: uint64(seq), Event: ev})
+	}
+	return out, rows.Err()
+}
+
 // GetSyncedMessage 按 (node_id, server_seq) 取回落库后的权威消息
 // （含接收节点分配的 LocalSeq），供 mesh_loop 广播闭环使用。
 func (s *Store) GetSyncedMessage(ctx context.Context, nodeID string, serverSeq uint64) (protocol.StoredMessage, error) {

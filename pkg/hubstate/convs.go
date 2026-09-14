@@ -256,6 +256,35 @@ func (c *Convs) Invite(ctx context.Context, convID string, userIDs []string, sto
 	return added, true
 }
 
+// EnsureGroup 确保群存在并把成员并入（幂等合并，M-c 远端事件应用）。
+// 与 Create 不同：不生成新 ID、不排序去重（事件载荷已是权威快照）；
+// 与 Invite 不同：成员并入后不返回"新增"，纯合并语义。
+// 应用顺序要求：left 之外的会话事件（created/joined）都走这里——
+// 跨节点事件顺序不定，union 合并保证不会把其他节点加的成员冲掉。
+func (c *Convs) EnsureGroup(conv protocol.Conversation, members []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	g, ok := c.groups[conv.ID]
+	if !ok {
+		g = &convGroup{conv: conv, members: make(map[string]struct{}, len(members))}
+		c.groups[conv.ID] = g
+	}
+	for _, u := range members {
+		if u != "" {
+			g.members[u] = struct{}{}
+		}
+	}
+}
+
+// RemoveMember 移除某用户出群（幂等，M-c 远端 left 事件应用）。
+func (c *Convs) RemoveMember(convID, userID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if g, ok := c.groups[convID]; ok {
+		delete(g.members, userID)
+	}
+}
+
 // Leave 移除某用户出群（退群）。返回 false 表示会话不存在或用户本就不在。
 func (c *Convs) Leave(ctx context.Context, convID, userID string, store interface {
 	DeleteConversationMember(context.Context, string, string) error

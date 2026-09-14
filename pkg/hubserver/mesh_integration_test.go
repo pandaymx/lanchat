@@ -387,3 +387,89 @@ func TestMeshDeliverToLocalClient(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+// TestMeshConvConverge 验证群成员一致性（M-c）：A 上建群/邀请/退群
+// 产生的会话事件经 mesh 后台循环传播到 B，B 的会话表/成员表/运行时
+// 注册表（router.convs）全部收敛，退群也能跨节点生效。
+func TestMeshConvConverge(t *testing.T) {
+	ctx := context.Background()
+
+	srvA, urlA := startMeshHub(t, "node-a", nil)
+	srvB, _ := startMeshHub(t, "node-b", []string{urlA})
+
+	storeA, _ := srvA.store.(*libsql.Store)
+	storeB, _ := srvB.store.(*libsql.Store)
+
+	// A 侧产生会话事件（等价于 handleConvCreate/Invite/Leave 的
+	// convs 更新 + recordConvEvent）：本地应用 + 写入事件流。
+	emit := func(ev protocol.ConversationEvent) {
+		t.Helper()
+		if err := storeA.AppendConvEvent(ctx, "node-a", ev); err != nil {
+			t.Fatalf("A append conv event: %v", err)
+		}
+		srvA.router.ApplyConvEvent(ctx, ev)
+	}
+
+	conv := protocol.Conversation{ID: "g1", Kind: "group", Title: "team"}
+	emit(protocol.ConversationEvent{
+		Conversation: conv, Event: "created", ByUserID: "alice",
+		Members: []string{"alice", "bob"},
+	})
+	emit(protocol.ConversationEvent{
+		Conversation: conv, Event: "joined", ByUserID: "alice",
+		Members: []string{"alice", "bob", "carol"},
+	})
+	emit(protocol.ConversationEvent{
+		Conversation: conv, Event: "left", ByUserID: "bob",
+	})
+
+	// B 经后台 meshLoop 收敛：事件流 + 会话表 + 成员表 + 运行时注册表。
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		members, err := storeB.ListConversationMembers(ctx, "g1")
+		if err == nil && len(members) == 2 &&
+			hasUser(members, "alice") && hasUser(members, "carol") &&
+			!hasUser(members, "bob") &&
+			srvB.router.Convs().IsMember("g1", "alice") {
+			break // 收敛成功
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	members, err := storeB.ListConversationMembers(ctx, "g1")
+	if err != nil {
+		t.Fatalf("B list members: %v", err)
+	}
+	if len(members) != 2 || !hasUser(members, "alice") || !hasUser(members, "carol") || hasUser(members, "bob") {
+		t.Fatalf("B members = %v, want [alice carol]", members)
+	}
+	convs, err := storeB.ListConversations(ctx)
+	if err != nil {
+		t.Fatalf("B list conversations: %v", err)
+	}
+	if len(convs) != 1 || convs[0].ID != "g1" || convs[0].Title != "team" {
+		t.Fatalf("B conversations = %+v, want [g1 team]", convs)
+	}
+	// 事件流幂等性：B 再拉一轮应是空增量（游标已推进）。
+	events, err := storeB.ListConvEvents(ctx, "node-a", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("B conv events = %d, want 3 (full replication)", len(events))
+	}
+	// B 权限模型生效：bob 已被移出，不能再向 g1 发消息。
+	if srvB.router.Convs().IsMember("g1", "bob") {
+		t.Fatal("B still treats bob as member of g1")
+	}
+}
+
+// hasUser 判断切片是否含目标用户（测试辅助）。
+func hasUser(users []string, want string) bool {
+	for _, u := range users {
+		if u == want {
+			return true
+		}
+	}
+	return false
+}

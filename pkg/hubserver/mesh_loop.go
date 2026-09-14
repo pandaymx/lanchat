@@ -91,12 +91,28 @@ func (s *Server) syncOnce(ctx context.Context, peerURL string, remote mesh.Remot
 	if err != nil {
 		return err
 	}
-	resps, err := remote.Sync(ctx, protocol.SyncRequest{Cursor: cursor, Limit: mesh.DefaultLimit})
+	convCursor, err := s.meshStore.ConvEventCursor(ctx)
 	if err != nil {
 		return err
 	}
+	resps, err := remote.Sync(ctx, protocol.SyncRequest{
+		Cursor: cursor, ConvCursor: convCursor, Limit: mesh.DefaultLimit,
+	})
+	if err != nil {
+		return err
+	}
+	events := 0
 	pulled := 0
 	for _, resp := range resps {
+		// 会话事件（M-c 群成员一致性）：按原 (From, Seq) 坐标落表（全量复制
+		// + 游标推进），再幂等应用并广播给本地在线成员。
+		for _, entry := range resp.ConvEvents {
+			if err := s.meshStore.StoreSyncedConvEvent(ctx, resp.From, entry.Seq, entry.Event); err != nil {
+				return err
+			}
+			s.router.ApplyConvEvent(ctx, entry.Event)
+			events++
+		}
 		for _, m := range resp.Messages {
 			inserted, err := s.meshStore.AppendSyncedMessage(ctx, m)
 			if err != nil {
@@ -117,8 +133,8 @@ func (s *Server) syncOnce(ctx context.Context, peerURL string, remote mesh.Remot
 			s.router.DeliverSynced(ctx, stored)
 		}
 	}
-	if pulled > 0 {
-		s.logger.Info("mesh pulled", "peer", peerURL, "messages", pulled)
+	if pulled > 0 || events > 0 {
+		s.logger.Info("mesh pulled", "peer", peerURL, "messages", pulled, "convEvents", events)
 	}
 	return nil
 }

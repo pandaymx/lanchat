@@ -646,6 +646,62 @@ func (r *Router) sendConvSnapshot(ctx context.Context, p Peer) error {
 	return nil
 }
 
+// recordConvEvent 把本节点产生的会话变更事件写入 conv_events 事件流，
+// 供 mesh 邻居按 per-source 游标同步（M-c 群成员一致性）。
+// 仅 mesh 模式（r.nodeID 非空）且 store 支持时记录；纯单机/内存模式
+// 无 mesh 邻居，事件只走本地 FKConvEvent 广播，无需持久化事件流。
+func (r *Router) recordConvEvent(ctx context.Context, ev protocol.ConversationEvent) {
+	if r.nodeID == "" {
+		return
+	}
+	if rs, ok := r.store.(interface {
+		AppendConvEvent(context.Context, string, protocol.ConversationEvent) error
+	}); ok && rs != nil {
+		if err := rs.AppendConvEvent(ctx, r.nodeID, ev); err != nil {
+			routerLog.Warn("record conv event failed", "conv", ev.Conversation.ID, "event", ev.Event, "err", err)
+		}
+	}
+}
+
+// ApplyConvEvent 应用一条 mesh 同步来的会话事件（M-c 群成员一致性）：
+//   - created/joined：确保群存在 + 成员 union 并入（幂等），落库；
+//   - left：移除成员，落库。
+//
+// 然后广播 FKConvEvent 给本地在线成员——与本地产生的会话变更走同一条
+// 客户端通知路径，四端无需感知消息来源。
+func (r *Router) ApplyConvEvent(ctx context.Context, ev protocol.ConversationEvent) {
+	switch ev.Event {
+	case "created", "joined":
+		if r.store != nil {
+			if err := r.store.SaveConversation(ctx, ev.Conversation); err != nil {
+				routerLog.Warn("apply conv event: save conversation failed",
+					"conv", ev.Conversation.ID, "err", err)
+			}
+			for _, u := range ev.Members {
+				if err := r.store.SaveConversationMember(ctx, ev.Conversation.ID, u); err != nil {
+					routerLog.Warn("apply conv event: save member failed",
+						"conv", ev.Conversation.ID, "user", u, "err", err)
+				}
+			}
+		}
+		r.convs.EnsureGroup(ev.Conversation, ev.Members)
+	case "left":
+		if r.store != nil {
+			if err := r.store.DeleteConversationMember(ctx, ev.Conversation.ID, ev.ByUserID); err != nil {
+				routerLog.Warn("apply conv event: delete member failed",
+					"conv", ev.Conversation.ID, "user", ev.ByUserID, "err", err)
+			}
+		}
+		r.convs.RemoveMember(ev.Conversation.ID, ev.ByUserID)
+	default:
+		routerLog.Warn("apply conv event: unknown event type", "event", ev.Event)
+		return
+	}
+	routerLog.Debug("conv event applied", "conv", ev.Conversation.ID, "event", ev.Event)
+	// 广播给当前成员集合：left 事件自然排除了退出者（与本地退群一致）。
+	r.broadcastConvEvent(ctx, ev, r.convs.Members(ev.Conversation.ID), 0)
+}
+
 // broadcastConvEvent 把一个会话变更事件广播给指定用户集合（M12-A）。
 func (r *Router) broadcastConvEvent(ctx context.Context, ev protocol.ConversationEvent, userIDs []string, exclude uint64) {
 	payload, err := json.Marshal(ev)
@@ -690,6 +746,7 @@ func (r *Router) handleConvCreate(ctx context.Context, peerID uint64, p Peer, f 
 		Conversation: conv, Event: "created", ByUserID: id.UserID,
 		Members: r.convs.Members(conv.ID),
 	}
+	r.recordConvEvent(ctx, ev)
 	r.broadcastConvEvent(ctx, ev, r.convs.Members(conv.ID), 0)
 	return nil
 }
@@ -731,6 +788,7 @@ func (r *Router) handleConvInvite(ctx context.Context, peerID uint64, p Peer, f 
 		Conversation: cv, Event: "joined", ByUserID: id.UserID,
 		Members: r.convs.Members(ref.ConversationID),
 	}
+	r.recordConvEvent(ctx, ev)
 	r.broadcastConvEvent(ctx, ev, r.convs.Members(ref.ConversationID), 0)
 	return nil
 }
@@ -763,6 +821,7 @@ func (r *Router) handleConvLeave(ctx context.Context, peerID uint64, p Peer, f p
 	}
 	cv, _ := r.convs.Get(ref.ConversationID)
 	ev := protocol.ConversationEvent{Conversation: cv, Event: "left", ByUserID: id.UserID}
+	r.recordConvEvent(ctx, ev)
 	r.broadcastConvEvent(ctx, ev, r.convs.Members(ref.ConversationID), 0)
 	return nil
 }

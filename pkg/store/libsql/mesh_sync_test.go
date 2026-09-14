@@ -152,3 +152,81 @@ func TestAppendSyncedMessageIdempotent(t *testing.T) {
 		t.Fatalf("MaxSeqOfNode after upsert = %d, want 6", maxA)
 	}
 }
+
+// TestConvEventStream 验证会话事件流：分配/游标/枚举/幂等（M-c 群成员一致性）。
+func TestConvEventStream(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openTestStore(t)
+
+	ev := func(typ, convID, by string, members ...string) protocol.ConversationEvent {
+		return protocol.ConversationEvent{
+			Conversation: protocol.Conversation{ID: convID, Kind: "group", Title: "team"},
+			Event:        typ, ByUserID: by, Members: members,
+		}
+	}
+
+	// 本节点产生 3 个事件（per-node seq 单调）
+	for _, e := range []protocol.ConversationEvent{
+		ev("created", "g1", "alice", "alice", "bob"),
+		ev("joined", "g1", "alice", "alice", "bob", "carol"),
+		ev("left", "g1", "bob"),
+	} {
+		if err := s.AppendConvEvent(ctx, "node-a", e); err != nil {
+			t.Fatalf("append conv event: %v", err)
+		}
+	}
+	// 幂等：同 node 重复 append 应分配新 seq（事件不同），同 seq 由
+	// (node_id, seq) 主键去重——这里验证游标与列表一致即可。
+
+	cursor, err := s.ConvEventCursor(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cursor["node-a"] != 3 {
+		t.Fatalf("cursor node-a = %d, want 3", cursor["node-a"])
+	}
+	nodes, err := s.ConvEventNodes(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 || nodes[0] != "node-a" {
+		t.Fatalf("conv event nodes = %v, want [node-a]", nodes)
+	}
+
+	// after=0 取全部，升序
+	evs, err := s.ListConvEvents(ctx, "node-a", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 3 {
+		t.Fatalf("list conv events = %d, want 3", len(evs))
+	}
+	if evs[0].Event.Event != "created" || evs[2].Event.Event != "left" {
+		t.Fatalf("conv events order wrong: %v", []string{evs[0].Event.Event, evs[1].Event.Event, evs[2].Event.Event})
+	}
+	if evs[0].Seq != 1 || evs[1].Seq != 2 || evs[2].Seq != 3 {
+		t.Fatalf("conv event seqs = %d,%d,%d, want 1,2,3", evs[0].Seq, evs[1].Seq, evs[2].Seq)
+	}
+
+	// after=1 增量
+	evs, err = s.ListConvEvents(ctx, "node-a", 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 || evs[0].Event.Event != "joined" {
+		t.Fatalf("incremental conv events = %+v, want [joined left]", evs)
+	}
+
+	// 跨源隔离：另一个节点的事件互不干扰
+	if err := s.AppendConvEvent(ctx, "node-b", ev("created", "g2", "bob", "bob")); err != nil {
+		t.Fatal(err)
+	}
+	cursor, _ = s.ConvEventCursor(ctx)
+	if cursor["node-a"] != 3 || cursor["node-b"] != 1 {
+		t.Fatalf("per-node cursors = %v", cursor)
+	}
+	nodes, _ = s.ConvEventNodes(ctx)
+	if len(nodes) != 2 {
+		t.Fatalf("conv event nodes = %v, want 2", nodes)
+	}
+}

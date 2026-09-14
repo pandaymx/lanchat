@@ -778,3 +778,79 @@ func decodeSearchResp(t *testing.T, p *pipePeer) protocol.SearchResponse {
 	}
 	return resp
 }
+
+// TestApplyConvEvent 验证 mesh 同步来的会话事件应用（M-c 群成员一致性）：
+// created/joined 幂等合并成员、left 移除成员，且都广播 FKConvEvent 给
+// 本地在线成员（与本地会话变更走同一条客户端通知路径）。
+func TestApplyConvEvent(t *testing.T) {
+	ctx := context.Background()
+	r, store := setupRouter(t)
+
+	p1, id1 := addPeer(t, r, "dev-1", "u-1")
+	p2, id2 := addPeer(t, r, "dev-2", "u-2")
+
+	conv := protocol.Conversation{ID: "g1", Kind: "group", Title: "team"}
+	created := protocol.ConversationEvent{
+		Conversation: conv, Event: "created", ByUserID: "u-1",
+		Members: []string{"u-1", "u-2"},
+	}
+	r.ApplyConvEvent(ctx, created)
+
+	// 内存态：IsMember 成立
+	if !r.convs.IsMember("g1", "u-1") || !r.convs.IsMember("g1", "u-2") {
+		t.Fatal("created: members not applied to runtime registry")
+	}
+	if r.convs.IsMember("g1", "u-3") {
+		t.Fatal("created: non-member wrongly present")
+	}
+	// 落库
+	hist, err := store.ListConversationMembers(ctx, "g1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 2 {
+		t.Fatalf("persisted members = %v, want 2", hist)
+	}
+	// FKConvEvent 广播给两个在线用户
+	for _, id := range []uint64{id1, id2} {
+		var p *pipePeer
+		if id == id1 {
+			p = p1
+		} else {
+			p = p2
+		}
+		frames := p.framesOf(protocol.FKConvEvent)
+		if len(frames) == 0 {
+			t.Fatalf("peer %d got no FKConvEvent", id)
+		}
+	}
+
+	// joined：union 并入新成员，不冲掉已有
+	joined := protocol.ConversationEvent{
+		Conversation: conv, Event: "joined", ByUserID: "u-1",
+		Members: []string{"u-1", "u-2", "u-3"},
+	}
+	r.ApplyConvEvent(ctx, joined)
+	if !r.convs.IsMember("g1", "u-3") || !r.convs.IsMember("g1", "u-1") {
+		t.Fatal("joined: members not union-merged")
+	}
+
+	// left：移除成员
+	left := protocol.ConversationEvent{
+		Conversation: conv, Event: "left", ByUserID: "u-2",
+	}
+	r.ApplyConvEvent(ctx, left)
+	if r.convs.IsMember("g1", "u-2") {
+		t.Fatal("left: member not removed")
+	}
+	if !r.convs.IsMember("g1", "u-1") || !r.convs.IsMember("g1", "u-3") {
+		t.Fatal("left: other members wrongly removed")
+	}
+	hist, _ = store.ListConversationMembers(ctx, "g1")
+	if len(hist) != 2 {
+		t.Fatalf("persisted members after left = %v, want 2", hist)
+	}
+
+	// 未知事件类型：静默忽略，不 panic
+	r.ApplyConvEvent(ctx, protocol.ConversationEvent{Conversation: conv, Event: "rename"})
+}

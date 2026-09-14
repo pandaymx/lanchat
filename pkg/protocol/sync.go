@@ -8,21 +8,35 @@ package protocol
 
 // SyncRequest 是 mesh 同步请求（FKSyncReq 载荷）。
 //
-// Cursor：源节点 ID → 我已收到的该节点最大 seq（跨会话）。请求方
+// Cursor：源节点 ID → 我已收到的该节点最大消息 seq（跨会话）。请求方
 // 声明「源节点 X 的 seq<=C[X] 的消息我已经有了」，对方只需补发
 // 之后的。缺省/空 map 表示「请给我全部」。
+// ConvCursor 同构：源节点 ID → 我已收到的该节点最大会话事件 seq
+// （M-c 群成员一致性）。两类数据各自独立游标、同一批同步。
 type SyncRequest struct {
 	Cursor map[string]uint64 `json:"c,omitempty"`
+	// ConvCursor 是会话事件（建群/邀请/退群）的 per-source 游标。
+	ConvCursor map[string]uint64 `json:"cc,omitempty"`
 	// Limit 本次响应条数上限；<=0 由接收方取默认。
 	Limit int `json:"n,omitzero"`
 }
 
 // SyncResponse 是同步响应（FKSyncResp 载荷）。
 //
-// From 是这批消息的源节点 ID；Messages 按 ServerSeq 升序；
-// More=true 表示还有后续（调用方以本批最大 seq 更新游标后继续拉）。
+// From 是这批数据的源节点 ID；Messages 按 ServerSeq 升序；
+// ConvEvents 按该源节点的 seq 升序（会话事件，M-c）；More=true 表示
+// 消息还有后续（调用方以本批最大 seq 更新游标后继续拉）。
 type SyncResponse struct {
-	From     string          `json:"from"`
-	Messages []StoredMessage `json:"m,omitempty"`
-	More     bool            `json:"more,omitempty"`
+	From       string           `json:"from"`
+	Messages   []StoredMessage  `json:"m,omitempty"`
+	ConvEvents []ConvEventEntry `json:"ce,omitempty"`
+	More       bool             `json:"more,omitempty"`
+}
+
+// ConvEventEntry 是一条带幂等坐标的会话事件（M-c 群成员一致性）。
+// Seq 是源节点的事件序号；请求侧用本批最大 Seq 推进 per-source 游标，
+// 并把事件按原 (From, Seq) 坐标落库（全量复制模型）。
+type ConvEventEntry struct {
+	Seq   uint64            `json:"s,omitzero"`
+	Event ConversationEvent `json:"e"`
 }

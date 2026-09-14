@@ -115,6 +115,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		// 补发查询的固定模式：WHERE conv_id=? AND local_seq>? ORDER BY local_seq
 		`CREATE INDEX IF NOT EXISTS idx_messages_conv_seq ON messages (conv_id, server_seq)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_local_seq ON messages (local_seq)`,
+		// conv_events（ADR-014 M-c 群成员一致性）：会话变更事件流，
+		// 与消息同构的 (node_id, seq) 幂等坐标 + per-source 游标同步。
+		`CREATE TABLE IF NOT EXISTS conv_events (
+			node_id    TEXT NOT NULL,
+			seq        INTEGER NOT NULL,
+			ev_type    TEXT NOT NULL,
+			payload    TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (node_id, seq)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_conv_events_node ON conv_events (node_id, seq)`,
 
 		`CREATE TABLE IF NOT EXISTS read_cursors (
 			device_id TEXT NOT NULL,

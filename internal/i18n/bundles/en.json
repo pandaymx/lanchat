@@ -87,5 +87,6 @@
   "web.voice.stop": "Send",
   "web.voice.cancel": "Cancel",
   "web.day.today": "Today",
-  "web.day.yesterday": "Yesterday"
+  "web.day.yesterday": "Yesterday",
+  "web.conv.empty": "No messages yet"
 }

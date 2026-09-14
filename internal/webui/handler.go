@@ -294,6 +294,28 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 
 	// M12-A：当前会话来自 URL ?conv=（空 = 大厅）。
 	convID := r.URL.Query().Get("conv")
+	sess.setConv(convID)
+
+	// v3.0 会话列表数据层首屏回填：缺数据层记录的会话补拉最近一条预览。
+	// defer 里不用 r.Context()（请求结束后 context 会 cancel），改用
+	// 请求上下文的拷贝——数据层回填可容忍在响应已写出后继续完成。
+	homeCtx := r.Context()
+	defer func() {
+		backfill := func(cid string) {
+			// 已有数据层记录（运行期事件累积或上次回填）不重复拉历史。
+			if _, at, _ := sess.convMetaOf(cid); at > 0 {
+				return
+			}
+			ms, err := sess.cli.History(homeCtx, cid, 0, 1)
+			if err == nil && len(ms) > 0 {
+				sess.backfillConv(cid, previewBody(&ms[0]), ms[0].CreatedAt)
+			}
+		}
+		for _, s := range sess.cli.Conversations() {
+			backfill(s.Conversation.ID)
+		}
+		backfill("")
+	}()
 
 	msgs, histErr := sess.cli.History(r.Context(), convID, 0, historyLimit)
 	if histErr != nil {
@@ -308,7 +330,7 @@ func (h *Handler) handleHome(w http.ResponseWriter, r *http.Request) {
 	templates.MarkDayDividers(h.cfg.Translator, views)
 
 	// 会话列表与当前会话信息（标题、是否成员）。
-	convs := templates.NewConvViews(sess.cli.Conversations(), convID)
+	convs := templates.NewConvViews(sess.cli.Conversations(), convID, sess.convMetaOf)
 	convTitle, convMember := "Lobby", true
 	for _, s := range sess.cli.Conversations() {
 		if s.Conversation.ID == convID {
@@ -799,5 +821,29 @@ func (h *Handler) serveSSE(ctx context.Context, w http.ResponseWriter, flusher h
 			}
 			flusher.Flush()
 		}
+	}
+}
+
+// previewBody 从消息构造会话列表预览正文：纯文本取原文；文件/语音/
+// 图片/视频等空 body 消息给占位文案（[图片]/[文件]/[语音]/[视频]）。
+func previewBody(m *protocol.StoredMessage) string {
+	if m == nil {
+		return ""
+	}
+	if m.Body != "" {
+		return m.Body
+	}
+	if m.File == nil {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(m.File.Mime, "audio/"):
+		return "[语音]"
+	case strings.HasPrefix(m.File.Mime, "video/"):
+		return "[视频]"
+	case m.File.Mime != "" && m.File.Mime != "application/octet-stream":
+		return "[图片]"
+	default:
+		return "[文件]"
 	}
 }

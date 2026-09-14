@@ -273,6 +273,7 @@ func (m *Manager) create(ctx context.Context, cookie string) (*Session, error) {
 		store:     res.store,
 		lastSeen:  time.Now(),
 		writers:   make(map[*sseWriter]struct{}),
+		convs:     make(map[string]*convMeta),
 		ctx:       sessCtx,
 		cancel:    sessCancel,
 		onMessage: m.cfg.OnMessage,
@@ -378,6 +379,10 @@ type Session struct {
 	writers      map[*sseWriter]struct{}
 	shutdownOnce sync.Once
 
+	// convMetaMu 保护 convs 数据层（事件泵 goroutine 与 HTTP handler 并发）。
+	convMetaMu sync.Mutex
+	convs      map[string]*convMeta
+
 	// ctx / cancel 是 Session 级生命周期 ctx：拨号与 pump 都用它
 	// （fake transport 的 Router 读循环绑定 Dial ctx）。shutdown 时 cancel。
 	ctx    context.Context
@@ -391,6 +396,14 @@ type Session struct {
 	tr templates.Translator
 
 	logger *logging.ComponentLogger
+}
+
+// convMeta 是会话列表数据层（v3.0）的一条记录：最后消息预览/时间/未读数。
+// 由事件泵在运行期累积；首屏缺省时 handler 用历史回填。
+type convMeta struct {
+	lastBody string
+	lastAtMs int64
+	unread   int
 }
 
 // touch 刷新最后活动时间（每个 HTTP 请求 / SSE 连接建立时调）。
@@ -427,6 +440,71 @@ func (s *Session) markDead() {
 	s.mu.Lock()
 	s.dead = true
 	s.mu.Unlock()
+}
+
+// touchConv 记录一条消息对会话列表数据层的贡献：更新最后消息预览与
+// 时间；消息不属于当前会话时未读 +1（当前会话即时可见，不计角标）。
+// 预览是原始 body（文件/语音等空 body 消息由上层给占位文案）。
+func (s *Session) touchConv(convID, body string, atMs int64) {
+	s.convMetaMu.Lock()
+	m := s.convs[convID]
+	if m == nil {
+		m = &convMeta{}
+		s.convs[convID] = m
+	}
+	m.lastBody = body
+	m.lastAtMs = atMs
+	if convID != s.activeConv() {
+		m.unread++
+	}
+	s.convMetaMu.Unlock()
+}
+
+// setConv 切换当前会话（handleHome 每次进入会话时调）：更新会话身份
+// 供事件泵判定未读归属，并清零新会话的未读（看到即已读）。
+func (s *Session) setConv(convID string) {
+	s.mu.Lock()
+	s.convID = convID
+	s.mu.Unlock()
+	s.clearUnread(convID)
+}
+
+// activeConv 返回当前会话（事件泵判定未读归属用）。
+func (s *Session) activeConv() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.convID
+}
+
+// clearUnread 清零某会话未读数（进入会话时调用：看到即已读）。
+func (s *Session) clearUnread(convID string) {
+	s.convMetaMu.Lock()
+	if m := s.convs[convID]; m != nil {
+		m.unread = 0
+	}
+	s.convMetaMu.Unlock()
+}
+
+// backfillConv 首屏历史回填：该会话还没有数据层记录时用最近一条消息
+// 填充预览/时间（未读从 0 计——首次进入会话即已读）。返回是否回填。
+func (s *Session) backfillConv(convID, body string, atMs int64) bool {
+	s.convMetaMu.Lock()
+	defer s.convMetaMu.Unlock()
+	if _, ok := s.convs[convID]; ok {
+		return false
+	}
+	s.convs[convID] = &convMeta{lastBody: body, lastAtMs: atMs}
+	return true
+}
+
+// convMetaOf 是 ConvMetaFn 的实现：返回某会话的数据层三要素。
+func (s *Session) convMetaOf(convID string) (string, int64, int) {
+	s.convMetaMu.Lock()
+	defer s.convMetaMu.Unlock()
+	if m := s.convs[convID]; m != nil {
+		return m.lastBody, m.lastAtMs, m.unread
+	}
+	return "", 0, 0
 }
 
 // shutdown 释放底层连接。顺序铁律（同 DialClient 注释）：先 cli.Close()

@@ -2,6 +2,7 @@
 package templates
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -109,5 +110,42 @@ func TestVoiceWaveHeights(t *testing.T) {
 		if hs[i] != again[i] {
 			t.Fatalf("not deterministic at %d", i)
 		}
+	}
+}
+
+// TestNewConvViewsMeta：v3.0 会话列表数据层——metaFn 填充最后消息预览/
+// 时间/未读；大厅与群都走数据层；预览截断与时间格式化符合预期。
+func TestNewConvViewsMeta(t *testing.T) {
+	snaps := []protocol.ConversationSnapshot{
+		{Conversation: protocol.Conversation{ID: "g1", Kind: "group", Title: "群一"}, Members: []string{"a", "b"}},
+	}
+	now := time.Now()
+	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location()).AddDate(0, 0, -1)
+	meta := map[string][3]any{
+		"":   {"大厅最后一条", now.UnixMilli(), 3},
+		"g1": {"这条消息比较长，" + strings.Repeat("长", 30), yesterday.UnixMilli(), 1},
+	}
+	fn := func(id string) (string, int64, int) {
+		m := meta[id]
+		return m[0].(string), m[1].(int64), m[2].(int)
+	}
+	views := NewConvViews(snaps, "", fn)
+	if len(views) != 2 {
+		t.Fatalf("views = %d, want 2", len(views))
+	}
+	if views[0].Unread != 3 || views[0].LastPreview != "大厅最后一条" {
+		t.Fatalf("lobby meta wrong: %+v", views[0])
+	}
+	if views[0].LastAtText == "" {
+		t.Fatal("lobby time should be formatted (today)")
+	}
+	if views[1].Unread != 1 || views[1].LastPreview == "" {
+		t.Fatalf("group meta wrong: %+v", views[1])
+	}
+	if views[1].LastAtText != "昨天" {
+		t.Fatalf("group time = %q, want 昨天", views[1].LastAtText)
+	}
+	if len([]rune(views[1].LastPreview)) > 42 {
+		t.Fatalf("preview not clipped: %q", views[1].LastPreview)
 	}
 }

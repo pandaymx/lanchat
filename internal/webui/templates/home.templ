@@ -248,6 +248,18 @@ func onlineText(tr Translator, n int) string {
 	return Tf(tr, "web.conv.online", strconv.Itoa(n))
 }
 
+// convPreview 是会话列表最后消息行：有预览显示预览，否则显示成员数
+// 语义的占位（大厅无成员数时显示空行占位）。
+func convPreview(tr Translator, c ConvView) string {
+	if c.LastPreview != "" {
+		return c.LastPreview
+	}
+	if c.Kind == "group" {
+		return Tf(tr, "web.conv.members", strconv.Itoa(c.MemberCount))
+	}
+	return T(tr, "web.conv.empty")
+}
+
 // ConvList 是会话列表片段（M12-A）：首屏服务端渲染（activeID 命中项加
 // active class）+ SSE conversations 帧整段 innerHTML swap 进 #conv-list
 // （SSE 时 activeID 传 ""，高亮由 app.js 按当前 ?conv= 补）。
@@ -262,11 +274,20 @@ templ ConvList(tr Translator, convs []ConvView, activeID string) {
 					<a href={ ConvHref(c.ID) } class="conv-link">
 						<span class="avatar conv-avatar" style={ avatarBG(convTitle(c)) }>{ AvatarChar(convTitle(c)) }</span>
 						<div class="conv-info">
-							<div class="conv-name">{ convTitle(c) }</div>
+							<div class="conv-name-row">
+								<div class="conv-name">{ convTitle(c) }</div>
+								if c.LastAtText != "" {
+									<div class="conv-time">{ c.LastAtText }</div>
+								}
+							</div>
+							<div class="conv-last">{ convPreview(tr, c) }</div>
 							if c.Kind == "group" {
 								<div class="conv-meta">{ Tf(tr, "web.conv.members", strconv.Itoa(c.MemberCount)) }</div>
 							}
 						</div>
+						if c.Unread > 0 {
+							<span class="unread-badge">{ strconv.Itoa(c.Unread) }</span>
+						}
 					</a>
 				</li>
 			} else {
@@ -274,11 +295,20 @@ templ ConvList(tr Translator, convs []ConvView, activeID string) {
 					<a href={ ConvHref(c.ID) } class="conv-link">
 						<span class="avatar conv-avatar" style={ avatarBG(convTitle(c)) }>{ AvatarChar(convTitle(c)) }</span>
 						<div class="conv-info">
-							<div class="conv-name">{ convTitle(c) }</div>
+							<div class="conv-name-row">
+								<div class="conv-name">{ convTitle(c) }</div>
+								if c.LastAtText != "" {
+									<div class="conv-time">{ c.LastAtText }</div>
+								}
+							</div>
+							<div class="conv-last">{ convPreview(tr, c) }</div>
 							if c.Kind == "group" {
 								<div class="conv-meta">{ Tf(tr, "web.conv.members", strconv.Itoa(c.MemberCount)) }</div>
 							}
 						</div>
+						if c.Unread > 0 {
+							<span class="unread-badge">{ strconv.Itoa(c.Unread) }</span>
+						}
 					</a>
 				</li>
 			}

@@ -139,8 +139,12 @@ func (s *Session) startPump() {
 				s.logger.Info("event pump stopped: hub connection lost", "cookie", s.id)
 				return
 			case e := <-sub.C():
-				if e.Kind == core.EventMessage && s.onMessage != nil && e.Message != nil {
-					s.onMessage(e.Message)
+				if e.Kind == core.EventMessage && e.Message != nil {
+					// v3.0 会话列表数据层：运行期持续更新最后消息与未读。
+					s.touchConv(e.Message.ConversationID, previewBody(e.Message), e.Message.CreatedAt)
+					if s.onMessage != nil {
+						s.onMessage(e.Message)
+					}
 				}
 				seq, frame, ok := s.sseFrame(e)
 				if !ok {
@@ -310,7 +314,7 @@ func (s *Session) sseFrameConv(e core.Event, convID string) (uint64, []byte, boo
 		// convs 快照已更新（dispatch 先 apply 后发布事件），取全量快照
 		// 整段重渲 #conv-list 片段，广播给所有 writer（全局帧）。
 		// 高亮由浏览器按当前 ?conv= 补（app.js），服务端不带 active。
-		convs := templates.NewConvViews(s.cli.Conversations(), "")
+		convs := templates.NewConvViews(s.cli.Conversations(), "", s.convMetaOf)
 		var buf bytes.Buffer
 		if err := templates.ConvList(s.tr, convs, "").Render(s.ctx, &buf); err != nil {
 			s.logger.Error("render conversations frame failed", "err", err)

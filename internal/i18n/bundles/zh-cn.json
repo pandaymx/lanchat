@@ -87,5 +87,6 @@
   "web.voice.stop": "发送",
   "web.voice.cancel": "取消",
   "web.day.today": "今天",
-  "web.day.yesterday": "昨天"
+  "web.day.yesterday": "昨天",
+  "web.conv.empty": "暂无消息"
 }

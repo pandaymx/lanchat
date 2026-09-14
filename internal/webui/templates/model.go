@@ -327,11 +327,23 @@ type ConvView struct {
 	Active bool
 	// MemberCount 是群成员数（大厅为 0，不展示）。
 	MemberCount int
+	// LastPreview 是最后一条消息的正文预览（v3.0 会话列表数据层）；
+	// LastAtText 是最后消息时间的会话列表格式；Unread 是未读条数。
+	// 大厅/群各自独立维护，首屏缺省时由调用方补（历史回填）。
+	LastPreview string
+	LastAtText  string
+	Unread      int
 }
+
+// ConvMetaFn 是会话列表数据层（v3.0）的读取回调：按会话 ID 返回
+// 最后消息预览（原始 body）、最后消息时间（Unix 毫秒）与未读数。
+// 由 Session 注入（运行期事件累积 + 首屏历史回填）。
+type ConvMetaFn func(convID string) (lastBody string, lastAtMs int64, unread int)
 
 // NewConvViews 把协议会话快照转成视图模型，大厅排第一、其余按 ID 升序
 // （handler 已保证传入顺序）；activeConvID 命中的条目标记 Active。
-func NewConvViews(snaps []protocol.ConversationSnapshot, activeConvID string) []ConvView {
+// metaFn 非 nil 时填充会话列表数据层（最后消息预览/时间/未读角标）。
+func NewConvViews(snaps []protocol.ConversationSnapshot, activeConvID string, metaFn ConvMetaFn) []ConvView {
 	out := make([]ConvView, 0, len(snaps)+1)
 	// 合成大厅（协议层不落库，客户端恒可见）。
 	out = append(out, ConvView{ID: "", Title: "Lobby", Kind: "lobby", Active: activeConvID == ""})
@@ -339,15 +351,59 @@ func NewConvViews(snaps []protocol.ConversationSnapshot, activeConvID string) []
 		if s.Conversation.ID == "" {
 			continue // 防御：不重复渲染大厅
 		}
-		out = append(out, ConvView{
+		cv := ConvView{
 			ID:          s.Conversation.ID,
 			Title:       s.Conversation.Title,
 			Kind:        s.Conversation.Kind,
 			Active:      s.Conversation.ID == activeConvID,
 			MemberCount: len(s.Members),
-		})
+		}
+		if metaFn != nil {
+			body, atMs, unread := metaFn(s.Conversation.ID)
+			cv.LastPreview = ClipPreview(body)
+			cv.LastAtText = FormatConvTime(atMs)
+			cv.Unread = unread
+		}
+		out = append(out, cv)
+	}
+	// 大厅也有数据层（首屏补最后一条；运行期持续更新）。
+	if metaFn != nil {
+		body, atMs, unread := metaFn("")
+		out[0].LastPreview = ClipPreview(body)
+		out[0].LastAtText = FormatConvTime(atMs)
+		out[0].Unread = unread
 	}
 	return out
+}
+
+// ClipPreview 把最后消息正文压成会话列表预览：换行→空格、去首尾空白、
+// 截断到 42 字（文件/语音等空 body 消息由上层给占位文案）。
+func ClipPreview(body string) string {
+	body = strings.Join(strings.Fields(body), " ")
+	r := []rune(body)
+	if len(r) > 42 {
+		return string(r[:42]) + "…"
+	}
+	return body
+}
+
+// FormatConvTime 是会话列表时间列格式（v3.0）：
+// 今天 → HH:mm；昨天 → 昨天；更早 → M月d日。ms<=0 返回空串。
+func FormatConvTime(ms int64) string {
+	if ms <= 0 {
+		return ""
+	}
+	t := time.UnixMilli(ms).Local()
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if t.After(today) {
+		return t.Format("15:04")
+	}
+	yesterday := today.AddDate(0, 0, -1)
+	if t.After(yesterday) {
+		return "昨天"
+	}
+	return t.Format("1月2日")
 }
 
 // PeerView 是在线成员列表中一行的视图模型（M7.2）。

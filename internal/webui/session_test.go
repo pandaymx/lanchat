@@ -653,3 +653,45 @@ func TestManager_CloseAll_ShutsDownAll(t *testing.T) {
 		}
 	}
 }
+
+// TestConvDataLayer：v3.0 会话列表数据层——touchConv 更新预览/时间并按
+// 当前会话判定未读归属；setConv 切换会话清零；backfillConv 只补缺省；
+// convMetaOf 读回三要素。
+func TestConvDataLayer(t *testing.T) {
+	sess := &Session{convs: make(map[string]*convMeta)}
+
+	// 默认当前会话是大厅（convID 空串）：其它会话消息计未读。
+	sess.touchConv("g9", "hi", 1000)
+	b, at, u := sess.convMetaOf("g9")
+	if b != "hi" || at != 1000 || u != 1 {
+		t.Fatalf("g9 meta = (%q,%d,%d), want (hi,1000,1)", b, at, u)
+	}
+
+	// 进入大厅（setConv 清未读），此时大厅消息不计角标、群消息计。
+	sess.setConv("")
+	sess.touchConv("", "hi2", 2000)
+	sess.touchConv("g1", "群消息", 3000)
+	if _, _, u := sess.convMetaOf(""); u != 0 {
+		t.Fatalf("lobby unread = %d, want 0 (active)", u)
+	}
+	if _, _, u := sess.convMetaOf("g1"); u != 1 {
+		t.Fatalf("g1 unread = %d, want 1", u)
+	}
+
+	// 切到 g1：g1 未读清零。
+	sess.setConv("g1")
+	if _, _, u := sess.convMetaOf("g1"); u != 0 {
+		t.Fatalf("g1 unread after switch = %d, want 0", u)
+	}
+
+	// backfillConv：已有记录不覆盖，缺省才补。
+	if sess.backfillConv("g2", "old", 5) != true {
+		t.Fatal("g2 should be backfilled")
+	}
+	if sess.backfillConv("g2", "new", 6) != false {
+		t.Fatal("g2 backfill should be skipped once present")
+	}
+	if _, at, _ := sess.convMetaOf("g2"); at != 5 {
+		t.Fatalf("g2 at = %d, want 5 (first backfill kept)", at)
+	}
+}

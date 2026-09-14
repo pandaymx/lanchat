@@ -163,6 +163,29 @@ body {
   text-overflow: ellipsis;
 }
 
+.conv-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conv-time {
+  flex: none;
+  font-size: 10px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.conv-last {
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
 .peer-you {
   font-size: 10px;
   color: var(--fg-dim);
@@ -1153,6 +1176,29 @@ html[data-accent="pink"]   { --accent: #ff4d8d; --bubble-self: #ff4d8d; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.conv-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conv-time {
+  flex: none;
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.conv-last {
+  font-size: 12px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
 }
 
 /* 未读角标（QQ 红胶囊；数据就绪后由模板渲染） */

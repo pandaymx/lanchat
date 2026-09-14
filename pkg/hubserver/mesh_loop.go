@@ -58,6 +58,11 @@ func (s *Server) meshLoop(ctx context.Context, peerURLs []string, id *mesh.Ident
 		return
 	}
 
+	// 同步 s.meshPeers 给 presence 即时推送（router goroutine 读）。
+	s.meshPeersMu.Lock()
+	s.meshPeers = peers
+	s.meshPeersMu.Unlock()
+
 	s.logger.Info("mesh loop started", "peers", len(peers), "node", s.nodeID)
 	ticker := time.NewTicker(meshSyncInterval)
 	defer ticker.Stop()
@@ -96,14 +101,25 @@ func (s *Server) syncOnce(ctx context.Context, peerURL string, remote mesh.Remot
 		return err
 	}
 	resps, err := remote.Sync(ctx, protocol.SyncRequest{
-		Cursor: cursor, ConvCursor: convCursor, Limit: mesh.DefaultLimit,
+		Cursor: cursor, ConvCursor: convCursor,
+		// M-c presence 广播：每次同步带上本节点在线用户快照（覆盖式）。
+		Presence: s.router.PresenceSnapshot(),
+		Limit:    mesh.DefaultLimit,
 	})
 	if err != nil {
 		return err
 	}
 	events := 0
 	pulled := 0
+	// 应用远端节点的在线用户快照：广播 FKPresence 给本地客户端。
+	// 与消息/事件同步同批返回，非增量（覆盖式，presence 是易失状态）。
 	for _, resp := range resps {
+		if len(resp.Presence) > 0 {
+			for _, pr := range resp.Presence {
+				s.router.ApplyRemotePresence(ctx, pr)
+			}
+		}
+
 		// 会话事件（M-c 群成员一致性）：按原 (From, Seq) 坐标落表（全量复制
 		// + 游标推进），再幂等应用并广播给本地在线成员。
 		for _, entry := range resp.ConvEvents {

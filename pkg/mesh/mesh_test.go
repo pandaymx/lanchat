@@ -30,7 +30,7 @@ type stubRemote struct {
 }
 
 func (r stubRemote) Sync(ctx context.Context, req protocol.SyncRequest) ([]protocol.SyncResponse, error) {
-	return Respond(ctx, r.store, req)
+	return Respond(ctx, r.store, nil, req)
 }
 
 func localMsg(nodeID string, seq uint64, conv, id, body string) protocol.StoredMessage {
@@ -149,7 +149,7 @@ func TestRespondBatchLimit(t *testing.T) {
 	}
 
 	// 单批上限 3：第一批 More=true。
-	resps, err := Respond(ctx, a, protocol.SyncRequest{Limit: 3})
+	resps, err := Respond(ctx, a, nil, protocol.SyncRequest{Limit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestRespondBatchLimit(t *testing.T) {
 
 	// 续拉：游标 = 第一批最大 seq。
 	cursor := map[string]uint64{"node-a": resps[0].Messages[2].ServerSeq}
-	resps2, err := Respond(ctx, a, protocol.SyncRequest{Cursor: cursor, Limit: 3})
+	resps2, err := Respond(ctx, a, nil, protocol.SyncRequest{Cursor: cursor, Limit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -473,3 +473,112 @@ func hasUser(users []string, want string) bool {
 	}
 	return false
 }
+
+// waitMeshPeers 轮询某 hub 的 meshPeers 填满 n 个邻居
+// （meshLoop 启动后才会填充；presence sink 依赖它，测试需先等）。
+func waitMeshPeers(t *testing.T, srv *Server, n int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		srv.meshPeersMu.Lock()
+		c := len(srv.meshPeers)
+		srv.meshPeersMu.Unlock()
+		if c >= n {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("mesh peers not populated: got %d, want %d", func() int {
+		srv.meshPeersMu.Lock()
+		defer srv.meshPeersMu.Unlock()
+		return len(srv.meshPeers)
+	}(), n)
+}
+
+// TestMeshPresenceConverge：presence 广播闭环（M-c 第 3 项）——
+// A 上用户上线/下线，经 meshSink 即时推送邻居 B，B 应用远端 presence
+// 并广播 FKPresence 给本地客户端（远端用户状态 = 一条普通 presence 帧，
+// 客户端无需感知消息来源）。
+func TestMeshPresenceConverge(t *testing.T) {
+	ctx := context.Background()
+	portA, portB := freePort(t), freePort(t)
+	urlA := "http://127.0.0.1:" + strconv.Itoa(portA)
+	urlB := "http://127.0.0.1:" + strconv.Itoa(portB)
+	srvA, _ := startMeshHubOn(t, "node-a", []string{urlB}, portA)
+	_, _ = startMeshHubOn(t, "node-b", []string{urlA}, portB)
+
+	// A 的 meshLoop 先把 peers 填进 s.meshPeers，sink 才会真正推送。
+	waitMeshPeers(t, srvA, 1)
+
+	// B 上 bob 连接并握手。
+	tr := wstransport.New().WithClientTrust(func([]byte) error { return nil })
+	connB, err := tr.Dial(ctx, urlB, protocol.Hello{DeviceID: "dev-b"})
+	if err != nil {
+		t.Fatalf("dial B hub: %v", err)
+	}
+	defer func() { _ = connB.Close() }()
+	helloB, _ := json.Marshal(protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "dev-b",
+		UserID:          "bob",
+	})
+	if err := connB.Send(ctx, protocol.Frame{Kind: protocol.FKHello, Payload: helloB}); err != nil {
+		t.Fatalf("send hello: %v", err)
+	}
+	recvCh := make(chan protocol.Frame, 64)
+	go func() {
+		for {
+			f, err := connB.Recv(ctx)
+			if err != nil {
+				return
+			}
+			recvCh <- f
+		}
+	}()
+
+	// A 上 alice 上线：Hello 握手 → A 广播 online(alice) + sink 即时推 B。
+	connA, err := tr.Dial(ctx, urlA, protocol.Hello{DeviceID: "dev-a"})
+	if err != nil {
+		t.Fatalf("dial A hub: %v", err)
+	}
+	helloA, _ := json.Marshal(protocol.Hello{
+		ProtocolVersion: protocol.ProtocolVersion,
+		DeviceID:        "dev-a",
+		UserID:          "alice",
+	})
+	if err := connA.Send(ctx, protocol.Frame{Kind: protocol.FKHello, Payload: helloA}); err != nil {
+		t.Fatalf("send hello: %v", err)
+	}
+
+	// B 的 bob 应收到 alice 的 online presence（即时推送，等 3s 足够）。
+	if !waitPresence(t, recvCh, 3*time.Second, "alice", true) {
+		t.Fatal("B client did not receive online(alice) via mesh presence push")
+	}
+
+	// alice 断开 → A 广播 offline(alice) + sink 即时推 B → bob 收到。
+	_ = connA.Close()
+	if !waitPresence(t, recvCh, 3*time.Second, "alice", false) {
+		t.Fatal("B client did not receive offline(alice) via mesh presence push")
+	}
+}
+
+// waitPresence 从 recvCh 等一条目标 user 的 FKPresence（online 匹配）。
+// 其余帧（初始快照、bob 自己的 presence 等）直接消费。
+func waitPresence(t *testing.T, recvCh <-chan protocol.Frame, timeout time.Duration, user string, online bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case f := <-recvCh:
+			if f.Kind != protocol.FKPresence {
+				continue
+			}
+			var pr protocol.Presence
+			if err := json.Unmarshal(f.Payload, &pr); err == nil && pr.UserID == user && pr.Online == online {
+				return true
+			}
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	return false
+}

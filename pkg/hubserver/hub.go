@@ -23,6 +23,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pandaymx/lanchat/internal/discovery"
@@ -100,6 +101,10 @@ type Server struct {
 	meshStore mesh.SourceStore
 	meshID    *mesh.Identity
 	meshKnown *mesh.KnownKeys
+	// meshPeers 是当前 mesh 邻居 URL 集合（meshLoop 填充，presence 即时
+	// 推送用；mutex 保护，因为 sink 回调跑在 router 的 goroutine 上）。
+	meshPeersMu sync.Mutex
+	meshPeers   map[string]bool
 }
 
 // Start 库内启动 hub。ctx 取消或 Close 触发优雅关停；
@@ -111,6 +116,9 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		logger = logging.New("hub")
 	}
 
+	// srv 在 router 之后才完成构造（Server 持有 router），presence sink
+	// 用指针间接引用，避免循环依赖（router ← sink → srv）。
+	var srv *Server
 	// 数据目录：-db / -files 未指定时落到平台可写目录（Windows
 	// %LOCALAPPDATA%、Linux XDG、macOS Application Support），避免
 	// 安装在只读目录（如 C:\Program Files\...）时无法写库和文件。
@@ -149,6 +157,13 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		StartSeq:        startSeq,
 		MaxHistoryLimit: cfg.MaxHistory,
 		NodeID:          nodeID,
+		// M-c presence 广播：本地上下线时即时推给 mesh 邻居。
+		MeshPresenceSink: func(ctx context.Context, pr protocol.Presence) error {
+			if srv == nil {
+				return nil
+			}
+			return srv.pushPresence(ctx, pr)
+		},
 	})
 	// 持久化模式下把最近消息灌回内存补发缓冲。
 	if ls, ok := store.(*libsql.Store); ok {
@@ -206,8 +221,23 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 			_ = store.Close()
 			return nil, fmt.Errorf("mesh known keys: %w", err)
 		}
+		applyRemote := func(ps []protocol.Presence) {
+			for i := range ps {
+				router.ApplyRemotePresence(ctx, ps[i])
+			}
+		}
 		tr = tr.
-			WithHandler("POST "+mesh.MeshPath, mesh.SyncHandler{Store: meshStore, ID: meshID, Known: meshKnown}).
+			WithHandler("POST "+mesh.MeshPath, mesh.SyncHandler{
+				Store:         meshStore,
+				ID:            meshID,
+				Known:         meshKnown,
+				ApplyPresence: applyRemote,
+				Presence:      router.PresenceSnapshot,
+			}).
+			WithHandler("POST "+mesh.MeshPresencePath, mesh.PresenceHandler{
+				ID: meshID, Known: meshKnown,
+				Apply: func(pr protocol.Presence) { router.ApplyRemotePresence(ctx, pr) },
+			}).
 			WithHandler("GET "+mesh.PubKeyPath, mesh.PubKeyHandler{ID: meshID})
 		logger.Info("mesh endpoint mounted (encrypted)", "path", mesh.MeshPath, "pubkeyPath", mesh.PubKeyPath)
 	}
@@ -252,6 +282,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		meshID:    meshID,
 		meshKnown: meshKnown,
 	}
+	srv = s
 
 	// 起监听；ctx 取消 → 优雅关停（含 mDNS 停止）。
 	if cfg.Mesh {
@@ -393,4 +424,28 @@ func waitForListener(ctx context.Context, addr string, timeout time.Duration) er
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+// pushPresence 把本地 presence 变化即时推给所有 mesh 邻居（M-c）。
+// 邻居不在线/握手失败只记日志：presence 是易失状态，周期同步会纠偏。
+func (s *Server) pushPresence(ctx context.Context, pr protocol.Presence) error {
+	s.meshPeersMu.Lock()
+	peers := make([]string, 0, len(s.meshPeers))
+	for u := range s.meshPeers {
+		peers = append(peers, u)
+	}
+	s.meshPeersMu.Unlock()
+	if len(peers) == 0 || s.meshID == nil || s.meshKnown == nil {
+		return nil
+	}
+	var firstErr error
+	for _, u := range peers {
+		if err := mesh.PushPresence(ctx, u, s.meshID, s.meshKnown, pr); err != nil {
+			s.logger.Warn("mesh presence push failed", "peer", u, "err", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
 }

@@ -30,6 +30,10 @@ import (
 // MeshPath 是 mesh 同步端点的路由（挂在与 WS 同端口的 mux 上）。
 const MeshPath = "/api/v1/mesh/sync"
 
+// MeshPresencePath 是 mesh presence 即时推送端点（M-c）：本地用户
+// 上线/下线时把单条 presence 变化推给邻居，不等 5s 同步周期。
+const MeshPresencePath = "/api/v1/mesh/presence"
+
 // PubKeyPath 是 mesh 公钥端点（TOFU 首连取公钥）。
 const PubKeyPath = "/api/v1/mesh/pubkey"
 
@@ -46,6 +50,13 @@ type SyncHandler struct {
 	ID *Identity
 	// Known 是 TOFU 公钥表；nil 时跳过记录（纯内存模式）。
 	Known *KnownKeys
+	// ApplyPresence 应用请求方节点随同步带来的在线用户快照（M-c）。
+	// 由 hubserver 注入 router.ApplyRemotePresence（广播给本地客户端）。
+	// nil 时静默忽略。
+	ApplyPresence func([]protocol.Presence)
+	// Presence 返回本节点当前在线用户快照，随响应返回给请求方。
+	// nil 时响应不带 presence 数据。
+	Presence func() []protocol.Presence
 }
 
 // ServeHTTP 实现 http.Handler（method+path 由 mux 匹配）。
@@ -84,7 +95,11 @@ func (h SyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad sync request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	resps, err := Respond(r.Context(), h.Store, req)
+	// M-c presence 广播：应用请求方节点的在线用户快照（周期同步路径）。
+	if h.ApplyPresence != nil && len(req.Presence) > 0 {
+		h.ApplyPresence(req.Presence)
+	}
+	resps, err := Respond(r.Context(), h.Store, h.Presence, req)
 	if err != nil {
 		http.Error(w, "sync failed: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -211,4 +226,98 @@ func fetchPeerPubKey(ctx context.Context, baseURL string) ([]byte, error) {
 		return nil, fmt.Errorf("mesh: invalid peer pubkey from %s", baseURL)
 	}
 	return pub, nil
+}
+
+// PresenceHandler 是 mesh presence 即时推送的服务端（POST，Envelope 加密）：
+// 邻居上线/下线时把单条 presence 变化推过来，这里应用并广播给本地客户端。
+type PresenceHandler struct {
+	ID *Identity
+	// Known 是 TOFU 公钥表；nil 时跳过记录（纯内存模式）。
+	Known *KnownKeys
+	// Apply 应用一条邻居节点的 presence 变化（由 hubserver 注入）。
+	Apply func(protocol.Presence)
+}
+
+// ServeHTTP 实现 http.Handler（method+path 由 mux 匹配）。
+func (h PresenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var env Envelope
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&env); err != nil {
+		http.Error(w, "bad envelope: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if h.ID == nil {
+		http.Error(w, "mesh encryption not configured", http.StatusInternalServerError)
+		return
+	}
+	if h.Known != nil {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		if err := h.Known.Trust(host, env.Key); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+	}
+	plain, err := Open(h.ID, &env)
+	if err != nil {
+		http.Error(w, "decrypt failed", http.StatusForbidden)
+		return
+	}
+	var pr protocol.Presence
+	if err := json.Unmarshal(plain, &pr); err != nil {
+		http.Error(w, "bad presence: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if h.Apply != nil {
+		h.Apply(pr)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PushPresence 是 mesh presence 即时推送的客户端：TOFU 取/校公钥 →
+// 加密单条 presence → 发往邻居端点。失败返回 error（调用方记日志即可，
+// 周期同步会纠偏）。
+func PushPresence(ctx context.Context, baseURL string, id *Identity, known *KnownKeys, pr protocol.Presence) error {
+	peerPub := known.PeerKey(baseURL)
+	if peerPub == nil {
+		pub, err := fetchPeerPubKey(ctx, baseURL)
+		if err != nil {
+			return err
+		}
+		if err := known.Trust(baseURL, pub); err != nil {
+			return err
+		}
+		peerPub = pub
+	}
+	body, err := json.Marshal(pr)
+	if err != nil {
+		return err
+	}
+	env, err := Seal(id, peerPub, body)
+	if err != nil {
+		return err
+	}
+	envJSON, err := json.Marshal(env)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL+MeshPresencePath, bytes.NewReader(envJSON))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("mesh presence push: status %d", resp.StatusCode)
+	}
+	return nil
 }

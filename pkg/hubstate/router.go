@@ -37,6 +37,7 @@ type Router struct {
 	convs  *Convs
 	store  core.Store
 	nodeID string
+	sink   func(ctx context.Context, pr protocol.Presence) error
 
 	// maxHistoryLimit 是单次补发返回的最大条数上限。
 	// 客户端请求的 limit 超过它时按它截断，防止一个请求把整个历史拖出来打爆内存。
@@ -58,6 +59,12 @@ type RouterConfig struct {
 	// 非空时，落库消息若未带源节点（v1 客户端不传 node_id），
 	// 盖上本节点 ID——消息坐标 (NodeID, ServerSeq) 由此成立。
 	NodeID string
+
+	// MeshPresenceSink 是 mesh presence 即时推送回调（M-c）：本地用户
+	// 上线/下线广播 FKPresence 时同步通知 mesh 邻居。nil 时跳过。
+	// 由 hubserver 装配（遍历邻居加密推送）；远端来的 presence 经
+	// ApplyRemotePresence 应用，不会再次触发 sink（防回声环）。
+	MeshPresenceSink func(ctx context.Context, pr protocol.Presence) error
 }
 
 // defaultMaxHistoryLimit 是单次补发的默认条数上限。
@@ -80,6 +87,7 @@ func NewRouter(ctx context.Context, cfg *RouterConfig) *Router {
 		store:           cfg.Store,
 		nodeID:          cfg.NodeID,
 		maxHistoryLimit: limit,
+		sink:            cfg.MeshPresenceSink,
 	}
 	// M12-A：hub 重启后从 store 恢复群与会话成员。
 	r.convs.LoadFromStore(ctx, cfg.Store)
@@ -143,7 +151,7 @@ func (r *Router) serveLoop(ctx context.Context, peerID uint64, p Peer) {
 		// 一起取消（best-effort 通知其余在线者）。同设备仍有连接在册
 		// （断线重连新旧共存）时 HasDevice 防抖跳过。
 		if id.HelloOK && id.DeviceID != "" && !r.reg.HasDevice(id.DeviceID) {
-			r.broadcastPresence(context.WithoutCancel(ctx), protocol.Presence{
+			r.broadcastLocalPresence(context.WithoutCancel(ctx), protocol.Presence{
 				UserID: id.UserID, DeviceID: id.DeviceID, Online: false,
 			})
 		}
@@ -296,7 +304,7 @@ func (r *Router) announceOnline(ctx context.Context, p Peer, hello protocol.Hell
 	if err := r.sendConvSnapshot(ctx, p); err != nil {
 		return err
 	}
-	r.broadcastPresence(ctx, protocol.Presence{
+	r.broadcastLocalPresence(ctx, protocol.Presence{
 		UserID: hello.UserID, DeviceID: hello.DeviceID, Online: true,
 	})
 	return nil
@@ -360,6 +368,31 @@ func (r *Router) broadcastPresence(ctx context.Context, pr protocol.Presence) {
 		return
 	}
 	r.broadcast(ctx, protocol.Frame{Kind: protocol.FKPresence, Payload: payload})
+}
+
+// broadcastLocalPresence 是本地产生 presence 变化的完整路径：
+// 广播 FKPresence 给本地客户端 + 经 meshSink 即时通知 mesh 邻居
+// （M-c presence 广播）。下线防抖逻辑不变，只在真正广播时触发 sink。
+func (r *Router) broadcastLocalPresence(ctx context.Context, pr protocol.Presence) {
+	r.broadcastPresence(ctx, pr)
+	if r.sink != nil {
+		if err := r.sink(ctx, pr); err != nil {
+			routerLog.Warn("mesh presence push failed", "user", pr.UserID, "online", pr.Online, "err", err)
+		}
+	}
+}
+
+// ApplyRemotePresence 应用一条 mesh 同步来的 presence 变化（M-c）：
+// 广播 FKPresence 给本地已连接客户端——远端节点的用户状态变化，对
+// 本地客户端就是一条普通 presence 帧，四端无需感知消息来源。
+// 不走 broadcastLocalPresence（不触发 meshSink），防回声环。
+func (r *Router) ApplyRemotePresence(ctx context.Context, pr protocol.Presence) {
+	r.broadcastPresence(ctx, pr)
+}
+
+// PresenceSnapshot 返回本节点当前在线用户快照（mesh 同步/即时推送用）。
+func (r *Router) PresenceSnapshot() []protocol.Presence {
+	return r.reg.OnlinePresence("")
 }
 
 // handleMessage 是写路径：分配序号 → 落库 → 进缓冲 → 广播。

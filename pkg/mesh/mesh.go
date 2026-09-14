@@ -61,7 +61,9 @@ const DefaultLimit = 512
 // 对本地每个源节点 X：after = req.Cursor[X]（缺省 0=全量），
 // 取 SyncMessages(X, after, limit) 作为一批；若条数==limit 认为可能
 // 还有后续（More=true，请求侧用本批最大 seq 更新游标后重拉）。
-func Respond(ctx context.Context, store SourceStore, req protocol.SyncRequest) ([]protocol.SyncResponse, error) {
+// presence 非 nil 时，把本节点在线用户快照附加到首个响应
+// （无数据响应时构造一个纯 presence 响应）——M-c presence 广播。
+func Respond(ctx context.Context, store SourceStore, presence func() []protocol.Presence, req protocol.SyncRequest) ([]protocol.SyncResponse, error) {
 	limit := req.Limit
 	if limit <= 0 {
 		limit = DefaultLimit
@@ -108,6 +110,16 @@ func Respond(ctx context.Context, store SourceStore, req protocol.SyncRequest) (
 			ConvEvents: events,
 			More:       len(msgs) == limit,
 		})
+	}
+	if presence != nil {
+		if ps := presence(); len(ps) > 0 {
+			if len(out) > 0 {
+				out[0].Presence = ps
+			} else {
+				// 无数据增量也要把 presence 快照带回去（纠正性同步）。
+				out = append(out, protocol.SyncResponse{Presence: ps})
+			}
+		}
 	}
 	return out, nil
 }

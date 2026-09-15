@@ -1,3 +1,18 @@
+## [2.10.0](https://github.com/pandaymx/lanchat/compare/v2.9.2...v2.10.0) (2026-09-15)
+
+### Features
+
+* **hub:** cmd/hub 暴露 -mesh/-peers/-node-id（ADR-014 M-b） ([5d168db](https://github.com/pandaymx/lanchat/commit/5d168db1369db78fb00b48077669393c9bc19f53))
+* **mesh:** M-b 广播闭环——同步落库实时推送本地客户端（ADR-014） ([a79f02b](https://github.com/pandaymx/lanchat/commit/a79f02b6d721e385382fd18f3dd975d88132c304))
+* **mobile:** 大厅用户信息卡（P2 第 4 项） ([4e9047c](https://github.com/pandaymx/lanchat/commit/4e9047cfd1a650b43b18c7b74cec812d02d50733))
+* **mobile:** 表情面板搜索（P2 第 3 项） ([408abe1](https://github.com/pandaymx/lanchat/commit/408abe1eb5acf76ded404ca7afb493660e7cd3a9))
+* **mobile:** 通知震动开关（P2 第 2 项） ([a2550c4](https://github.com/pandaymx/lanchat/commit/a2550c462292b2ddb516f8bd769ad627ad82ba63))
+* **store:** M-c presence 广播——mesh 节点间上下线即时同步 ([e177dd1](https://github.com/pandaymx/lanchat/commit/e177dd197fe5d500cd205457ba75dfe2b2a0ed26))
+* **store:** M-c 文件全节点同步——mesh fetch-through 懒拉取 ([12bd071](https://github.com/pandaymx/lanchat/commit/12bd071bf6fd559302fadce2d7202c1dd1d92c6d))
+* **store:** M-c 本地视图序 LocalSeq 统一排序/补发/分页 ([c820c7c](https://github.com/pandaymx/lanchat/commit/c820c7c3f3d75d61f84b6e59805233f960b1d449))
+* **store:** M-c 群成员一致性——会话事件 mesh 同步 ([c20239c](https://github.com/pandaymx/lanchat/commit/c20239c3ad965fe21a7cc2ff639da6a1ab248c82))
+* **web:** 会话列表数据层（最后消息/时间列/未读角标） ([96a0e81](https://github.com/pandaymx/lanchat/commit/96a0e81f165320a2b36d91966425a2c7b67d1f8f))
+
 ## [2.9.2](https://github.com/pandaymx/lanchat/compare/v2.9.1...v2.9.2) (2026-09-13)
 
 ### Bug Fixes

@@ -11,15 +11,14 @@
 
 **MVP 判据（一句话）**：一个程序员在局域网里，用两个终端窗口，能可靠地把一段代码发给同事；关掉重开消息还在；断网重连能补回漏掉的消息。
 
-**当前阶段**：去中心化 mesh（ADR-014 wire v2）迭代中——M-a 嵌入式 hub
-（`pkg/hubserver`）已完成（v2.3.0）；M-b 同步引擎/传输加密/后台循环/双向
-E2E 与广播闭环已合入（v2.4–v2.9），`cmd/hub` 已暴露 `-mesh/-peers/-node-id`；
-M-c 体验对齐（文件全节点同步、presence、群成员一致性、多节点历史视图）已完成
-（v2.10：LocalSeq 本地视图序 `7dfdaf7`、群成员一致性 `d64d86b`、presence 广播
-`0a0f669`、文件 fetch-through `ce01db4`）。P2（v3.0：移动端 4 项 + 桌面端会话
-列表数据层）已完成（移动端 `940cf6b` 震动开关 / `324ac74` 表情搜索 /
-`29d606b` 用户信息卡；桌面端 `b81ab13` 会话列表数据层——最后消息预览/时间列/
-未读角标）。P3 方向未定，待用户拍板。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
+**当前阶段**：去中心化（ADR-014 wire v2 延伸）——**删除 hub 依赖**迭代中：
+M-a 嵌入式 hub（`pkg/hubserver`）已完成（v2.3.0）；M-b 同步引擎/传输加密/后台
+循环/双向 E2E 与广播闭环已合入（v2.4–v2.9）；M-c 体验对齐已完成（v2.10）。
+P2（v3.0）已完成。当前线：每端自带嵌入式 hub + mesh 组网，逐步让「先另跑
+hub 进程」的部署依赖消失——第一步桌面端 `ff3b0cb`（`-embedded` 默认 true，
+进程内起 hubserver + mesh + mDNS；`cmd/hub` 保留为显式独立部署）。下一步：
+TUI 端接入嵌入式 hub（`pkg/tui` 或 `cmd/tui` 默认 `-embedded`），随后 web 端
+与移动端（gomobile，远期）。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 

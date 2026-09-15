@@ -33,6 +33,7 @@ import (
 	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/internal/webui"
 	"github.com/pandaymx/lanchat/pkg/appdir"
+	"github.com/pandaymx/lanchat/pkg/hubserver"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/secure"
 	wstransport "github.com/pandaymx/lanchat/pkg/transport/ws"
@@ -63,7 +64,8 @@ func main() {
 	}
 
 	addr := flag.String("addr", ":9001", "HTTP 监听地址（:9001 或 127.0.0.1:9001）")
-	hubURL := flag.String("hub-url", "", "hub 的 ws 地址，必填（如 ws://127.0.0.1:9000/ws）")
+	hubURL := flag.String("hub-url", "", "hub 的 ws 地址；留空且 -embedded 开启时进程内起嵌入式 hub，不再自动发现")
+	embedded := flag.Bool("embedded", true, "hub-url 留空时在本进程内起嵌入式 hub（去中心化；-hub-url 显式指定时忽略）")
 	user := flag.String("user", "anonymous", "显示名（昵称即用）")
 	convID := flag.String("conv", "lobby", "会话 ID；默认 lobby")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
@@ -102,6 +104,7 @@ func main() {
 	if err := run(runOptions{
 		Addr:       *addr,
 		HubURL:     *hubURL,
+		Embedded:   *embedded,
 		User:       *user,
 		ConvID:     *convID,
 		Version:    version,
@@ -134,6 +137,8 @@ type runOptions struct {
 	// Translator 是 UI chrome 文案翻译器；Handler 与 Manager 各持一份
 	// （首页/历史片段渲染 + SSE state 帧渲染）。
 	Translator i18n.Translator
+	// Embedded 为 true 且 HubURL 为空时，进程内起嵌入式 hub（去中心化）。
+	Embedded bool
 }
 
 // run 起 HTTP 服务并阻塞到收到退出信号。
@@ -141,6 +146,19 @@ func run(opts runOptions) error {
 	logger := logging.New("web")
 	logger.Info("starting web", "version", version, "commit", commit, "addr", opts.Addr, "user", opts.User)
 
+	if opts.HubURL == "" && opts.Embedded {
+		// 去中心化迭代：进程内起嵌入式 hub（127.0.0.1 随机端口 + mesh），
+		// 免去「先另跑 hub 进程」。defer embCancel 在退出时关停本进程 hub。
+		embCtx, embCancel := context.WithCancel(context.Background())
+		_, wsURL, err := hubserver.StartEmbedded(embCtx, hubserver.Config{Version: version})
+		if err != nil {
+			embCancel()
+			return fmt.Errorf("嵌入式 hub 启动失败: %w", err)
+		}
+		opts.HubURL = wsURL
+		defer embCancel()
+		logger.Info("embedded hub started", "ws", opts.HubURL)
+	}
 	if opts.HubURL == "" {
 		// -hub-url 留空：走 mDNS 自动发现局域网内的 hub（M6.1）。
 		discoverCtx, discoverCancel := context.WithTimeout(context.Background(), discoverTimeout)

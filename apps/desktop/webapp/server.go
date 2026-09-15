@@ -92,27 +92,19 @@ func Start(opts Options) (*Server, error) {
 		// 去中心化迭代：本进程起嵌入式 hub（127.0.0.1 随机端口）。
 		// 数据/身份与独立 hub 模式同目录（appdir 默认），mesh 组网
 		// + mDNS 广播/发现——桌面端装上即用，无需先跑 hub 进程。
+		// 统一走 hubserver.StartEmbedded（cmd/tui、cmd/web 同款）。
 		embCtx, cancel := context.WithCancel(context.Background())
-		embCfg := hubserver.Config{
-			Addr:    "127.0.0.1:0",
-			Mesh:    true,
-			Version: opts.Version,
-			// Logger 留空：hubserver 自建 "hub" 组件，日志独立可辨。
-		}
+		var overrides hubserver.Config
 		if opts.Embedded != nil {
-			embCfg.DataDir = opts.Embedded.DataDir
-			embCfg.DBPath = opts.Embedded.DBPath
-			embCfg.FilesDir = opts.Embedded.FilesDir
-			embCfg.MDNS = opts.Embedded.MDNS
-			embCfg.NodeID = opts.Embedded.NodeID
-			embCfg.MeshPeers = opts.Embedded.MeshPeers
+			overrides = *opts.Embedded
 		}
-		hubSrv, err := hubserver.Start(embCtx, embCfg)
+		overrides.Version = opts.Version
+		hubSrv, wsURL, err := hubserver.StartEmbedded(embCtx, overrides)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("嵌入式 hub 启动失败: %w", err)
 		}
-		opts.HubURL = "ws://" + hubSrv.Addr() + wstransport.DefaultPath
+		opts.HubURL = wsURL
 		embHub, embCancel = hubSrv, cancel // 交给 Server 持有，Close 释放
 		logger.Info("embedded hub started", "ws", opts.HubURL, "node", "auto")
 	}

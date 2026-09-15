@@ -26,6 +26,7 @@ import (
 	"github.com/pandaymx/lanchat/internal/discovery"
 	"github.com/pandaymx/lanchat/internal/i18n"
 	"github.com/pandaymx/lanchat/pkg/appdir"
+	"github.com/pandaymx/lanchat/pkg/hubserver"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/secure"
 	"github.com/pandaymx/lanchat/pkg/transport/ws"
@@ -62,7 +63,8 @@ func main() {
 
 	user := flag.String("user", "", "显示名（昵称即用）")
 	device := flag.String("device", "", "设备标识；留空取 hostname")
-	hubURL := flag.String("hub", "", "hub 的 ws 地址，例如 ws://192.168.1.10:9000/ws")
+	hubURL := flag.String("hub", "", "hub 的 ws 地址；留空且 -embedded 开启时进程内起嵌入式 hub，不再自动发现")
+	embedded := flag.Bool("embedded", true, "hub 留空时在本进程内起嵌入式 hub（去中心化；-hub 显式指定时忽略）")
 	convID := flag.String("conv", "", "会话 ID；留空走 default (=lobby)")
 	maxHist := flag.Int("max-hist", 0, "内存保留的最大消息条数；<=0 用默认 5000")
 	noConnect := flag.Bool("no-connect", false, "跳过连接 hub（仅用于 UI 调试）")
@@ -106,6 +108,7 @@ func main() {
 		User:        *user,
 		Device:      *device,
 		HubURL:      *hubURL,
+		Embedded:    *embedded,
 		ConvID:      *convID,
 		MaxHist:     *maxHist,
 		NoConnect:   *noConnect,
@@ -140,6 +143,7 @@ type runOptions struct {
 	NoConnect                    bool
 	DownloadDir                  string
 	Translator                   tui.Translator
+	Embedded                     bool
 }
 
 // resolveLocale 在 -lang 与 env 之间做优先级排序：flag > env > fallback。
@@ -161,6 +165,20 @@ func resolveLocale(flagValue string) string {
 func run(opts runOptions) error {
 	if opts.Device == "" {
 		opts.Device = defaultDeviceName()
+	}
+
+	// 去中心化迭代：-hub 留空且嵌入式开启时，进程内起 hub 再连回自己，
+	// 免去「先另跑 hub 进程」。defer cancel 在退出时关停本进程 hub。
+	if opts.HubURL == "" && opts.Embedded {
+		embCtx, cancel := context.WithCancel(context.Background())
+		_, wsURL, err := hubserver.StartEmbedded(embCtx, hubserver.Config{Version: version})
+		if err != nil {
+			cancel()
+			return fmt.Errorf("嵌入式 hub 启动失败: %w", err)
+		}
+		opts.HubURL = wsURL
+		defer cancel()
+		logging.New("tui").Info("embedded hub started", "ws", opts.HubURL)
 	}
 
 	cfg := tui.Config{

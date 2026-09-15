@@ -16,6 +16,7 @@ import (
 	"github.com/pandaymx/lanchat/pkg/client"
 	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/event"
+	"github.com/pandaymx/lanchat/pkg/hubserver"
 	"github.com/pandaymx/lanchat/pkg/hubstate"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/secure"
@@ -181,6 +182,50 @@ func TestServer_Restart(t *testing.T) {
 	status, _ := getStatus(t, s2.URL()+"/")
 	if status != http.StatusServiceUnavailable {
 		t.Errorf("home status = %d, want 503 (hub unreachable)", status)
+	}
+}
+
+// TestServer_EmbeddedHub 验证去中心化第一步：EmbeddedHub=true 且 HubURL
+// 为空时，进程内起嵌入式 hub——首页 200（hub 在线）、会话可收发；
+// Close 后本进程 hub 一并关闭（端口释放）。
+func TestServer_EmbeddedHub(t *testing.T) {
+	s, err := Start(Options{
+		User:        "tester",
+		Version:     "test",
+		EmbeddedHub: true,
+		DialTimeout: 2 * time.Second,
+		Embedded: &hubserver.Config{
+			DataDir: t.TempDir(), // 测试隔离：不写真实数据目录、不 mDNS 广播
+			MDNS:    false,
+			NodeID:  "test-node",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	if s.hub == nil {
+		t.Fatal("embedded hub not started")
+	}
+
+	// 首页 200：嵌入式 hub 在线，聊天骨架正常渲染。
+	status, body := getStatus(t, s.URL()+"/")
+	if status != http.StatusOK {
+		t.Fatalf("home status = %d, want 200 (embedded hub online)", status)
+	}
+	if !strings.Contains(body, "lanchat") {
+		t.Errorf("home body missing lanchat: %.120q", body)
+	}
+
+	// Close 后嵌入式 hub 端口应释放。
+	hubAddr := s.hub.Addr()
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	conn, err := net.DialTimeout("tcp", hubAddr, 500*time.Millisecond)
+	if err == nil {
+		_ = conn.Close()
+		t.Error("hub port still open after Close")
 	}
 }
 

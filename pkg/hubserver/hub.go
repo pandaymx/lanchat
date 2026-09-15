@@ -117,6 +117,20 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		logger = logging.New("hub")
 	}
 
+	// 端口 0（自动分配）：先绑定一次拿真实端口再以固定端口启动。
+	// 不这样做 Addr() 只能返回 "127.0.0.1:0"，调用方无法连回本节点
+	// （桌面端嵌入式 hub 依赖真实地址）。绑定后立即关闭，回环上被
+	// 抢走的窗口极小，失败会向上返回错误。
+	if _, port, err := net.SplitHostPort(cfg.Addr); err == nil && port == "0" {
+		probe, err := net.Listen("tcp", probeableAddr(cfg.Addr))
+		if err != nil {
+			return nil, fmt.Errorf("auto port probe: %w", err)
+		}
+		cfg.Addr = probe.Addr().String()
+		_ = probe.Close()
+		logger.Info("auto port resolved", "addr", cfg.Addr)
+	}
+
 	// srv 在 router 之后才完成构造（Server 持有 router），presence sink
 	// 用指针间接引用，避免循环依赖（router ← sink → srv）。
 	var srv *Server

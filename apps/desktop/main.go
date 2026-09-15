@@ -54,7 +54,8 @@ func main() {
 		return
 	}
 
-	hubURL := flag.String("hub-url", "", "hub 的 ws 地址；留空走 mDNS 自动发现")
+	hubURL := flag.String("hub-url", "", "hub 的 ws 地址；留空且 -embedded 开启时进程内起嵌入式 hub，不再自动发现")
+	embedded := flag.Bool("embedded", true, "hub-url 留空时在本进程内起嵌入式 hub（去中心化；-hub-url 显式指定时忽略）")
 	user := flag.String("user", "anonymous", "显示名（昵称即用）")
 	convID := flag.String("conv", "lobby", "会话 ID；默认 lobby")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
@@ -91,11 +92,12 @@ func main() {
 	logging.New("desktop").Info("i18n resolved", "locale", resolvedLocale)
 
 	srv, err := webapp.Start(webapp.Options{
-		HubURL:     *hubURL,
-		User:       *user,
-		ConvID:     *convID,
-		Version:    version,
-		Translator: tr,
+		HubURL:      *hubURL,
+		EmbeddedHub: *embedded,
+		User:        *user,
+		ConvID:      *convID,
+		Version:     version,
+		Translator:  tr,
 		// 只投递，不做事：事件泵同步调用必须快返回。
 		OnMessage: func(msg *protocol.StoredMessage) {
 			select {

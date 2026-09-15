@@ -22,6 +22,7 @@ import (
 	"github.com/pandaymx/lanchat/internal/webui"
 	"github.com/pandaymx/lanchat/pkg/appdir"
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/hubserver"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/secure"
@@ -54,6 +55,15 @@ type Options struct {
 	// DialTimeout 是单次拨号（含握手）上限；<=0 用 webui 默认（5s）。
 	// 测试里给短值避免慢超时；桌面端一般不用改。
 	DialTimeout time.Duration
+	// EmbeddedHub 为 true 且 HubURL 为空时，进程内起嵌入式 hub
+	// （pkg/hubserver，127.0.0.1 随机端口 + mesh 组网 + mDNS），
+	// 免去"先另起 hub 进程"的部署步骤（去中心化迭代第一步）。
+	// HubURL 非空时忽略（显式连外部 hub 优先）。
+	EmbeddedHub bool
+	// Embedded 是嵌入式 hub 的覆盖配置（可选）：DataDir/DBPath/FilesDir/
+	// MDNS/NodeID/MeshPeers 由此覆盖；Addr 固定 127.0.0.1:0、Mesh 固定
+	// true（webapp 语义），传入值忽略这两项。测试用临时目录隔离数据。
+	Embedded *hubserver.Config
 }
 
 // Server 是桌面端持有的本地 web 服务。Start 成功后可取 URL 交给窗口加载，
@@ -63,6 +73,10 @@ type Server struct {
 	srv *http.Server
 	mgr *webui.Manager
 	url string
+	// hub 非 nil = 本进程嵌入式 hub（EmbeddedHub 模式）；hubCancel 是
+	// 它的生命周期 ctx 取消函数，Close 时按序释放。
+	hub       *hubserver.Server
+	hubCancel context.CancelFunc
 }
 
 // Start 起本地 webui 服务并返回 Server。HubURL 空且 mDNS 找不到 hub 时返回
@@ -71,6 +85,37 @@ func Start(opts Options) (*Server, error) {
 	logger := logging.New("desktop")
 	logger.Info("starting desktop webui", "version", opts.Version, "user", opts.User)
 
+	// embHub/embCancel 是嵌入式 hub 的持有者（EmbeddedHub 模式才非零）。
+	var embHub *hubserver.Server
+	var embCancel context.CancelFunc
+	if opts.HubURL == "" && opts.EmbeddedHub {
+		// 去中心化迭代：本进程起嵌入式 hub（127.0.0.1 随机端口）。
+		// 数据/身份与独立 hub 模式同目录（appdir 默认），mesh 组网
+		// + mDNS 广播/发现——桌面端装上即用，无需先跑 hub 进程。
+		embCtx, cancel := context.WithCancel(context.Background())
+		embCfg := hubserver.Config{
+			Addr:    "127.0.0.1:0",
+			Mesh:    true,
+			Version: opts.Version,
+			// Logger 留空：hubserver 自建 "hub" 组件，日志独立可辨。
+		}
+		if opts.Embedded != nil {
+			embCfg.DataDir = opts.Embedded.DataDir
+			embCfg.DBPath = opts.Embedded.DBPath
+			embCfg.FilesDir = opts.Embedded.FilesDir
+			embCfg.MDNS = opts.Embedded.MDNS
+			embCfg.NodeID = opts.Embedded.NodeID
+			embCfg.MeshPeers = opts.Embedded.MeshPeers
+		}
+		hubSrv, err := hubserver.Start(embCtx, embCfg)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("嵌入式 hub 启动失败: %w", err)
+		}
+		opts.HubURL = "ws://" + hubSrv.Addr() + wstransport.DefaultPath
+		embHub, embCancel = hubSrv, cancel // 交给 Server 持有，Close 释放
+		logger.Info("embedded hub started", "ws", opts.HubURL, "node", "auto")
+	}
 	if opts.HubURL == "" {
 		discoverCtx, cancel := context.WithTimeout(context.Background(), discoverTimeout)
 		found, err := discovery.ResolveHubURL(discoverCtx, discoverTimeout)
@@ -131,17 +176,24 @@ func Start(opts Options) (*Server, error) {
 	}()
 
 	logger.Info("desktop webui listening", "url", url, "hub", opts.HubURL)
-	return &Server{ln: ln, srv: srv, mgr: mgr, url: url}, nil
+	return &Server{ln: ln, srv: srv, mgr: mgr, url: url, hub: embHub, hubCancel: embCancel}, nil
 }
 
 // URL 返回窗口应加载的本地地址（http://127.0.0.1:<port>/）。
 func (s *Server) URL() string { return s.url }
 
 // Close 停掉本地服务并释放全部 hub 会话。窗口关闭时由调用方保证调用一次。
+// 嵌入式 hub 模式还会把本进程的 hub 一并关掉（窗口=hub 生命周期）。
 func (s *Server) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	err := s.srv.Shutdown(ctx)
 	s.mgr.CloseAll()
+	if s.hub != nil {
+		if cerr := s.hub.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		s.hubCancel()
+	}
 	return err
 }

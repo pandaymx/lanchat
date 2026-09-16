@@ -27,6 +27,15 @@ gated TOFU」——`cmd/hub` 新 flag `-join-token`（启用后未知节点必�
 `-mesh-dir`（同机多实例隔离身份/信任表）。移动端仍为「本机模式」单实例，
 Token 握手入口暂走 `hubserver.StartEmbedded` 透传（后续接入设置页）。
 Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
+消息端到端加密（E2E，进行中→已完成 Step 1–4）：wire v2 只是传输加密
+（mesh X25519 静态 ECDH 封通道，hub/中继能看明文正文），现把「内容」
+也加密——轻量 ECIES（非 Double Ratchet）：每节点独立 E2E X25519 身份
+（`pkg/e2e`，与 mesh 传输身份分层），每条消息随机 DEK（AES-256-GCM
+正文）+ eph 公钥封装 DEK，群聊 DEK 共享逐成员封装；hub keyring 维护
+设备公钥目录（`/api/v1/e2e/keys`）；渐进落地：目标设备（含自己）全有
+公钥才加密，否则明文 + 公钥自我声明。已提交：`e79e323`（pkg/e2e 核心）、
+`c7aef87`（encrypted 列透传）、`e45da3d`（keyring）、`f404277`（端侧接入
+client+tui+测试）。尚未接入：desktop/web 端与安卓 App（tui 已接）。
 
 ### 1.1 M3 子任务拆解与进度
 

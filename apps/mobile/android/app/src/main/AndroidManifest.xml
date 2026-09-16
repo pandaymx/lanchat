@@ -2,6 +2,10 @@
     <!-- 网络权限：debug/profile 由 Flutter 模板注入，release 必须显式声明，
          否则发布版 APK 完全无法联网（连 hub / 检查更新全失败）。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- 嵌入式 hub（gomobile）：网络探测 + mDNS 多播（局域网发现）。 -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />

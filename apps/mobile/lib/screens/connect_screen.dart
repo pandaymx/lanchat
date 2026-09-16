@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../embedded_hub.dart';
 import '../hub_client.dart';
 import 'home_screen.dart';
 
@@ -19,6 +20,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   final _userCtrl = TextEditingController();
   final _deviceCtrl = TextEditingController();
   bool _connecting = false;
+  /// 本机模式：连接时先起进程内嵌入式 hub（默认开，失败回退手动地址）。
+  bool _embedded = true;
   List<String> _recent = const [];
 
   @override
@@ -52,8 +55,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   }
 
   Future<void> _connect() async {
-    final host = _hostCtrl.text.trim();
-    final port = int.tryParse(_portCtrl.text.trim()) ?? 9000;
+    var host = _hostCtrl.text.trim();
+    var port = int.tryParse(_portCtrl.text.trim()) ?? 9000;
     final user = _userCtrl.text.trim();
     var device = _deviceCtrl.text.trim();
     if (host.isEmpty || user.isEmpty) {
@@ -64,6 +67,14 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
     if (device.isEmpty) {
       device = 'flutter-${DateTime.now().millisecondsSinceEpoch % 100000}';
+    }
+
+    // 本机模式：先起进程内嵌入式 hub，拿本地 ws 地址；失败回退手动。
+    var embeddedAddr = _embedded ? await EmbeddedHub.start(device) : null;
+    if (embeddedAddr != null) {
+      final uri = Uri.parse(embeddedAddr);
+      host = uri.host;
+      port = uri.port;
     }
     setState(() => _connecting = true);
 
@@ -88,6 +99,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(title: const Text('连接 hub')),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -128,7 +140,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 13, color: Color(0xFF8B919C)),
                   ),
-                  const SizedBox(height: 32),
+                  SwitchListTile(
+                    value: _embedded,
+                    onChanged: (v) => setState(() => _embedded = v),
+                    title: const Text('本机模式（内嵌 hub）'),
+                    subtitle: const Text('启动时本机自动起 hub，无需外部地址'),
+                    contentPadding: EdgeInsets.zero,
+                    activeThumbColor: const Color(0xFF4E8CFF),
+                    activeTrackColor: const Color(0xFF2A3A5C),
+                    inactiveThumbColor: const Color(0xFF8B919C),
+                    inactiveTrackColor: const Color(0xFF2E3138),
+                    tileColor: const Color(0xFF262A32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
                   _field(_hostCtrl, 'hub 地址', Icons.dns, hint: '192.168.1.10'),
                   const SizedBox(height: 12),
                   _field(_portCtrl, '端口', Icons.numbers, keyboard: TextInputType.number),

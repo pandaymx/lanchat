@@ -40,7 +40,9 @@ client+tui+测试）。三端接入完成：web 与桌面端共用 webui 装配�
 cmd/web 均传 appdir 数据目录）；安卓 Dart 侧实现与 Go pkg/e2e
 字节级对齐的 ECIES（`apps/mobile/lib/e2e.dart`，Go↔Dart 双向互操作
 测试通过），启用时对会话在线设备加密、入站统一解密，明文渐进
-策略一致。
+策略一致。大厅会话（无成员表）以「全部在线设备 + 自己」为
+目标启用 E2E；keyring 支持吊销（DELETE /api/v1/e2e/keys，设备
+注销/换钥后对其他端渐进回退明文）。
 
 ### 1.1 M3 子任务拆解与进度
 

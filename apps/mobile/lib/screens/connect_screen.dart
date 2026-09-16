@@ -85,6 +85,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     await prefs.setString('hub_device', device);
 
     final client = HubClient(host: host, port: port, userId: user, deviceId: device);
+    // E2E：加载/创建本端身份并注册公钥（失败静默，明文渐进）。
+    await client.enableE2E();
     final cursor = prefs.getInt('cursor_$user') ?? 0;
     await _rememberRecent(host, port, user);
 

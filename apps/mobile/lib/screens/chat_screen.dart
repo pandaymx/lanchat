@@ -168,7 +168,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  void _send() {
+  Future<void> _send() async {
     final body = _inputCtrl.text.trim();
     if (body.isEmpty) return;
     if (!client.connected) {
@@ -177,14 +177,14 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     try {
       if (_replyTo != null) {
-        client.sendMessage(convId, body,
+        await client.sendMessage(convId, body,
             replyTo: ReplyRef(
               id: _replyTo!.id,
               senderUserId: _replyTo!.senderUserId,
               body: _replyTo!.body,
             ));
       } else {
-        client.sendMessage(convId, body);
+        await client.sendMessage(convId, body);
       }
     } catch (e) {
       _toast('发送失败: $e');
@@ -507,7 +507,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (m.file != null) {
         client.sendFileMessage(picked.id, m.file!, body: m.body);
       } else {
-        client.sendMessage(picked.id, m.body);
+        await client.sendMessage(picked.id, m.body);
       }
     }
     setState(() {
@@ -560,7 +560,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (m.file != null) {
       client.sendFileMessage(picked.id, m.file!, body: m.body);
     } else {
-      client.sendMessage(picked.id, m.body);
+      await client.sendMessage(picked.id, m.body);
     }
     _toast('已转发');
   }
@@ -1528,7 +1528,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(width: 8),
           IconButton.filled(
-            onPressed: _send,
+            onPressed: () => _send(),
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.all(6),
             style: IconButton.styleFrom(backgroundColor: const Color(0xFF2B6BFF)),

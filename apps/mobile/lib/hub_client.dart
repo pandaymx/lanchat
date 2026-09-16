@@ -11,10 +11,15 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'e2e.dart';
 import 'protocol.dart';
 import 'secure_client.dart';
 
@@ -39,6 +44,8 @@ class HubClient extends ChangeNotifier {
 
   final List<StoredMessage> messages = [];
   final Map<String, bool> onlineUsers = {}; // userID -> online
+  final Map<String, Presence> onlineDevices = {}; // deviceID -> presence（E2E 目标选择）
+  E2EIdentity? _e2e; // E2E 身份；null = 未启用（明文渐进）
   final Map<String, ConversationSnapshot> conversations = {};
   final Map<String, List<ConvEventMsg>> convEvents = {}; // convID -> 成员变动系统消息
   final Map<String, int> _readCursors = {}; // convID -> 已读 ServerSeq
@@ -59,6 +66,112 @@ class HubClient extends ChangeNotifier {
   });
 
   String get wsUrl => 'ws://$host:$port/ws';
+
+  String get _httpBase => 'http://$host:$port';
+
+  /// 启用 E2E：加载/创建身份（docs/e2e_identity.bin）并注册公钥到 keyring。
+  /// 失败不抛错——明文渐进，自我声明会逐步补全 keyring。
+  Future<void> enableE2E() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final id = await E2EIdentity.loadOrCreate(
+          '${dir.path}/e2e_identity.bin');
+      _e2e = id;
+      await _registerKey();
+      debugPrint('e2e enabled, peer=${id.peerId}');
+    } catch (e) {
+      debugPrint('e2e enable failed, plaintext mode: $e');
+    }
+  }
+
+  /// 注册本设备公钥到 hub keyring（自我声明；失败静默）。
+  Future<void> _registerKey() async {
+    try {
+      await http.post(
+        Uri.parse('$_httpBase/api/v1/e2e/keys'),
+        headers: {'content-type': 'application/json'},
+        body: jsonEncode({
+          'device_id': deviceId,
+          'pubkey': base64Encode(_e2e!.pub),
+        }),
+      );
+    } catch (_) {}
+  }
+
+  /// 批量查 keyring 公钥：deviceID → pubkey(base64)。
+  Future<Map<String, String>> _lookupKeys(List<String> deviceIds) async {
+    if (deviceIds.isEmpty) return {};
+    try {
+      final uri = Uri.parse(
+          '$_httpBase/api/v1/e2e/keys?device_id=${deviceIds.join(',')}');
+      final resp = await http.get(uri);
+      if (resp.statusCode != 200) return {};
+      final j = jsonDecode(resp.body) as Map<String, dynamic>;
+      final keys = j['keys'];
+      return keys is Map
+          ? Map<String, String>.from(keys.map((k, v) => MapEntry(k as String, v as String)))
+          : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  /// 为会话加密正文。目标 = 会话成员在线设备 + 自己设备；
+  /// 全部有公钥才加密，否则返回明文（渐进）。返回 (enc, finalBody)。
+  Future<(String, String)> _encryptFor(String convId, String body) async {
+    final members = conversations[convId]?.members ?? const <String>[];
+    final targets = <String>{};
+    for (final p in onlineDevices.values) {
+      if (p.online && members.contains(p.userId)) targets.add(p.deviceId);
+    }
+    if (deviceId.isNotEmpty) targets.add(deviceId);
+    if (targets.isEmpty) return ('', body);
+
+    final keys = await _lookupKeys(targets.toList());
+    if (keys.length != targets.length) return ('', body); // 有设备缺公钥 → 明文
+
+    final pubs = keys.values.map(base64Decode).toList();
+    final enc = await E2EEnvelope.encryptMulti(pubs, utf8.encode(body));
+    return (enc, '');
+  }
+
+  /// 就地解密 deliver/history 帧里的密文消息（失败显示占位）。
+  Future<void> _decryptFramePayload(Frame frame) async {
+    final p = frame.payload;
+    if (p is! Map<String, dynamic>) return;
+    if (frame.kind == kDeliver) {
+      if (p['enc'] is String && (p['enc'] as String).isNotEmpty) {
+        final plain = await _tryDecrypt(p['enc'] as String);
+        p['body'] = plain ?? '[加密消息：无法解密]';
+        p.remove('enc');
+        p.remove('ek');
+      }
+      return;
+    }
+    final msgs = p['m'];
+    if (msgs is List) {
+      for (final m in msgs) {
+        if (m is Map<String, dynamic> && m['enc'] is String &&
+            (m['enc'] as String).isNotEmpty) {
+          final plain = await _tryDecrypt(m['enc'] as String);
+          m['body'] = plain ?? '[加密消息：无法解密]';
+          m.remove('enc');
+          m.remove('ek');
+        }
+      }
+    }
+  }
+
+  /// 尝试解 E2E 密文信封；失败（非接收者/认证失败）返回 null。
+  Future<String?> _tryDecrypt(String encB64) async {
+    try {
+      final env = E2EEnvelope.unmarshal(encB64);
+      final plain = await env.decrypt(_e2e!.seed);
+      return plain == null ? null : utf8.decode(plain);
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// 会话列表（大厅 + 群聊），按最后消息时间降序。
   List<ConversationSnapshot> get sortedConversations {
@@ -226,8 +339,13 @@ class HubClient extends ChangeNotifier {
         });
         return;
       }
-      _session!.openFrame(bytes).then((plain) {
-        _handleFrame(Frame.decode(plain));
+      _session!.openFrame(bytes).then((plain) async {
+        final frame = Frame.decode(plain);
+        // E2E：密文消息在进入事件分发前解密（deliver / history 统一路径）。
+        if (_e2e != null && (frame.kind == kDeliver || frame.kind == kHistoryResp)) {
+          await _decryptFramePayload(frame);
+        }
+        _handleFrame(frame);
       }).catchError((Object e) {
         debugPrint('frame decrypt error: $e');
       });
@@ -370,6 +488,10 @@ class HubClient extends ChangeNotifier {
         if (presence.deviceId.isEmpty || presence.deviceId == deviceId) {
           onlineUsers[presence.userId] = presence.online;
         }
+        // E2E：记录他端设备级在线（发送时据此选加密目标）。
+        if (presence.deviceId.isNotEmpty && presence.deviceId != deviceId) {
+          onlineDevices[presence.deviceId] = presence;
+        }
         notifyListeners();
       case kTyping:
         final convId = (p?['c'] as String?) ?? '';
@@ -453,16 +575,34 @@ class HubClient extends ChangeNotifier {
   }
 
   /// 发送一条文本消息。返回本地 nonce；Hub 回 FKDeliver 后合并。
-  String sendMessage(String conversationId, String body, {ReplyRef? replyTo}) {
+  ///
+  /// E2E 启用时：会话成员在线设备（含自己）全部有公钥才加密正文，
+  /// 否则明文渐进；无论如何都自我声明本设备 E2E 公钥（keyring 收集）。
+  Future<String> sendMessage(String conversationId, String body, {ReplyRef? replyTo}) async {
     final nonce = _newNonce();
     final now = DateTime.now().millisecondsSinceEpoch;
+    var finalBody = body;
+    var enc = '';
+    var ek = '';
+    if (_e2e != null) {
+      try {
+        final r = await _encryptFor(conversationId, body);
+        enc = r.$1;
+        finalBody = r.$2;
+        ek = base64Encode(_e2e!.pub);
+      } catch (e) {
+        debugPrint('e2e encrypt error, plaintext fallback: $e');
+      }
+    }
     final msg = StoredMessage(
       id: 'local-$nonce',
       clientNonce: nonce,
       conversationId: conversationId,
       senderUserId: userId,
       senderDeviceId: deviceId,
-      body: body,
+      body: finalBody,
+      encrypted: enc,
+      e2eKey: ek,
       createdAt: now,
       reply: replyTo,
     );

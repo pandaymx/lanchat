@@ -144,6 +144,8 @@ class StoredMessage {
   final String senderUserId;
   final String senderDeviceId;
   final String body;
+  final String encrypted; // E2E 密文信封（base64，与 body 互斥）
+  final String e2eKey; // 发送者 E2E 公钥（base64 自我声明）
   final int serverSeq;
   final int createdAt; // Unix 毫秒
   final FileRef? file;
@@ -156,6 +158,8 @@ class StoredMessage {
     required this.senderUserId,
     required this.senderDeviceId,
     required this.body,
+    this.encrypted = '',
+    this.e2eKey = '',
     this.serverSeq = 0,
     this.createdAt = 0,
     this.file,
@@ -169,6 +173,8 @@ class StoredMessage {
         senderUserId: (j['suid'] as String?) ?? '',
         senderDeviceId: (j['sdid'] as String?) ?? '',
         body: (j['body'] as String?) ?? '',
+        encrypted: (j['enc'] as String?) ?? '',
+        e2eKey: (j['ek'] as String?) ?? '',
         serverSeq: ((j['seq'] as num?) ?? 0).toInt(),
         createdAt: ((j['at'] as num?) ?? 0).toInt(),
         file: j['f'] != null ? FileRef.fromJson(j['f'] as Map<String, dynamic>) : null,
@@ -182,6 +188,8 @@ class StoredMessage {
         'suid': senderUserId,
         'sdid': senderDeviceId,
         'body': body,
+        if (encrypted.isNotEmpty) 'enc': encrypted,
+        if (e2eKey.isNotEmpty) 'ek': e2eKey,
         'seq': serverSeq,
         if (createdAt != 0) 'at': createdAt,
         if (file != null) 'f': file!.toJson(),

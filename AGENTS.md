@@ -35,7 +35,12 @@ Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / d
 设备公钥目录（`/api/v1/e2e/keys`）；渐进落地：目标设备（含自己）全有
 公钥才加密，否则明文 + 公钥自我声明。已提交：`e79e323`（pkg/e2e 核心）、
 `c7aef87`（encrypted 列透传）、`e45da3d`（keyring）、`f404277`（端侧接入
-client+tui+测试）。尚未接入：desktop/web 端与安卓 App（tui 已接）。
+client+tui+测试）。三端接入完成：web 与桌面端共用 webui 装配层
+（`E2EDataDir` 按设备建独立身份文件 e2e_<device>.bin，desktop 与
+cmd/web 均传 appdir 数据目录）；安卓 Dart 侧实现与 Go pkg/e2e
+字节级对齐的 ECIES（`apps/mobile/lib/e2e.dart`，Go↔Dart 双向互操作
+测试通过），启用时对会话在线设备加密、入站统一解密，明文渐进
+策略一致。
 
 ### 1.1 M3 子任务拆解与进度
 

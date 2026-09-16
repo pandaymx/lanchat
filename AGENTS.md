@@ -19,7 +19,14 @@ hub 进程」的部署依赖消失——desktop `ff3b0cb`、tui `f8d8a95`、web 
 三端已全部默认 `-embedded`（进程内起 hubserver + mesh + mDNS；共享入口
 `hubserver.StartEmbedded`）；移动端已内嵌 Go hub（`33e28d9`：c-shared
 liblanchub.so + Dart FFI，连接页默认本机模式，失败回退手动地址）。
-`cmd/hub` 保留为显式独立部署，下一步降级 deprecated/移除。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
+`cmd/hub` 保留为显式独立部署，下一步降级 deprecated/移除。
+新增「节点身份 + 配对 Token 握手」（`95a5eee`）：mesh 信任模型从「按来源
+IP 的纯 TOFU」升级为「X25519 公钥指纹为节点身份 + 设备名记录 + 配对 Token
+gated TOFU」——`cmd/hub` 新 flag `-join-token`（启用后未知节点必须带 Token
+才被授权）、`-print-join-token`（生成即退出）、`-device`（设备名）、
+`-mesh-dir`（同机多实例隔离身份/信任表）。移动端仍为「本机模式」单实例，
+Token 握手入口暂走 `hubserver.StartEmbedded` 透传（后续接入设置页）。
+Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 

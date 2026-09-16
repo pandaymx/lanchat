@@ -14,7 +14,11 @@ type StoredMessage struct {
 	SenderUserID   string `json:"suid"`  // 发送者用户
 	SenderDeviceID string `json:"sdid"`  // 发送者设备
 	Body           string `json:"body"`  // 纯文本（M4 可扩展到 MIME）
-	ServerSeq      uint64 `json:"seq"`   // 源节点单调递增（见 NodeID）
+	// Encrypted 非空表示正文是 E2E 密文信封（pkg/e2e.Envelope 的 base64
+	// 串）。Body 与 Encrypted 互斥：Body 非空 = 明文（legacy / 对方未启用
+	// E2E）。Hub/中继原样透传不校验——它看不到明文，也无法解密。
+	Encrypted string `json:"enc,omitempty"`
+	ServerSeq uint64 `json:"seq"` // 源节点单调递增（见 NodeID）
 	// LocalSeq 是**本地视图序**（ADR-014 M-c）：每个节点对自己 store 里
 	// 全部消息（本地 + mesh 同步）按落库顺序分配的单调递增序号。客户端
 	// 排序、History 补发、分页游标都用它——ServerSeq 在多节点下是源节点

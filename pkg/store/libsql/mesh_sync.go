@@ -40,7 +40,7 @@ func (s *Store) SyncMessages(ctx context.Context, nodeID string, after uint64, l
 		// 注：local_seq 是接收节点本地视图序，源节点的此值对接收方无意义
 		// （接收方 AppendSyncedMessage 会强制重新分配），因此查询带出
 		// 但被 scanMessages 填充后由接收方忽略。
-		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, encrypted, server_seq, created_at,
 		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages
 		 WHERE node_id = ? AND server_seq > ?
@@ -207,7 +207,7 @@ func (s *Store) ListConvEvents(ctx context.Context, nodeID string, after uint64,
 // （含接收节点分配的 LocalSeq），供 mesh_loop 广播闭环使用。
 func (s *Store) GetSyncedMessage(ctx context.Context, nodeID string, serverSeq uint64) (protocol.StoredMessage, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, encrypted, server_seq, created_at,
 		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages WHERE node_id = ? AND server_seq = ?`,
 		nodeID, int64(serverSeq))

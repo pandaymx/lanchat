@@ -108,6 +108,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			sender_user   TEXT NOT NULL DEFAULT '',
 			sender_device TEXT NOT NULL DEFAULT '',
 			body          TEXT NOT NULL DEFAULT '',
+			encrypted     TEXT NOT NULL DEFAULT '',
 			created_at    INTEGER NOT NULL,
 			local_seq     INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (conv_id, id)
@@ -160,7 +161,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	// 列名来自内部常量表，不拼接任何外部输入，无注入面。
 	// wire v2（ADR-014）：node_id 列支撑去中心化 mesh 的 per-source
 	// 游标与幂等去重（本地消息也写自己的 nodeID）。
-	for _, col := range []string{"file_id", "file_name", "file_size", "file_mime", "reply_to", "node_id"} {
+	for _, col := range []string{"file_id", "file_name", "file_size", "file_mime", "reply_to", "node_id", "encrypted"} {
 		has, err := s.hasColumn(ctx, "messages", col)
 		if err != nil {
 			return err
@@ -408,9 +409,9 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) (pr
 	// 否则保留原值——避免本地消息重复送达时视图序漂移。
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO messages
-		   (conv_id, id, server_seq, client_nonce, sender_user, sender_device, body, created_at,
+		   (conv_id, id, server_seq, client_nonce, sender_user, sender_device, body, encrypted, created_at,
 		    file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 		         COALESCE(NULLIF(?, 0), (SELECT COALESCE(MAX(local_seq), 0) + 1 FROM messages)))
 		 ON CONFLICT(conv_id, id) DO UPDATE SET
 		   server_seq    = excluded.server_seq,
@@ -418,6 +419,7 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) (pr
 		   sender_user   = excluded.sender_user,
 		   sender_device = excluded.sender_device,
 		   body          = excluded.body,
+		   encrypted     = excluded.encrypted,
 		   created_at    = excluded.created_at,
 		   file_id       = excluded.file_id,
 		   file_name     = excluded.file_name,
@@ -427,14 +429,14 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) (pr
 		   node_id       = excluded.node_id,
 		   local_seq     = CASE WHEN excluded.local_seq > 0 THEN excluded.local_seq ELSE messages.local_seq END`,
 		m.ConversationID, m.ID, int64(m.ServerSeq), m.ClientNonce,
-		m.SenderUserID, m.SenderDeviceID, m.Body, m.CreatedAt,
+		m.SenderUserID, m.SenderDeviceID, m.Body, m.Encrypted, m.CreatedAt,
 		fileID, fileName, fileSize, fileMime, replyJSON, m.NodeID, int64(m.LocalSeq))
 	if err != nil {
 		return protocol.StoredMessage{}, fmt.Errorf("libsql: append message %q/%q: %w", m.ConversationID, m.ID, err)
 	}
 	// 返回落库后的完整消息（含分配的 LocalSeq），供补发/广播使用。
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, encrypted, server_seq, created_at,
 		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages WHERE conv_id = ? AND id = ?`,
 		m.ConversationID, m.ID)
@@ -460,7 +462,7 @@ func (s *Store) History(ctx context.Context, convID string, after uint64, limit 
 		limit = maxHistoryLimit
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, encrypted, server_seq, created_at,
 		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages
 		 WHERE conv_id = ? AND local_seq > ?
@@ -498,7 +500,7 @@ func (s *Store) RecentMessages(ctx context.Context, limit int) ([]protocol.Store
 	}
 	// 先 DESC 取最近 N 条，再在 Go 侧反转成升序——补发缓冲要求升序追加。
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, encrypted, server_seq, created_at,
 		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages
 		 ORDER BY local_seq DESC
@@ -593,7 +595,7 @@ func (s *Store) ExportAll(ctx context.Context) (*protocol.Backup, error) {
 
 	// 消息（全量升序）
 	msgRows, err := s.db.QueryContext(ctx,
-		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+		`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, encrypted, server_seq, created_at,
 		        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 		 FROM messages ORDER BY server_seq ASC`)
 	if err != nil {
@@ -667,7 +669,7 @@ func (s *Store) SearchMessages(ctx context.Context, query, convID string, limit 
 	var err error
 	if convID != "" {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+			`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, encrypted, server_seq, created_at,
 			        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 			 FROM messages
 			 WHERE conv_id = ? AND body LIKE ? ESCAPE '\'
@@ -676,7 +678,7 @@ func (s *Store) SearchMessages(ctx context.Context, query, convID string, limit 
 			convID, like, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, server_seq, created_at,
+			`SELECT id, client_nonce, conv_id, sender_user, sender_device, body, encrypted, server_seq, created_at,
 			        file_id, file_name, file_size, file_mime, reply_to, node_id, local_seq
 			 FROM messages
 			 WHERE body LIKE ? ESCAPE '\'
@@ -703,7 +705,7 @@ func scanMessages(rows *sql.Rows) ([]protocol.StoredMessage, error) {
 		var replyTo string
 		if err := rows.Scan(
 			&m.ID, &m.ClientNonce, &m.ConversationID,
-			&m.SenderUserID, &m.SenderDeviceID, &m.Body,
+			&m.SenderUserID, &m.SenderDeviceID, &m.Body, &m.Encrypted,
 			&seq, &m.CreatedAt,
 			&fileID, &fileName, &fileSize, &fileMime,
 			&replyTo, &m.NodeID, &localSeq,

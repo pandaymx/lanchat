@@ -49,11 +49,29 @@ func TestE2EKeysAPI(t *testing.T) {
 	if len(resp.Keys) != 1 || resp.Keys["dev-1"] != "AAAA" {
 		t.Fatalf("keys = %v", resp.Keys)
 	}
-	// 方法不允许。
+	// 吊销：DELETE 后查询为空；缺 device_id 拒绝；重复删除幂等。
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/e2e/keys?device_id=dev-1", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("revoke code = %d", w.Code)
+	}
 	req = httptest.NewRequest(http.MethodDelete, "/api/v1/e2e/keys", nil)
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("delete code = %d", w.Code)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("revoke without device_id code = %d", w.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/e2e/keys?device_id=dev-1", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if got := w.Body.String(); !strings.Contains(got, `"keys":{}`) {
+		t.Fatalf("after revoke lookup = %s", got)
+	}
+	req = httptest.NewRequest(http.MethodDelete, "/api/v1/e2e/keys?device_id=dev-1", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("re-revoke code = %d", w.Code)
 	}
 }

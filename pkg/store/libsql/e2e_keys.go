@@ -30,6 +30,15 @@ func (s *Store) SaveE2EKey(ctx context.Context, deviceID, pubkey string) error {
 	return nil
 }
 
+// DeleteE2EKey 从 keyring 吊销设备公钥（幂等）。
+func (s *Store) DeleteE2EKey(ctx context.Context, deviceID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM e2e_keys WHERE device_id = ?`, deviceID); err != nil {
+		return fmt.Errorf("libsql: delete e2e key %q: %w", deviceID, err)
+	}
+	return nil
+}
+
 // GetE2EKey 查询设备 E2E 公钥；未记录返回空串（非错误）。
 func (s *Store) GetE2EKey(ctx context.Context, deviceID string) (string, error) {
 	var pub string

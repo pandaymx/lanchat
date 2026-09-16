@@ -36,19 +36,38 @@ func NewE2EKeysAPI(store core.Store) *E2EKeysAPI {
 func (a *E2EKeysAPI) Routes(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/e2e/keys", a)
 	mux.Handle("GET /api/v1/e2e/keys", a)
+	mux.Handle("DELETE /api/v1/e2e/keys", a)
 }
 
-// ServeHTTP 分发注册与查询。
+// ServeHTTP 分发注册/查询/吊销。
 func (a *E2EKeysAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 		a.handleRegister(w, r)
 	case http.MethodGet:
 		a.handleLookup(w, r)
+	case http.MethodDelete:
+		a.handleRevoke(w, r)
 	default:
-		w.Header().Set("Allow", "POST, GET")
+		w.Header().Set("Allow", "POST, GET, DELETE")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleRevoke 吊销设备公钥：DELETE /api/v1/e2e/keys?device_id=x
+// （设备注销/换钥；幂等，未记录也返回 204）。
+func (a *E2EKeysAPI) handleRevoke(w http.ResponseWriter, r *http.Request) {
+	deviceID := r.URL.Query().Get("device_id")
+	if deviceID == "" {
+		http.Error(w, "device_id required", http.StatusBadRequest)
+		return
+	}
+	if err := a.store.DeleteE2EKey(r.Context(), deviceID); err != nil {
+		a.logger.Error("e2e revoke failed", "device_id", deviceID, "err", err)
+		http.Error(w, "revoke failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // registerRequest 是注册请求体。

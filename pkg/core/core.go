@@ -181,6 +181,9 @@ type Store interface {
 	SaveE2EKey(ctx context.Context, deviceID, pubkey string) error
 	// GetE2EKey 查询设备 E2E 公钥；未记录返回空串（非错误）。
 	GetE2EKey(ctx context.Context, deviceID string) (string, error)
+	// DeleteE2EKey 从 keyring 吊销/移除设备公钥（设备注销、换钥等）。
+	// 删除不存在的键不是错误。
+	DeleteE2EKey(ctx context.Context, deviceID string) error
 
 	// SetCursor 与 GetCursor 共同维护 per-device 阅读游标。
 	// 这是多设备读同步的关键（参见 ADR-008）。

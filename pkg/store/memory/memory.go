@@ -247,6 +247,17 @@ func (s *MemoryStore) GetE2EKey(_ context.Context, deviceID string) (string, err
 	return s.e2eKeys[deviceID], nil
 }
 
+// DeleteE2EKey 从 keyring 吊销设备公钥（幂等）。
+func (s *MemoryStore) DeleteE2EKey(_ context.Context, deviceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return core.ErrClosed
+	}
+	delete(s.e2eKeys, deviceID)
+	return nil
+}
+
 // AppendMessage 追加或更新一条消息到指定会话（upsert-by-ID）。
 //
 // 设计取舍：upsert 而不是纯追加，是为了支持 Client 侧的乐观写入 + Hub 端的 ServerSeq 分配。

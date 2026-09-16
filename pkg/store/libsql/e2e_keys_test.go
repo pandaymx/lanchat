@@ -56,6 +56,17 @@ func TestE2EKeyring(t *testing.T) {
 	if got, _ := st.GetE2EKey(ctx, "dev-c"); got != "" {
 		t.Fatalf("plain message must not write keyring, got %q", got)
 	}
+
+	// 吊销：删除后查询为空；重复删除幂等。
+	if err := st.DeleteE2EKey(ctx, "dev-a"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetE2EKey(ctx, "dev-a"); got != "" {
+		t.Fatalf("after delete = %q, want empty", got)
+	}
+	if err := st.DeleteE2EKey(ctx, "dev-a"); err != nil {
+		t.Fatalf("re-delete should be idempotent: %v", err)
+	}
 }
 
 // TestE2EKeyringSyncExtract：mesh 同步消息也自动提取。

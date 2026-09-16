@@ -14,6 +14,7 @@ package client
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/e2e"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
@@ -106,6 +108,10 @@ type Client struct {
 	pendingMu      sync.Mutex
 	pendingDeliver []protocol.StoredMessage
 	lastLocalSeq   uint64
+
+	// e2eID 是本端 E2E 身份（SetE2E 注入；nil = 未启用 E2E 纯明文）。
+	// 发送时向会话在线成员加密、接收时解密；身份文件由调用方加载。
+	e2eID *e2e.Identity
 
 	// peers 是当前在线成员名单（M7.2），按 DeviceID 索引。
 	// Hub 握手后发 roster + 上下线广播，dispatch 里 upsert；offline 直接删除。
@@ -658,6 +664,8 @@ func (c *Client) publishMessageOnce(msg *protocol.StoredMessage) bool {
 	if msg == nil || msg.ID == "" {
 		return false
 	}
+	// E2E：密文消息在发布到事件总线前解密（所有入站路径统一走这里）。
+	c.decryptMessage(msg)
 	c.seenMu.Lock()
 	if _, ok := c.seen[msg.ID]; ok {
 		c.seenMu.Unlock()
@@ -789,6 +797,12 @@ func (c *Client) SendMessage(ctx context.Context, convID, body string, replyTo .
 	if len(replyTo) > 0 && replyTo[0] != nil && replyTo[0].ID != "" {
 		msg.ReplyTo = replyTo[0]
 	}
+	// E2E：目标设备全部已知公钥时加密正文；无论是否加密都自我声明
+	// 本设备 E2E 公钥（接收侧 keyring 提取）。
+	c.encryptMessage(ctx, &msg)
+	if c.e2eEnabled() {
+		msg.E2EKey = base64.StdEncoding.EncodeToString(c.e2eID.PublicKey())
+	}
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal message: %w", err)
@@ -838,7 +852,15 @@ func (c *Client) SendTyping(ctx context.Context, convID string) error {
 
 // History 直接读本地 Store。已含已读游标过滤在调用方做。
 func (c *Client) History(ctx context.Context, convID string, after uint64, limit int) ([]protocol.StoredMessage, error) {
-	return c.store.History(ctx, convID, after, limit)
+	msgs, err := c.store.History(ctx, convID, after, limit)
+	if err != nil {
+		return nil, err
+	}
+	// E2E：本地 store 存的是密文（hub 侧不可见明文），返回前解密。
+	for i := range msgs {
+		c.decryptMessage(&msgs[i])
+	}
+	return msgs, nil
 }
 
 // FetchHistory 向 Hub 请求一段历史并同步等待响应。

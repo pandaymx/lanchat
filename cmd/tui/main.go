@@ -258,6 +258,8 @@ func dialSession(opts runOptions) (*tui.Session, context.Context, context.Cancel
 		ConvID:       opts.ConvID,
 		HistoryLimit: opts.MaxHist,
 		DownloadDir:  opts.DownloadDir,
+		// E2E 身份与 mesh 身份同目录（appdir.DataDir("lanchat")）。
+		E2EIdentityPath: filepath.Join(appdir.DataDir("lanchat"), "e2e_identity.bin"),
 	})
 	if err != nil {
 		return nil, nil, nil, err

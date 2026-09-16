@@ -11,7 +11,9 @@ import (
 	"github.com/pandaymx/lanchat/pkg/appdir"
 	"github.com/pandaymx/lanchat/pkg/client"
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/e2e"
 	"github.com/pandaymx/lanchat/pkg/event"
+	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 	"github.com/pandaymx/lanchat/pkg/store/memory"
 )
@@ -132,7 +134,13 @@ type DialOptions struct {
 	// DownloadDir 是附件保存目录；空则用平台下载目录
 	// （Windows ~/Downloads、Linux/macOS ~/Downloads）。
 	DownloadDir string
+	// E2EIdentityPath 是本端 E2E 身份文件路径；非空时启用端到端加密
+	//（不存在则创建并持久化）。加载失败仅警告、回退明文，不阻断连接。
+	E2EIdentityPath string
 }
+
+// sessLog 是 Session 生命周期日志。
+var sessLog = logging.New("tui.session")
 
 // Dial 建立连接并完成握手（Hello + 可选历史补发）。
 //
@@ -161,6 +169,19 @@ func Dial(ctx context.Context, opts DialOptions) (*Session, error) {
 	store := memory.New()
 	bus := event.New()
 	cli := client.New(hello, conn, store, bus)
+
+	// E2E：加载/创建本端身份并向 hub keyring 注册公钥（可选能力，
+	// 失败只警告——消息自我声明会逐步补全 keyring）。
+	if opts.E2EIdentityPath != "" {
+		e2eID, err := e2e.LoadOrCreateIdentity(opts.E2EIdentityPath)
+		if err != nil {
+			sessLog.Warn("e2e identity load failed, plaintext mode", "err", err)
+		} else if err := cli.SetE2E(e2eID); err != nil {
+			sessLog.Warn("e2e init failed, plaintext mode", "err", err)
+		} else {
+			sessLog.Info("e2e enabled", "path", opts.E2EIdentityPath)
+		}
+	}
 
 	// M9：文件传输的数据面挂在 hub 的 HTTP 端口（与 WS 同端口），
 	// 从 ws URL 推导 http 基址注入 client；不额外要求第二个地址。

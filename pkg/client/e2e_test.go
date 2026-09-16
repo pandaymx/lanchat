@@ -180,10 +180,3 @@ func TestE2EPlaintextFallback(t *testing.T) {
 		t.Fatal("E2EKey self-announce should always be present")
 	}
 }
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

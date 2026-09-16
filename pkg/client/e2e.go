@@ -119,7 +119,7 @@ func (c *Client) lookupE2EKeys(deviceIDs []string) ([][]byte, bool) {
 		cliLog.Warn("e2e lookup failed", "err", err)
 		return nil, false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, false
 	}

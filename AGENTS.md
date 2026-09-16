@@ -17,8 +17,9 @@ M-a 嵌入式 hub（`pkg/hubserver`）已完成（v2.3.0）；M-b 同步引擎/�
 P2（v3.0）已完成。当前线：每端自带嵌入式 hub + mesh 组网，逐步让「先另跑
 hub 进程」的部署依赖消失——desktop `ff3b0cb`、tui `f8d8a95`、web `30e02f5`
 三端已全部默认 `-embedded`（进程内起 hubserver + mesh + mDNS；共享入口
-`hubserver.StartEmbedded`）；`cmd/hub` 保留为显式独立部署。下一步：移动端
-（gomobile 嵌入式，远期），随后 `cmd/hub` 独立进程降级 deprecated/移除。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
+`hubserver.StartEmbedded`）；移动端已内嵌 Go hub（`33e28d9`：c-shared
+liblanchub.so + Dart FFI，连接页默认本机模式，失败回退手动地址）。
+`cmd/hub` 保留为显式独立部署，下一步降级 deprecated/移除。Release 资产形态：桌面端 5 平台「安装包」（windows NSIS .exe / darwin .dmg / linux deb+rpm）、CLI 端按 os/arch 拆包 + 单个 checksums.txt（用户要求：安装包而非 zip、redhat rpm 与 Windows ARM 必须给够；GitHub Action 资源不受限）。架构决策摘要内嵌于本文档 §12。
 
 ### 1.1 M3 子任务拆解与进度
 

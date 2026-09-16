@@ -148,7 +148,7 @@ func TestMeshEndpointDirect(t *testing.T) {
 	}
 
 	storeB, _ := srvB.store.(*libsql.Store)
-	resps, err := mesh.SyncPeer(ctx, urlA, id, known, protocol.SyncRequest{Limit: mesh.DefaultLimit})
+	resps, err := mesh.SyncPeer(ctx, urlA, id, known, protocol.SyncRequest{Limit: mesh.DefaultLimit}, "test-dev", "")
 	if err != nil {
 		t.Fatalf("SyncPeer: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestMeshEndpointDirect(t *testing.T) {
 
 	// 第二轮（同 TOFU 表，公钥已信任；游标已推进到 1）：空增量。
 	resps2, err := mesh.SyncPeer(ctx, urlA, id, known,
-		protocol.SyncRequest{Cursor: map[string]uint64{"node-a": 1}, Limit: mesh.DefaultLimit})
+		protocol.SyncRequest{Cursor: map[string]uint64{"node-a": 1}, Limit: mesh.DefaultLimit}, "test-dev", "")
 	if err != nil {
 		t.Fatalf("second SyncPeer: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestMeshTOFUReject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := mesh.SyncPeer(ctx, urlA, id, known, protocol.SyncRequest{Limit: mesh.DefaultLimit})
+	_, err := mesh.SyncPeer(ctx, urlA, id, known, protocol.SyncRequest{Limit: mesh.DefaultLimit}, "test-dev", "")
 	if err == nil {
 		t.Fatal("SyncPeer with mismatched TOFU key succeeded, want error")
 	}

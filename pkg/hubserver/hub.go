@@ -63,6 +63,9 @@ type Config struct {
 	// DataDir 数据根目录（身份密钥/TOFU 表/默认 DB 与 files 落在这里）。
 	// 空 → 平台默认数据目录。多实例/测试需隔离时显式指定。
 	DataDir string
+	// MeshDir mesh 身份与 known-keys 目录；空 → DataDir（向后兼容）。
+	// 同机多 hub 实例建议各自指定，避免身份/信任表互相覆盖。
+	MeshDir string
 	// DBPath 持久化库路径；空 → DataDir；"memory" → 纯内存。
 	DBPath string
 	// FilesDir 文件 blob 存储目录；空 → 平台默认数据目录。
@@ -88,6 +91,13 @@ type Config struct {
 	// NodeID 是本节点的 mesh 标识；空时用主机名。持久化后不可随意
 	// 更改（消息坐标 (NodeID, ServerSeq) 依赖它稳定）。
 	NodeID string
+	// JoinToken 是 mesh 配对 Token（明文）：启用后未知节点必须携带
+	// 该 Token 才被授权加入（gated TOFU，见 pkg/mesh/handshake.go）；
+	// 空 = 保持旧 TOFU 行为。服务端只保存其 SHA-256 哈希。
+	JoinToken string
+	// Device 是本节点设备名（人类可读），随 mesh 握手上报给邻居；
+	// 空时用主机名。
+	Device string
 }
 
 // Server 是运行中的嵌入式 hub。
@@ -99,6 +109,7 @@ type Server struct {
 	addr      string
 	done      chan error
 	nodeID    string
+	device    string
 	meshStore mesh.SourceStore
 	meshID    *mesh.Identity
 	meshKnown *mesh.KnownKeys
@@ -141,6 +152,11 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 	if dataDir == "" {
 		dataDir = appdir.DataDir(appdir.AppName())
 	}
+	// mesh 身份/信任表默认与数据根同目录；可用 MeshDir 单独隔离（同机多实例）。
+	meshDir := cfg.MeshDir
+	if meshDir == "" {
+		meshDir = dataDir
+	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = filepath.Join(dataDir, "lanchat.db")
 	}
@@ -166,6 +182,10 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		} else {
 			nodeID = "node"
 		}
+	}
+	device := cfg.Device
+	if device == "" {
+		device = nodeID // 设备名缺省用节点 ID（主机名），保证可读且稳定。
 	}
 	router := hubstate.NewRouter(ctx, &hubstate.RouterConfig{
 		Store:           store,
@@ -223,7 +243,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 
 	// 传输加密（wire v2）：无论是否开启 mesh，都加载节点 X25519 身份，
 	// 供 WS 服务端握手用——client↔hub 与 mesh 同步共用同一把身份。
-	meshID, err = mesh.LoadOrCreateIdentity(filepath.Join(dataDir, "mesh_identity.bin"))
+	meshID, err = mesh.LoadOrCreateIdentity(filepath.Join(meshDir, "mesh_identity.bin"))
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("node identity: %w", err)
@@ -237,7 +257,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("mesh mode requires persistent store (DBPath != memory)")
 		}
 		meshStore = ls
-		meshKnown, err = mesh.LoadKnownKeys(filepath.Join(dataDir, "mesh_known_keys.json"))
+		meshKnown, err = mesh.LoadKnownKeys(filepath.Join(meshDir, "mesh_known_keys.json"))
 		if err != nil {
 			_ = store.Close()
 			return nil, fmt.Errorf("mesh known keys: %w", err)
@@ -247,20 +267,25 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 				router.ApplyRemotePresence(ctx, ps[i])
 			}
 		}
+		joinHash := []byte(mesh.HashToken(cfg.JoinToken))
+		if cfg.JoinToken == "" {
+			joinHash = nil
+		}
 		tr = tr.
 			WithHandler("POST "+mesh.MeshPath, mesh.SyncHandler{
 				Store:         meshStore,
 				ID:            meshID,
 				Known:         meshKnown,
+				JoinHash:      joinHash,
 				ApplyPresence: applyRemote,
 				Presence:      router.PresenceSnapshot,
 			}).
 			WithHandler("POST "+mesh.MeshPresencePath, mesh.PresenceHandler{
-				ID: meshID, Known: meshKnown,
+				ID: meshID, Known: meshKnown, JoinHash: joinHash,
 				Apply: func(pr protocol.Presence) { router.ApplyRemotePresence(ctx, pr) },
 			}).
 			WithHandler("POST "+mesh.MeshFilePath, mesh.FileFetchHandler{
-				ID: meshID, Known: meshKnown,
+				ID: meshID, Known: meshKnown, JoinHash: joinHash,
 				Open: fileSvc.Open,
 			}).
 			WithHandler("GET "+mesh.PubKeyPath, mesh.PubKeyHandler{ID: meshID})
@@ -303,6 +328,7 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		addr:      cfg.Addr,
 		done:      make(chan error, 1),
 		nodeID:    nodeID,
+		device:    device,
 		meshStore: meshStore,
 		meshID:    meshID,
 		meshKnown: meshKnown,
@@ -465,7 +491,7 @@ func (s *Server) pushPresence(ctx context.Context, pr protocol.Presence) error {
 	}
 	var firstErr error
 	for _, u := range peers {
-		if err := mesh.PushPresence(ctx, u, s.meshID, s.meshKnown, pr); err != nil {
+		if err := mesh.PushPresence(ctx, u, s.meshID, s.meshKnown, pr, s.device, s.cfg.JoinToken); err != nil {
 			s.logger.Warn("mesh presence push failed", "peer", u, "err", err)
 			if firstErr == nil {
 				firstErr = err
@@ -490,7 +516,7 @@ func (s *Server) fetchFileFromPeers(ctx context.Context, fileSvc *hubfile.Servic
 		return protocol.FileMeta{}, nil, false
 	}
 	for _, u := range peers {
-		meta, rc, err := mesh.FetchFile(ctx, u, s.meshID, s.meshKnown, fileID)
+		meta, rc, err := mesh.FetchFile(ctx, u, s.meshID, s.meshKnown, fileID, s.device, s.cfg.JoinToken)
 		if err != nil {
 			s.logger.Debug("mesh file fetch miss", "peer", u, "file", fileID, "err", err)
 			continue

@@ -110,19 +110,33 @@ func gcm(key []byte) (cipher.AEAD, error) {
 
 // ---- TOFU 公钥信任表 ----
 
-// KnownKeys 记录已信任的对端公钥（peerID → base64 pubkey），
-// JSON 文件持久化（原子写：tmp + rename）。
+// KnownKeys 记录已信任的对端公钥（peerID → base64 pubkey）与设备名。
+// peerID 是发送方公钥指纹（PeerID，32 hex），不再用来源 IP——
+// 换 IP 不丢信任、无法冒充。JSON 文件持久化（原子写：tmp + rename）。
 type KnownKeys struct {
-	mu   sync.Mutex
-	path string
-	keys map[string]string
+	mu    sync.Mutex
+	path  string
+	keys  map[string]string
+	names map[string]string
 }
 
 // LoadKnownKeys 加载或初始化 TOFU 表。
+//
+// 磁盘格式 v2：{"keys": {...}, "names": {...}}；v1 是纯 map（keys 顶层），
+// 兼容加载：unmarshal 到新结构失败时按 v1 回退。
 func LoadKnownKeys(path string) (*KnownKeys, error) {
-	k := &KnownKeys{path: path, keys: map[string]string{}}
+	k := &KnownKeys{path: path, keys: map[string]string{}, names: map[string]string{}}
 	if raw, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(raw, &k.keys); err != nil {
+		var doc struct {
+			Keys  map[string]string `json:"keys"`
+			Names map[string]string `json:"names"`
+		}
+		if err := json.Unmarshal(raw, &doc); err == nil && doc.Keys != nil {
+			k.keys = doc.Keys
+			if doc.Names != nil {
+				k.names = doc.Names
+			}
+		} else if err := json.Unmarshal(raw, &k.keys); err != nil {
 			return nil, fmt.Errorf("mesh: parse known keys %s: %w", path, err)
 		}
 	} else if !os.IsNotExist(err) {
@@ -147,6 +161,32 @@ func (k *KnownKeys) Trust(peerID string, pub []byte) error {
 	}
 	k.keys[peerID] = want
 	return k.saveLocked()
+}
+
+// IsKnown 报告 peerID 是否已入信任表。
+func (k *KnownKeys) IsKnown(peerID string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	_, ok := k.keys[peerID]
+	return ok
+}
+
+// SetDevice 记录 peerID 的设备名（握手时随请求上报，用于展示）。
+func (k *KnownKeys) SetDevice(peerID, name string) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.names == nil {
+		k.names = map[string]string{}
+	}
+	k.names[peerID] = name
+	return k.saveLocked()
+}
+
+// DeviceName 返回 peerID 已记录的设备名；未知返回空串。
+func (k *KnownKeys) DeviceName(peerID string) string {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.names[peerID]
 }
 
 // PeerKey 返回 peerID 的已信任公钥；未知返回 nil。
@@ -174,7 +214,10 @@ func (k *KnownKeys) saveLocked() error {
 			return fmt.Errorf("mesh: mkdir known keys dir: %w", err)
 		}
 	}
-	raw, err := json.MarshalIndent(k.keys, "", "  ")
+	raw, err := json.MarshalIndent(struct {
+		Keys  map[string]string `json:"keys"`
+		Names map[string]string `json:"names"`
+	}{k.keys, k.names}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("mesh: marshal known keys: %w", err)
 	}

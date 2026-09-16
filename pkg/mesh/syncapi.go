@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -43,8 +42,25 @@ const MeshFilePath = "/api/v1/mesh/file"
 // PubKeyPath 是 mesh 公钥端点（TOFU 首连取公钥）。
 const PubKeyPath = "/api/v1/mesh/pubkey"
 
+// setHandshakeHeaders 在 mesh 请求上带设备名与配对 Token（空值跳过）。
+func setHandshakeHeaders(req *http.Request, device, joinToken string) {
+	if device != "" {
+		req.Header.Set(HeaderDevice, device)
+	}
+	if joinToken != "" {
+		req.Header.Set(HeaderToken, joinToken)
+	}
+}
+
 // httpClient 是可替换的 HTTP 客户端（测试注入短超时用）。
 var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// 握手请求头：随每个 mesh 请求带上本节点设备名与配对 Token。
+// 服务端对未知节点校验 Token（gated TOFU），已知节点无需 Token。
+const (
+	HeaderDevice = "X-Lanchat-Device"
+	HeaderToken  = "X-Lanchat-Token"
+)
 
 // SyncHandler 是 mesh 同步的 HTTP 服务端：解密 Envelope → Respond →
 // 加密响应。挂载：
@@ -56,6 +72,10 @@ type SyncHandler struct {
 	ID *Identity
 	// Known 是 TOFU 公钥表；nil 时跳过记录（纯内存模式）。
 	Known *KnownKeys
+	// JoinHash 是配对 Token 的 SHA-256 hex；空 = 未启用配对
+	// （未知节点保持旧 TOFU 行为）。非空时未知节点必须带有效
+	// Token 才被授权加入（见 handshake.go）。
+	JoinHash []byte
 	// ApplyPresence 应用请求方节点随同步带来的在线用户快照（M-c）。
 	// 由 hubserver 注入 router.ApplyRemotePresence（广播给本地客户端）。
 	// nil 时静默忽略。
@@ -80,13 +100,11 @@ func (h SyncHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mesh encryption not configured", http.StatusInternalServerError)
 		return
 	}
-	// TOFU：按来源 IP 记录/校验发送方公钥。
+	// 身份握手：按公钥指纹鉴权（已知放行 / 未知校验配对 Token）。
 	if h.Known != nil {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		if err := h.Known.Trust(host, env.Key); err != nil {
+		if _, err := h.Known.authorizePeer(
+			h.JoinHash, env.Key, r.Header.Get(HeaderDevice), r.Header.Get(HeaderToken),
+		); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
@@ -147,7 +165,7 @@ func (h PubKeyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // SyncPeer 是 mesh 同步的 HTTP 客户端：TOFU 取/校公钥 → 加密请求 →
 // 发往远端 → 解密响应。
-func SyncPeer(ctx context.Context, baseURL string, id *Identity, known *KnownKeys, req protocol.SyncRequest) ([]protocol.SyncResponse, error) {
+func SyncPeer(ctx context.Context, baseURL string, id *Identity, known *KnownKeys, req protocol.SyncRequest, device, joinToken string) ([]protocol.SyncResponse, error) {
 	peerPub := known.PeerKey(baseURL)
 	if peerPub == nil {
 		// 首连：先 GET 对端公钥并 TOFU 记录。
@@ -179,6 +197,7 @@ func SyncPeer(ctx context.Context, baseURL string, id *Identity, known *KnownKey
 		return nil, fmt.Errorf("mesh: new request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	setHandshakeHeaders(httpReq, device, joinToken)
 
 	resp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -242,6 +261,8 @@ type PresenceHandler struct {
 	Known *KnownKeys
 	// Apply 应用一条邻居节点的 presence 变化（由 hubserver 注入）。
 	Apply func(protocol.Presence)
+	// JoinHash 配对 Token 哈希；语义同 SyncHandler.JoinHash。
+	JoinHash []byte
 }
 
 // ServeHTTP 实现 http.Handler（method+path 由 mux 匹配）。
@@ -260,11 +281,9 @@ func (h PresenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Known != nil {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		if err := h.Known.Trust(host, env.Key); err != nil {
+		if _, err := h.Known.authorizePeer(
+			h.JoinHash, env.Key, r.Header.Get(HeaderDevice), r.Header.Get(HeaderToken),
+		); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
@@ -288,7 +307,7 @@ func (h PresenceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // PushPresence 是 mesh presence 即时推送的客户端：TOFU 取/校公钥 →
 // 加密单条 presence → 发往邻居端点。失败返回 error（调用方记日志即可，
 // 周期同步会纠偏）。
-func PushPresence(ctx context.Context, baseURL string, id *Identity, known *KnownKeys, pr protocol.Presence) error {
+func PushPresence(ctx context.Context, baseURL string, id *Identity, known *KnownKeys, pr protocol.Presence, device, joinToken string) error {
 	peerPub := known.PeerKey(baseURL)
 	if peerPub == nil {
 		pub, err := fetchPeerPubKey(ctx, baseURL)
@@ -317,6 +336,7 @@ func PushPresence(ctx context.Context, baseURL string, id *Identity, known *Know
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setHandshakeHeaders(req, device, joinToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -337,6 +357,8 @@ type FileFetchHandler struct {
 	Known *KnownKeys
 	// Open 按 FileID 打开本地文件（hubfile.Service.Open），由 hubserver 注入。
 	Open func(ctx context.Context, fileID string) (protocol.FileMeta, io.ReadCloser, error)
+	// JoinHash 配对 Token 哈希；语义同 SyncHandler.JoinHash。
+	JoinHash []byte
 }
 
 // ServeHTTP 实现 http.Handler（method+path 由 mux 匹配）。
@@ -355,11 +377,9 @@ func (h FileFetchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Known != nil {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		if err := h.Known.Trust(host, env.Key); err != nil {
+		if _, err := h.Known.authorizePeer(
+			h.JoinHash, env.Key, r.Header.Get(HeaderDevice), r.Header.Get(HeaderToken),
+		); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
@@ -399,7 +419,7 @@ func (h FileFetchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // FetchFile 是 mesh 文件 fetch-through 的客户端：TOFU 取/校公钥 →
 // 加密请求 → POST 邻居端点 → 返回 meta 与可读流（调用方负责 Close）。
 // meta 从响应头解析，body 是纯 blob，流式转发不占内存。
-func FetchFile(ctx context.Context, baseURL string, id *Identity, known *KnownKeys, fileID string) (protocol.FileMeta, io.ReadCloser, error) {
+func FetchFile(ctx context.Context, baseURL string, id *Identity, known *KnownKeys, fileID string, device, joinToken string) (protocol.FileMeta, io.ReadCloser, error) {
 	peerPub := known.PeerKey(baseURL)
 	if peerPub == nil {
 		pub, err := fetchPeerPubKey(ctx, baseURL)
@@ -430,6 +450,7 @@ func FetchFile(ctx context.Context, baseURL string, id *Identity, known *KnownKe
 		return protocol.FileMeta{}, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setHandshakeHeaders(req, device, joinToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return protocol.FileMeta{}, nil, err

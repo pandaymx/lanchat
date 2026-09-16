@@ -26,10 +26,13 @@ func StartEmbedded(ctx context.Context, cfg Config) (*Server, string, error) {
 		// Logger 留空：hubserver 自建 "hub" 组件，日志独立可辨。
 	}
 	embCfg.DataDir = cfg.DataDir
+	embCfg.MeshDir = cfg.MeshDir
 	embCfg.DBPath = cfg.DBPath
 	embCfg.FilesDir = cfg.FilesDir
 	embCfg.MDNS = cfg.MDNS
 	embCfg.NodeID = cfg.NodeID
+	embCfg.Device = cfg.Device
+	embCfg.JoinToken = cfg.JoinToken
 	embCfg.MeshPeers = cfg.MeshPeers
 
 	srv, err := Start(ctx, embCfg)

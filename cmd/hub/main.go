@@ -13,6 +13,7 @@ import (
 
 	"github.com/pandaymx/lanchat/pkg/hubserver"
 	"github.com/pandaymx/lanchat/pkg/logging"
+	"github.com/pandaymx/lanchat/pkg/mesh"
 )
 
 // 版本号由构建注入，见 Makefile LDFLAGS。不要在这里写死版本号。
@@ -44,10 +45,25 @@ func main() {
 	meshMode := flag.Bool("mesh", false, "启用去中心化 mesh 同步（ADR-014 wire v2；需持久化库）")
 	meshPeers := flag.String("peers", "", "mesh 邻居 base URL 列表，逗号分隔（如 http://192.168.1.5:9000,http://192.168.1.6:9000）")
 	nodeID := flag.String("node-id", "", "本节点 mesh 标识（默认主机名；持久化后不可随意更改，消息坐标依赖它稳定）")
+	joinToken := flag.String("join-token", "", "mesh 配对 Token：启用后未知节点必须携带该 Token 才被授权加入（gated TOFU）；空 = 保持旧 TOFU（首次见即信任）。配对 Token 用 -print-join-token 生成")
+	printJoinToken := flag.Bool("print-join-token", false, "生成一个新的配对 Token 并打印，然后退出（供分享给要加入的新设备）")
+	deviceName := flag.String("device", "", "本节点设备名（随 mesh 握手展示给邻居；默认主机名）")
+	meshDir := flag.String("mesh-dir", "", "mesh 身份/信任表目录（默认与数据目录相同）；同机多实例时各自指定可避免身份互相覆盖")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
 	logFormat := flag.String("log-format", "text", "日志格式：text|json")
 	logFile := flag.String("log-file", "", "日志文件路径；空走 stderr")
 	flag.Parse()
+
+	// -print-join-token：生成配对 Token 即退出，不启动 hub。
+	if *printJoinToken {
+		tok, err := mesh.NewToken()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "hub: generate join token:", err)
+			os.Exit(1)
+		}
+		fmt.Println(tok)
+		return
+	}
 
 	// 解析日志 flag；不识别走默认 + stderr 警告，不中断启动。
 	lvl, lvlErr := logging.ParseLevel(*logLevel)
@@ -78,6 +94,9 @@ func main() {
 		Mesh:        *meshMode,
 		MeshPeers:   splitPeers(*meshPeers),
 		NodeID:      *nodeID,
+		JoinToken:   *joinToken,
+		Device:      *deviceName,
+		MeshDir:     *meshDir,
 		Version:     version,
 	}
 	srv, err := hubserver.Start(ctx, cfg)

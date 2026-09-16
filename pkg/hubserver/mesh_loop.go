@@ -23,14 +23,16 @@ const meshSyncInterval = 5 * time.Second
 
 // httpRemote 把 base URL 适配成 mesh.Remote（加密 HTTP POST 一轮同步）。
 type httpRemote struct {
-	baseURL string
-	id      *mesh.Identity
-	known   *mesh.KnownKeys
+	baseURL   string
+	id        *mesh.Identity
+	known     *mesh.KnownKeys
+	device    string // 本节点设备名（握手头）
+	joinToken string // 配对 Token（未知节点首次加入用）
 }
 
 // Sync 实现 mesh.Remote：加密后把请求发往远端 mesh 端点。
 func (r httpRemote) Sync(ctx context.Context, req protocol.SyncRequest) ([]protocol.SyncResponse, error) {
-	return mesh.SyncPeer(ctx, r.baseURL, r.id, r.known, req)
+	return mesh.SyncPeer(ctx, r.baseURL, r.id, r.known, req, r.device, r.joinToken)
 }
 
 // meshLoop 周期性向邻居同步。peerURLs 是显式邻居；mDNS 发现的
@@ -69,7 +71,7 @@ func (s *Server) meshLoop(ctx context.Context, peerURLs []string, id *mesh.Ident
 
 	syncAll := func() {
 		for u := range peers {
-			if err := s.syncOnce(ctx, u, httpRemote{baseURL: u, id: id, known: known}); err != nil {
+			if err := s.syncOnce(ctx, u, httpRemote{baseURL: u, id: id, known: known, device: s.device, joinToken: s.cfg.JoinToken}); err != nil {
 				s.logger.Warn("mesh sync failed", "peer", u, "err", err)
 			}
 		}

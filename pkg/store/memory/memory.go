@@ -16,6 +16,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -50,6 +51,9 @@ type MemoryStore struct {
 	// files[fileID] = FileMeta（M9）
 	files map[string]protocol.FileMeta
 
+	// e2eKeys[deviceID] = E2E 公钥 base64（keyring，消息自我声明提取）。
+	e2eKeys map[string]string
+
 	closed bool
 }
 
@@ -63,6 +67,7 @@ func New() *MemoryStore {
 		messages:      make(map[string][]protocol.StoredMessage),
 		cursors:       make(map[string]uint64),
 		files:         make(map[string]protocol.FileMeta),
+		e2eKeys:       make(map[string]string),
 	}
 }
 
@@ -218,6 +223,30 @@ func (s *MemoryStore) DeleteConversationMember(_ context.Context, convID, userID
 	return nil
 }
 
+// SaveE2EKey 记录设备 E2E 公钥（keyring，幂等覆盖）。
+func (s *MemoryStore) SaveE2EKey(_ context.Context, deviceID, pubkey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return core.ErrClosed
+	}
+	if deviceID == "" {
+		return errors.New("memory: e2e key device id empty")
+	}
+	s.e2eKeys[deviceID] = pubkey
+	return nil
+}
+
+// GetE2EKey 查询设备 E2E 公钥；未记录返回空串。
+func (s *MemoryStore) GetE2EKey(_ context.Context, deviceID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return "", core.ErrClosed
+	}
+	return s.e2eKeys[deviceID], nil
+}
+
 // AppendMessage 追加或更新一条消息到指定会话（upsert-by-ID）。
 //
 // 设计取舍：upsert 而不是纯追加，是为了支持 Client 侧的乐观写入 + Hub 端的 ServerSeq 分配。
@@ -236,6 +265,10 @@ func (s *MemoryStore) AppendMessage(_ context.Context, m protocol.StoredMessage)
 	}
 	if m.CreatedAt == 0 {
 		m.CreatedAt = time.Now().UnixMilli()
+	}
+	// E2E keyring：消息自我声明的公钥提取（发送者设备 → 公钥）。
+	if m.E2EKey != "" && m.SenderDeviceID != "" {
+		s.e2eKeys[m.SenderDeviceID] = m.E2EKey
 	}
 	list := s.messages[m.ConversationID]
 	for i := range list {

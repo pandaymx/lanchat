@@ -64,6 +64,12 @@ func (s *Store) AppendSyncedMessage(ctx context.Context, m protocol.StoredMessag
 	if m.CreatedAt == 0 {
 		m.CreatedAt = nowMillis()
 	}
+	// E2E keyring：同步消息自我声明的公钥提取（发送者设备 → 公钥）。
+	// 公钥不入消息列，只进 keyring 目录；失败不阻断同步（公钥可后续
+	// 由注册端点补，本地消息落库时也会再尝试）。
+	if m.E2EKey != "" && m.SenderDeviceID != "" {
+		_ = s.SaveE2EKey(ctx, m.SenderDeviceID, m.E2EKey)
+	}
 	var fileID, fileName, fileMime string
 	var fileSize int64
 	if m.File != nil {

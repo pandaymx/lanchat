@@ -176,6 +176,12 @@ type Store interface {
 	// limit<=0 表示无限（实现可设上限防 OOM）。
 	History(ctx context.Context, convID string, after uint64, limit int) ([]protocol.StoredMessage, error)
 
+	// SaveE2EKey 记录设备 E2E 公钥（keyring，幂等覆盖）。
+	// AppendMessage/AppendSyncedMessage 收到带 E2EKey 的消息时自动调用。
+	SaveE2EKey(ctx context.Context, deviceID, pubkey string) error
+	// GetE2EKey 查询设备 E2E 公钥；未记录返回空串（非错误）。
+	GetE2EKey(ctx context.Context, deviceID string) (string, error)
+
 	// SetCursor 与 GetCursor 共同维护 per-device 阅读游标。
 	// 这是多设备读同步的关键（参见 ADR-008）。
 	SetCursor(ctx context.Context, deviceID, convID string, seq uint64) error

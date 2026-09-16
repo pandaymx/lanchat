@@ -18,6 +18,10 @@ type StoredMessage struct {
 	// 串）。Body 与 Encrypted 互斥：Body 非空 = 明文（legacy / 对方未启用
 	// E2E）。Hub/中继原样透传不校验——它看不到明文，也无法解密。
 	Encrypted string `json:"enc,omitempty"`
+	// E2EKey 是发送者设备的 E2E 公钥（base64，自我声明）。随消息传播，
+	// 接收侧提取进 keyring（store 落库时自动处理，不入消息表列）。
+	// 空 = 未启用 E2E / 老客户端。
+	E2EKey    string `json:"ek,omitempty"`
 	ServerSeq uint64 `json:"seq"` // 源节点单调递增（见 NodeID）
 	// LocalSeq 是**本地视图序**（ADR-014 M-c）：每个节点对自己 store 里
 	// 全部消息（本地 + mesh 同步）按落库顺序分配的单调递增序号。客户端

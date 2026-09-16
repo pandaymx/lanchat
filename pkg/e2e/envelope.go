@@ -156,6 +156,7 @@ var (
 	ErrDecrypt = errors.New("e2e: decrypt failed")
 )
 
+// Decrypt 用本节点 E2E 私钥解出明文信封内容。
 func (e *Envelope) Decrypt(priv *ecdh.PrivateKey) ([]byte, error) {
 	if e == nil || e.Version != EnvelopeVersion {
 		return nil, ErrDecrypt

@@ -227,11 +227,14 @@ func Start(ctx context.Context, cfg Config) (*Server, error) {
 		}
 	}
 	exportAPI := hubapi.NewExportAPI(store)
+	e2eAPI := hubapi.NewE2EKeysAPI(store)
 	tr := wstransport.New().WithPath(cfg.Path)
 	tr = tr.
 		WithHandler("POST /api/files", filesAPI).
 		WithHandler("GET /api/files/{fileID}", filesAPI).
-		WithHandler("GET /api/export", exportAPI)
+		WithHandler("GET /api/export", exportAPI).
+		WithHandler("POST /api/v1/e2e/keys", e2eAPI).
+		WithHandler("GET /api/v1/e2e/keys", e2eAPI)
 	logger.Info("file service ready", "dir", cfg.FilesDir, "maxFileSize", cfg.MaxFileSize)
 
 	// 去中心化 mesh（ADR-014）：挂载加密同步端点 + 后台同步循环。

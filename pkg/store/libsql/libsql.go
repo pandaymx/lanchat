@@ -141,6 +141,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			PRIMARY KEY (conv_id, user_id)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_conv_members_user ON conversation_members (user_id)`,
+		// E2E keyring：设备 E2E 公钥目录（密钥管理）。局域网信任模型下
+		// hub 只存公钥不分发私钥，公钥公开不泄密。
+		`CREATE TABLE IF NOT EXISTS e2e_keys (
+			device_id  TEXT PRIMARY KEY,
+			pubkey     TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
 		// M9 文件元信息：blob 本体在 hub 文件目录（files/<FileID>），
 		// 这里只保证「重启后按 ID 能查到」；CreatedAt 供未来清理/审计。
 		`CREATE TABLE IF NOT EXISTS file_meta (
@@ -402,6 +409,13 @@ func (s *Store) AppendMessage(ctx context.Context, m protocol.StoredMessage) (pr
 	if m.ReplyTo != nil {
 		if b, err := json.Marshal(m.ReplyTo); err == nil {
 			replyJSON = string(b)
+		}
+	}
+	// E2E keyring：消息自我声明的公钥提取（发送者设备 → 公钥）。
+	// 公钥不随消息本体落库（不入 messages 列），只进 keyring 目录。
+	if m.E2EKey != "" && m.SenderDeviceID != "" {
+		if err := s.SaveE2EKey(ctx, m.SenderDeviceID, m.E2EKey); err != nil {
+			return protocol.StoredMessage{}, err
 		}
 	}
 	// local_seq：m.LocalSeq>0 保留（hub 已定序 / 权威值），==0 由库分配

@@ -1,3 +1,4 @@
+// Package e2e 的测试：身份持久化、信封往返、错钥/篡改拒绝、群聊多接收者。
 package e2e
 
 import (

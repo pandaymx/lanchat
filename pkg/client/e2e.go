@@ -65,22 +65,29 @@ func (c *Client) encryptMessage(ctx context.Context, msg *protocol.StoredMessage
 		return
 	}
 	members, err := c.store.ListConversationMembers(ctx, msg.ConversationID)
-	if err != nil || len(members) == 0 {
-		return // 大厅/未知会话：明文（大厅是全员广播，E2E 后续版本覆盖）
+	if err != nil {
+		return
 	}
-	// 目标 = 会话成员里当前在线、且属于本会话的设备（含自己，发送方要能解）。
+	// 大厅（无成员表）= 全员广播：目标 = 全部在线设备（含自己）。
+	// 群聊 = 会话成员里当前在线、且属于本会话的设备（含自己，发送方要能解）。
+	isLobby := len(members) == 0
 	targets := make([]string, 0, 4)
 	c.peersMu.RLock()
 	for _, pr := range c.peers {
 		if !pr.Online || pr.DeviceID == "" {
 			continue
 		}
-		if !memberIn(pr.UserID, members) {
+		if !isLobby && !memberIn(pr.UserID, members) {
 			continue
 		}
 		targets = append(targets, pr.DeviceID)
 	}
 	c.peersMu.RUnlock()
+	// 发送者自己必须能解：peers 里不一定有自己（presence 广播可能未含）。
+	self := c.hello.DeviceID
+	if self != "" && !containsString(targets, self) {
+		targets = append(targets, self)
+	}
 	if len(targets) == 0 {
 		return // 无在线接收者：发明文，对方上线后经同步收到
 	}
@@ -164,6 +171,16 @@ func (c *Client) decryptMessage(msg *protocol.StoredMessage) {
 	}
 	msg.Body = string(plain)
 	msg.Encrypted = ""
+}
+
+// containsString 判断 s 是否在 list 里。
+func containsString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }
 
 // memberIn 判断 userID 是否在成员列表里。

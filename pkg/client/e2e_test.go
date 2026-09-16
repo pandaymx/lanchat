@@ -151,6 +151,49 @@ func TestE2EConversation(t *testing.T) {
 	}
 }
 
+// TestE2ELobbyEncryption：大厅（无成员表）= 全员广播，全部在线
+// 设备（含自己）有公钥 → 加密；B/C 都能解。
+func TestE2ELobbyEncryption(t *testing.T) {
+	ctx := context.Background()
+	keys := map[string]string{}
+	srv := keyringServer(keys)
+	defer srv.Close()
+
+	idA, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/a.bin")
+	idB, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/b.bin")
+	idC, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/c.bin")
+	keys["devB"] = base64.StdEncoding.EncodeToString(idB.PublicKey())
+	keys["devC"] = base64.StdEncoding.EncodeToString(idC.PublicKey())
+
+	// 大厅会话：不建成员表。
+	st := memory.New()
+	cliA := newTestClient(t, "userA", "devA", idA, srv.URL, st)
+	cliA.peers["devB"] = protocol.Presence{UserID: "userB", DeviceID: "devB", Online: true}
+	cliA.peers["devC"] = protocol.Presence{UserID: "userC", DeviceID: "devC", Online: true}
+
+	if err := cliA.SendMessage(ctx, "lobby", "大厅全员密文"); err != nil {
+		t.Fatal(err)
+	}
+	hist, _ := st.History(ctx, "lobby", 0, 10)
+	m := hist[0]
+	if m.Body != "" || m.Encrypted == "" {
+		t.Fatalf("lobby msg should be encrypted: body=%q", m.Body)
+	}
+	env, err := e2e.Unmarshal(m.Encrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []*e2e.Identity{idA, idB, idC} {
+		plain, err := env.Decrypt(id.PrivateKey())
+		if err != nil {
+			t.Fatalf("recipient should decrypt: %v", err)
+		}
+		if string(plain) != "大厅全员密文" {
+			t.Fatalf("plain = %q", plain)
+		}
+	}
+}
+
 // TestE2EPlaintextFallback：对方无公钥 → 明文（渐进）。
 func TestE2EPlaintextFallback(t *testing.T) {
 	ctx := context.Background()

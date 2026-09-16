@@ -190,6 +190,7 @@ func run(opts runOptions) error {
 		ConvID:     opts.ConvID,
 		Transport:  wstransport.New().WithClientTrust(hubTrust),
 		Translator: opts.Translator,
+		E2EDataDir: appdir.DataDir("lanchat"),
 	}, nil)
 	defer mgr.CloseAll()
 

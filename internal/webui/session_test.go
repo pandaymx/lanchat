@@ -319,12 +319,16 @@ type stubDialer struct {
 
 	// reads 复制给每个新 client 的 ReadCursors() 预置返回（M8.1）。
 	reads []protocol.ReadCursor
+
+	// lastOpts 记录最近一次拨号的完整 DialOptions（E2EDataDir 断言用）。
+	lastOpts DialOptions
 }
 
-func (d *stubDialer) dial(_ context.Context, _ DialOptions) (Client, core.Store, error) {
+func (d *stubDialer) dial(_ context.Context, opts DialOptions) (Client, core.Store, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.count++
+	d.lastOpts = opts
 	if d.err != nil {
 		return nil, nil, d.err
 	}
@@ -544,6 +548,24 @@ func TestManager_GetOrCreate_IdentityFields(t *testing.T) {
 	}
 	if s.id != "cookie-a" {
 		t.Errorf("session id = %q, want cookie-a", s.id)
+	}
+}
+
+// TestManager_E2EDataDir_ForwardsToDial 验证 E2EDataDir 从 ManagerConfig
+// 一路透传到每次拨号的 DialOptions（web 每设备独立身份文件的前提）。
+func TestManager_E2EDataDir_ForwardsToDial(t *testing.T) {
+	d := &stubDialer{}
+	m := newTestManager(t, d)
+	m.cfg.E2EDataDir = "/tmp/lanchat-e2e-test"
+
+	_, err := m.GetOrCreate(t.Context(), "cookie-e2e")
+	if err != nil {
+		t.Fatalf("GetOrCreate: %v", err)
+	}
+	defer m.Release("cookie-e2e")
+
+	if d.lastOpts.E2EDataDir != "/tmp/lanchat-e2e-test" {
+		t.Errorf("E2EDataDir = %q, want forwarded", d.lastOpts.E2EDataDir)
 	}
 }
 

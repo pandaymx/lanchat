@@ -22,6 +22,7 @@ import (
 	"image/png"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/pandaymx/lanchat/apps/desktop/webapp"
 	"github.com/pandaymx/lanchat/internal/i18n"
+	"github.com/pandaymx/lanchat/pkg/appdir"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
@@ -98,6 +100,8 @@ func main() {
 		ConvID:      *convID,
 		Version:     version,
 		Translator:  tr,
+		// E2E 身份与 mesh/known_hubs 同目录（appdir 默认）。
+		E2EDataDir: filepath.Join(appdir.DataDir("lanchat")),
 		// 只投递，不做事：事件泵同步调用必须快返回。
 		OnMessage: func(msg *protocol.StoredMessage) {
 			select {

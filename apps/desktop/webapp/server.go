@@ -55,6 +55,9 @@ type Options struct {
 	// DialTimeout 是单次拨号（含握手）上限；<=0 用 webui 默认（5s）。
 	// 测试里给短值避免慢超时；桌面端一般不用改。
 	DialTimeout time.Duration
+	// E2EDataDir 是本端 E2E 身份存放目录；空用 appdir 默认
+	//（DataDir("lanchat")）。每个浏览器会话/设备独立身份文件。
+	E2EDataDir string
 	// EmbeddedHub 为 true 且 HubURL 为空时，进程内起嵌入式 hub
 	// （pkg/hubserver，127.0.0.1 随机端口 + mesh 组网 + mDNS），
 	// 免去"先另起 hub 进程"的部署步骤（去中心化迭代第一步）。
@@ -135,6 +138,10 @@ func Start(opts Options) (*Server, error) {
 	}
 
 	// Manager 按 cookie 惰性拨号；窗口内单用户单会话，沿用 web 端同一套。
+	e2eDir := opts.E2EDataDir
+	if e2eDir == "" {
+		e2eDir = appdir.DataDir("lanchat")
+	}
 	mgr := webui.NewManager(webui.ManagerConfig{
 		HubURL:      opts.HubURL,
 		User:        opts.User,
@@ -142,6 +149,7 @@ func Start(opts Options) (*Server, error) {
 		Transport:   opts.Transport,
 		Translator:  opts.Translator,
 		DialTimeout: opts.DialTimeout,
+		E2EDataDir:  e2eDir,
 		OnMessage:   opts.OnMessage,
 	}, nil)
 

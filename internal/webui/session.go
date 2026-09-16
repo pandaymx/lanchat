@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/pandaymx/lanchat/internal/webui/templates"
 	"github.com/pandaymx/lanchat/pkg/client"
 	"github.com/pandaymx/lanchat/pkg/core"
+	"github.com/pandaymx/lanchat/pkg/e2e"
 	"github.com/pandaymx/lanchat/pkg/event"
 	"github.com/pandaymx/lanchat/pkg/logging"
 	"github.com/pandaymx/lanchat/pkg/protocol"
@@ -29,6 +31,10 @@ type DialOptions struct {
 	Device string
 	// HistoryLimit 是首屏历史拉取条数，<=0 用 client 默认值（50）。
 	HistoryLimit int
+	// E2EDataDir 是本端 E2E 身份存放目录；非空时按设备创建独立身份
+	// 文件 e2e_<device>.bin（每个浏览器 Session/设备一份），启用端到端
+	// 加密。加载失败仅警告、回退明文，不阻断连接。
+	E2EDataDir string
 }
 
 // DialClient 建立到 hub 的连接并完成握手（Hello + 历史补发）。
@@ -63,6 +69,18 @@ func DialClient(ctx context.Context, opts DialOptions) (*client.Client, core.Sto
 	// M9：文件传输的数据面挂在 hub 的 HTTP 端口（与 WS 同端口），
 	// 从 ws URL 推导 http 基址注入 client；不额外要求第二个地址。
 	cli.SetFileBase(client.HTTPBaseFromWS(opts.HubURL))
+
+	// E2E：每个设备（web cookie 对应一个 device）独立身份文件，
+	// 加载/创建后向 hub keyring 注册公钥（失败只警告，渐进明文）。
+	if opts.E2EDataDir != "" {
+		idPath := filepath.Join(opts.E2EDataDir, "e2e_"+opts.Device+".bin")
+		e2eID, err := e2e.LoadOrCreateIdentity(idPath)
+		if err != nil {
+			logging.New("webui").Warn("e2e identity load failed, plaintext", "path", idPath, "err", err)
+		} else if err := cli.SetE2E(e2eID); err != nil {
+			logging.New("webui").Warn("e2e init failed, plaintext", "err", err)
+		}
+	}
 
 	if err := cli.Connect(ctx, client.ConnectOptions{
 		RequestHistory: true,
@@ -123,6 +141,8 @@ type ManagerConfig struct {
 	Transport core.Transport
 	// HistoryLimit 是首屏历史条数，<=0 用 historyLimit（50）。
 	HistoryLimit int
+	// E2EDataDir 透传给每次拨号（非空启用 E2E，按设备建身份文件）。
+	E2EDataDir string
 	// DialTimeout 是单次拨号（含握手）上限，<=0 用 defaultDialTimeout。
 	DialTimeout time.Duration
 	// SessionTTL 是 Session 无活动多久后被 janitor 回收，<=0 用 defaultSessionTTL。
@@ -244,6 +264,7 @@ func (m *Manager) create(ctx context.Context, cookie string) (*Session, error) {
 			User:         m.cfg.User,
 			Device:       device,
 			HistoryLimit: m.cfg.HistoryLimit,
+			E2EDataDir:   m.cfg.E2EDataDir,
 		})
 		resCh <- dialResult{cli: cli, store: store, err: err}
 	}()

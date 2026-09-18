@@ -1,3 +1,11 @@
+## [2.15.0](https://github.com/pandaymx/lanchat/compare/v2.14.0...v2.15.0) (2026-09-18)
+
+### Features
+
+* **core:** E2E pin 手动信任入口（TrustE2EKey） ([8b77cd4](https://github.com/pandaymx/lanchat/commit/8b77cd44f1f5abe3e738ad3065b0d9462d4cca80))
+* **mobile:** 换钥告警 SnackBar 加「信任此密钥」动作 ([e214664](https://github.com/pandaymx/lanchat/commit/e2146649f7cdff76e5db4aa75581dc4cfd593764))
+* **web:** 换钥告警 banner 加「信任此密钥」按钮 ([1091412](https://github.com/pandaymx/lanchat/commit/1091412f812483f19118a5897b49873d09733099))
+
 ## [2.14.0](https://github.com/pandaymx/lanchat/compare/v2.13.2...v2.14.0) (2026-09-18)
 
 ### Features

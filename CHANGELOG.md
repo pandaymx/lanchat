@@ -1,3 +1,10 @@
+## [2.13.0](https://github.com/pandaymx/lanchat/compare/v2.12.0...v2.13.0) (2026-09-18)
+
+### Features
+
+* **core:** 接收方向 pinning（入站 E2EKey 换钥告警） ([abfcb7d](https://github.com/pandaymx/lanchat/commit/abfcb7ddd306348a2d64d8d2a07937f065d5d604))
+* **mobile:** 安卓接收方向 pinning（入站 ek 换钥告警） ([1226e5c](https://github.com/pandaymx/lanchat/commit/1226e5cc1b5d351d9019ef39bdfca9f4240aa43e))
+
 ## [2.12.0](https://github.com/pandaymx/lanchat/compare/v2.11.0...v2.12.0) (2026-09-18)
 
 ### Features

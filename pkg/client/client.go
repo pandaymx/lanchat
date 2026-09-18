@@ -218,7 +218,10 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 		}
 		// 兜底超时：Hub 没响应也不能让 buffer 一直挂起；超时后按到达顺序直接 publish。
 		// 用闭包捕获 opts 的超时；Close() 也会强制清（见 forceFlushPending），保证 quit 路径无残留。
-		time.AfterFunc(opts.HistoryWaitTimeout, c.forceFlushPending)
+		time.AfterFunc(opts.HistoryWaitTimeout, func() {
+			//nolint:contextcheck // timer 回调无父 ctx，Background 足够
+			c.forceFlushPending(context.Background())
+		})
 	}
 
 	go c.readPump(c.pumpCtx) //nolint:contextcheck // pumpCtx 由 Client 自身管理，Client 没有父 ctx
@@ -282,7 +285,7 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 		// 幂等持久化，upsert-by-ID 保证 ServerSeq 由 Hub 补齐；
 		// 入事件总线走 deliverMessage 入口，受 catch-up 缓冲护栏约束。
 		_, _ = c.store.AppendMessage(ctx, msg)
-		c.deliverMessage(&msg)
+		c.deliverMessage(ctx, &msg)
 
 	case protocol.FKHistoryResp:
 		var resp protocol.HistoryResponse
@@ -323,13 +326,13 @@ func (c *Client) dispatch(ctx context.Context, f protocol.Frame) {
 		for i := range resp.Messages {
 			m := resp.Messages[i]
 			_, _ = c.store.AppendMessage(ctx, m)
-			c.publishMessageOnce(&m)
+			c.publishMessageOnce(ctx, &m)
 			// 通过 pendingMu 保护下写入 lastLocalSeq；
 			// flushPendingDeliver 紧随其后读，forceFlushPending 的 timer goroutine 也通过同一把锁读，
 			// 这样不依赖 happens-before 也能让 race detector 通过。
 			c.setLastHistorySeq(m.ServerSeq)
 		}
-		c.flushPendingDeliver()
+		c.flushPendingDeliver(ctx)
 		// 首屏历史已落 Store：通知同步等待的 Connect（若有）。
 		c.histMu.Lock()
 		if c.historyDone != nil {
@@ -660,12 +663,18 @@ func (c *Client) Identity() (userID, deviceID string) {
 
 // publishMessageOnce 防止同一 ID 的消息重复发射到 EventBus。
 // 返回 false 表示已见过，应当跳过。
-func (c *Client) publishMessageOnce(msg *protocol.StoredMessage) bool {
+func (c *Client) publishMessageOnce(ctx context.Context, msg *protocol.StoredMessage) bool {
 	if msg == nil || msg.ID == "" {
 		return false
 	}
 	// E2E：密文消息在发布到事件总线前解密（所有入站路径统一走这里）。
 	c.decryptMessage(msg)
+	// E2E：入站自我声明的公钥也走 pinning——中间人换钥后，换钥设备
+	// 发过来的消息会带新 E2EKey；不在这里检测就会被当成「首次见」
+	// 钉成新 pin，告警永远不触发。
+	if msg.E2EKey != "" && msg.SenderDeviceID != "" {
+		c.checkPin(ctx, msg.SenderDeviceID, msg.E2EKey)
+	}
 	c.seenMu.Lock()
 	if _, ok := c.seen[msg.ID]; ok {
 		c.seenMu.Unlock()
@@ -691,7 +700,7 @@ func (c *Client) publishMessageOnce(msg *protocol.StoredMessage) bool {
 // 后收到「FKHistoryResp 里的 [M1, M2]」，结果事件总线出现 [M2, M1] 这种乱序。
 // 这里把 race window 里的 FKDeliver 先缓存；FKHistoryResp 到达后 flush 一次，
 // 保证事件总线上的消息序列在 ServerSeq 上单调递增。
-func (c *Client) deliverMessage(msg *protocol.StoredMessage) {
+func (c *Client) deliverMessage(ctx context.Context, msg *protocol.StoredMessage) {
 	if msg == nil {
 		return
 	}
@@ -701,7 +710,7 @@ func (c *Client) deliverMessage(msg *protocol.StoredMessage) {
 		c.pendingMu.Unlock()
 		return
 	}
-	c.publishMessageOnce(msg)
+	c.publishMessageOnce(ctx, msg)
 }
 
 // flushPendingDeliver 在 FKHistoryResp 收完时被调用一次：
@@ -714,7 +723,7 @@ func (c *Client) deliverMessage(msg *protocol.StoredMessage) {
 // hub 的 broadcast 单条是同步顺序发出，单条 FKDeliver 内部已是有序；
 // 但 race window 里 M2 的 deliver 跑到 history resp 之前是站得住的，
 // 所以需要这条护栏保证总线上"history 先 → race 来的 deliver 后"。
-func (c *Client) flushPendingDeliver() {
+func (c *Client) flushPendingDeliver(ctx context.Context) {
 	if !c.awaitingHistory.CompareAndSwap(true, false) {
 		// 已经被超时路径或 Close 兜底清过；不重复 flush。
 		return
@@ -732,14 +741,14 @@ func (c *Client) flushPendingDeliver() {
 		if m.LocalSeq != 0 && m.LocalSeq <= last {
 			continue
 		}
-		c.publishMessageOnce(m)
+		c.publishMessageOnce(ctx, m)
 	}
 }
 
 // forceFlushPending 是 Connect 设的兜底超时回调。timeout 后无论是否拿到 FKHistoryResp，
 // 都强制走"按到达顺序直送"——这是降级语义，事件顺序有可能非严格按 ServerSeq，
 // 但不能因为 hub 一次没回就把整个客户端卡住。
-func (c *Client) forceFlushPending() {
+func (c *Client) forceFlushPending(ctx context.Context) {
 	if !c.awaitingHistory.CompareAndSwap(true, false) {
 		return
 	}
@@ -748,7 +757,7 @@ func (c *Client) forceFlushPending() {
 	c.pendingDeliver = nil
 	c.pendingMu.Unlock()
 	for i := range pending {
-		c.publishMessageOnce(&pending[i])
+		c.publishMessageOnce(ctx, &pending[i])
 	}
 }
 
@@ -987,7 +996,7 @@ func (c *Client) Close() error {
 	if c.pumpCancel != nil {
 		c.pumpCancel()
 	}
-	c.forceFlushPending()
+	c.forceFlushPending(context.Background())
 	err := c.conn.Close()
 	<-c.done
 	return err

@@ -132,7 +132,7 @@ func TestE2EConversation(t *testing.T) {
 
 	// 直接走 deliver → publish 路径（模拟 hub FKDeliver）。
 	m.ID = "srv-1" // hub 会重写 ID
-	cliB.deliverMessage(&m)
+	cliB.deliverMessage(context.Background(), &m)
 	ev := <-sub.C()
 	if ev.Kind != core.EventMessage || ev.Message.Body != "机密：攻击计划" {
 		t.Fatalf("decrypted body = %q (kind=%v)", ev.Message.Body, ev.Kind)
@@ -251,6 +251,55 @@ func TestE2EKeyPinning(t *testing.T) {
 	// pin 仍记录旧值（不自动更新——用户核对后手动重置）。
 	if pin, _ := st.GetE2EPinnedKey(ctx, "devB"); pin == "" || pin == keys["devB"] {
 		t.Fatalf("pin should keep old value, got %q", pin)
+	}
+}
+
+// TestE2EKeyPinningRecv：中间人换钥后，换钥设备发过来的带新 E2EKey
+// 的消息也应触发告警（不只发送方向查 keyring 才检测）。
+func TestE2EKeyPinningRecv(t *testing.T) {
+	ctx := context.Background()
+	keys := map[string]string{}
+	srv := keyringServer(keys)
+	defer srv.Close()
+
+	idA, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/a1.bin")
+	idB, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/b1.bin")
+	idB2, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/b2.bin")
+	pubB := base64.StdEncoding.EncodeToString(idB.PublicKey())
+	pubB2 := base64.StdEncoding.EncodeToString(idB2.PublicKey())
+	keys["devB"] = pubB
+
+	st := memory.New()
+	bus := event.New()
+	cliB := New(protocol.Hello{UserID: "userB", DeviceID: "devB"},
+		fake.NewConn("devB"), st, bus)
+	cliB.SetFileBase(srv.URL)
+	_ = cliB.SetE2E(idB)
+
+	// A 发送方向查一次 keyring → pin 钉成旧公钥。
+	cliB.peers["devA"] = protocol.Presence{UserID: "userA", DeviceID: "devA", Online: true}
+	keys["devA"] = base64.StdEncoding.EncodeToString(idA.PublicKey())
+	_ = st.SaveE2EPinnedKey(ctx, "devA", keys["devA"]) // 模拟已 pin devA
+	_ = st.SaveE2EPinnedKey(ctx, "devB", pubB)         // devB 自己的 pin
+
+	// 换钥后的 devB 发消息过来（自我声明新公钥 pubB2）。
+	sub := bus.Subscribe(8)
+	defer sub.Close()
+	m := &protocol.StoredMessage{
+		ID: "m1", ConversationID: "lobby", SenderDeviceID: "devB",
+		E2EKey: pubB2, Body: "hi",
+	}
+	cliB.deliverMessage(ctx, m)
+	got := false
+	for ev := range sub.C() {
+		if ev.Kind == core.EventE2EKeyChanged && ev.KeyChanged != nil &&
+			ev.KeyChanged.DeviceID == "devB" && ev.KeyChanged.OldFingerprint != ev.KeyChanged.NewFingerprint {
+			got = true
+			break
+		}
+	}
+	if !got {
+		t.Fatal("expected key-changed event on inbound rotated E2EKey")
 	}
 }
 

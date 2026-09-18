@@ -1,3 +1,9 @@
+## [2.12.0](https://github.com/pandaymx/lanchat/compare/v2.11.0...v2.12.0) (2026-09-18)
+
+### Features
+
+* **mobile:** 安卓对等 E2E pinning 与换钥告警 SnackBar ([e8ae1bb](https://github.com/pandaymx/lanchat/commit/e8ae1bb0e1b32cf845ba02540488224d3ba0f12f))
+
 ## [2.11.0](https://github.com/pandaymx/lanchat/compare/v2.10.0...v2.11.0) (2026-09-18)
 
 ### Features

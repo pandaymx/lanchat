@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LAN Chat Windows MSI 模板（wixl / msitools 交叉打包用）。
+     变量：Version / ProductName / ExePath。
+     注意：wixl 不支持 WixUI_* 扩展（WiX 官方 UI 库），用默认基本 UI。
+     UpgradeCode 固定 GUID：同一产品跨版本稳定，MajorUpgrade 才能正确识别升级。 -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="$(var.ProductName)"
+           Language="2052"
+           Version="$(var.Version)"
+           Manufacturer="pandaymx"
+           UpgradeCode="6F3A9C2E-1B4D-4E5A-8F7C-2D9E0A1B3C4D">
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Feature Id="MainFeature" Title="$(var.ProductName)" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Product>
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+  </Fragment>
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="MainExe" Guid="*">
+        <File Id="MainExeFile" Source="$(var.ExePath)" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="ProgramMenuDir" Guid="*">
+        <CreateFolder />
+        <RemoveFolder Id="ProgramMenuDir" On="uninstall" />
+        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]"
+                       Name="Manufacturer" Type="string" Value="pandaymx" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>

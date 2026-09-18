@@ -158,13 +158,13 @@ jobs:
       - name: Install Windows arm64 cross toolchain
         if: matrix.goos == 'windows' && matrix.goarch == 'arm64'
         run: |
-          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true; sudo apt-get update || true && sudo apt-get install -y nsis
+          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true; sudo apt-get update || true && sudo apt-get install -y nsis msitools
           curl -sL https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-ubuntu-20.04-x86_64.tar.xz -o /tmp/llvm-mingw.tar.xz
           sudo tar -C /opt -xf /tmp/llvm-mingw.tar.xz
           ls /opt/llvm-mingw*/bin/aarch64-w64-mingw32-clang
       - name: Install Windows toolchain
         if: runner.os == 'Windows'
-        run: choco install mingw nsis -y
+        run: choco install mingw nsis wixtoolset -y
       # *_templ.go 被 .gitignore 排除，desktop 依赖 internal/webui 模板，
       # 构建前必须 templ generate（与 package job 同款 pin）。
       - name: Install templ CLI
@@ -224,6 +224,9 @@ jobs:
                 export MAKENSIS="/c/Program Files (x86)/NSIS/makensis.exe"
               fi
               ./.github/installer/pkg-windows-nsis.sh "${LANCHAT_VERSION#v}" "$arch" desktop
+              # 同时产 MSI（双后端：Windows runner 用 WiX candle/light，Linux
+              # 交叉 runner 用 msitools wixl；pkg-windows-msi.sh 自动选择）。
+              ./.github/installer/pkg-windows-msi.sh "${LANCHAT_VERSION#v}" "$arch" desktop
               ;;
             darwin)
               bash .github/installer/pkg-macos-dmg.sh "${LANCHAT_VERSION#v}" "$arch"
@@ -242,7 +245,7 @@ jobs:
           tag="$LANCHAT_VERSION"
           gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --notes "> 由 CI 打包 job 补建的 Release 页面。"
           shopt -s nullglob
-          gh release upload "$tag" dist/*.exe dist/*.dmg dist/*.deb dist/*.rpm --clobber
+          gh release upload "$tag" dist/*.exe dist/*.dmg dist/*.deb dist/*.rpm dist/*.msi --clobber
 
   # 哈希汇总（2026-09-07）：逐文件 .sha256 太多（每资产一个），改为
   # 全部资产一个 checksums.txt。package / desktop 各 job 不再产 .sha256，
@@ -467,7 +470,7 @@ jobs:
       # windows NSIS + linux deb/rpm；darwin 只产压缩包不需要）。
       - name: Install packaging tools
         if: matrix.goos != 'darwin'
-        run: sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true; sudo apt-get update || true && sudo apt-get install -y rpm nsis
+        run: sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true; sudo apt-get update || true && sudo apt-get install -y rpm nsis msitools
       # 纯 Go + 零 CGO（AGENTS.md §2）：CGO_ENABLED=0 交叉编译无坑。
       # 版本注入与 Makefile LDFLAGS 同款（main.version/commit/date），
       # 值取自 git（describe / rev-parse），与触发方式无关。
@@ -516,6 +519,7 @@ jobs:
             for bin in hub tui web; do
               cp "$raw/${bin}${ext}" "dist/raw/${bin}${ext}"
               ./.github/installer/pkg-windows-nsis.sh "${ver#v}" "${{ matrix.goarch }}" "$bin"
+              ./.github/installer/pkg-windows-msi.sh "${ver#v}" "${{ matrix.goarch }}" "$bin"
             done
           elif [ "${{ matrix.goos }}" = "linux" ]; then
             for bin in hub tui web; do
@@ -537,4 +541,4 @@ jobs:
           # 精确匹配三类产物，缺一类时展开为空不报错（linux/darwin 只有
           # tar.gz、windows 只有 zip）
           shopt -s nullglob
-          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/*.exe --clobber
+          gh release upload "$tag" dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm dist/*.exe dist/*.msi --clobber

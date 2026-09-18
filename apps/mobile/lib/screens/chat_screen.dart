@@ -68,7 +68,12 @@ class _ChatScreenState extends State<ChatScreen> {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         backgroundColor: const Color(0xFF856404),
         content: Text('E2E 警告：设备 ${ch.deviceId} 公钥已变更（旧 ${ch.oldFingerprint} 新 ${ch.newFingerprint}），请核对'),
-        duration: const Duration(seconds: 8),
+        duration: const Duration(seconds: 10),
+        action: SnackBarAction(
+          label: '信任此密钥',
+          textColor: Colors.white,
+          onPressed: () => client.trustE2EKey(ch.deviceId, ch.newPubB64),
+        ),
       ));
     };
     _scrollCtrl.addListener(_onScroll);

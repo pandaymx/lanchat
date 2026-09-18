@@ -104,7 +104,15 @@ class HubClient extends ChangeNotifier {
       deviceId: deviceId,
       oldFingerprint: e2eFingerprint(old),
       newFingerprint: e2eFingerprint(pubB64),
+      newPubB64: pubB64,
     ));
+  }
+
+  /// trustE2EKey：用户核对完换钥告警后，把 deviceId 的 pin 覆盖为新公钥。
+  /// 幂等；覆盖后下一次 checkPin 一致，不再告警。
+  Future<void> trustE2EKey(String deviceId, String pubB64) async {
+    _pins[deviceId] = pubB64;
+    await _savePins();
   }
 
   Future<void> _loadPins() async {
@@ -781,10 +789,12 @@ class E2EKeyChange {
   final String deviceId;
   final String oldFingerprint;
   final String newFingerprint;
+  final String newPubB64;
   E2EKeyChange({
     required this.deviceId,
     required this.oldFingerprint,
     required this.newFingerprint,
+    required this.newPubB64,
   });
 }
 

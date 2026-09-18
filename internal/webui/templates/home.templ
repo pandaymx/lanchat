@@ -208,10 +208,21 @@ templ ConnStatus(tr Translator, connected bool) {
 
 // KeyWarning 是 E2E 公钥变更告警 banner（SSE key-warning 帧的 swap 片段）。
 // 渐进：不阻断通信，仅提示用户核对指纹。
-templ KeyWarning(tr Translator, device, oldFP, newFP string) {
+templ KeyWarning(tr Translator, device, oldFP, newFP, pub string) {
 	<div class="banner key-warning">
 		<strong>{ "E2E" }</strong>
 		{ " 设备 " + device + " 公钥已变更（旧 " + oldFP + " 新 " + newFP + "），请核对" }
+		<button
+			class="key-trust-btn"
+			hx-post="/api/e2e/trust"
+			hx-swap="outerHTML"
+			hx-target="#key-warning"
+			data-device={ device }
+			data-pub={ pub }
+			onclick="event.preventDefault(); this.parentElement.innerHTML=''; htmx.ajax('POST','/api/e2e/trust',{values:{device_id:this.dataset.device,pub:this.dataset.pub}});"
+		>
+			{ "信任此密钥" }
+		</button>
 	</div>
 }
 

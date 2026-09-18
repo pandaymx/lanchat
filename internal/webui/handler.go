@@ -100,6 +100,9 @@ type Client interface {
 	// SendRead 上发「已读到 seq」回执（M8.1）；POST /read 的出站路径。
 	// 身份由 hub 盖戳，convID 由会话绑定。
 	SendRead(ctx context.Context, convID string, serverSeq uint64) error
+	// TrustE2EKey 把指定设备的本地 pin 覆盖为新公钥（用户核对完换钥告警
+	// 后主动信任；POST /api/e2e/trust 的出站路径）。
+	TrustE2EKey(ctx context.Context, deviceID, pubB64 string) error
 	// SendFileMessage 发送一条携带文件附件引用的消息（M9）。
 	// FileRef 由 hub 文件端点返回（FileID 由 hub 生成），本方法只负责
 	// 把引用挂到消息上走既有消息管线；文件二进制不经过 WS。
@@ -153,6 +156,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/messages", h.handleMessages)
 	mux.HandleFunc("/typing", h.handleTyping)
 	mux.HandleFunc("/read", h.handleRead)
+	mux.HandleFunc("/api/e2e/trust", h.handleE2ETrust)
 	mux.HandleFunc("/history", h.handleHistory)
 	// v1.1 消息搜索：GET /search?q=…（可选 &conv= 限定会话）。
 	mux.HandleFunc("/search", h.handleSearch)
@@ -249,6 +253,39 @@ func (h *Handler) handleRead(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read failed", http.StatusServiceUnavailable)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleE2ETrust：用户核对完换钥告警后，把指定设备的 pin 覆盖为新公钥。
+// 表单字段：device_id、pub（新公钥 base64）。成功后 banner 由 SSE 重新评估
+// 或下一次 checkPin 一致即不再告警。
+func (h *Handler) handleE2ETrust(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	deviceID := r.PostFormValue("device_id")
+	pub := r.PostFormValue("pub")
+	if deviceID == "" || pub == "" {
+		http.Error(w, "device_id and pub required", http.StatusBadRequest)
+		return
+	}
+	sess, err := h.ensureSession(w, r)
+	if err != nil {
+		http.Error(w, "hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := sess.cli.TrustE2EKey(r.Context(), deviceID, pub); err != nil {
+		h.logger.Warn("e2e trust failed", "device", deviceID, "err", err)
+		http.Error(w, "trust failed", http.StatusServiceUnavailable)
+		return
+	}
+	// 信任成功：清掉 banner（前端 hx-post 到这里后把 banner 元素清空）。
+	w.Header().Set("HX-Trigger", "e2e-trusted")
 	w.WriteHeader(http.StatusNoContent)
 }
 

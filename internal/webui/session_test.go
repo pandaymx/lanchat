@@ -235,6 +235,9 @@ func (s *stubClient) ReadCursors() []protocol.ReadCursor {
 	return out
 }
 
+// TrustE2EKey：测试桩空实现。
+func (s *stubClient) TrustE2EKey(_ context.Context, _, _ string) error { return nil }
+
 // SendRead 记录调用入参（M8.1）。
 func (s *stubClient) SendRead(_ context.Context, convID string, serverSeq uint64) error {
 	s.mu.Lock()

@@ -294,7 +294,22 @@ body {
   background: #fff3cd;
   color: #856404;
   border-bottom-color: #ffeaa7;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
+.key-trust-btn {
+  margin-left: auto;
+  background: #856404;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.key-trust-btn:hover { background: #6b5003; }
 
 /* 正在输入指示条（M7.3） */
 #typing { flex: 0 0 auto; }

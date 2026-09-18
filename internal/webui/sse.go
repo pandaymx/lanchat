@@ -300,7 +300,8 @@ func (s *Session) sseFrameConv(e core.Event, convID string) (uint64, []byte, boo
 		}
 		var buf bytes.Buffer
 		if err := templates.KeyWarning(s.tr, e.KeyChanged.DeviceID,
-			e.KeyChanged.OldFingerprint, e.KeyChanged.NewFingerprint).Render(s.ctx, &buf); err != nil {
+			e.KeyChanged.OldFingerprint, e.KeyChanged.NewFingerprint,
+			e.KeyChanged.NewPubB64).Render(s.ctx, &buf); err != nil {
 			s.logger.Error("render key-warning frame failed", "err", err)
 			return 0, nil, false
 		}

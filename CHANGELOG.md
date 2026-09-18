@@ -1,3 +1,9 @@
+## [2.13.2](https://github.com/pandaymx/lanchat/compare/v2.13.1...v2.13.2) (2026-09-18)
+
+### Bug Fixes
+
+* **mobile:** 退出登录黑屏——回到连接页而非已断开的 HomeScreen ([a98aeb3](https://github.com/pandaymx/lanchat/commit/a98aeb3f0b415d37b6c08479a43dab80b1d59f45))
+
 ## [2.13.1](https://github.com/pandaymx/lanchat/compare/v2.13.0...v2.13.1) (2026-09-18)
 
 ### Bug Fixes

@@ -34,8 +34,10 @@ class Notifier {
 
   Future<void> show(String title, String body, {String? payload}) async {
     if (!_ready) return;
-    // 通知震动开关（设置页 notify_vibrate，默认开）。
     final prefs = await SharedPreferences.getInstance();
+    // 通知总开关（设置页 notify_enabled，默认开）：关了就不弹。
+    if (!(prefs.getBool('notify_enabled') ?? true)) return;
+    // 通知震动开关（设置页 notify_vibrate，默认开）。
     final vibrate = prefs.getBool('notify_vibrate') ?? true;
     await _plugin.show(
       id: 1,

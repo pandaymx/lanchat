@@ -124,6 +124,7 @@ type KeyChangedInfo struct {
 	DeviceID       string
 	OldFingerprint string // 本地已 pin 的指纹（hex，前 8 字节）
 	NewFingerprint string // keyring 里现在的指纹（hex，前 8 字节）
+	NewPubB64      string // 当前新公钥 base64；UI 点「信任此密钥」时回传，覆盖旧 pin
 }
 
 // StateInfo 是 EventState 的载荷。

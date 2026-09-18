@@ -180,8 +180,18 @@ func (c *Client) checkPin(ctx context.Context, deviceID, pubB64 string) {
 			DeviceID:       deviceID,
 			OldFingerprint: e2eFingerprint(oldPub),
 			NewFingerprint: e2eFingerprint(newPub),
+			NewPubB64:      pubB64,
 		},
 	})
+}
+
+// TrustE2EKey 把 deviceID 的本地 pin 覆盖为 pubB64（用户核对完换钥告警后
+// 主动信任新公钥；否则告警每次收发都会触发）。幂等。
+func (c *Client) TrustE2EKey(ctx context.Context, deviceID, pubB64 string) error {
+	if deviceID == "" || pubB64 == "" {
+		return fmt.Errorf("trustE2EKey: empty device or pub")
+	}
+	return c.store.SaveE2EPinnedKey(ctx, deviceID, pubB64)
 }
 
 // e2eFingerprint 公钥指纹：SHA-256 前 8 字节 hex（16 字符，人眼可辨）。

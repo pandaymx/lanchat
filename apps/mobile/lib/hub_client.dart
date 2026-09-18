@@ -189,6 +189,12 @@ class HubClient extends ChangeNotifier {
       if (p['enc'] is String && (p['enc'] as String).isNotEmpty) {
         final plain = await _tryDecrypt(p['enc'] as String);
         p['body'] = plain ?? '[加密消息：无法解密]';
+        // 入站自我声明的公钥也走 pinning（中间人换钥后会带新 ek）。
+        final ek = p['ek'];
+        final sdid = p['sdid'];
+        if (ek is String && ek.isNotEmpty && sdid is String && sdid.isNotEmpty) {
+          _checkPin(sdid, ek);
+        }
         p.remove('enc');
         p.remove('ek');
       }
@@ -201,6 +207,11 @@ class HubClient extends ChangeNotifier {
             (m['enc'] as String).isNotEmpty) {
           final plain = await _tryDecrypt(m['enc'] as String);
           m['body'] = plain ?? '[加密消息：无法解密]';
+          final ek = m['ek'];
+          final sdid = m['sdid'];
+          if (ek is String && ek.isNotEmpty && sdid is String && sdid.isNotEmpty) {
+            _checkPin(sdid, ek);
+          }
           m.remove('enc');
           m.remove('ek');
         }

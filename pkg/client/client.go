@@ -218,8 +218,8 @@ func (c *Client) Connect(ctx context.Context, opts ConnectOptions) error {
 		}
 		// 兜底超时：Hub 没响应也不能让 buffer 一直挂起；超时后按到达顺序直接 publish。
 		// 用闭包捕获 opts 的超时；Close() 也会强制清（见 forceFlushPending），保证 quit 路径无残留。
-		time.AfterFunc(opts.HistoryWaitTimeout, func() {
-			//nolint:contextcheck // timer 回调无父 ctx，Background 足够
+		// timer 回调无父 ctx；闭包内用 Background（contextcheck 已确认此处安全）。
+		time.AfterFunc(opts.HistoryWaitTimeout, func() { //nolint:contextcheck
 			c.forceFlushPending(context.Background())
 		})
 	}

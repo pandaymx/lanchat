@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'connect_screen.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -262,7 +263,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.remove('hub_user');
     await prefs.remove('hub_device');
     if (context.mounted) {
-      Navigator.of(context).popUntil((r) => r.isFirst);
+      // 连接成功时是 pushReplacement 到 HomeScreen 的，栈里已无 ConnectScreen。
+      // logout 要回到连接页——用 pushAndRemoveUntil 清掉整栈再进 ConnectScreen，
+      // 而不是 popUntil first（那只会回到已断开的 HomeScreen，黑屏）。
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const ConnectScreen()),
+        (route) => false,
+      );
     }
   }
 

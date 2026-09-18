@@ -1,3 +1,28 @@
+## [2.11.0](https://github.com/pandaymx/lanchat/compare/v2.10.0...v2.11.0) (2026-09-18)
+
+### Features
+
+* **core:** E2E 公钥指纹 pinning（TOFU 换钥告警） ([79859e7](https://github.com/pandaymx/lanchat/commit/79859e71a91ef54f1460ad95a0197f5a5072b7b1))
+* **core:** 大厅会话启用 E2E（无成员表 = 全员广播目标） ([2501298](https://github.com/pandaymx/lanchat/commit/250129855997b3fb2d9034c776304a3bc85d6aed))
+* **core:** 新增 pkg/e2e —— 消息端到端加密核心 ([d409991](https://github.com/pandaymx/lanchat/commit/d409991b693dfe523d1bdccf204f7b2c688d68ab))
+* **core:** 消息端到端加密（E2E）端侧接入 Step 4 ([c561452](https://github.com/pandaymx/lanchat/commit/c561452c3d999715d8728f49a50fc925e0801fdd))
+* **desktop:** 嵌入式 hub——桌面端免外部 hub 进程（去中心化第一步） ([88315f1](https://github.com/pandaymx/lanchat/commit/88315f101c6410d8bb96f5df04bf053917633a23))
+* **hub:** mesh 节点身份 + 配对 Token 握手（gated TOFU） ([33b8d39](https://github.com/pandaymx/lanchat/commit/33b8d39c1027ead27f3c6c5e5cb10385e7d61758))
+* **hub:** StartEmbedded 共享辅助 + TUI 端嵌入式 hub（去中心化第二步） ([1383c2a](https://github.com/pandaymx/lanchat/commit/1383c2a26479c502cec8c616ca8a411dd9b99409))
+* **mobile:** E2E 端侧接入安卓（Dart 与 Go pkg/e2e 字节级对齐） ([5cd6e29](https://github.com/pandaymx/lanchat/commit/5cd6e297620b0c9f329ef67d431274956cd3041a))
+* **mobile:** Go 嵌入式 hub 绑定入口（去中心化第 4 步·Go 侧） ([60161ab](https://github.com/pandaymx/lanchat/commit/60161abb9bbfc91a7e6cf0dbaf1ed18c208cc8e2))
+* **mobile:** 安卓内嵌 Go hub——c-shared + Dart FFI（去中心化第 4 步） ([6c9b1e0](https://github.com/pandaymx/lanchat/commit/6c9b1e023fb9fff324637c2d6eef9c7962c7c6c7))
+* **store:** E2E keyring —— 设备公钥注册/查询与消息自我声明提取 ([ecdc886](https://github.com/pandaymx/lanchat/commit/ecdc8866ce5ec92962b9baf02d4fd410edc6b54c))
+* **store:** keyring 支持密钥吊销（DELETE 端点 + DeleteE2EKey） ([f9d7381](https://github.com/pandaymx/lanchat/commit/f9d738199f599c02988e02873301f7aa7622e277))
+* **store:** 消息管线支持 E2E 密文信封（encrypted 列透传） ([4483e04](https://github.com/pandaymx/lanchat/commit/4483e0437e9a1a36a1eb2373c3d2498ff51b6738))
+* **web:** E2E 换钥告警 banner（SSE 推送） ([0f6eb8c](https://github.com/pandaymx/lanchat/commit/0f6eb8c30539015db019d47271de92087db8b96e)), closes [#key-warning](https://github.com/pandaymx/lanchat/issues/key-warning)
+* **web:** E2E 端侧接入 web 与桌面端（共用 webui 装配层） ([fe62d89](https://github.com/pandaymx/lanchat/commit/fe62d89a21558a5a00cc8a431b5980d15c7cff61))
+* **web:** 嵌入式 hub——cmd/web 默认 -embedded（去中心化第三步） ([600291d](https://github.com/pandaymx/lanchat/commit/600291da1ea21e7268aad27e8f7daffb65061001))
+
+### Bug Fixes
+
+* **core:** E2E 客户端两处 lint 修复 ([837b020](https://github.com/pandaymx/lanchat/commit/837b020d21d414c4ae812d3f8b0311da312ab97a))
+
 ## [2.10.0](https://github.com/pandaymx/lanchat/compare/v2.9.2...v2.10.0) (2026-09-15)
 
 ### Features

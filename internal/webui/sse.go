@@ -293,6 +293,19 @@ func (s *Session) sseFrameConv(e core.Event, convID string) (uint64, []byte, boo
 		}
 		return 0, sseDataFrame("typing", buf.Bytes()), true
 
+	case core.EventE2EKeyChanged:
+		// E2E 公钥变更告警（TOFU pinning）：渲染警告 banner 片段。
+		if e.KeyChanged == nil {
+			return 0, nil, false
+		}
+		var buf bytes.Buffer
+		if err := templates.KeyWarning(s.tr, e.KeyChanged.DeviceID,
+			e.KeyChanged.OldFingerprint, e.KeyChanged.NewFingerprint).Render(s.ctx, &buf); err != nil {
+			s.logger.Error("render key-warning frame failed", "err", err)
+			return 0, nil, false
+		}
+		return 0, sseDataFrame("key-warning", buf.Bytes()), true
+
 	case core.EventRead:
 		// M8.1：他人已读回执。事件到达时 client 已读快照已更新（dispatch
 		// 先 applyRead 后发布事件）。把盖戳后的游标 JSON 推给浏览器，

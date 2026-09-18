@@ -114,6 +114,8 @@ templ Home(data HomeData) {
 				<div id="conn-state" hx-sse="swap:state" hx-swap="innerHTML">
 					@ConnStatus(data.Tr, data.Connected)
 				</div>
+				// E2E 公钥变更告警：SSE key-warning 帧整段 swap（渐进，不阻断）。
+				<div id="key-warning" hx-sse="swap:key-warning" hx-swap="innerHTML"></div>
 				// v1.2 备份导出：同源直链下载（hub 与 Web 同端口）。
 				// QQ 风顶栏工具组：导出备份 + 退出群（SVG 图标）。
 				<div class="chat-tools">
@@ -202,6 +204,15 @@ templ ConnStatus(tr Translator, connected bool) {
 	if !connected {
 		<div class="banner offline">{ T(tr, "web.state.disconnected") }</div>
 	}
+}
+
+// KeyWarning 是 E2E 公钥变更告警 banner（SSE key-warning 帧的 swap 片段）。
+// 渐进：不阻断通信，仅提示用户核对指纹。
+templ KeyWarning(tr Translator, device, oldFP, newFP string) {
+	<div class="banner key-warning">
+		<strong>{ "E2E" }</strong>
+		{ " 设备 " + device + " 公钥已变更（旧 " + oldFP + " 新 " + newFP + "），请核对" }
+	</div>
 }
 
 // Peers 是侧栏在线成员列表片段（M7.2）：首屏服务端渲染，SSE presence

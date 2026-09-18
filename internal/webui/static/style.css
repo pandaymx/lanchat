@@ -289,6 +289,13 @@ body {
   border-bottom: 1px solid var(--banner-border);
 }
 
+/* E2E 公钥变更告警（TOFU pinning）：琥珀色警告条 */
+.banner.key-warning {
+  background: #fff3cd;
+  color: #856404;
+  border-bottom-color: #ffeaa7;
+}
+
 /* 正在输入指示条（M7.3） */
 #typing { flex: 0 0 auto; }
 

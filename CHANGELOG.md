@@ -1,3 +1,9 @@
+## [2.13.1](https://github.com/pandaymx/lanchat/compare/v2.13.0...v2.13.1) (2026-09-18)
+
+### Bug Fixes
+
+* **mobile:** 检查更新中可取消（trailing 转圈改取消按钮） ([cc62771](https://github.com/pandaymx/lanchat/commit/cc627718f80a178f1248f7d0eafb29515b86b5a9))
+
 ## [2.13.0](https://github.com/pandaymx/lanchat/compare/v2.12.0...v2.13.0) (2026-09-18)
 
 ### Features

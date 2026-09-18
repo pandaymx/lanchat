@@ -1,3 +1,9 @@
+## [2.16.0](https://github.com/pandaymx/lanchat/compare/v2.15.0...v2.16.0) (2026-09-18)
+
+### Features
+
+* **tui:** E2E 换钥告警按 T 信任新公钥 ([b9a30f1](https://github.com/pandaymx/lanchat/commit/b9a30f1919f010e6a2e7387094d57c1f80398277))
+
 ## [2.15.0](https://github.com/pandaymx/lanchat/compare/v2.14.0...v2.15.0) (2026-09-18)
 
 ### Features

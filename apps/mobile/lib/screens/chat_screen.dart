@@ -63,6 +63,14 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     client.addListener(_onClientChanged);
+    client.onKeyChange = (ch) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        backgroundColor: const Color(0xFF856404),
+        content: Text('E2E 警告：设备 ${ch.deviceId} 公钥已变更（旧 ${ch.oldFingerprint} 新 ${ch.newFingerprint}），请核对'),
+        duration: const Duration(seconds: 8),
+      ));
+    };
     _scrollCtrl.addListener(_onScroll);
     // 进入会话即已读（列表页已 markRead，这里兜底新消息）。
     WidgetsBinding.instance.addPostFrameCallback((_) => client.markRead(convId));
@@ -133,6 +141,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _saveDraft();
     client.removeListener(_onClientChanged);
+    client.onKeyChange = null;
     _inputCtrl.dispose();
     _inputFocus.dispose();
     _emojiSearchCtrl.dispose();

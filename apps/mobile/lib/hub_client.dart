@@ -19,7 +19,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'dart:io';
+
 import 'e2e.dart';
+import 'package:crypto/crypto.dart' show sha256;
 import 'protocol.dart';
 import 'secure_client.dart';
 
@@ -46,6 +49,9 @@ class HubClient extends ChangeNotifier {
   final Map<String, bool> onlineUsers = {}; // userID -> online
   final Map<String, Presence> onlineDevices = {}; // deviceID -> presence（E2E 目标选择）
   E2EIdentity? _e2e; // E2E 身份；null = 未启用（明文渐进）
+  final Map<String, String> _pins = {}; // deviceId -> 首次见的公钥 b64（TOFU）
+  /// 换钥告警回调（UI 层挂 SnackBar）；null = 未挂。
+  void Function(E2EKeyChange change)? onKeyChange;
   final Map<String, ConversationSnapshot> conversations = {};
   final Map<String, List<ConvEventMsg>> convEvents = {}; // convID -> 成员变动系统消息
   final Map<String, int> _readCursors = {}; // convID -> 已读 ServerSeq
@@ -77,11 +83,50 @@ class HubClient extends ChangeNotifier {
       final id = await E2EIdentity.loadOrCreate(
           '${dir.path}/e2e_identity.bin');
       _e2e = id;
+      await _loadPins();
       await _registerKey();
       debugPrint('e2e enabled, peer=${id.peerId}');
     } catch (e) {
       debugPrint('e2e enable failed, plaintext mode: $e');
     }
+  }
+
+  /// _checkPin：TOFU pinning。首次见即记录；一致无事；变了 → onKeyChange。
+  void _checkPin(String deviceId, String pubB64) {
+    final old = _pins[deviceId];
+    if (old == null) {
+      _pins[deviceId] = pubB64;
+      _savePins();
+      return;
+    }
+    if (old == pubB64) return;
+    onKeyChange?.call(E2EKeyChange(
+      deviceId: deviceId,
+      oldFingerprint: e2eFingerprint(old),
+      newFingerprint: e2eFingerprint(pubB64),
+    ));
+  }
+
+  Future<void> _loadPins() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final f = File('${dir.path}/e2e_pins.json');
+      if (!await f.exists()) return;
+      final j = jsonDecode(await f.readAsString()) as Map<String, dynamic>;
+      _pins
+        ..clear()
+        ..addAll(j.map((k, v) => MapEntry(k, v as String)));
+    } catch (e) {
+      debugPrint('e2e load pins failed: $e');
+    }
+  }
+
+  Future<void> _savePins() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final f = File('${dir.path}/e2e_pins.json');
+      await f.writeAsString(jsonEncode(_pins));
+    } catch (_) {}
   }
 
   /// 注册本设备公钥到 hub keyring（自我声明；失败静默）。
@@ -130,6 +175,7 @@ class HubClient extends ChangeNotifier {
     final keys = await _lookupKeys(targets.toList());
     if (keys.length != targets.length) return ('', body); // 有设备缺公钥 → 明文
 
+    keys.forEach(_checkPin);
     final pubs = keys.values.map(base64Decode).toList();
     final enc = await E2EEnvelope.encryptMulti(pubs, utf8.encode(body));
     return (enc, '');
@@ -717,4 +763,22 @@ class HubClient extends ChangeNotifier {
     final rnd = DateTime.now().microsecondsSinceEpoch;
     return '$rnd-${DateTime.now().millisecondsSinceEpoch}';
   }
+}
+
+/// E2E 公钥变更告警（TOFU pinning）。
+class E2EKeyChange {
+  final String deviceId;
+  final String oldFingerprint;
+  final String newFingerprint;
+  E2EKeyChange({
+    required this.deviceId,
+    required this.oldFingerprint,
+    required this.newFingerprint,
+  });
+}
+
+/// e2eFingerprint：sha256(pub) 前 8 字节 hex（16 字符，人眼可辨）。
+String e2eFingerprint(String pubB64) {
+  final sum = sha256.convert(base64Decode(pubB64)).bytes;
+  return sum.take(8).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 }

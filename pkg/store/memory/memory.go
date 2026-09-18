@@ -53,6 +53,8 @@ type MemoryStore struct {
 
 	// e2eKeys[deviceID] = E2E 公钥 base64（keyring，消息自我声明提取）。
 	e2eKeys map[string]string
+	// e2ePins[deviceID] = 首次见到的公钥（TOFU pinning，换钥告警用）。
+	e2ePins map[string]string
 
 	closed bool
 }
@@ -68,6 +70,7 @@ func New() *MemoryStore {
 		cursors:       make(map[string]uint64),
 		files:         make(map[string]protocol.FileMeta),
 		e2eKeys:       make(map[string]string),
+		e2ePins:       make(map[string]string),
 	}
 }
 
@@ -255,6 +258,27 @@ func (s *MemoryStore) DeleteE2EKey(_ context.Context, deviceID string) error {
 		return core.ErrClosed
 	}
 	delete(s.e2eKeys, deviceID)
+	return nil
+}
+
+// GetE2EPinnedKey 取本地 pin（device_id → 首次见的公钥）。
+func (s *MemoryStore) GetE2EPinnedKey(_ context.Context, deviceID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed {
+		return "", core.ErrClosed
+	}
+	return s.e2ePins[deviceID], nil
+}
+
+// SaveE2EPinnedKey 记录/更新 pin（幂等）。
+func (s *MemoryStore) SaveE2EPinnedKey(_ context.Context, deviceID, pubkey string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return core.ErrClosed
+	}
+	s.e2ePins[deviceID] = pubkey
 	return nil
 }
 

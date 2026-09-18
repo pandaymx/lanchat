@@ -148,6 +148,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			pubkey     TEXT NOT NULL,
 			updated_at INTEGER NOT NULL
 		)`,
+		// E2E pinning：客户端本地 TOFU pin（device_id → 首次见的公钥）。
+		// 与 e2e_keys 分离：那是 hub 公钥目录，这是本端信任锚。
+		`CREATE TABLE IF NOT EXISTS e2e_pins (
+			device_id  TEXT PRIMARY KEY,
+			pubkey     TEXT NOT NULL,
+			updated_at INTEGER NOT NULL
+		)`,
 		// M9 文件元信息：blob 本体在 hub 文件目录（files/<FileID>），
 		// 这里只保证「重启后按 ID 能查到」；CreatedAt 供未来清理/审计。
 		`CREATE TABLE IF NOT EXISTS file_meta (

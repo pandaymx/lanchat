@@ -67,6 +67,23 @@ func TestE2EKeyring(t *testing.T) {
 	if err := st.DeleteE2EKey(ctx, "dev-a"); err != nil {
 		t.Fatalf("re-delete should be idempotent: %v", err)
 	}
+
+	// pinning：首次记录、幂等覆盖、未 pin 返回空。
+	if got, _ := st.GetE2EPinnedKey(ctx, "dev-a"); got != "" {
+		t.Fatalf("fresh pin = %q, want empty", got)
+	}
+	if err := st.SaveE2EPinnedKey(ctx, "dev-a", "pin-A"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetE2EPinnedKey(ctx, "dev-a"); got != "pin-A" {
+		t.Fatalf("pin = %q", got)
+	}
+	if err := st.SaveE2EPinnedKey(ctx, "dev-a", "pin-A2"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := st.GetE2EPinnedKey(ctx, "dev-a"); got != "pin-A2" {
+		t.Fatalf("pin after overwrite = %q", got)
+	}
 }
 
 // TestE2EKeyringSyncExtract：mesh 同步消息也自动提取。

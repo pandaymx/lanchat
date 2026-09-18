@@ -15,11 +15,14 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
+	"github.com/pandaymx/lanchat/pkg/core"
 	"github.com/pandaymx/lanchat/pkg/e2e"
 	"github.com/pandaymx/lanchat/pkg/protocol"
 )
@@ -92,7 +95,7 @@ func (c *Client) encryptMessage(ctx context.Context, msg *protocol.StoredMessage
 		return // 无在线接收者：发明文，对方上线后经同步收到
 	}
 	// 查全部目标设备公钥；任一缺失 → 明文。
-	pubs, ok := c.lookupE2EKeys(targets)
+	pubs, ok := c.lookupE2EKeys(ctx, targets)
 	if !ok {
 		cliLog.Debug("e2e: not all recipients have keys, plaintext", "conv", msg.ConversationID)
 		return
@@ -112,7 +115,7 @@ func (c *Client) encryptMessage(ctx context.Context, msg *protocol.StoredMessage
 }
 
 // lookupE2EKeys 批量查设备公钥；全部存在才返回（保持顺序）。
-func (c *Client) lookupE2EKeys(deviceIDs []string) ([][]byte, bool) {
+func (c *Client) lookupE2EKeys(ctx context.Context, deviceIDs []string) ([][]byte, bool) {
 	if len(deviceIDs) == 0 {
 		return nil, false
 	}
@@ -146,9 +149,45 @@ func (c *Client) lookupE2EKeys(deviceIDs []string) ([][]byte, bool) {
 		if err != nil {
 			return nil, false
 		}
+		// TOFU pinning：首次见就钉住；再见到不同公钥 → 发告警事件
+		// （渐进：仍继续加密，UI 提示用户核对）。
+		c.checkPin(ctx, id, b64)
 		pubs = append(pubs, pub)
 	}
 	return pubs, true
+}
+
+// checkPin 对比本地 pin（device_id → 首次见的公钥 base64）。
+// 未 pin → 记录；一致 → 无事；变了 → 发 EventE2EKeyChanged。
+func (c *Client) checkPin(ctx context.Context, deviceID, pubB64 string) {
+	pinned, err := c.store.GetE2EPinnedKey(ctx, deviceID)
+	if err != nil {
+		cliLog.Warn("e2e pin lookup failed", "device", deviceID, "err", err)
+		return
+	}
+	if pinned == "" {
+		_ = c.store.SaveE2EPinnedKey(ctx, deviceID, pubB64)
+		return
+	}
+	if pinned == pubB64 {
+		return
+	}
+	oldPub, _ := base64.StdEncoding.DecodeString(pinned)
+	newPub, _ := base64.StdEncoding.DecodeString(pubB64)
+	c.bus.Publish(core.Event{
+		Kind: core.EventE2EKeyChanged,
+		KeyChanged: &core.KeyChangedInfo{
+			DeviceID:       deviceID,
+			OldFingerprint: e2eFingerprint(oldPub),
+			NewFingerprint: e2eFingerprint(newPub),
+		},
+	})
+}
+
+// e2eFingerprint 公钥指纹：SHA-256 前 8 字节 hex（16 字符，人眼可辨）。
+func e2eFingerprint(pub []byte) string {
+	sum := sha256.Sum256(pub)
+	return hex.EncodeToString(sum[:8])
 }
 
 // decryptMessage 就地解密收到的消息（Encrypted → Body）。

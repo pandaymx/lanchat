@@ -194,6 +194,66 @@ func TestE2ELobbyEncryption(t *testing.T) {
 	}
 }
 
+// TestE2EKeyPinning：首次见钉住公钥；换钥 → 发 EventE2EKeyChanged。
+func TestE2EKeyPinning(t *testing.T) {
+	ctx := context.Background()
+	keys := map[string]string{}
+	srv := keyringServer(keys)
+	defer srv.Close()
+
+	idA, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/a.bin")
+	idB, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/b.bin")
+	idB2, _ := e2e.LoadOrCreateIdentity(t.TempDir() + "/b2.bin")
+	keys["devB"] = base64.StdEncoding.EncodeToString(idB.PublicKey())
+
+	st := memory.New()
+	bus := event.New()
+	hello := protocol.Hello{UserID: "userA", DeviceID: "devA"}
+	cli := New(hello, fake.NewConn("devA"), st, bus)
+	cli.SetFileBase(srv.URL)
+	if err := cli.SetE2E(idA); err != nil {
+		t.Fatal(err)
+	}
+	sub := bus.Subscribe(8)
+	defer sub.Close()
+	cli.peers["devB"] = protocol.Presence{UserID: "userB", DeviceID: "devB", Online: true}
+
+	// 第一次发：首次见 devB → pin 落库，无告警事件。
+	if err := cli.SendMessage(ctx, "lobby", "hi1"); err != nil {
+		t.Fatal(err)
+	}
+	if pin, _ := st.GetE2EPinnedKey(ctx, "devB"); pin == "" {
+		t.Fatal("pin should be saved on first sight")
+	}
+	select {
+	case ev := <-sub.C():
+		t.Fatalf("first sight should not emit key-changed, got %v", ev.Kind)
+	default:
+	}
+
+	// 换 B 的公钥（模拟换设备/中间人）。
+	keys["devB"] = base64.StdEncoding.EncodeToString(idB2.PublicKey())
+	if err := cli.SendMessage(ctx, "lobby", "hi2"); err != nil {
+		t.Fatal(err)
+	}
+	got := false
+	select {
+	case ev := <-sub.C():
+		if ev.Kind == core.EventE2EKeyChanged && ev.KeyChanged != nil &&
+			ev.KeyChanged.DeviceID == "devB" && ev.KeyChanged.OldFingerprint != ev.KeyChanged.NewFingerprint {
+			got = true
+		}
+	case <-ctx.Done():
+	}
+	if !got {
+		t.Fatal("expected EventE2EKeyChanged on key rotation")
+	}
+	// pin 仍记录旧值（不自动更新——用户核对后手动重置）。
+	if pin, _ := st.GetE2EPinnedKey(ctx, "devB"); pin == "" || pin == keys["devB"] {
+		t.Fatalf("pin should keep old value, got %q", pin)
+	}
+}
+
 // TestE2EPlaintextFallback：对方无公钥 → 明文（渐进）。
 func TestE2EPlaintextFallback(t *testing.T) {
 	ctx := context.Background()

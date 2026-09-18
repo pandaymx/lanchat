@@ -602,6 +602,12 @@ func (m *Model) applyEvent(e core.Event) tea.Cmd {
 		if e.Read != nil && m.upsertRead(*e.Read) {
 			m.refreshHistory()
 		}
+	case core.EventE2EKeyChanged:
+		// TOFU pinning 告警：某设备公钥变了。状态栏提示，不阻断通信。
+		if e.KeyChanged != nil {
+			m.convNotice = fmt.Sprintf("E2E 警告：设备 %s 公钥已变更（旧 %s 新 %s），请核对",
+				e.KeyChanged.DeviceID, e.KeyChanged.OldFingerprint, e.KeyChanged.NewFingerprint)
+		}
 	default:
 		// 其它事件类型不处理。
 	}

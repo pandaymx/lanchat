@@ -74,6 +74,9 @@ const (
 	EventConversation
 	// EventState 本地连接状态变化（连接/已断/重连中）—— 不是线缆上的事件。
 	EventState
+	// EventE2EKeyChanged 某设备的 E2E 公钥指纹变了（TOFU pinning 告警）。
+	// 渐进：仍继续加密/解密，UI 提示用户核对。
+	EventE2EKeyChanged
 )
 
 // String 用于日志与 CLI 渲染。wire 协议里见 protocol.FrameKind.String。
@@ -91,6 +94,8 @@ func (k EventKind) String() string {
 		return "conversation"
 	case EventState:
 		return "state"
+	case EventE2EKeyChanged:
+		return "e2e-key-changed"
 	default:
 		return "unknown"
 	}
@@ -110,6 +115,15 @@ type Event struct {
 	Typing         *protocol.Typing               // 当 Kind == EventTyping
 	Conversation   *protocol.ConversationSnapshot // 当 Kind == EventConversation
 	State          *StateInfo                     // 当 Kind == EventState
+	KeyChanged     *KeyChangedInfo                // 当 Kind == EventE2EKeyChanged
+}
+
+// KeyChangedInfo 是 EventE2EKeyChanged 的载荷：某 device_id 的 E2E
+// 公钥与本地 pin（TOFU 首次记录）不一致。
+type KeyChangedInfo struct {
+	DeviceID       string
+	OldFingerprint string // 本地已 pin 的指纹（hex，前 8 字节）
+	NewFingerprint string // keyring 里现在的指纹（hex，前 8 字节）
 }
 
 // StateInfo 是 EventState 的载荷。
@@ -184,6 +198,11 @@ type Store interface {
 	// DeleteE2EKey 从 keyring 吊销/移除设备公钥（设备注销、换钥等）。
 	// 删除不存在的键不是错误。
 	DeleteE2EKey(ctx context.Context, deviceID string) error
+	// GetE2EPinnedKey 取本地 pin（device_id → 首次见的公钥 base64）；
+	// 未 pin 返回空串。
+	GetE2EPinnedKey(ctx context.Context, deviceID string) (string, error)
+	// SaveE2EPinnedKey 记录/更新 pin（幂等）。
+	SaveE2EPinnedKey(ctx context.Context, deviceID, pubkey string) error
 
 	// SetCursor 与 GetCursor 共同维护 per-device 阅读游标。
 	// 这是多设备读同步的关键（参见 ADR-008）。

@@ -87,6 +87,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   bool _checking = false;
+  bool _canceledCheck = false; // 用户主动取消检查更新
 
   /// GitHub API 请求头：GitHub 要求非空 User-Agent，否则 403。
   static const _ghHeaders = {
@@ -97,18 +98,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// 检查 GitHub Releases 最新版本（移动端版本跟随仓库 tag）。
   Future<void> _checkUpdate() async {
     if (_checking) return;
-    setState(() => _checking = true);
+    setState(() {
+      _checking = true;
+      _canceledCheck = false;
+    });
     String msg = '已是最新版本';
     try {
       final latest = await _fetchLatestRelease();
+      if (_canceledCheck) return; // 用户已取消
       if (latest == null || latest.isEmpty) {
         msg = '获取更新信息失败';
       } else if (latest != 'v$_version' && latest != _version) {
         msg = '发现新版本 $latest，请到项目主页下载';
       }
     } on TimeoutException {
+      if (_canceledCheck) return;
       msg = '连接 GitHub 超时，请稍后再试';
     } catch (_) {
+      if (_canceledCheck) return;
       msg = '网络异常，检查更新失败';
     }
     if (!mounted) return;
@@ -362,10 +369,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
             subtitle: Text(_version.isEmpty ? '获取版本信息中…' : '当前版本 $_version',
                 style: const TextStyle(color: Color(0xFF8B919C), fontSize: 13)),
             trailing: _checking
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF8B919C)),
+                ? GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _canceledCheck = true;
+                        _checking = false;
+                      });
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.close, size: 18, color: Color(0xFF8B919C)),
+                    ),
                   )
                 : const Icon(Icons.chevron_right, size: 18, color: Color(0xFF6A707A)),
             onTap: _checkUpdate,

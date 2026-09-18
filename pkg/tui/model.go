@@ -104,6 +104,11 @@ type Model struct {
 	pendingJoin string
 	convNotice  string
 
+	// pendingTrust：最近一次 E2E 换钥告警待信任的设备+新公钥；
+	// 用户按 T 键调 TrustE2EKey 后清空。空串 = 无待信任告警。
+	pendingTrustDevice string
+	pendingTrustPub    string
+
 	// v1.1：unreadByConv 是各会话的未读计数（其它会话有新消息时 +1，
 	// 切换进该会话清零），/rooms 列表展示角标。与 m.unread（当前会话
 	// 未跟随底部的计数）互不干扰。
@@ -371,6 +376,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// End  → 滚到底部并清零 unread（「跟到底」动作）。
 		// PgUp → 整页上滚（不会到 AtBottom，所以不清 zero）。
 		// PgDn → 整页下滚；若到底则 markRead。
+		// 有待信任的 E2E 换钥告警时，按 T 信任新公钥。
+		if m.pendingTrustDevice != "" && k.Code == 't' {
+			dev, pub := m.pendingTrustDevice, m.pendingTrustPub
+			m.pendingTrustDevice = ""
+			m.pendingTrustPub = ""
+			m.convNotice = "已信任新公钥"
+			return m, m.trustE2ECmd(dev, pub)
+		}
 		switch k.Code {
 		case tea.KeyEnd:
 			m.history.GotoBottom()
@@ -604,8 +617,11 @@ func (m *Model) applyEvent(e core.Event) tea.Cmd {
 		}
 	case core.EventE2EKeyChanged:
 		// TOFU pinning 告警：某设备公钥变了。状态栏提示，不阻断通信。
+		// 核对完按 T 信任新公钥（覆盖本地 pin）。
 		if e.KeyChanged != nil {
-			m.convNotice = fmt.Sprintf("E2E 警告：设备 %s 公钥已变更（旧 %s 新 %s），请核对",
+			m.pendingTrustDevice = e.KeyChanged.DeviceID
+			m.pendingTrustPub = e.KeyChanged.NewPubB64
+			m.convNotice = fmt.Sprintf("E2E 警告：设备 %s 公钥已变更（旧 %s 新 %s），按 T 信任此密钥",
 				e.KeyChanged.DeviceID, e.KeyChanged.OldFingerprint, e.KeyChanged.NewFingerprint)
 		}
 	default:
@@ -1063,6 +1079,23 @@ func (m *Model) readCmd(seq uint64) tea.Cmd {
 			tuiLog.Debug("SendRead failed", "err", err)
 		}
 		return readSentMsg{}
+	}
+}
+
+// trustE2ECmd 调 E2ETruster.TrustE2EKey 覆盖本地 pin；fire-and-forget，
+// 失败只 Debug 日志。无回执消息（不需要 Update 续链）。
+func (m *Model) trustE2ECmd(deviceID, pubB64 string) tea.Cmd {
+	tr, ok := m.sender.(E2ETruster)
+	if !ok {
+		return nil
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+		defer cancel()
+		if err := tr.TrustE2EKey(ctx, deviceID, pubB64); err != nil {
+			tuiLog.Debug("TrustE2EKey failed", "device", deviceID, "err", err)
+		}
+		return nil
 	}
 }
 

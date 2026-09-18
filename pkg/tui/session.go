@@ -77,6 +77,11 @@ type Reader interface {
 	SendRead(ctx context.Context, serverSeq uint64) error
 }
 
+// E2ETruster 是 Sender 的可选能力：用户核对完换钥告警后手动信任新公钥。
+type E2ETruster interface {
+	TrustE2EKey(ctx context.Context, deviceID, pubB64 string) error
+}
+
 // ConversationManager 是 Sender 的可选能力（M12-A）：会话列表/切换/
 // 建群/邀请/退群。Session 实现该接口；测试 fake 不实现时 Model 静默
 // 禁用对应命令（类型断言失败 no-op + 提示）。
@@ -286,6 +291,11 @@ func (s *Session) SendTyping(ctx context.Context) error {
 // 会话 ID 由 Session 绑定，调用方无需感知。
 func (s *Session) SendRead(ctx context.Context, serverSeq uint64) error {
 	return s.cli.SendRead(ctx, s.convID, serverSeq)
+}
+
+// TrustE2EKey 实现 E2ETruster：覆盖指定设备的本地 pin 为新公钥。
+func (s *Session) TrustE2EKey(ctx context.Context, deviceID, pubB64 string) error {
+	return s.cli.TrustE2EKey(ctx, deviceID, pubB64)
 }
 
 // ConversationID 返回本 Session 绑定的会话 ID。

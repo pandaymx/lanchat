@@ -1,3 +1,9 @@
+## [2.16.1](https://github.com/pandaymx/lanchat/compare/v2.16.0...v2.16.1) (2026-09-18)
+
+### Bug Fixes
+
+* **mobile:** 通知总开关接线（关了不再弹通知） ([ecc5e0e](https://github.com/pandaymx/lanchat/commit/ecc5e0e346ec8eca15225ade23b0b64a428722c7))
+
 ## [2.16.0](https://github.com/pandaymx/lanchat/compare/v2.15.0...v2.16.0) (2026-09-18)
 
 ### Features

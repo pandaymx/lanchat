@@ -6,6 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.0.9
 	charm.land/lipgloss/v2 v2.0.6
+	github.com/a-h/templ v0.3.1020
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/coder/websocket v1.8.15
 	github.com/grandcat/zeroconf v1.0.0

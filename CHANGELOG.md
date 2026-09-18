@@ -1,3 +1,9 @@
+## [2.14.0](https://github.com/pandaymx/lanchat/compare/v2.13.2...v2.14.0) (2026-09-18)
+
+### Features
+
+* **release:** Windows MSI 安装包（与 NSIS 并存） ([dbbe9cb](https://github.com/pandaymx/lanchat/commit/dbbe9cb77daa58760a024accd8392d6a0ec5d5aa))
+
 ## [2.13.2](https://github.com/pandaymx/lanchat/compare/v2.13.1...v2.13.2) (2026-09-18)
 
 ### Bug Fixes

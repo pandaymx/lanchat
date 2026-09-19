@@ -12,7 +12,8 @@
            UpgradeCode="6F3A9C2E-1B4D-4E5A-8F7C-2D9E0A1B3C4D">
     <Package InstallerVersion="500"
              Compressed="yes"
-             InstallScope="perMachine" />
+             InstallScope="perMachine"
+             Platform="x64" />
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Feature Id="MainFeature" Title="$(var.ProductName)" Level="1">

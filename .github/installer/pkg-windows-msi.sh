@@ -51,8 +51,9 @@ elif command -v candle >/dev/null 2>&1; then
     -out "$ABS_OUT" \
     "$WORK/lanchat.wixobj"
 else
-  echo "no MSI backend found (need wixl or candle)" >&2
-  exit 1
+  # MSI 是锦上添花，后端缺失不阻塞 release（只产 NSIS exe）。
+  echo "WARNING: no MSI backend (wixl/candle), skipping MSI; NSIS 仍可用" >&2
+  exit 0
 fi
 
 echo "built dist/${NAME}"

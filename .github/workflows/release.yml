@@ -201,7 +201,7 @@ jobs:
             export CC="$(ls /opt/llvm-mingw*/bin/aarch64-w64-mingw32-clang | head -1)"
             echo "CC=$CC"
           fi
-          go build -tags desktop -ldflags "-s -w -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE" -o "$out" ./apps/desktop
+          go build -tags desktop -ldflags "-s -w -H=windowsgui -X main.version=$LANCHAT_VERSION -X main.commit=$COMMIT -X main.date=$DATE" -o "$out" ./apps/desktop
           # 诊断：确认产物名与路径（2026-09-08 NSIS no files found 排查）
           ls -la dist/raw/ || echo "dist/raw MISSING"
       - name: Package

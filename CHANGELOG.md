@@ -1,3 +1,9 @@
+## [2.16.2](https://github.com/pandaymx/lanchat/compare/v2.16.1...v2.16.2) (2026-09-19)
+
+### Bug Fixes
+
+* **desktop:** Windows 构建加 -H windowsgui（双击不再弹黑终端） ([8dd1f36](https://github.com/pandaymx/lanchat/commit/8dd1f368a9acd48757a91bb183e58112b0ea8d52))
+
 ## [2.16.1](https://github.com/pandaymx/lanchat/compare/v2.16.0...v2.16.1) (2026-09-18)
 
 ### Bug Fixes

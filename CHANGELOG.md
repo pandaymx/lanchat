@@ -1,3 +1,9 @@
+## [2.16.4](https://github.com/pandaymx/lanchat/compare/v2.16.3...v2.16.4) (2026-09-19)
+
+### Bug Fixes
+
+* **release:** CI 打包三连修 ([da6a6de](https://github.com/pandaymx/lanchat/commit/da6a6de7e047272a7f6a66e8226e18f830f211e0))
+
 ## [2.16.3](https://github.com/pandaymx/lanchat/compare/v2.16.2...v2.16.3) (2026-09-19)
 
 ### Bug Fixes

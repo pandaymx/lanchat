@@ -41,7 +41,8 @@ if command -v wixl >/dev/null 2>&1; then
     "$WXS"
 elif command -v candle >/dev/null 2>&1; then
   # Windows / WiX v3：candle 编译 wxs -> wixobj，light 链接 -> msi
-  candle -nologo \
+  # -arch x64：candle 默认 32 位，ProgramFiles64Folder 会触发 ICE80。
+  candle -nologo -arch x64 \
     -dVersion="${VERSION}" \
     -dProductName="${APPNAME}" \
     -dExePath="${ABS_EXE}" \

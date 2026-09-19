@@ -1,3 +1,9 @@
+## [2.16.5](https://github.com/pandaymx/lanchat/compare/v2.16.4...v2.16.5) (2026-09-19)
+
+### Bug Fixes
+
+* **release:** MSI 打包两个 CI 错误 ([c9e1ce5](https://github.com/pandaymx/lanchat/commit/c9e1ce591e3e0a555d3d8434374633217bcc4494))
+
 ## [2.16.4](https://github.com/pandaymx/lanchat/compare/v2.16.3...v2.16.4) (2026-09-19)
 
 ### Bug Fixes

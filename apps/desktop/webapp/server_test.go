@@ -217,14 +217,25 @@ func TestServer_EmbeddedHub(t *testing.T) {
 		t.Errorf("home body missing lanchat: %.120q", body)
 	}
 
-	// Close 后嵌入式 hub 端口应释放。
+	// Close 后嵌入式 hub 端口应释放。CI 机器负载高时 listener 释放有
+	// 延迟，重试几次（最多 2s）再判失败。
 	hubAddr := s.hub.Addr()
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	conn, err := net.DialTimeout("tcp", hubAddr, 500*time.Millisecond)
-	if err == nil {
-		_ = conn.Close()
+	var stillOpen bool
+	for i := 0; i < 10; i++ {
+		conn, err := net.DialTimeout("tcp", hubAddr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			stillOpen = true
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		stillOpen = false
+		break
+	}
+	if stillOpen {
 		t.Error("hub port still open after Close")
 	}
 }

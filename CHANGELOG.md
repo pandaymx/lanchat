@@ -1,3 +1,9 @@
+## [2.16.3](https://github.com/pandaymx/lanchat/compare/v2.16.2...v2.16.3) (2026-09-19)
+
+### Bug Fixes
+
+* **release:** MSI wxs 去掉孤立的 ProgramMenuDir Component ([cebb1ac](https://github.com/pandaymx/lanchat/commit/cebb1ac880c19d53025fdeb1b1485237a4b0d80d))
+
 ## [2.16.2](https://github.com/pandaymx/lanchat/compare/v2.16.1...v2.16.2) (2026-09-19)
 
 ### Bug Fixes

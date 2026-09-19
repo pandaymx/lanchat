@@ -24,7 +24,6 @@
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="$(var.ProductName)" />
       </Directory>
-      <Directory Id="ProgramMenuFolder" />
     </Directory>
   </Fragment>
   <Fragment>
@@ -33,13 +32,5 @@
         <File Id="MainExeFile" Source="$(var.ExePath)" KeyPath="yes" />
       </Component>
     </ComponentGroup>
-    <DirectoryRef Id="ProgramMenuFolder">
-      <Component Id="ProgramMenuDir" Guid="*">
-        <CreateFolder />
-        <RemoveFolder Id="ProgramMenuDir" On="uninstall" />
-        <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\Uninstall\[ProductCode]"
-                       Name="Manufacturer" Type="string" Value="pandaymx" KeyPath="yes" />
-      </Component>
-    </DirectoryRef>
   </Fragment>
 </Wix>

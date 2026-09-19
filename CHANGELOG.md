@@ -1,3 +1,9 @@
+## [2.16.6](https://github.com/pandaymx/lanchat/compare/v2.16.5...v2.16.6) (2026-09-19)
+
+### Bug Fixes
+
+* **release:** candle 加 -arch x64 真正修 ICE80 ([0ff6e3e](https://github.com/pandaymx/lanchat/commit/0ff6e3ee9485f6054751469014184df4b6414d4d))
+
 ## [2.16.5](https://github.com/pandaymx/lanchat/compare/v2.16.4...v2.16.5) (2026-09-19)
 
 ### Bug Fixes

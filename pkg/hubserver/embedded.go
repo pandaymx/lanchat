@@ -19,8 +19,12 @@ import (
 // 传入值忽略。ctx 由调用方持有并负责 cancel（Server.Close 是空操作，
 // 关停靠 ctx 取消），故返回 *Server 让调用方可查 Addr()/做测试断言。
 func StartEmbedded(ctx context.Context, cfg Config) (*Server, string, error) {
+	bind := "127.0.0.1:0"
+	if cfg.LANVisible {
+		bind = "0.0.0.0:0"
+	}
 	embCfg := Config{
-		Addr:    "127.0.0.1:0",
+		Addr:    bind,
 		Mesh:    true,
 		Version: cfg.Version,
 		// Logger 留空：hubserver 自建 "hub" 组件，日志独立可辨。

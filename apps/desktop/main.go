@@ -58,6 +58,7 @@ func main() {
 
 	hubURL := flag.String("hub-url", "", "hub 的 ws 地址；留空且 -embedded 开启时进程内起嵌入式 hub，不再自动发现")
 	embedded := flag.Bool("embedded", true, "hub-url 留空时在本进程内起嵌入式 hub（去中心化；-hub-url 显式指定时忽略）")
+	lanHub := flag.Bool("lan-hub", false, "嵌入式 hub 监听 0.0.0.0（对局域网暴露，其他设备可 mDNS 发现并连上本机）")
 	user := flag.String("user", "anonymous", "显示名（昵称即用）")
 	convID := flag.String("conv", "lobby", "会话 ID；默认 lobby")
 	logLevel := flag.String("log-level", "info", "日志级别：debug|info|warn|error")
@@ -93,9 +94,14 @@ func main() {
 	tr := bundle.ForLocale(resolvedLocale)
 	logging.New("desktop").Info("i18n resolved", "locale", resolvedLocale)
 
+	var embOver *hubserver.Config
+	if *lanHub {
+		embOver = &hubserver.Config{LANVisible: true}
+	}
 	srv, err := webapp.Start(webapp.Options{
 		HubURL:      *hubURL,
 		EmbeddedHub: *embedded,
+		Embedded:    embOver,
 		User:        *user,
 		ConvID:      *convID,
 		Version:     version,

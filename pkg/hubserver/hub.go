@@ -76,6 +76,9 @@ type Config struct {
 	MaxFileSize int64
 	// MDNS 是否在局域网广播（默认 true）。
 	MDNS bool
+	// LANVisible=true 时监听 0.0.0.0（对局域网暴露），false 只绑
+	// 127.0.0.1（本进程专用窗口，不暴露）。StartEmbedded 默认 false。
+	LANVisible bool
 	// Version 供 mDNS 元数据与日志；空用 "embedded"。
 	Version string
 	// Logger 复用调用方日志组件；nil 时自建 "hub" logger。

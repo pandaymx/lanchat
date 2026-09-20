@@ -34,13 +34,15 @@ class EmbeddedHub {
     return s;
   }
 
-  /// 启动嵌入式 hub，返回本地 ws 地址（ws://127.0.0.1:<port>/ws）。
+  /// 启动嵌入式 hub，返回本地 ws 地址。
+  /// [lanVisible]=true 时监听 0.0.0.0（局域网其他设备可发现并连上本机），
+  /// false 只绑 127.0.0.1（本机自用）。
   /// 已启动时幂等返回现有地址；so 缺失或启动失败返回 null。
-  static Future<String?> start(String nodeId) async {
+  static Future<String?> start(String nodeId, {bool lanVisible = false}) async {
     final lib = _handle;
     if (lib == null) return null;
     try {
-      final start = lib.lookupFunction<StartNative, StartDart>('lanchub_start');
+      final start = lib.lookupFunction<StartNativeLan, StartDartLan>('lanchub_start_lan');
       String dataDir;
       try {
         dataDir = (await getApplicationDocumentsDirectory()).path;
@@ -51,7 +53,12 @@ class EmbeddedHub {
       final nodeP = nodeId.toNativeUtf8();
       final verP = 'lanchat'.toNativeUtf8();
       try {
-        return _take(start(dirP, nodeP, verP));
+        final lanP = (lanVisible ? "1" : "0").toNativeUtf8();
+        try {
+          return _take(start(dirP, nodeP, verP, lanP));
+        } finally {
+          calloc.free(lanP);
+        }
       } finally {
         calloc.free(dirP);
         calloc.free(nodeP);
@@ -74,10 +81,10 @@ class EmbeddedHub {
   }
 }
 
-typedef StartNative = Pointer<Utf8> Function(
-    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
-typedef StartDart = Pointer<Utf8> Function(
-    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef StartNativeLan = Pointer<Utf8> Function(
+    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef StartDartLan = Pointer<Utf8> Function(
+    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
 
 /// C 侧返回 void 的导出：Native 泛型用 ffi 的 Void，Dart 侧用 void。
 typedef StopNative = Void Function();

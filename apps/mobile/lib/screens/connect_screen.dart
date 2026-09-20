@@ -22,6 +22,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   bool _connecting = false;
   /// 本机模式：连接时先起进程内嵌入式 hub（默认开，失败回退手动地址）。
   bool _embedded = true;
+  bool _lanVisible = false;
   List<String> _recent = const [];
 
   @override
@@ -70,7 +71,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
     }
 
     // 本机模式：先起进程内嵌入式 hub，拿本地 ws 地址；失败回退手动。
-    var embeddedAddr = _embedded ? await EmbeddedHub.start(device) : null;
+    var embeddedAddr = _embedded ? await EmbeddedHub.start(device, lanVisible: _lanVisible) : null;
     if (embeddedAddr != null) {
       final uri = Uri.parse(embeddedAddr);
       host = uri.host;
@@ -147,6 +148,23 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     onChanged: (v) => setState(() => _embedded = v),
                     title: const Text('本机模式（内嵌 hub）'),
                     subtitle: const Text('启动时本机自动起 hub，无需外部地址'),
+                    contentPadding: EdgeInsets.zero,
+                    activeThumbColor: const Color(0xFF4E8CFF),
+                    activeTrackColor: const Color(0xFF2A3A5C),
+                    inactiveThumbColor: const Color(0xFF8B919C),
+                    inactiveTrackColor: const Color(0xFF2E3138),
+                    tileColor: const Color(0xFF262A32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  SwitchListTile(
+                    value: _lanVisible,
+                    onChanged: _embedded
+                        ? (v) => setState(() => _lanVisible = v)
+                        : null,
+                    title: const Text('对局域网开放本机 hub'),
+                    subtitle: const Text('其他设备可 mDNS 发现并连上本机；关时仅本机可见'),
                     contentPadding: EdgeInsets.zero,
                     activeThumbColor: const Color(0xFF4E8CFF),
                     activeTrackColor: const Color(0xFF2A3A5C),

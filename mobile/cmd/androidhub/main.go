@@ -30,7 +30,19 @@ import (
 //
 //export lanchub_start
 func lanchub_start(dataDir, nodeID, version *C.char) *C.char {
-	ws, err := mobile.Start(C.GoString(dataDir), C.GoString(nodeID), C.GoString(version))
+	ws, err := mobile.Start(C.GoString(dataDir), C.GoString(nodeID), C.GoString(version), false)
+	if err != nil {
+		return nil
+	}
+	return C.CString(ws)
+}
+
+// lanchub_start_lan 起嵌入式 hub，lanVisible != 0 时监听 0.0.0.0。
+//
+//export lanchub_start_lan
+func lanchub_start_lan(dataDir, nodeID, version *C.char, lanVisible *C.char) *C.char {
+	vis := lanVisible != nil && C.GoString(lanVisible) != "" && C.GoString(lanVisible) != "0"
+	ws, err := mobile.Start(C.GoString(dataDir), C.GoString(nodeID), C.GoString(version), vis)
 	if err != nil {
 		return nil
 	}

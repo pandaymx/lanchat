@@ -23,12 +23,12 @@ var (
 	stop context.CancelFunc
 )
 
-// Start 起本进程内的嵌入式 hub（127.0.0.1 随机端口 + mesh + mDNS），
-// 返回本地 ws 地址（如 ws://127.0.0.1:34123/ws）。dataDir 是数据目录
-// （Android 传应用私有 files 目录；空用平台默认）；nodeID 是 mesh
-// 节点标识（建议用持久化设备 ID，空用主机名）；version 进日志/mDNS。
-// 已启动时幂等返回现有地址。
-func Start(dataDir, nodeID, version string) (string, error) {
+// Start 起本进程内的嵌入式 hub（mesh + mDNS），返回本地 ws 地址。
+// dataDir 是数据目录；nodeID 是 mesh 节点标识；version 进日志/mDNS。
+// lanVisible=true 时监听 0.0.0.0（对局域网暴露，其他设备可 mDNS 发现
+// 并连上本机）；false 只绑 127.0.0.1（本机自用）。
+// 已启动时幂等返回现有地址（忽略后续 lanVisible）。
+func Start(dataDir, nodeID, version string, lanVisible bool) (string, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	if hub != nil {
@@ -36,9 +36,10 @@ func Start(dataDir, nodeID, version string) (string, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	srv, ws, err := hubserver.StartEmbedded(ctx, hubserver.Config{
-		DataDir: dataDir,
-		NodeID:  nodeID,
-		Version: version,
+		DataDir:    dataDir,
+		NodeID:     nodeID,
+		Version:    version,
+		LANVisible: lanVisible,
 	})
 	if err != nil {
 		cancel()

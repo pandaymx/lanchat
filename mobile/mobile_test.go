@@ -9,7 +9,7 @@ import (
 func TestStartStop(t *testing.T) {
 	dir := t.TempDir()
 
-	ws, err := Start(dir, "test-node", "test")
+	ws, err := Start(dir, "test-node", "test", false)
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -21,7 +21,7 @@ func TestStartStop(t *testing.T) {
 	}
 
 	// 幂等：重复 Start 返回同一地址且不报错。
-	ws2, err := Start(dir, "test-node", "test")
+	ws2, err := Start(dir, "test-node", "test", false)
 	if err != nil {
 		t.Fatalf("second Start: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestStartStop(t *testing.T) {
 	}
 
 	// 停止后可再起。
-	ws3, err := Start(dir, "test-node", "test")
+	ws3, err := Start(dir, "test-node", "test", false)
 	if err != nil {
 		t.Fatalf("restart: %v", err)
 	}

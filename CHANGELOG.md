@@ -1,3 +1,10 @@
+## [2.17.0](https://github.com/pandaymx/lanchat/compare/v2.16.6...v2.17.0) (2026-09-20)
+
+### Features
+
+* **core:** embedded hub 加 LANVisible 开关 ([d30dfd6](https://github.com/pandaymx/lanchat/commit/d30dfd66bcd7773cec1f4786c1e3dcc6cd7bd5f8))
+* **mobile:** 安卓 embedded hub 支持对局域网开放 ([bff63ff](https://github.com/pandaymx/lanchat/commit/bff63ffd101f7a44f0f66380b901d64a01b291a5))
+
 ## [2.16.6](https://github.com/pandaymx/lanchat/compare/v2.16.5...v2.16.6) (2026-09-19)
 
 ### Bug Fixes

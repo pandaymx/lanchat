@@ -132,5 +132,5 @@
 - Go：`gofumpt / go vet / golangci-lint`、`go test -race -cover`（core/transfer/protocol ≥70%）、Framer fuzz、集成测试。
 - Rust：`cargo fmt / clippy / test`，Cargo.lock 锁版本，CI 固定 gtk4-rs/libadwaita-rs。
 - **契约测试**：schema × 五端逐个校验，schema 变更未同步五端即拦截合并。
-- CI = **GitHub Actions**；发版用 release-please（自动推导 CHANGELOG/版本号），R-2 冒烟通过后由**人工 merge release PR** 触发打 tag。
+- CI = **GitHub Actions**；发版用 release-please（自动推导 CHANGELOG/版本号），release PR 配置 `automerge`，在必需检查（`build / vet / race test`、`conventional-commits`）全绿后由 GitHub **自动 squash merge** 触发打 tag；自动合并由平台执行，非 AI 代操，不违反 §6 HIRO。
 - 当前**无代码签名证书**：无 secrets 时签名步骤跳过，制品打 `unsigned` 标记并附内网安装指引。

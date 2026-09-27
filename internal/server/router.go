@@ -31,6 +31,8 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.routeSticker(c, env)
 	case protocol.Typing:
 		h.forward(c, env)
+	case protocol.FileOffer, protocol.FileAccept, protocol.FileReject, protocol.FileCancel:
+		h.forward(c, env)
 	default:
 		h.send(c, protocol.Error, protocol.ErrorPayload{
 			Code:    "unknown_type",

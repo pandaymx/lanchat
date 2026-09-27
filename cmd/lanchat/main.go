@@ -3,6 +3,7 @@
 // 子命令：
 //
 //	lanchat serve   [--config path] [--listen addr] ...   启动信令服务器
+//	lanchat browse  [--timeout sec]                       浏览局域网内的服务器
 //	lanchat genpsk                                        生成 PSK 的 bcrypt 哈希
 //	lanchat version                                       打印版本信息
 package main
@@ -11,17 +12,21 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"golang.org/x/term"
 
 	"github.com/pandaymx/lanchat/internal/config"
+	"github.com/pandaymx/lanchat/internal/discover"
 	"github.com/pandaymx/lanchat/internal/protocol"
 	"github.com/pandaymx/lanchat/internal/server"
 )
@@ -41,6 +46,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = runServe(os.Args[2:])
+	case "browse":
+		err = runBrowse(os.Args[2:])
 	case "genpsk":
 		err = runGenPSK(os.Args[2:])
 	case "version":
@@ -65,6 +72,7 @@ func usage() {
   lanchat serve   [--config path] [--listen addr] [--path p]
                   [--auth-mode psk|none] [--psk-hash hash]
                   [--heartbeat-sec n] [--idle-timeout-sec n] [--shutdown-grace-sec n]
+  lanchat browse  [--timeout sec]
   lanchat genpsk
   lanchat version
 
@@ -123,6 +131,60 @@ func explicitFlags(fs *flag.FlagSet) map[string]string {
 		out[fl.Name] = fl.Value.String()
 	})
 	return out
+}
+
+// runBrowse 在给定超时内通过 mDNS 浏览局域网中的 LANChat 服务器并打印列表。
+func runBrowse(args []string) error {
+	fs := flag.NewFlagSet("browse", flag.ContinueOnError)
+	var timeoutSec int
+	fs.IntVar(&timeoutSec, "timeout", 3, "浏览等待时长（秒）")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if timeoutSec <= 0 {
+		return fmt.Errorf("--timeout 必须为正数")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	browser := discover.NewBrowser()
+	errc := make(chan error, 1)
+	go func() { errc <- browser.Browse(ctx, nil) }()
+
+	<-ctx.Done()
+	servers := browser.Snapshot()
+	// Browse 随超时结束返回；LookupType 此时回传 context 的 deadline 错误，
+	// 对一次性浏览属正常收尾，不当作失败。
+	if err := <-errc; err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	if len(servers) == 0 {
+		fmt.Println("未在局域网内发现 LANChat 服务器")
+		return nil
+	}
+	for _, s := range servers {
+		fmt.Printf("%s  %s\n", orDefault(s.Name, s.ID), joinIPs(s.Addresses, s.Port))
+		fmt.Printf("    id=%s path=%s auth=%s ver=%s tls=%t\n",
+			s.ID, orDefault(s.Path, "/"), orDefault(s.Auth, "unknown"), s.Version, s.TLS)
+	}
+	return nil
+}
+
+// joinIPs 把地址列表与端口拼成 "192.168.1.47:19090, ..." 形式。
+func joinIPs(ips []net.IP, port int) string {
+	parts := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		parts = append(parts, net.JoinHostPort(ip.String(), fmt.Sprintf("%d", port)))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func orDefault(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 func runGenPSK(args []string) error {

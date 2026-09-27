@@ -1,0 +1,173 @@
+{
+  "schemaVersion": "1.0",
+  "description": "LANChat daemon <-> 五端 UI 契约（JSON-RPC 2.0）。唯一真源为 internal/appapi；禁止任何端使用本文件之外的方法、事件或字段。",
+  "transport": {
+    "protocol": "jsonrpc-2.0",
+    "desktop": {
+      "windows": "named-pipe",
+      "linux": "unix-socket",
+      "macos": "unix-socket"
+    },
+    "mobile": {
+      "ios": "gomobile-xcframework",
+      "android": "gomobile-aar"
+    }
+  },
+  "requests": {
+    "GetState": {
+      "params": [],
+      "result": {
+        "type": "State",
+        "fields": {
+          "conn": "ConnState",
+          "server": "string?",
+          "selfId": "string?",
+          "nickname": "string",
+          "peers": "Peer[]",
+          "transfers": "Transfer[]",
+          "channels": "Channel[]"
+        }
+      }
+    },
+    "Connect": {
+      "params": { "addr": "string", "psk": "string" },
+      "result": {}
+    },
+    "BrowseServers": {
+      "params": [],
+      "result": { "type": "Server[]" }
+    },
+    "SendText": {
+      "params": { "to": "string", "text": "string", "group": "string?" },
+      "result": { "msgID": "string" }
+    },
+    "SendSticker": {
+      "params": { "to": "string", "path": "string" },
+      "result": { "msgID": "string" }
+    },
+    "OfferFile": {
+      "params": { "to": "string", "path": "string" },
+      "result": { "transferID": "string" }
+    },
+    "OfferFileToGroup": {
+      "params": { "group": "string", "path": "string" },
+      "result": { "transferID": "string" }
+    },
+    "RespondFile": {
+      "params": { "transferID": "string", "accept": "bool", "dest": "string" },
+      "result": {}
+    },
+    "PauseFile": {
+      "params": { "transferID": "string" },
+      "result": {}
+    },
+    "ResumeFile": {
+      "params": { "transferID": "string" },
+      "result": {}
+    },
+    "CancelFile": {
+      "params": { "transferID": "string" },
+      "result": {}
+    },
+    "SetNickname": {
+      "params": { "name": "string" },
+      "result": {}
+    },
+    "PickDownloadDir": {
+      "params": { "path": "string" },
+      "result": {}
+    },
+    "ChannelCreate": {
+      "params": { "name": "string" },
+      "result": { "channelID": "string" }
+    },
+    "ChannelJoin": {
+      "params": { "channelID": "string" },
+      "result": {}
+    },
+    "ChannelList": {
+      "params": [],
+      "result": { "type": "Channel[]" }
+    }
+  },
+  "notifications": {
+    "conn.changed": {
+      "payload": { "state": "ConnState", "reason": "string" }
+    },
+    "peer.joined": {
+      "payload": { "peer": "Peer" }
+    },
+    "peer.left": {
+      "payload": { "peerId": "string" }
+    },
+    "msg.received": {
+      "payload": {
+        "from": "string",
+        "group": "string?",
+        "msgId": "string",
+        "type": "string",
+        "text": "string"
+      }
+    },
+    "transfer.progress": {
+      "payload": { "transfer": "Transfer" }
+    },
+    "transfer.done": {
+      "payload": { "transferId": "string" }
+    },
+    "transfer.failed": {
+      "payload": { "transferId": "string", "reason": "string" }
+    },
+    "group.matrix": {
+      "payload": {
+        "groupId": "string",
+        "transferId": "string",
+        "haveBitmap": "bytes"
+      }
+    },
+    "channel.updated": {
+      "payload": { "channels": "Channel[]" }
+    }
+  },
+  "enums": {
+    "ConnState": ["disconnected", "connecting", "connected", "auth_failed"],
+    "TransferState": ["pending", "active", "paused", "done", "failed", "canceled"],
+    "TransferDirection": ["inbound", "outbound"],
+    "PathKind": ["unicast", "swarm", "channel"]
+  },
+  "types": {
+    "Peer": {
+      "id": "string",
+      "nickname": "string",
+      "os": "string",
+      "status": "string"
+    },
+    "Server": {
+      "name": "string",
+      "id": "string",
+      "addr": "string",
+      "version": "string",
+      "authMode": "string"
+    },
+    "Transfer": {
+      "id": "string",
+      "direction": "TransferDirection",
+      "state": "TransferState",
+      "kind": "PathKind",
+      "peerId": "string?",
+      "groupId": "string?",
+      "name": "string",
+      "size": "int64",
+      "bytesDone": "int64",
+      "speedBps": "int64",
+      "viaRelay": "bool",
+      "errorReason": "string?"
+    },
+    "Channel": {
+      "id": "string",
+      "name": "string",
+      "ownerId": "string",
+      "members": "string[]"
+    }
+  }
+}

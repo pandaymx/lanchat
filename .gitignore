@@ -1,0 +1,25 @@
+# 构建产物
+/dist/
+/bin/
+/lanchat
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go
+vendor/
+
+# gomobile 产物
+*.aar
+*.xcframework/
+
+# 本地环境
+.env
+*.local
+
+# IDE
+.idea/
+.vscode/

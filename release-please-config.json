@@ -5,7 +5,9 @@
     ".": {
       "package-name": "lanchat",
       "changelog-path": "CHANGELOG.md",
+      "include-component-in-tag": false,
       "tag-format": "v${version}",
+      "pull-request-title-pattern": "chore: release ${version}",
       "bump-minor-pre-major": true,
       "automerge": true,
       "merge-method": "squash"

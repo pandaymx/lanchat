@@ -7,7 +7,8 @@
       "changelog-path": "CHANGELOG.md",
       "tag-format": "v${version}",
       "bump-minor-pre-major": true,
-      "bump-patch-for-minor-pre-major": true
+      "automerge": true,
+      "merge-method": "squash"
     }
   }
 }

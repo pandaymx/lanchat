@@ -1,0 +1,200 @@
+package protocol
+
+import "encoding/json"
+
+// HelloPayload 是 HELLO 的负载（方案 §3.2）。
+type HelloPayload struct {
+	Nickname string            `json:"nickname"`
+	DeviceID string            `json:"deviceID"`
+	PSK      string            `json:"psk,omitempty"`
+	Caps     ClientCaps        `json:"caps"`
+	OS       string            `json:"os"`
+}
+
+// ClientCaps 是客户端能力声明，服务端取交集后在 WELCOME.features 回传。
+type ClientCaps struct {
+	Resume bool `json:"resume"`
+	Relay  bool `json:"relay"`
+	TLS    bool `json:"tls"`
+	Swarm  bool `json:"swarm"`
+	Group  bool `json:"group"`
+}
+
+// WelcomePayload 是 WELCOME 的负载。
+type WelcomePayload struct {
+	SelfID              string   `json:"selfID"`
+	ProtocolVersion     string   `json:"protocolVersion"`
+	HeartbeatInterval   int      `json:"heartbeatInterval"`
+	AuthMode            string   `json:"authMode"`
+	Features            []string `json:"features"`
+}
+
+// AuthFailPayload 是 AUTH_FAIL 的负载。
+type AuthFailPayload struct {
+	Reason    string `json:"reason"`
+	Retryable bool   `json:"retryable"`
+}
+
+// ErrorPayload 是 ERROR 的负载。
+type ErrorPayload struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// User 是在线用户条目。
+type User struct {
+	ID       string `json:"id"`
+	Nickname string `json:"nickname"`
+	OS       string `json:"os"`
+	Status   string `json:"status,omitempty"`
+}
+
+// UserListPayload 是 USER_LIST 的负载（全量）。
+type UserListPayload struct {
+	Revision uint64 `json:"revision"`
+	Users    []User `json:"users"`
+}
+
+// UserUpdatePayload 是 USER_JOIN / USER_LEAVE / PRESENCE_UPDATE 的负载（增量）。
+type UserUpdatePayload struct {
+	User     User   `json:"user"`
+	Revision uint64 `json:"revision"`
+}
+
+// HeartbeatPayload 是 HEARTBEAT / HEARTBEAT_ACK 的负载。
+type HeartbeatPayload struct {
+	Revision   uint64 `json:"revision,omitempty"`
+	ServerTime int64  `json:"serverTime,omitempty"`
+}
+
+// TextPayload 是 TEXT_MSG 的负载。
+type TextPayload struct {
+	Text string `json:"text"`
+}
+
+// StickerPayload 是 STICKER_MSG 的负载。
+type StickerPayload struct {
+	Name string `json:"name"`
+	Mime string `json:"mime"`
+	B64  string `json:"b64,omitempty"`
+	Hash string `json:"hash"`
+}
+
+// TypingPayload 是 TYPING 的负载。
+type TypingPayload struct {
+	Typing bool `json:"typing"`
+}
+
+// FileOfferPayload 是 FILE_OFFER 的负载（方案 §5.2/§5.3）。
+type FileOfferPayload struct {
+	TransferID string   `json:"transferID"`
+	Name       string   `json:"name"`
+	Size       int64    `json:"size"`
+	ChunkSize  int      `json:"chunkSize"`
+	SHA256     string   `json:"sha256"`
+	Candidates []string `json:"candidates,omitempty"`
+	Token      string   `json:"token,omitempty"`
+}
+
+// FileAcceptPayload 是 FILE_ACCEPT 的负载。
+type FileAcceptPayload struct {
+	TransferID string `json:"transferID"`
+}
+
+// FileRejectPayload 是 FILE_REJECT 的负载。
+type FileRejectPayload struct {
+	TransferID string `json:"transferID"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// FileCancelPayload 是 FILE_CANCEL 的负载。
+type FileCancelPayload struct {
+	TransferID string `json:"transferID"`
+}
+
+// FileProgressPayload 是 FILE_PROGRESS 的负载。
+type FileProgressPayload struct {
+	TransferID string `json:"transferID"`
+	BytesDone  int64  `json:"bytesDone"`
+	SpeedBps   int64  `json:"speedBps,omitempty"`
+}
+
+// FileDonePayload 是 FILE_DONE 的负载。
+type FileDonePayload struct {
+	TransferID string `json:"transferID"`
+	SHA256     string `json:"sha256"`
+}
+
+// GroupOfferPayload 是 GROUP_OFFER 的负载（1:N，方案 §9.3）。
+type GroupOfferPayload struct {
+	GroupID     string `json:"groupID"`
+	TransferID string `json:"transferID"`
+	Name       string `json:"name"`
+	Size       int64  `json:"size"`
+	BlockCount int    `json:"blockCount"`
+	SHA256     string `json:"sha256"`
+	Seeders    []string `json:"seeders,omitempty"`
+}
+
+// GroupJoinPayload 是 GROUP_JOIN / GROUP_LEAVE 的负载。
+type GroupJoinPayload struct {
+	GroupID    string `json:"groupID"`
+	TransferID string `json:"transferID"`
+}
+
+// GroupProgressPayload 是 GROUP_PROGRESS 的负载（块位图）。
+type GroupProgressPayload struct {
+	GroupID     string `json:"groupID"`
+	TransferID string `json:"transferID"`
+	HaveBitmap json.RawMessage `json:"haveBitmap,omitempty"`
+}
+
+// Channel 是 G2 自定义频道（方案 §9.6）。
+type Channel struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	OwnerID string `json:"ownerID"`
+	Members []string `json:"members,omitempty"`
+}
+
+// ChannelCreatePayload 是 CHANNEL_CREATE 的负载。
+type ChannelCreatePayload struct {
+	Name string `json:"name"`
+}
+
+// ChannelJoinPayload 是 CHANNEL_JOIN 的负载。
+type ChannelJoinPayload struct {
+	ChannelID string `json:"channelID"`
+}
+
+// ChannelListPayload 是 CHANNEL_LIST 的负载。
+type ChannelListPayload struct {
+	Channels []Channel `json:"channels"`
+}
+
+// RelayRequestPayload 是 RELAY_REQUEST 的负载。
+type RelayRequestPayload struct {
+	TransferID string `json:"transferID"`
+}
+
+// RelayGrantPayload 是 RELAY_GRANT 的负载。
+type RelayGrantPayload struct {
+	TransferID string `json:"transferID"`
+	RelayID    string `json:"relayID"`
+}
+
+// RelayKeyPayload 是 RELAY_KEY 的负载（AES-GCM 密钥，经加密通道下发）。
+type RelayKeyPayload struct {
+	RelayID string `json:"relayID"`
+	Key     string `json:"key"`
+}
+
+// MsgAckPayload 是 MSG_ACK 的负载。
+type MsgAckPayload struct {
+	Status string `json:"status,omitempty"`
+}
+
+// ServerShutdownPayload 是 SERVER_SHUTDOWN 的负载。
+type ServerShutdownPayload struct {
+	GracePeriodSec int `json:"gracePeriodSec"`
+}

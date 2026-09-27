@@ -10,10 +10,11 @@
 **Go 核心 + 平台原生 UI** 的局域网即时通信系统：中心节点只做信令与文本转发，文件走客户端 P2P TCP 直连，直连失败回退 AES-GCM 加密中继。
 
 - 核心（Go）：信令 / 鉴权 / 在线表 / P2P 传输 / 群组分发 / mDNS / 中继
-- 四端原生 UI（拒绝 Web/HTML 壳）：
+- 五端原生 UI（拒绝 Web/HTML 壳，桌面端与移动端遵循各自平台交互范式，类比 QQ）：
   - Windows = WinUI 3（C# / .NET 8），daemon 命名管道
   - Linux = GTK4 + libadwaita（Rust / gtk-rs，Relm4 可选），daemon Unix socket
-  - Apple = SwiftUI（macOS daemon Unix socket；iOS gomobile XCFramework）
+  - macOS = SwiftUI（独立 Xcode 工程），daemon Unix socket
+  - iOS = SwiftUI（独立 Xcode 工程），gomobile XCFramework
   - Android = Jetpack Compose（Kotlin，gomobile AAR）
 
 ---
@@ -27,27 +28,29 @@
 | **A2** | 传输引擎 Transfer Engine | `transfer` + `group` | Go | A0 |
 | **A3** | Windows 端 | `ui-win` + `ipc`（Go daemon 命名管道侧） | C#/.NET 8 + Go daemon | A0 schema |
 | **A4** | Linux 端 | `ui-linux` + `ipc`（Go daemon Unix socket 侧） | Rust + gtk-rs/libadwaita | A0 schema |
-| **A5** | Apple 端 | `ui-apple` + `bindings`（macOS/iOS 部分） | SwiftUI + Go(gomobile) | A0 schema |
-| **A6** | Android 端 | `ui-android` + `bindings`（Android 部分） | Compose + Go(gomobile) | A0 schema |
-| **A7** | 平台/发版 | `ci` + `config` + `docs` + 契约测试工具 | YAML/Go/Rust | 全部 |
+| **A5** | macOS 端 | `ui-macos` + `ipc`（Go daemon Unix socket 侧） | SwiftUI（独立 Xcode 工程）+ Go daemon | A0 schema |
+| **A6** | iOS 端 | `ui-ios` + `bindings`（iOS 部分） | SwiftUI（独立 Xcode 工程）+ Go(gomobile) | A0 schema |
+| **A7** | Android 端 | `ui-android` + `bindings`（Android 部分） | Compose + Go(gomobile) | A0 schema |
+| **A8** | 平台/发版 | `ci` + `config` + `docs` + 契约测试工具 | YAML/Go/Rust | 全部 |
 
 **规则**：
 - 一个 Agent **只允许改自己 scope 内的文件**；CI 按 scope 校验改动范围，越界拦截。
 - A0 冻结契约前，其余 Agent 一律阻塞，**不得基于臆测提前写代码**。
-- 契约冻结后 A1–A7 可完全并行。
+- 契约冻结后 A1–A8 可完全并行。
+- macOS 与 iOS 为两个独立 Agent / 工程（桌面端与移动端交互范式、功能范围不同）；两端仅共享 `ui/strings/` 文案、设计规范与 appapi 契约。
 
 ---
 
 ## 3. 契约先行（最高纪律）
 
-1. **唯一真源**：`internal/appapi` 定义方法集合 → 导出 `api/ipc.schema.json` → 四端据此实现客户端。
-2. **禁止四端臆造 API**；schema 未定义的方法/字段不得出现在任何端。
+1. **唯一真源**：`internal/appapi` 定义方法集合 → 导出 `api/ipc.schema.json` → 五端据此实现客户端。
+2. **禁止各端臆造 API**；schema 未定义的方法/字段不得出现在任何端。
 3. **新增字段必须可缺省解析**；minor 版本内不允许改变已有字段语义。
 4. **契约变更流程**（任何 Agent 不得单人偷改 schema）：
    1. 提「契约变更请求」，不直接改；
    2. 编排者评审并决定版本号（minor/major）；
-   3. A0 + 四端（A3/A4/A5/A6）**五方同时改**并各自更新契约测试；
-   4. CI 校验五端 schema 一致后才允许合并。
+   3. A0 + 五端（A3/A4/A5/A6/A7）**六方同时改**并各自更新契约测试；
+   4. CI 校验六端 schema 一致后才允许合并。
 5. `PROTOCOL_VERSION`（`internal/protocol/version.go`）由**人工 bump**，与产品 SemVer 解耦。
 
 ---
@@ -68,7 +71,7 @@
 | M2 | mDNS 发现 + P2P 主干传输 | 零配置 3s 连上；1 GiB 千兆 ≥110 MB/s |
 | M3 | 可靠性 + 中继：续传、多网卡拨号、反向拨号、AES-GCM 中继 | `kill -9` 可续传；`relay_force` 为密文 |
 | M4 | Windows 原生端（先做，验证契约） | 发现→连接→聊天→1 GiB；契约测试通过 |
-| M5 | Linux 原生端（GTK4） | Wayland 正常；四端契约测试通过 |
+| M5 | Linux 原生端（GTK4） | Wayland 正常；五端契约测试通过 |
 | M6 | Android（Compose + AAR + 前台服务） | 聊天 + 200 MB；后台保活 |
 | M7 | macOS（SwiftUI + MenuBarExtra） | 完整能力 |
 | M8 | iOS（前台 + 中小文件，>1 GiB 提示） | 能力边界提示生效 |
@@ -86,7 +89,7 @@
 
 - **type**：`feat / fix / perf / refactor / test / docs / build / ci / chore / revert`
 - **scope 枚举（写死，禁止自造）**：
-  `protocol, server, core, transfer, group, relay, discover, appapi, bindings, ipc, ui-win, ui-linux, ui-apple, ui-android, config, ci, docs`
+  `protocol, server, core, transfer, group, relay, discover, appapi, bindings, ipc, ui-win, ui-linux, ui-macos, ui-ios, ui-android, config, ci, docs`
 - subject 祈使句、≤72 字符、结尾无句号；type/scope 必须英文，正文可中文。
 - 一个提交 = 一个可独立回滚的变更；实现与测试同提交。
 - 破坏性变更必须在 footer 写 `BREAKING CHANGE:` 及迁移方式。
@@ -128,6 +131,6 @@
 
 - Go：`gofumpt / go vet / golangci-lint`、`go test -race -cover`（core/transfer/protocol ≥70%）、Framer fuzz、集成测试。
 - Rust：`cargo fmt / clippy / test`，Cargo.lock 锁版本，CI 固定 gtk4-rs/libadwaita-rs。
-- **契约测试**：schema × 四端逐个校验，schema 变更未同步四端即拦截合并。
+- **契约测试**：schema × 五端逐个校验，schema 变更未同步五端即拦截合并。
 - CI = **GitHub Actions**；发版用 release-please（自动推导 CHANGELOG/版本号），R-2 冒烟通过后由**人工 merge release PR** 触发打 tag。
 - 当前**无代码签名证书**：无 secrets 时签名步骤跳过，制品打 `unsigned` 标记并附内网安装指引。

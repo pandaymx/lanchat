@@ -25,7 +25,7 @@ internal/
 api/
   ipc.schema.json            # ★ 契约机器可读定义（生成 + 校验）
 bindings/mobile/             # gomobile 薄适配层（XCFramework / AAR）
-ui/{windows,linux,apple,android}/
+ui/{windows,linux,macos,ios,android}/
 test/integration/
 .github/workflows/           # GitHub Actions
 configs/lanchat.example.yaml
@@ -34,7 +34,7 @@ configs/lanchat.example.yaml
 ## 开工顺序（必须遵守）
 
 1. **先 M0**：`internal/protocol`（Envelope + 全部消息类型 + P2P 帧，含群组帧占位）、Framer、fuzz/单测、`api/ipc.schema.json` v1、`internal/appapi` 接口桩。
-2. M0 经人类评审冻结、写入 `PROTOCOL_VERSION` 后，才并行推进 A1–A7。
+2. M0 经人类评审冻结、写入 `PROTOCOL_VERSION` 后，才并行推进 A1–A8（macOS=A5、iOS=A6、Android=A7、平台/发版=A8）。
 3. 每个里程碑结束输出「待执行 git 命令清单」，**等待人类亲自执行 commit/push**，不要自行提交。
 
 ## 常用命令
@@ -46,7 +46,7 @@ task build               # 服务端 + daemon + CLI（CGO_ENABLED=0）
 task dist                # linux/windows/darwin 产物（并行）
 task bind-ios            # gomobile bind → LanchatCore.xcframework
 task bind-android        # gomobile bind → lanchatcore.aar
-task ui-linux:build      # 四端各自子任务（ui-windows/ui-apple/ui-android 同理）
+task ui-linux:build      # 各端各自子任务（ui-windows/ui-macos/ui-ios/ui-android 同理）
 ```
 
 M0 阶段直接使用 Go 工具链：

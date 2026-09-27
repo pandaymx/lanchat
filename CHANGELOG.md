@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/pandaymx/lanchat/compare/v0.2.0...v0.3.0) (2026-09-27)
+
+
+### Features
+
+* M2 mDNS 零配置发现 + P2P 主干传输 ([#3](https://github.com/pandaymx/lanchat/issues/3)) ([23a3628](https://github.com/pandaymx/lanchat/commit/23a3628518ab276ec5c87237ace3500bba01e2ac))
+
 ## [0.2.0](https://github.com/pandaymx/lanchat/compare/lanchat-v0.1.1...lanchat-v0.2.0) (2026-09-27)
 
 

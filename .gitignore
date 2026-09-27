@@ -23,3 +23,7 @@ vendor/
 # IDE
 .idea/
 .vscode/
+.trae/
+
+# Go fuzz 缓存
+testdata/fuzz/

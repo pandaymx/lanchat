@@ -54,6 +54,26 @@ func TestFileSignalingForwarded(t *testing.T) {
 		}
 	})
 
+	t.Run("reverse delivered and stamped", func(t *testing.T) {
+		a.sendTo(protocol.FileReverse, b.id, protocol.FileReversePayload{
+			TransferID: "tx-r",
+			Candidates: []string{"127.0.0.1:42100"},
+			Token:      "tok",
+		})
+
+		got := b.recvUntil(protocol.FileReverse, readTimeout)
+		if got.From != a.id {
+			t.Fatalf("From = %q，期望 %q", got.From, a.id)
+		}
+		var p protocol.FileReversePayload
+		if err := got.DecodePayload(&p); err != nil {
+			t.Fatal(err)
+		}
+		if p.TransferID != "tx-r" || len(p.Candidates) != 1 || p.Token != "tok" {
+			t.Fatalf("FILE_REVERSE 负载透传异常: %+v", p)
+		}
+	})
+
 	t.Run("accept and reject forwarded", func(t *testing.T) {
 		b.sendTo(protocol.FileAccept, a.id, protocol.FileAcceptPayload{TransferID: "tx-2"})
 		if got := a.recvUntil(protocol.FileAccept, readTimeout); got.From != b.id {

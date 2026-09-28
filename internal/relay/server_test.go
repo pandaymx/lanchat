@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -125,6 +126,54 @@ func TestPairTimeout(t *testing.T) {
 	if _, err := c.Read(buf); err == nil {
 		t.Fatalf("expected connection closed after timeout, got data")
 	}
+}
+
+// TestConcurrentPairsStress 并发建立大量「两端同时到达」的配对，每个配对
+// 双向交换互不相同的字节模式。旧实现的单 channel 握手在该时序下会让一端
+// 与自己配对（读到自己发出的字节 / 密文流被搅乱），此用例用于防回归。
+func TestConcurrentPairsStress(t *testing.T) {
+	s := startTestServer(t)
+	addr := s.Addr().String()
+
+	const n = 100
+	var wg sync.WaitGroup
+	wg.Add(n * 2)
+	// barrier 让所有连接尽量同时发起拨号，最大化握手竞态窗口。
+	barrier := make(chan struct{})
+
+	pairOne := func(idx int, selfByte, peerByte byte) {
+		defer wg.Done()
+		<-barrier
+
+		id := fmt.Sprintf("stress-%d", idx)
+		c := dialWithHandshake(t, addr, id)
+		defer c.Close()
+
+		out := bytes.Repeat([]byte{selfByte}, 32)
+		if _, err := c.Write(out); err != nil {
+			t.Errorf("pair %d write: %v", idx, err)
+			return
+		}
+		in := make([]byte, 32)
+		_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := io.ReadFull(c, in); err != nil {
+			t.Errorf("pair %d read: %v", idx, err)
+			return
+		}
+		want := bytes.Repeat([]byte{peerByte}, 32)
+		if !bytes.Equal(in, want) {
+			t.Errorf("pair %d 错配：读到 %x…，期望对方字节 %d（自配/串线）", idx, in[:4], peerByte)
+		}
+	}
+
+	for i := 0; i < n; i++ {
+		a := byte(i)
+		b := byte(255 - i)
+		go pairOne(i, a, b)
+		go pairOne(i, b, a)
+	}
+	close(barrier)
+	wg.Wait()
 }
 
 // TestSecondPairReusesRelayID 验证一个 relayID 配对完成后，

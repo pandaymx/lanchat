@@ -24,12 +24,32 @@ const (
 	pairingTTL = 30 * time.Second
 )
 
+// pairOffer 是后到者发给先到者的配对请求：携带后到连接与其握手用的
+// bufio.Reader（可能已缓冲握手行之后的早期字节），并通过 ack 把先到连接
+// 回交给后到者。done 由桥接方在转发结束后关闭，通知后到者退出。
+type pairOffer struct {
+	conn net.Conn
+	br   io.Reader
+	ack  chan net.Conn
+	done chan struct{}
+}
+
+// pairResult 是配对结果。bridge=true 表示本端是先到者，负责双向桥接；
+// peerReader 是对端的握手 bufio，仅桥接方需要使用；桥接方结束后必须
+// close(done) 以通知后到者退出。
+type pairResult struct {
+	peer       net.Conn
+	peerReader io.Reader
+	done       chan struct{}
+	bridge     bool
+}
+
 // Server 是中继 TCP 服务器。
 type Server struct {
 	listener net.Listener
 
 	mu      sync.Mutex
-	waiting map[string]chan net.Conn // relayID -> 先到连接的通知 channel
+	waiting map[string]chan *pairOffer // relayID -> 先到者的等待 channel
 	closed  bool
 
 	// pairTTL 为零值时使用默认 pairingTTL；测试可覆盖。
@@ -46,7 +66,7 @@ func New(listen string) (*Server, error) {
 	}
 	s := &Server{
 		listener: ln,
-		waiting:  make(map[string]chan net.Conn),
+		waiting:  make(map[string]chan *pairOffer),
 	}
 	return s, nil
 }
@@ -114,63 +134,109 @@ func (s *Server) handle(conn net.Conn) {
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 
-	peer, err := s.pair(relayID, conn)
+	res, err := s.pair(relayID, conn, br)
 	if err != nil {
 		return // 等待超时或服务器关闭
 	}
-	defer peer.Close()
+	defer res.peer.Close()
 
-	// 双向透传：任一方关闭/出错即结束，交由两个 defer 关闭连接。
-	// 从本端读出时必须用 br：握手行之后提前到达的字节可能已被 bufio 缓冲，
-	// 改读裸 conn 会丢掉这部分数据。
-	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(peer, br); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(conn, peer); done <- struct{}{} }()
+	// 只有先到者一方做双向桥接：两个 handle 若各自 io.Copy 同一对连接，
+	// 每个方向都会被两个 reader 竞争读取（其中一个还是 bufio 预读），小帧
+	// 时序下会把字节流劈碎、重复，造成对端解密失败 / broken pipe。
+	if !res.bridge {
+		// 后到者：桥接由对端负责，本端只等转发结束再走 defer 关闭。
+		<-res.done
+		return
+	}
+
+	// 双向透传。读两侧都必须用各自的 bufio.Reader：握手行之后提前到达的
+	// 字节可能已被缓冲，改读裸 conn 会丢掉这部分数据。
+	copyDone := make(chan struct{}, 2)
+	go func() {
+		_, _ = io.Copy(res.peer, br)
+		_ = closeWrite(res.peer)
+		copyDone <- struct{}{}
+	}()
+	go func() {
+		_, _ = io.Copy(conn, res.peerReader)
+		_ = closeWrite(conn)
+		copyDone <- struct{}{}
+	}()
 	// 必须等两个方向都结束：只等一个方向会在对端半关闭后提前关闭两条连接，
 	// 拖慢另一方向尚在传输的尾数据 / ACK（race 构建下尤其易触发）。
-	<-done
-	<-done
+	<-copyDone
+	<-copyDone
+	// 通知后到者桥接已结束（其 handle 正在等待）。
+	close(res.done)
 }
 
-// pair 按 relayID 配对：先到者放入 waiting 并等待后到者；后到者取出先到连接。
-func (s *Server) pair(relayID string, conn net.Conn) (net.Conn, error) {
-	ch := make(chan net.Conn, 1)
+// closeWrite 在连接支持时半关闭写方向，让对端读到 EOF 而不是 RST。
+func closeWrite(c net.Conn) error {
+	if cw, ok := c.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
 
+// pair 按 relayID 配对。先到者注册一个等待 channel 并阻塞；后到者投递
+// pairOffer（携带自身连接与握手 bufio），再从 offer.ack 取回先到连接。
+// 两个方向各用独立 channel，任何调度时序下都不会把连接错配给自己。
+func (s *Server) pair(relayID string, conn net.Conn, br io.Reader) (pairResult, error) {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return nil, errors.New("relay closed")
+		return pairResult{}, errors.New("relay closed")
 	}
-	if waiter, ok := s.waiting[relayID]; ok {
-		delete(s.waiting, relayID)
+	waiter, exists := s.waiting[relayID]
+	if !exists {
+		// 本端是先到者：注册并等待后到者的 offer。
+		q := make(chan *pairOffer, 1)
+		s.waiting[relayID] = q
 		s.mu.Unlock()
-		// 本端是后到者：通知先到者配对成功，并把对端交给它。
+
+		timer := time.NewTimer(s.ttl())
+		defer timer.Stop()
 		select {
-		case waiter <- conn:
-		default:
+		case offer := <-q:
+			// 把本端连接回交给后到者；缓冲为 1，即使对方尚未进入接收也不丢。
+			offer.ack <- conn
+			// 先到者负责桥接：对端读取使用后到者移交的 bufio。
+			return pairResult{
+				peer:       offer.conn,
+				peerReader: offer.br,
+				done:       offer.done,
+				bridge:     true,
+			}, nil
+		case <-timer.C:
+			s.removeWaiting(relayID, q)
+			return pairResult{}, errors.New("relay: pairing timeout")
 		}
-		// 对后到者而言，对端是先到连接，需要从 waiter 取回。
-		peer := <-waiter
-		return peer, nil
 	}
-	s.waiting[relayID] = ch
+
+	// 本端是后到者：摘下等待项并投递 offer。
+	delete(s.waiting, relayID)
 	s.mu.Unlock()
 
-	// 本端是先到者：等待后到者，受 pairTTL 约束。
+	offer := &pairOffer{
+		conn: conn,
+		br:   br,
+		ack:  make(chan net.Conn, 1),
+		done: make(chan struct{}),
+	}
 	timer := time.NewTimer(s.ttl())
 	defer timer.Stop()
 	select {
-	case peer := <-ch:
-		// 后到者已把自己的连接送入 ch；但同时后到者也在等先到连接。
-		// 回送本端连接以完成握手。
-		select {
-		case ch <- conn:
-		default:
-		}
-		return peer, nil
+	case waiter <- offer:
 	case <-timer.C:
-		s.removeWaiting(relayID, ch)
-		return nil, errors.New("relay: pairing timeout")
+		// 先到者恰好在我们到达前后超时退出，offer 无人接收。
+		return pairResult{}, errors.New("relay: pairing timeout")
+	}
+	select {
+	case peer := <-offer.ack:
+		// 后到者不做桥接，等待先到者转发结束。
+		return pairResult{peer: peer, done: offer.done, bridge: false}, nil
+	case <-timer.C:
+		return pairResult{}, errors.New("relay: pairing timeout")
 	}
 }
 
@@ -183,10 +249,10 @@ func (s *Server) ttl() time.Duration {
 }
 
 // removeWaiting 仅在 channel 仍是当前注册项时移除，避免误删后来者。
-func (s *Server) removeWaiting(relayID string, ch chan net.Conn) {
+func (s *Server) removeWaiting(relayID string, q chan *pairOffer) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if cur, ok := s.waiting[relayID]; ok && cur == ch {
+	if cur, ok := s.waiting[relayID]; ok && cur == q {
 		delete(s.waiting, relayID)
 	}
 }

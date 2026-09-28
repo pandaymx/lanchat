@@ -26,11 +26,14 @@ const (
 	DefaultHeartbeatSec     = 5
 	DefaultIdleTimeoutSec   = 15
 	DefaultShutdownGraceSec = 10
+
+	DefaultRelayListen = ":19100"
 )
 
 // Config 是服务端配置根。
 type Config struct {
 	Server ServerConfig `yaml:"server"`
+	Relay  RelayConfig  `yaml:"relay"`
 }
 
 // ServerConfig 是信令服务器配置。
@@ -44,6 +47,14 @@ type ServerConfig struct {
 	ShutdownGraceSec int    `yaml:"shutdownGraceSec"`
 }
 
+// RelayConfig 是回退中继数据面配置。
+type RelayConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"`
+	Host    string `yaml:"host"`  // 宣告给客户端的中继主机（LAN IP）；空=与信令同主机
+	Force   bool   `yaml:"force"` // 强制走中继，跳过直连，供测试与排障
+}
+
 // Default 返回填好默认值的配置（authMode=psk，PSKHash 需另行提供）。
 func Default() Config {
 	return Config{
@@ -54,6 +65,10 @@ func Default() Config {
 			HeartbeatSec:     DefaultHeartbeatSec,
 			IdleTimeoutSec:   DefaultIdleTimeoutSec,
 			ShutdownGraceSec: DefaultShutdownGraceSec,
+		},
+		Relay: RelayConfig{
+			Enabled: true,
+			Listen:  DefaultRelayListen,
 		},
 	}
 }
@@ -93,6 +108,24 @@ func fields() []field {
 				return err
 			}
 			c.Server.ShutdownGraceSec = n
+			return nil
+		}},
+		{"relay-enabled", "LANCHAT_RELAY_ENABLED", func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("需要布尔值，得到 %q", v)
+			}
+			c.Relay.Enabled = b
+			return nil
+		}},
+		{"relay-listen", "LANCHAT_RELAY_LISTEN", func(c *Config, v string) error { c.Relay.Listen = v; return nil }},
+		{"relay-host", "LANCHAT_RELAY_HOST", func(c *Config, v string) error { c.Relay.Host = v; return nil }},
+		{"relay-force", "LANCHAT_RELAY_FORCE", func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("需要布尔值，得到 %q", v)
+			}
+			c.Relay.Force = b
 			return nil
 		}},
 	}
@@ -152,6 +185,10 @@ func validate(cfg *Config) error {
 	}
 	if mode == AuthModePSK && cfg.Server.PSKHash == "" {
 		return errors.New("authMode=psk 时必须提供 pskHash（用 `lanchat genpsk` 生成）")
+	}
+
+	if cfg.Relay.Enabled && cfg.Relay.Listen == "" {
+		return errors.New("relay.enabled=true 时 relay.listen 不能为空")
 	}
 	return nil
 }

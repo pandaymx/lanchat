@@ -216,10 +216,10 @@ func TestHeartbeatAck(t *testing.T) {
 // TestIdleTimeoutDisconnects 验证空闲超时断连并广播 USER_LEAVE。
 func TestIdleTimeoutDisconnects(t *testing.T) {
 	url := startTestServerOpts(t, func(o *server.Options) {
-		o.IdleTimeout = 400 * time.Millisecond
+		o.IdleTimeout = 600 * time.Millisecond
 	})
 	a := dialClient(t, url, testPSK, "Alice")
-	// 拨号后立即保活，避免在激进超时下与 B 一起被判空闲。
+	// 拨号后立即保活（首跳同步发出），避免在激进超时下与 B 一起被判空闲。
 	stopHB := a.startHeartbeats(150 * time.Millisecond)
 	defer stopHB()
 

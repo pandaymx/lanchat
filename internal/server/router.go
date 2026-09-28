@@ -31,7 +31,11 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.routeSticker(c, env)
 	case protocol.Typing:
 		h.forward(c, env)
-	case protocol.FileOffer, protocol.FileAccept, protocol.FileReject, protocol.FileCancel:
+	case protocol.FileOffer, protocol.FileAccept, protocol.FileReject, protocol.FileCancel, protocol.FileReverse:
+		h.forward(c, env)
+	case protocol.RelayRequest:
+		h.onRelayRequest(c, env)
+	case protocol.RelayKey:
 		h.forward(c, env)
 	default:
 		h.send(c, protocol.Error, protocol.ErrorPayload{

@@ -72,6 +72,7 @@ func usage() {
   lanchat serve   [--config path] [--listen addr] [--path p]
                   [--auth-mode psk|none] [--psk-hash hash]
                   [--heartbeat-sec n] [--idle-timeout-sec n] [--shutdown-grace-sec n]
+                  [--relay-enabled] [--relay-listen addr] [--relay-host ip] [--relay-force]
   lanchat browse  [--timeout sec]
   lanchat genpsk
   lanchat version
@@ -93,6 +94,12 @@ func runServe(args []string) error {
 	fs.IntVar(&heartbeatSec, "heartbeat-sec", 0, "心跳间隔（秒）")
 	fs.IntVar(&idleTimeoutSec, "idle-timeout-sec", 0, "空闲超时（秒）")
 	fs.IntVar(&shutdownGraceSec, "shutdown-grace-sec", 0, "优雅关停宽限（秒）")
+	var relayEnabled, relayForce bool
+	fs.BoolVar(&relayEnabled, "relay-enabled", false, "启用回退中继数据面")
+	var relayListen, relayHost string
+	fs.StringVar(&relayListen, "relay-listen", "", "中继 TCP 监听地址，如 :19100")
+	fs.StringVar(&relayHost, "relay-host", "", "宣告给客户端的中继主机（LAN IP）")
+	fs.BoolVar(&relayForce, "relay-force", false, "强制走中继、跳过直连（测试/排障）")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -110,6 +117,10 @@ func runServe(args []string) error {
 		HeartbeatInterval: time.Duration(cfg.Server.HeartbeatSec) * time.Second,
 		IdleTimeout:       time.Duration(cfg.Server.IdleTimeoutSec) * time.Second,
 		ShutdownGrace:     time.Duration(cfg.Server.ShutdownGraceSec) * time.Second,
+	}
+	if cfg.Relay.Enabled {
+		opts.RelayListen = cfg.Relay.Listen
+		opts.RelayHost = cfg.Relay.Host
 	}
 	srv, err := server.New(opts, log.Printf)
 	if err != nil {

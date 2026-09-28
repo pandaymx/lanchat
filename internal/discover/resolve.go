@@ -175,7 +175,8 @@ func localIPv4Nets() []*net.IPNet {
 //
 // 成功时异步刷新缓存（仅地址信息）。
 func Resolve(ctx context.Context, explicit, preferCIDR string,
-	browseTimeout, probeTimeout time.Duration) (*ResolveResult, error) {
+	browseTimeout, probeTimeout time.Duration,
+) (*ResolveResult, error) {
 	if probeTimeout <= 0 {
 		probeTimeout = DefaultProbeTimeout
 	}
@@ -242,7 +243,8 @@ func Resolve(ctx context.Context, explicit, preferCIDR string,
 
 // resolveExplicit 解析并探测显式地址，形式为 host:port，可附路径查询。
 func resolveExplicit(ctx context.Context, explicit, preferCIDR string,
-	probeTimeout time.Duration) (*ResolveResult, error) {
+	probeTimeout time.Duration,
+) (*ResolveResult, error) {
 	host, portStr, err := net.SplitHostPort(explicit)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrBadAddress, explicit)
@@ -263,7 +265,8 @@ func resolveExplicit(ctx context.Context, explicit, preferCIDR string,
 
 // tryCandidates 对当前浏览快照排序后逐个探测，返回首个可达者。
 func tryCandidates(ctx context.Context, b *Browser, preferCIDR string,
-	probeTimeout time.Duration) *ResolveResult {
+	probeTimeout time.Duration,
+) *ResolveResult {
 	ranked, err := Rank(b.Snapshot(), preferCIDR)
 	if err != nil {
 		return nil

@@ -58,32 +58,7 @@ func (s *Sender) CandidateAddrs() []string {
 	if err != nil {
 		return nil
 	}
-	var out []string
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return nil
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			ipnet, ok := addr.(*net.IPNet)
-			if !ok {
-				continue
-			}
-			v4 := ipnet.IP.To4()
-			if v4 == nil {
-				continue
-			}
-			out = append(out, net.JoinHostPort(v4.String(), port))
-		}
-	}
-	return out
+	return candidateAddrs(port)
 }
 
 // Close 关闭监听端口。
@@ -109,7 +84,7 @@ func (s *Sender) Serve(ctx context.Context, progress func(bytesDone, speedBps in
 			return fmt.Errorf("transfer: accept: %w", r.err)
 		}
 		defer r.conn.Close()
-		return s.serveConn(ctx, r.conn, progress)
+		return serveSendConn(ctx, s.cfg, r.conn, progress)
 	case <-ctx.Done():
 		// 关闭 listener 以解除 Accept 阻塞。
 		_ = s.listener.Close()
@@ -118,38 +93,75 @@ func (s *Sender) Serve(ctx context.Context, progress func(bytesDone, speedBps in
 	}
 }
 
-// serveConn 在一条已建立连接上完成握手、数据发送与收尾。
-func (s *Sender) serveConn(ctx context.Context, conn net.Conn, progress func(bytesDone, speedBps int64)) error {
+// DialSend 用于反向拨号：本端（发送方）不可被拨入，接收方监听后回传候选地址，
+// 发送方拨号并在该连接上发送。拨号方仍是发送方，数据面逻辑与正向一致。
+// 候选错峰并发拨号，先胜者用，受 timeout 约束。
+func DialSend(ctx context.Context, cfg SendConfig, candidates []string, timeout time.Duration, progress func(bytesDone, speedBps int64)) error {
+	if cfg.File == nil || cfg.Token == "" {
+		return errors.New("transfer: file and token are required")
+	}
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	conn, err := dialFirst(ctx, candidates, timeout, dialStagger)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	return serveSendConn(ctx, cfg, conn, progress)
+}
+
+// serveSendConn 在一条已建立连接上完成握手、数据发送与收尾。
+func serveSendConn(ctx context.Context, cfg SendConfig, conn net.Conn, progress func(bytesDone, speedBps int64)) error {
+	return serveSendConnFile(ctx, cfg, conn, cfg.File, progress)
+}
+
+// serveSendConnFile 与 serveSendConn 相同，但文件以 io.ReaderAt 显式传入，
+// 供中继路径复用（此时文件不在 cfg.File 中）。
+func serveSendConnFile(ctx context.Context, cfg SendConfig, conn net.Conn, file io.ReaderAt, progress func(bytesDone, speedBps int64)) error {
+	if file == nil {
+		return errors.New("transfer: file is required")
+	}
 	fr := protocol.NewFramer(conn)
 
-	// 1. 读 HELLO，校验一次性 token（M2 单任务，TransferID 经信令已绑定到本 Sender）。
+	// 1. 读 HELLO，校验一次性 token（M2 单任务，TransferID 经信令已绑定到本发送）。
 	hello, err := readHello(fr)
 	if err != nil {
 		return err
 	}
-	if hello.Token != s.cfg.Token {
+	if hello.Token != cfg.Token {
 		_ = writePeerError(fr, "bad token")
 		return ErrBadToken
 	}
 
+	// 校验续传起点：非法偏移回 ERROR，要求从 0 开始。
+	resume := hello.ResumeOffset
+	if resume < 0 || resume > cfg.Size {
+		_ = writePeerError(fr, "invalid resume offset")
+		return fmt.Errorf("%w: resumeOffset %d", errBadPayload, resume)
+	}
+
 	// 2. 回 ACCEPT，初始窗口 1 MiB。
-	if err := writeAccept(fr, s.cfg.Size, ChunkSize); err != nil {
+	if err := writeAccept(fr, cfg.Size, ChunkSize); err != nil {
 		return err
 	}
 
+	// 信用窗口记账起点为 resume：已“发送/确认”到 resume，不重传已有字节。
 	cw := newCreditWindow(MinCreditBytes)
+	cw.sent = resume
+	cw.acked = resume
 	buf := make([]byte, ChunkSize)
 
 	// ackErr 承载 ACK 读取 goroutine 的结果。
 	ackCh := make(chan ackResult, 8)
 	ackCtx, stopAck := context.WithCancel(ctx)
 	defer stopAck()
-	go s.readAcks(ackCtx, fr, ackCh)
+	go readAcks(ackCtx, fr, ackCh)
 
-	var bytesSent int64
+	bytesSent := resume
 	start := time.Now()
 	lastReport := start
-	lastReportBytes := int64(0)
+	lastReportBytes := resume
 
 	report := func(now time.Time, force bool) {
 		if progress == nil {
@@ -168,15 +180,15 @@ func (s *Sender) serveConn(ctx context.Context, conn net.Conn, progress func(byt
 		lastReportBytes = bytesSent
 	}
 
-	// 3. 信用窗口循环发送。
-	for bytesSent < s.cfg.Size {
+	// 3. 信用窗口循环发送（从 resume 起读）。
+	for bytesSent < cfg.Size {
 		// ctx 取消优先。
 		if err := ctx.Err(); err != nil {
 			_ = writeCancel(fr)
 			return ErrCanceled
 		}
 
-		n, err := s.cfg.File.ReadAt(buf, bytesSent)
+		n, err := file.ReadAt(buf, bytesSent)
 		if err != nil && n == 0 {
 			if errors.Is(err, io.EOF) {
 				break
@@ -225,7 +237,7 @@ func (s *Sender) serveConn(ctx context.Context, conn net.Conn, progress func(byt
 	}
 fin:
 	// 4. 全部发完，发 FIN。
-	if err := writeFin(fr, s.cfg.SHA256, bytesSent); err != nil {
+	if err := writeFin(fr, cfg.SHA256, bytesSent); err != nil {
 		return err
 	}
 	report(time.Now(), true)
@@ -233,8 +245,9 @@ fin:
 	// 5. 优雅断连：半关闭发送方向（FIN 字节排在所有数据之后），
 	// 等待接收方读完 FIN 帧并关闭其端；readAcks 读到 EOF 后回送错误结果。
 	// 不立即全关闭，否则接收方仍在写末尾 ACK 时会收到 RST（broken pipe）。
-	if tc, ok := conn.(*net.TCPConn); ok {
-		_ = tc.CloseWrite()
+	// 半关闭发送方向：优先用接口（encConn 与 *net.TCPConn 均实现 CloseWrite）。
+	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
 	}
 	grace := time.NewTimer(5 * time.Second)
 	defer grace.Stop()
@@ -261,7 +274,7 @@ type ackResult struct {
 }
 
 // readAcks 持续读取 ACK 帧并送入 ch，直到出错或 ctx 取消。
-func (s *Sender) readAcks(ctx context.Context, fr *protocol.Framer, ch chan<- ackResult) {
+func readAcks(ctx context.Context, fr *protocol.Framer, ch chan<- ackResult) {
 	for {
 		cum, credit, err := readAck(fr)
 		if err != nil {

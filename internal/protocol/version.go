@@ -8,7 +8,7 @@ package protocol
 // 与产品 SemVer 解耦，由人工 bump：
 //   - 破坏性变更：升 major，并在提交 footer 标注 BREAKING CHANGE；
 //   - 非破坏新增：升 minor。
-const ProtocolVersion = "2.0"
+const ProtocolVersion = "2.1"
 
 // MinSupportedProtocol 是服务端仍接受的最低协议版本，
 // 构成兼容区间 [MinSupportedProtocol, ProtocolVersion]（见方案 §18.5）。

@@ -45,6 +45,8 @@ const (
 	FileReject = "FILE_REJECT"
 	// FileCancel 取消文件传输。
 	FileCancel = "FILE_CANCEL"
+	// FileReverse 反向拨号：发送方不可拨入时，接收方监听并回传自己的候选地址。
+	FileReverse = "FILE_REVERSE"
 	// FileProgress 文件传输进度。
 	FileProgress = "FILE_PROGRESS"
 	// FileDone 文件传输完成。

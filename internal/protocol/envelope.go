@@ -41,10 +41,10 @@ const (
 // payload 为 nil 时不带负载。
 func NewEnvelope(id, typ string, payload any) (*Envelope, error) {
 	env := &Envelope{
-		V:   envelopeV,
+		V:    envelopeV,
 		Type: typ,
-		ID:  id,
-		TS:  time.Now().UnixMilli(),
+		ID:   id,
+		TS:   time.Now().UnixMilli(),
 	}
 	if payload != nil {
 		raw, err := json.Marshal(payload)

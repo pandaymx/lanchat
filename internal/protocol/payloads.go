@@ -4,11 +4,11 @@ import "encoding/json"
 
 // HelloPayload 是 HELLO 的负载（方案 §3.2）。
 type HelloPayload struct {
-	Nickname string            `json:"nickname"`
-	DeviceID string            `json:"deviceID"`
-	PSK      string            `json:"psk,omitempty"`
-	Caps     ClientCaps        `json:"caps"`
-	OS       string            `json:"os"`
+	Nickname string     `json:"nickname"`
+	DeviceID string     `json:"deviceID"`
+	PSK      string     `json:"psk,omitempty"`
+	Caps     ClientCaps `json:"caps"`
+	OS       string     `json:"os"`
 }
 
 // ClientCaps 是客户端能力声明，服务端取交集后在 WELCOME.features 回传。
@@ -22,11 +22,11 @@ type ClientCaps struct {
 
 // WelcomePayload 是 WELCOME 的负载。
 type WelcomePayload struct {
-	SelfID              string   `json:"selfID"`
-	ProtocolVersion     string   `json:"protocolVersion"`
-	HeartbeatInterval   int      `json:"heartbeatInterval"`
-	AuthMode            string   `json:"authMode"`
-	Features            []string `json:"features"`
+	SelfID            string   `json:"selfID"`
+	ProtocolVersion   string   `json:"protocolVersion"`
+	HeartbeatInterval int      `json:"heartbeatInterval"`
+	AuthMode          string   `json:"authMode"`
+	Features          []string `json:"features"`
 }
 
 // AuthFailPayload 是 AUTH_FAIL 的负载。
@@ -86,6 +86,8 @@ type TypingPayload struct {
 }
 
 // FileOfferPayload 是 FILE_OFFER 的负载（方案 §5.2/§5.3）。
+// Candidates 为空表示发送方不可被拨入，请求接收方反向拨号（M3）。
+// ECDHPub 是发送方一次性 X25519 公钥（base64，32B），供端到端协商文件密钥。
 type FileOfferPayload struct {
 	TransferID string   `json:"transferID"`
 	Name       string   `json:"name"`
@@ -94,6 +96,7 @@ type FileOfferPayload struct {
 	SHA256     string   `json:"sha256"`
 	Candidates []string `json:"candidates,omitempty"`
 	Token      string   `json:"token,omitempty"`
+	ECDHPub    string   `json:"ecdhPub,omitempty"`
 }
 
 // FileAcceptPayload 是 FILE_ACCEPT 的负载。
@@ -112,6 +115,15 @@ type FileCancelPayload struct {
 	TransferID string `json:"transferID"`
 }
 
+// FileReversePayload 是 FILE_REVERSE 的负载（M3 反向拨号）。
+// 接收方监听 P2P 端口后，把自己的候选地址回给不可拨入的发送方，
+// 由发送方反向拨入；数据面仍是拨号方发 HELLO，逻辑与正向一致。
+type FileReversePayload struct {
+	TransferID string   `json:"transferID"`
+	Candidates []string `json:"candidates,omitempty"`
+	Token      string   `json:"token,omitempty"`
+}
+
 // FileProgressPayload 是 FILE_PROGRESS 的负载。
 type FileProgressPayload struct {
 	TransferID string `json:"transferID"`
@@ -127,12 +139,12 @@ type FileDonePayload struct {
 
 // GroupOfferPayload 是 GROUP_OFFER 的负载（1:N，方案 §9.3）。
 type GroupOfferPayload struct {
-	GroupID     string `json:"groupID"`
-	TransferID string `json:"transferID"`
-	Name       string `json:"name"`
-	Size       int64  `json:"size"`
-	BlockCount int    `json:"blockCount"`
-	SHA256     string `json:"sha256"`
+	GroupID    string   `json:"groupID"`
+	TransferID string   `json:"transferID"`
+	Name       string   `json:"name"`
+	Size       int64    `json:"size"`
+	BlockCount int      `json:"blockCount"`
+	SHA256     string   `json:"sha256"`
 	Seeders    []string `json:"seeders,omitempty"`
 }
 
@@ -144,16 +156,16 @@ type GroupJoinPayload struct {
 
 // GroupProgressPayload 是 GROUP_PROGRESS 的负载（块位图）。
 type GroupProgressPayload struct {
-	GroupID     string `json:"groupID"`
-	TransferID string `json:"transferID"`
+	GroupID    string          `json:"groupID"`
+	TransferID string          `json:"transferID"`
 	HaveBitmap json.RawMessage `json:"haveBitmap,omitempty"`
 }
 
 // Channel 是 G2 自定义频道（方案 §9.6）。
 type Channel struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	OwnerID string `json:"ownerID"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	OwnerID string   `json:"ownerID"`
 	Members []string `json:"members,omitempty"`
 }
 
@@ -173,20 +185,29 @@ type ChannelListPayload struct {
 }
 
 // RelayRequestPayload 是 RELAY_REQUEST 的负载。
+// PeerID 是对端（另一端）客户端 ID，服务器据此向双方分别下发 RELAY_GRANT。
 type RelayRequestPayload struct {
 	TransferID string `json:"transferID"`
+	PeerID     string `json:"peerID,omitempty"`
 }
 
 // RelayGrantPayload 是 RELAY_GRANT 的负载。
+// RelayAddr 是中继数据面 TCP 地址 host:port（可缺省，老端忽略）。
 type RelayGrantPayload struct {
 	TransferID string `json:"transferID"`
 	RelayID    string `json:"relayID"`
+	RelayAddr  string `json:"relayAddr,omitempty"`
 }
 
-// RelayKeyPayload 是 RELAY_KEY 的负载（AES-GCM 密钥，经加密通道下发）。
+// RelayKeyPayload 是 RELAY_KEY 的负载。
+// 端到端 X25519 方案下：接收方把自己的一次性 X25519 公钥放入 PeerPub，
+// 并用 ECDH 共享密钥加密文件密钥，密文（base64）放入 WrappedKey；
+// 中继/中心节点只能看到封装后的密文，无法还原文件密钥。
 type RelayKeyPayload struct {
-	RelayID string `json:"relayID"`
-	Key     string `json:"key"`
+	RelayID    string `json:"relayID"`
+	TransferID string `json:"transferID,omitempty"`
+	PeerPub    string `json:"peerPub,omitempty"`
+	WrappedKey string `json:"wrappedKey,omitempty"`
 }
 
 // MsgAckPayload 是 MSG_ACK 的负载。

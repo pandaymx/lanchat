@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/pandaymx/lanchat/compare/v0.3.0...v0.4.0) (2026-09-28)
+
+
+### Features
+
+* **core:** M3 可靠性增强与 AES-GCM 中继 ([#6](https://github.com/pandaymx/lanchat/issues/6)) ([2276683](https://github.com/pandaymx/lanchat/commit/2276683dcd26a4a6de486559356efad45bdc6606))
+
 ## [0.3.0](https://github.com/pandaymx/lanchat/compare/v0.2.0...v0.3.0) (2026-09-27)
 
 

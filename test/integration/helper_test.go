@@ -208,17 +208,20 @@ func (c *testClient) recvUntil(typ string, d time.Duration) *protocol.Envelope {
 }
 
 // startHeartbeats 按 interval 周期发送 HEARTBEAT，返回停止函数。
+// 启动后立即发送一次首跳：在激进空闲超时（如 400ms）下，不能把连接存活
+// 寄托在第一个 ticker 的调度时机上，高负载 CI 中首个 tick 可能被延迟。
 func (c *testClient) startHeartbeats(interval time.Duration) func() {
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		_ = c.sendTo(protocol.Heartbeat, "", nil)
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
-				c.sendTo(protocol.Heartbeat, "", nil)
+				_ = c.sendTo(protocol.Heartbeat, "", nil)
 			case <-stop:
 				return
 			}

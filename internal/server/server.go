@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/pandaymx/lanchat/internal/protocol"
+	"github.com/pandaymx/lanchat/internal/relay"
 )
 
 // Options 是服务器运行参数（由 cmd 从 config.Config 映射）。
@@ -28,6 +29,9 @@ type Options struct {
 	HeartbeatInterval time.Duration
 	IdleTimeout       time.Duration
 	ShutdownGrace     time.Duration
+
+	RelayListen string // 中继数据面监听地址；空=不启用
+	RelayHost   string // 宣告给客户端的中继主机（LAN IP）
 }
 
 // Server 是信令服务器。
@@ -106,6 +110,17 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// 中继数据面：配置了 RelayListen 才启用，随 ctx 关闭。
+	if s.opts.RelayListen != "" {
+		relaySrv, err := relay.New(s.opts.RelayListen)
+		if err != nil {
+			cancel()
+			return err
+		}
+		s.hub.relaySrv = relaySrv
+		go func() { _ = relaySrv.Serve(ctx) }()
+	}
 
 	go s.hub.run(ctx)
 
@@ -201,7 +216,7 @@ func (s *Server) handshake(parent context.Context, c *Client) error {
 		ProtocolVersion:   protocol.ProtocolVersion,
 		HeartbeatInterval: int(s.opts.HeartbeatInterval / time.Second),
 		AuthMode:          s.opts.AuthMode,
-		Features:          negotiateFeatures(hello.Caps),
+		Features:          negotiateFeatures(hello.Caps, s.opts.RelayListen != ""),
 	})
 	s.mustEnqueue(c, protocol.UserList, protocol.UserListPayload{
 		Revision: rev, Users: users,

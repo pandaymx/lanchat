@@ -34,15 +34,24 @@ type hub struct {
 	auth   *authenticator
 	events chan hubEvent
 	logf   func(string, ...any)
+
+	relaySrv  relayServer // 中继数据面（可为 nil，表示未启用）
+	relayHost string      // 宣告给客户端的中继主机
+}
+
+// relayServer 是中继数据面的最小依赖接口。
+type relayServer interface {
+	AdvertiseAddr(host string) string
 }
 
 func newHub(opts Options, logf func(string, ...any)) *hub {
 	return &hub{
-		opts:   opts,
-		reg:    newRegistry(),
-		auth:   newAuthenticator(opts.AuthMode, opts.PSKHash),
-		events: make(chan hubEvent, 256),
-		logf:   logf,
+		opts:      opts,
+		reg:       newRegistry(),
+		auth:      newAuthenticator(opts.AuthMode, opts.PSKHash),
+		events:    make(chan hubEvent, 256),
+		logf:      logf,
+		relayHost: opts.RelayHost,
 	}
 }
 

@@ -11,9 +11,23 @@ import (
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
-func TestNegotiateFeaturesEmpty(t *testing.T) {
-	if got := negotiateFeatures(protocol.ClientCaps{Resume: true, Relay: true}); len(got) != 0 {
-		t.Fatalf("M1 不应启用任何特性，得到 %v", got)
+func TestNegotiateFeatures(t *testing.T) {
+	// 中继未启用：只有 resume，客户端未声明 resume 时为空。
+	if got := negotiateFeatures(protocol.ClientCaps{}, false); len(got) != 0 {
+		t.Fatalf("无匹配能力时应为空，得到 %v", got)
+	}
+	// resume 恒可用。
+	if got := negotiateFeatures(protocol.ClientCaps{Resume: true}, false); len(got) != 1 || got[0] != "resume" {
+		t.Fatalf("应协商出 resume，得到 %v", got)
+	}
+	// 中继启用且客户端声明 relay：应得到 resume + relay。
+	got := negotiateFeatures(protocol.ClientCaps{Resume: true, Relay: true}, true)
+	if len(got) != 2 {
+		t.Fatalf("应协商出 resume+relay，得到 %v", got)
+	}
+	// 中继未启用时，即使客户端声明 relay 也不应返回。
+	if got := negotiateFeatures(protocol.ClientCaps{Relay: true}, false); len(got) != 0 {
+		t.Fatalf("中继未启用不应返回 relay，得到 %v", got)
 	}
 }
 

@@ -83,10 +83,15 @@ func (a *authenticator) helloOK(remoteIP, psk string) (reason string, ok bool) {
 	return "bad_psk", false
 }
 
-// negotiateFeatures 取客户端能力与服务端 M1 实际启用特性的交集。
-// M1 不启用 resume/relay/tls/swarm/group，故恒返回空切片。
-func negotiateFeatures(caps protocol.ClientCaps) []string {
-	serverFeatures := map[string]bool{} // M1：服务端无可用特性
+// negotiateFeatures 取客户端能力与服务端实际启用特性的交集。
+// relayEnabled 表示服务端中继数据面是否启用；其余特性 M3 暂不启用。
+func negotiateFeatures(caps protocol.ClientCaps, relayEnabled bool) []string {
+	serverFeatures := map[string]bool{
+		"resume": true, // M3 起支持断点续传
+	}
+	if relayEnabled {
+		serverFeatures["relay"] = true
+	}
 	features := make([]string, 0)
 	for _, f := range featureList(caps) {
 		if serverFeatures[f] {

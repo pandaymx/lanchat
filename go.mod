@@ -3,6 +3,7 @@ module github.com/pandaymx/lanchat
 go 1.27.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/brutella/dnssd v1.2.14
 	github.com/coder/websocket v1.8.15
 	github.com/google/uuid v1.6.0

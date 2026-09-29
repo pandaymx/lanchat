@@ -1,0 +1,29 @@
+# 默认：自动识别文本文件，统一以 LF 存储并检出
+* text=auto eol=lf
+
+# Visual Studio 解决方案文件按惯例使用 CRLF
+*.sln text eol=crlf
+
+# Windows 专用脚本（如未来新增）使用 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 常见二进制文件，不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.7z binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.a binary
+*.aar binary

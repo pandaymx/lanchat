@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -98,19 +97,20 @@ func (s *stubAPI) ChannelJoin(id string) error {
 }
 func (s *stubAPI) ChannelList() []appapi.Channel { return s.channels }
 
-// startServer 在临时 Unix socket 上启动服务端，返回服务端与客户端连接。
+// startServer 在临时本地传输（Unix socket / 命名管道）上启动服务端，
+// 返回服务端与客户端连接。
 func startServer(t *testing.T, api appapi.API) (*Server, net.Conn) {
 	t.Helper()
 	srv := NewServer(api)
-	sockPath := filepath.Join(t.TempDir(), "lanchat.sock")
+	addr := testAddr(t)
 
 	ready := make(chan error, 1)
-	go func() { ready <- srv.ListenAndServe(sockPath) }()
+	go func() { ready <- srv.ListenAndServe(addr) }()
 
-	// 等待 socket 文件就绪后拨号。
+	// 等待本地传输就绪后拨号。
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
+		c, err := dialTest(addr, 200*time.Millisecond)
 		if err == nil {
 			return srv, c
 		}
@@ -428,13 +428,13 @@ func TestEventBroadcast(t *testing.T) {
 	srv := NewServer(api)
 	l := srv.Listener()
 
-	sockPath := filepath.Join(t.TempDir(), "lanchat.sock")
-	go func() { _ = srv.ListenAndServe(sockPath) }()
+	addr := testAddr(t)
+	go func() { _ = srv.ListenAndServe(addr) }()
 
 	var conns []net.Conn
 	deadline := time.Now().Add(2 * time.Second)
 	for len(conns) < 2 && time.Now().Before(deadline) {
-		if c, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond); err == nil {
+		if c, err := dialTest(addr, 200*time.Millisecond); err == nil {
 			conns = append(conns, c)
 		} else {
 			time.Sleep(20 * time.Millisecond)
@@ -446,6 +446,58 @@ func TestEventBroadcast(t *testing.T) {
 	defer srv.Close()
 	for _, c := range conns {
 		defer c.Close()
+	}
+
+	// 每条连接一个持续读取的 goroutine：
+	//  - 先完成一次同步 GetState 往返作为就绪屏障（Dial 成功不代表服务端已
+	//    Accept 并把连接登记进广播表）；
+	//  - 屏障通过后立即持续读取后续 notification，避免广播方因命名管道 /
+	//    socket 缓冲写满而阻塞。
+	type readResult struct {
+		line []byte
+		err  error
+	}
+	results := make([]chan readResult, len(conns))
+	ready := make(chan error, len(conns))
+	for i, c := range conns {
+		results[i] = make(chan readResult, 16)
+		go func(i int, c net.Conn) {
+			reader := bufio.NewReader(c)
+
+			// 就绪请求。
+			req := Request{JSONRPC: rpcVersion, ID: json.RawMessage(`1`), Method: "GetState"}
+			data, err := encode(req)
+			if err != nil {
+				ready <- err
+				return
+			}
+			if _, err := c.Write(data); err != nil {
+				ready <- err
+				return
+			}
+			if _, err := reader.ReadBytes('\n'); err != nil {
+				ready <- err
+				return
+			}
+			ready <- nil
+
+			// 持续收集后续帧直到读取出错（连接关闭）。
+			for {
+				line, err := reader.ReadBytes('\n')
+				if len(line) > 0 {
+					results[i] <- readResult{line: line}
+				}
+				if err != nil {
+					results[i] <- readResult{err: err}
+					return
+				}
+			}
+		}(i, c)
+	}
+	for i := range conns {
+		if err := <-ready; err != nil {
+			t.Fatalf("连接 %d 就绪失败: %v", i, err)
+		}
 	}
 
 	l.OnConnChanged(appapi.ConnConnected, "")
@@ -464,18 +516,22 @@ func TestEventBroadcast(t *testing.T) {
 		"transfer.failed": false, "group.matrix": false, "channel.updated": false,
 	}
 	// 每条连接都应收到全部 9 个 notification。
-	for i, c := range conns {
+	for i, ch := range results {
 		got := map[string]bool{}
-		reader := bufio.NewReader(c)
 		for n := 0; n < 9; n++ {
-			line, err := reader.ReadBytes('\n')
-			if err != nil {
-				t.Fatalf("连接 %d 读取 notification %d 失败: %v", i, n, err)
+			var res readResult
+			select {
+			case res = <-ch:
+			case <-time.After(3 * time.Second):
+				t.Fatalf("连接 %d 等待 notification %d 超时", i, n)
+			}
+			if res.err != nil {
+				t.Fatalf("连接 %d 读取 notification %d 失败: %v", i, n, res.err)
 			}
 			var notif struct {
 				Method string `json:"method"`
 			}
-			if err := json.Unmarshal(line, &notif); err != nil {
+			if err := json.Unmarshal(res.line, &notif); err != nil {
 				t.Fatal(err)
 			}
 			got[notif.Method] = true

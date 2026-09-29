@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.1](https://github.com/pandaymx/lanchat/compare/v0.7.0...v0.7.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **core:** emit connected event on initial connect ([#15](https://github.com/pandaymx/lanchat/issues/15)) ([ef6ce07](https://github.com/pandaymx/lanchat/commit/ef6ce0708172052c23d16081077c268fc926292e))
+
+## [0.7.0](https://github.com/pandaymx/lanchat/compare/v0.6.0...v0.7.0) (2026-09-29)
+
+
+### Features
+
+* **ui-linux:** M5 Linux 原生端（GTK4 + libadwaita） ([#13](https://github.com/pandaymx/lanchat/issues/13)) ([7131530](https://github.com/pandaymx/lanchat/commit/713153038a9d1c06887629bb98dc25f45a1e315f))
+
 ## [0.6.0](https://github.com/pandaymx/lanchat/compare/v0.5.0...v0.6.0) (2026-09-29)
 
 

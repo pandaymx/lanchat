@@ -1,0 +1,17 @@
+<Application
+    x:Class="LANChat.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:LANChat.Converters">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <converters:SelfToHorizontalAlignmentConverter x:Key="IsSelf" />
+            <converters:SelfToTextAlignmentConverter x:Key="SelfAlignConverter" />
+            <converters:BubbleColorConverter x:Key="BubbleColorConverter" />
+            <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

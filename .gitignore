@@ -9,6 +9,9 @@
 *.test
 *.out
 
+# Rust (ui-linux)
+/ui-linux/target/
+
 # Go
 vendor/
 

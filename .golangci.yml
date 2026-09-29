@@ -13,12 +13,6 @@ linters:
       - path: _test\.go
         linters:
           - staticcheck
-      # 以下两项为存量告警，待 core/server 分支修复后移除（见 AGENTS.md §2）。
-      - path: internal/server/server\.go
-        text: "ST1005"
-      - path: internal/core/(signaling|task)\.go
-        linters:
-          - unused
 
 formatters:
   enable:

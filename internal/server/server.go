@@ -70,10 +70,10 @@ func New(opts Options, logf func(string, ...any)) (*Server, error) {
 
 func validateOptions(o Options) error {
 	if o.Listen == "" {
-		return errors.New("Listen 不能为空")
+		return errors.New("listen 选项不能为空")
 	}
 	if o.Path == "" || !strings.HasPrefix(o.Path, "/") {
-		return fmt.Errorf("Path 必须以 / 开头，当前 %q", o.Path)
+		return fmt.Errorf("path 必须以 / 开头，当前 %q", o.Path)
 	}
 	if o.AuthMode != "psk" && o.AuthMode != "none" {
 		return fmt.Errorf("非法 AuthMode %q", o.AuthMode)

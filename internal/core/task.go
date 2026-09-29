@@ -23,10 +23,9 @@ type taskSignal struct {
 type transferTask struct {
 	cli *Client
 
-	mu     sync.Mutex
-	snap   appapi.Transfer
-	mode   int
-	closed bool
+	mu   sync.Mutex
+	snap appapi.Transfer
+	mode int
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -48,7 +47,6 @@ type transferTask struct {
 	candidates   []string
 	senderECDH   string
 	destPath     string // 用户接受时指定的落盘全路径
-	relayGrant   *protocol.RelayGrantPayload
 	relayRequest string // RELAY_REQUEST 信封 ID（收 ERROR / ACK 时据此匹配）
 }
 

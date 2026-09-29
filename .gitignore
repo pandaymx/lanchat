@@ -27,3 +27,10 @@ vendor/
 
 # Go fuzz 缓存
 testdata/fuzz/
+
+# .NET 构建产物（任意层级）
+**/[Bb]in/
+**/[Oo]bj/
+*.user
+*.suo
+.vs/

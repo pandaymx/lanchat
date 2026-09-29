@@ -40,6 +40,12 @@ func (r *registry) replace(c *Client) {
 	r.byID[c.id] = c
 }
 
+// bumpRevision 令在线表 revision+1，用于资料变更等不改变成员集合的事件。
+func (r *registry) bumpRevision() uint64 {
+	r.revision++
+	return r.revision
+}
+
 func (r *registry) get(id string) (*Client, bool) {
 	c, ok := r.byID[id]
 	return c, ok

@@ -16,7 +16,6 @@ import (
 // session 是一次信令连接（含其自动重连生命周期）。
 type session struct {
 	conn      *websocket.Conn
-	gen       uint64
 	heartbeat time.Duration
 }
 

@@ -1,0 +1,40 @@
+version: "3"
+
+# macOS 端构建编排（AGENTS.md：使用 Task，不用 Makefile）。
+# 需要在 macOS 上执行，并已安装 XcodeGen（brew install xcodegen）。
+tasks:
+  generate:
+    desc: 用 XcodeGen 生成 LANChat.xcodeproj
+    cmds:
+      - xcodegen generate --spec project.yml
+    sources:
+      - project.yml
+      - "LANChat/**/*.swift"
+
+  daemon:
+    desc: 本机构建 lanchat-daemon（无 CGO，须在仓库根执行）
+    dir: ".."
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - go build -trimpath -o ui-macos/build/lanchat-daemon ./cmd/lanchat-daemon
+
+  build:
+    desc: 生成工程并构建 Release .app（未签名打 unsigned）
+    deps: [generate, daemon]
+    cmds:
+      - |
+        xcodebuild -project LANChat.xcodeproj -scheme LANChat \
+          -configuration Release -derivedDataPath build/DerivedData \
+          CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+          ONLY_ACTIVE_ARCH=NO build
+      - cmd: |
+          APP="build/DerivedData/Build/Products/Release/LANChat.app"
+          mkdir -p "$APP/Contents/Resources"
+          cp build/lanchat-daemon "$APP/Contents/Resources/lanchat-daemon"
+        ignore_error: true
+
+  clean:
+    desc: 清理构建产物
+    cmds:
+      - rm -rf build LANChat.xcodeproj

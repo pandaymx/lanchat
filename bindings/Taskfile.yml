@@ -1,0 +1,54 @@
+version: '3'
+
+tasks:
+  mobile:install:
+    desc: 安装 gomobile 工具
+    cmds:
+      - go install golang.org/x/mobile/cmd/gomobile@latest
+      - gomobile init
+
+  android:aar:
+    desc: 生成 Android AAR 到 ui-android/app/libs
+    dir: '{{.ROOT_DIR}}'
+    env:
+      ANDROID_HOME: '{{.ANDROID_HOME | default ""}}'
+      ANDROID_SDK_ROOT: '{{.ANDROID_SDK_ROOT | default ""}}'
+    cmds:
+      - mkdir -p ui-android/app/libs
+      - >
+        gomobile bind
+        -target=android
+        -androidapi 26
+        -javapkg=dev.lanchat.bindings
+        -o ui-android/app/libs/mobile.aar
+        ./bindings/mobile
+
+  android:build:
+    desc: 构建 Android APK（需先生成 AAR）
+    dir: '{{.ROOT_DIR}}/ui-android'
+    cmds:
+      - ./gradlew assembleDebug
+
+  android:
+    desc: 一键生成 AAR 并构建 APK
+    cmds:
+      - task: android:aar
+      - task: android:build
+
+  ios:framework:
+    desc: 生成 iOS XCFramework 到 ui-ios/Frameworks
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - mkdir -p ui-ios/Frameworks
+      - >
+        gomobile bind
+        -target=ios
+        -iosversion=16.0
+        -prefix=LC
+        -o ui-ios/Frameworks/Mobile.xcframework
+        ./bindings/mobile
+
+  ios:
+    desc: 生成 XCFramework（Xcode 工程构建见 ui-ios/Taskfile.yml）
+    cmds:
+      - task: ios:framework

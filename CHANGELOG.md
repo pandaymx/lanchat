@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/pandaymx/lanchat/compare/v0.7.1...v0.8.0) (2026-09-29)
+
+
+### Features
+
+* M7 macOS 原生端 ([#20](https://github.com/pandaymx/lanchat/issues/20)) ([640c57d](https://github.com/pandaymx/lanchat/commit/640c57d5469d76e53aa666f52d87cabb090463d0))
+
 ## [0.7.1](https://github.com/pandaymx/lanchat/compare/v0.7.0...v0.7.1) (2026-09-29)
 
 

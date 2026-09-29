@@ -1,0 +1,8 @@
+# Xcode / XcodeGen 构建产物
+build/
+DerivedData/
+*.xcodeproj
+!project.yml
+xcuserdata/
+*.xcuserstate
+.DS_Store

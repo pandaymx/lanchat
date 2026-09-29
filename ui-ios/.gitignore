@@ -1,0 +1,13 @@
+# XcodeGen 生成产物
+LANChat.xcodeproj/
+DerivedData/
+build/
+
+# gomobile 生成的 iOS 框架（由 task ios:framework 生成）
+Frameworks/
+
+# 用户态
+xcuserdata/
+*.xcuserstate
+.DS_Store
+*.swp

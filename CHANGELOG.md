@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/pandaymx/lanchat/compare/v0.4.0...v0.5.0) (2026-09-29)
+
+
+### Features
+
+* **core:** M4 客户端核心、daemon 进程与 JSON-RPC IPC ([#8](https://github.com/pandaymx/lanchat/issues/8)) ([afc5728](https://github.com/pandaymx/lanchat/commit/afc5728ad4773eda266c4a9fd7357713b02b737a))
+
+
+### Bug Fixes
+
+* **core:** 修正 TestPeerRoster 等待错误对象导致的偶发失败 ([#10](https://github.com/pandaymx/lanchat/issues/10)) ([d58cd2d](https://github.com/pandaymx/lanchat/commit/d58cd2df451da98c3f3c1258ca572fae06f56b95))
+
 ## [0.4.0](https://github.com/pandaymx/lanchat/compare/v0.3.0...v0.4.0) (2026-09-28)
 
 

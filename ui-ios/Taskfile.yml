@@ -1,0 +1,37 @@
+version: '3'
+
+tasks:
+  framework:
+    desc: 生成 gomobile iOS XCFramework
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - task: ios:framework
+        dir: bindings
+
+  generate:
+    desc: 生成 Xcode 工程
+    cmds:
+      - xcodegen generate
+
+  build:
+    desc: 生成框架 + 工程并构建（未签名模拟器版本）
+    dir: '{{.ROOT_DIR}}'
+    cmds:
+      - task: ios:framework
+        dir: bindings
+      - xcodegen generate
+        dir: ui-ios
+      - >
+        xcodebuild
+        -project ui-ios/LANChat.xcodeproj
+        -scheme LANChat
+        -configuration Release
+        -sdk iphonesimulator
+        -derivedDataPath ui-ios/build/DerivedData
+        CODE_SIGNING_ALLOWED=NO
+        build
+
+  clean:
+    desc: 清理构建产物
+    cmds:
+      - rm -rf build LANChat.xcodeproj Frameworks

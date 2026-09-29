@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/pandaymx/lanchat/compare/v0.7.0...v0.7.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **core:** emit connected event on initial connect ([#15](https://github.com/pandaymx/lanchat/issues/15)) ([ef6ce07](https://github.com/pandaymx/lanchat/commit/ef6ce0708172052c23d16081077c268fc926292e))
+
 ## [0.7.0](https://github.com/pandaymx/lanchat/compare/v0.6.0...v0.7.0) (2026-09-29)
 
 

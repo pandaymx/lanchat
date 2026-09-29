@@ -1,0 +1,44 @@
+name: LANChat
+options:
+  bundleIdPrefix: dev.lanchat
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+  developmentLanguage: zh-Hans
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.8.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+
+targets:
+  LANChat:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: LANChat
+        excludes:
+          - Info.plist
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.lanchat.macos
+        PRODUCT_NAME: LANChat
+        CODE_SIGN_ENTITLEMENTS: LANChat/LANChat.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_PREVIEWS: YES
+    info:
+      path: LANChat/Info.plist
+      properties:
+        CFBundleName: LANChat
+        CFBundleDisplayName: LANChat
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        LSMinimumSystemVersion: "$(MACOSX_DEPLOYMENT_TARGET)"
+        LSApplicationCategoryType: public.app-category.social-networking
+        NSHumanReadableCopyright: LANChat
+        LSUIElement: false

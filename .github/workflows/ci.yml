@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   test:
-    name: build / vet / race test
+    name: build / vet / lint / race test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -28,5 +28,54 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Race test
-        run: go test -race -count=1 ./...
+      - name: Install gofumpt
+        run: go install mvdan.cc/gofumpt@v0.12.0
+
+      - name: gofumpt
+        run: |
+          out="$(gofumpt -l .)"
+          if [ -n "$out" ]; then
+            echo "以下文件未通过 gofumpt："
+            echo "$out"
+            exit 1
+          fi
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.14.0
+
+      - name: Race test with coverage
+        run: |
+          go test -race -count=1 -coverprofile=coverage.out ./...
+
+      - name: Coverage gate (core/transfer/protocol >= 70%)
+        run: |
+          fail=0
+          for pkg in internal/core internal/transfer internal/protocol; do
+            pct=$(go tool cover -func=coverage.out \
+              | awk -v p="^github.com/pandaymx/lanchat/$pkg/" '
+                $1 ~ p { total++; sub(/%/, "", $3); sum += $3 }
+                END { if (total > 0) printf "%.1f", sum/total }')
+            echo "$pkg coverage: ${pct}%"
+            if awk "BEGIN {exit !($pct < 70)}"; then
+              echo "::error::$pkg 覆盖率 ${pct}% 低于 70% 门禁"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  scope-boundary:
+    name: scope boundary (per AGENTS.md §2)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check changed paths against branch ownership
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: scripts/check-scope.sh

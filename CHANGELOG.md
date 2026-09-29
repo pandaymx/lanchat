@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/pandaymx/lanchat/compare/v0.8.0...v0.9.0) (2026-09-29)
+
+
+### Features
+
+* M8 iOS 原生端 ([#23](https://github.com/pandaymx/lanchat/issues/23)) ([335dacb](https://github.com/pandaymx/lanchat/commit/335dacbc4fc319fedde5d8ed11627f8a82517367))
+
 ## [0.8.0](https://github.com/pandaymx/lanchat/compare/v0.7.1...v0.8.0) (2026-09-29)
 
 

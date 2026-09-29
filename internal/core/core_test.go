@@ -145,6 +145,17 @@ func TestConnectHandshake(t *testing.T) {
 	if st.Conn != appapi.ConnConnected {
 		t.Fatalf("conn = %s", st.Conn)
 	}
+	// 初始连接成功必须发出 connected 事件，UI 依赖它切换界面。
+	conns, _, _, _ := l.snapshot()
+	hasConnected := false
+	for _, s := range conns {
+		if s == appapi.ConnConnected {
+			hasConnected = true
+		}
+	}
+	if !hasConnected {
+		t.Fatalf("listener 未收到 connected 事件，实际 %v", conns)
+	}
 	if st.SelfID == "" {
 		t.Fatal("empty self id")
 	}

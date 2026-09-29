@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -9,8 +10,9 @@ import (
 
 // 业务层消息长度上限。
 const (
-	maxTextBytes    = 4 << 10   // 文本 4 KiB
-	maxStickerBytes = 256 << 10 // 表情内联 base64 256 KiB
+	maxTextBytes     = 4 << 10   // 文本 4 KiB
+	maxStickerBytes  = 256 << 10 // 表情内联 base64 256 KiB
+	maxNicknameBytes = 64        // 昵称 64 字节
 )
 
 // route 在 hub goroutine 内处理注册客户端上行的各类消息。
@@ -37,6 +39,8 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.onRelayRequest(c, env)
 	case protocol.RelayKey:
 		h.forward(c, env)
+	case protocol.PresenceUpdate:
+		h.onPresenceUpdate(c, env)
 	default:
 		h.send(c, protocol.Error, protocol.ErrorPayload{
 			Code:    "unknown_type",
@@ -67,6 +71,32 @@ func (h *hub) routeSticker(c *Client, env *protocol.Envelope) {
 		return
 	}
 	h.forward(c, env)
+}
+
+// onPresenceUpdate 处理客户端资料变更：更新昵称，bump revision 后广播给其他人。
+func (h *hub) onPresenceUpdate(c *Client, env *protocol.Envelope) {
+	var p protocol.UserUpdatePayload
+	if err := env.DecodePayload(&p); err != nil {
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code:    "invalid_presence",
+			Message: "资料变更消息非法",
+		})
+		return
+	}
+	nick := strings.TrimSpace(p.User.Nickname)
+	if nick == "" || len(nick) > maxNicknameBytes {
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code:    "invalid_presence",
+			Message: "昵称非法或超过长度上限",
+		})
+		return
+	}
+	c.nickname = nick
+	rev := h.reg.bumpRevision()
+	h.fanoutExcept(c, protocol.PresenceUpdate, protocol.UserUpdatePayload{
+		User: c.user(), Revision: rev,
+	})
+	h.ack(c, env.ID, "delivered")
 }
 
 // forward 把消息强制盖发送者印章后单播给 env.To，并向发送者回 MSG_ACK。

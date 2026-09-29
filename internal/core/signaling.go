@@ -63,6 +63,7 @@ func (c *Client) Connect(addr, psk string) error {
 	c.heartbeat = int(s.heartbeat / time.Second)
 	c.mu.Unlock()
 
+	c.listener().OnConnChanged(appapi.ConnConnected, "")
 	go c.watch(gen, s, time.Second)
 	return nil
 }

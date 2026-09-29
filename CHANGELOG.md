@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/pandaymx/lanchat/compare/v0.9.0...v0.9.1) (2026-09-29)
+
+
+### Bug Fixes
+
+* **core:** 清理 server/core 存量 lint 告警并补 core 责任田 ([#25](https://github.com/pandaymx/lanchat/issues/25)) ([592de35](https://github.com/pandaymx/lanchat/commit/592de35364d8cef507c6ab05099814778edb45ca))
+
 ## [0.9.0](https://github.com/pandaymx/lanchat/compare/v0.8.0...v0.9.0) (2026-09-29)
 
 

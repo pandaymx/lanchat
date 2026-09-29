@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/pandaymx/lanchat/compare/v0.5.0...v0.6.0) (2026-09-29)
+
+
+### Features
+
+* **ui-win:** M4 Windows native client ([#11](https://github.com/pandaymx/lanchat/issues/11)) ([f381338](https://github.com/pandaymx/lanchat/commit/f3813386f80e67f7881d9335be0cf3d9879cba07))
+
 ## [0.5.0](https://github.com/pandaymx/lanchat/compare/v0.4.0...v0.5.0) (2026-09-29)
 
 

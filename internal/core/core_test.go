@@ -193,10 +193,12 @@ func TestPeerRoster(t *testing.T) {
 	}
 	bID := b.GetState().SelfID
 
+	// 断言 alice 的 peers 前，必须等 alice 自己处理完 bob 的 USER_JOIN；
+	// 等待 bob 的事件无法保证 alice 侧已更新（两条独立连接，事件无跨端顺序保证）。
 	waitFor(t, time.Second, func() bool {
-		lb.mu.Lock()
-		defer lb.mu.Unlock()
-		return len(lb.joined) >= 1
+		la.mu.Lock()
+		defer la.mu.Unlock()
+		return len(la.joined) >= 1
 	})
 	if got := a.GetState(); len(got.Peers) != 1 || got.Peers[0].Nickname != "bob" {
 		t.Fatalf("alice peers = %+v", got.Peers)

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/pandaymx/lanchat/compare/v0.11.0...v0.12.0) (2026-09-30)
+
+
+### Features
+
+* **core:** wire group text fanout and G2 channels [M9] ([#32](https://github.com/pandaymx/lanchat/issues/32)) ([93153cd](https://github.com/pandaymx/lanchat/commit/93153cd03dfdf7ad7b254099e8be30f0fed1dcb5))
+
 ## [0.11.0](https://github.com/pandaymx/lanchat/compare/v0.10.0...v0.11.0) (2026-09-30)
 
 

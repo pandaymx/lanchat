@@ -24,11 +24,11 @@
 | 代号 | 角色 | scope（责任田，禁止越界） | 语言/工程 | 依赖 |
 |---|---|---|---|---|
 | **A0** | 契约管家 Contract Steward | `protocol` + `appapi` + `api/ipc.schema.json` | Go（纯协议，零业务依赖） | 无（一切起点，**串行**） |
-| **A1** | 后端核心 Backend Core | `server` + `discover` + `relay` | Go | A0 |
+| **A1** | 后端核心 Backend Core | `server` + `discover` + `relay` + `core`（客户端核心）+ daemon（`cmd/lanchat-daemon`） | Go | A0 |
 | **A2** | 传输引擎 Transfer Engine | `transfer` + `group` | Go | A0 |
-| **A3** | Windows 端 | `ui-win` + `ipc`（Go daemon 命名管道侧） | C#/.NET 8 + Go daemon | A0 schema |
-| **A4** | Linux 端 | `ui-linux` + `ipc`（Go daemon Unix socket 侧） | Rust + gtk-rs/libadwaita | A0 schema |
-| **A5** | macOS 端 | `ui-macos` + `ipc`（Go daemon Unix socket 侧） | SwiftUI（独立 Xcode 工程）+ Go daemon | A0 schema |
+| **A3** | Windows 端 | `ui-win` + `ipc`（命名管道 UI 客户端侧） | C#/.NET 8 + Go daemon | A0 schema |
+| **A4** | Linux 端 | `ui-linux` + `ipc`（Unix socket UI 客户端侧） | Rust + gtk-rs/libadwaita | A0 schema |
+| **A5** | macOS 端 | `ui-macos` + `ipc`（Unix socket UI 客户端侧） | SwiftUI（独立 Xcode 工程）+ Go daemon | A0 schema |
 | **A6** | iOS 端 | `ui-ios` + `bindings`（iOS 部分） | SwiftUI（独立 Xcode 工程）+ Go(gomobile) | A0 schema |
 | **A7** | Android 端 | `ui-android` + `bindings`（Android 部分） | Compose + Go(gomobile) | A0 schema |
 | **A8** | 平台/发版 | `ci` + `config` + `docs` + 契约测试工具 | YAML/Go/Rust | 全部 |
@@ -38,6 +38,7 @@
 - A0 冻结契约前，其余 Agent 一律阻塞，**不得基于臆测提前写代码**。
 - 契约冻结后 A1–A8 可完全并行。
 - macOS 与 iOS 为两个独立 Agent / 工程（桌面端与移动端交互范式、功能范围不同）；两端仅共享 `ui/strings/` 文案、设计规范与 appapi 契约。
+- `internal/core` 是唯一生产客户端核心（信令连接 / 在线表 / 文件编排 / 事件分发），归 A1；IPC 的 **Go daemon 服务端侧**（命名管道 + Unix socket 监听）归 A1，各 UI Agent 只拥有本端的 IPC **客户端侧**。
 
 ---
 

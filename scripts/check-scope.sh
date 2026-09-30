@@ -20,9 +20,14 @@ if [[ "$branch" == release-please* ]]; then
 fi
 
 # 公共改动（A8 平台/发版 scope）
-COMMON_PATHS='(^go\.(mod|sum)$)|((^|/)\.github/)|(^\.golangci\.(yml|yaml)$)|((^|/)Taskfile\.yml$)|(^configs/)|(^docs/)|(^scripts/)|(^CHANGELOG)|(^\.release-please-manifest)|(^release-please-config)'
+COMMON_PATHS='(^go\.(mod|sum)$)|((^|/)\.github/)|(^\.golangci\.(yml|yaml)$)|((^|/)Taskfile\.yml$)|(^configs/)|(^docs/)|(^scripts/)|(^CHANGELOG)|(^\.release-please-manifest)|(^release-please-config)|(^AGENTS\.md$)'
 
 case "$branch" in
+  # ci/chore 分支需优先匹配，避免分支名中同时含里程碑关键词（如 chore/m4-*）被误判。
+  *ci*|*chore*)
+    # A8 平台/发版：公共文件全部放行
+    OWNED_PATHS="$COMMON_PATHS"
+    ;;
   *m0*|*contract*|*appapi*)
     # A0 契约管家：协议 + 契约（契约冻结是一切起点）
     OWNED_PATHS='^internal/(protocol|appapi)/|^api/'
@@ -58,10 +63,6 @@ case "$branch" in
   *m9*|*group*)
     # A2 群组（M9 复用传输引擎）
     OWNED_PATHS='^internal/group/'
-    ;;
-  *ci*|*chore*)
-    # A8 平台/发版：公共文件全部放行
-    OWNED_PATHS="$COMMON_PATHS"
     ;;
   *)
     echo "::warning::无法识别分支 $branch 的责任田，跳过 scope 校验（详见 AGENTS.md §2）"

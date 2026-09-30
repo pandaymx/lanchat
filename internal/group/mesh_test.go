@@ -79,9 +79,8 @@ func (m *memStore) storedCount() int {
 
 // mesh 是全互联内存网络：按 ID 找到节点 swarm 并投递消息。
 type mesh struct {
-	mu      sync.Mutex
-	nodes   map[string]*Swarm
-	oneShot sync.Once
+	mu    sync.Mutex
+	nodes map[string]*Swarm
 }
 
 func newMesh() *mesh { return &mesh{nodes: make(map[string]*Swarm)} }

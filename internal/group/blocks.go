@@ -9,10 +9,7 @@ import (
 const BlockSize = 4 << 20
 
 // 块交换信令帧的 payload 编解码错误。
-var (
-	errShortBlockPayload = errors.New("group: short block payload")
-	errBlockIndex        = errors.New("group: block index out of range")
-)
+var errShortBlockPayload = errors.New("group: short block payload")
 
 // blockIdxSize REQUEST/HAVE 帧内块下标的字节长度。
 const blockIdxSize = 4

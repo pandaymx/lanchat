@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/pandaymx/lanchat/compare/v0.9.1...v0.10.0) (2026-09-30)
+
+
+### Features
+
+* **group:** M9 群组广播 G1 swarm + G2 频道 ([#28](https://github.com/pandaymx/lanchat/issues/28)) ([2bb46c5](https://github.com/pandaymx/lanchat/commit/2bb46c5e823457bb43e62397aa1fb5592762332f))
+
 ## [0.9.1](https://github.com/pandaymx/lanchat/compare/v0.9.0...v0.9.1) (2026-09-29)
 
 

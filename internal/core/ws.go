@@ -40,6 +40,20 @@ func (c *Client) sendTo(conn *websocket.Conn, typ, to string, payload any) (*pro
 	return env, nil
 }
 
+// sendGroup 构造并发往群组（G1 全体或 G2 频道）的信封。
+// 群组路由依据 Group 字段，服务器忽略 To，故留空。
+func (c *Client) sendGroup(conn *websocket.Conn, typ, group string, payload any) (*protocol.Envelope, error) {
+	env, err := buildEnvelope(typ, payload)
+	if err != nil {
+		return nil, err
+	}
+	env.Group = group
+	if err := c.writeJSON(conn, env); err != nil {
+		return nil, err
+	}
+	return env, nil
+}
+
 // sendPresenceUpdate 把当前昵称 / 状态经 PRESENCE_UPDATE 同步给服务器。
 func (c *Client) sendPresenceUpdate(conn *websocket.Conn) error {
 	c.mu.Lock()

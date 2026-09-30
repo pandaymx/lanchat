@@ -51,6 +51,24 @@ func (c *Client) applyUserList(env *protocol.Envelope) {
 	}
 }
 
+// applyChannelList 用服务器下发的全量频道表替换本地缓存并通知 UI。
+func (c *Client) applyChannelList(in []protocol.Channel) {
+	next := make(map[string]appapi.Channel, len(in))
+	for _, ch := range in {
+		next[ch.ID] = appapi.Channel{
+			ID: ch.ID, Name: ch.Name, OwnerID: ch.OwnerID, Members: ch.Members,
+		}
+	}
+	c.mu.Lock()
+	c.channels = next
+	snapshot := make([]appapi.Channel, 0, len(next))
+	for _, ch := range next {
+		snapshot = append(snapshot, ch)
+	}
+	c.mu.Unlock()
+	c.listener().OnChannelUpdated(snapshot)
+}
+
 // applyJoin 增量上线。
 func (c *Client) applyJoin(env *protocol.Envelope) {
 	var p protocol.UserUpdatePayload

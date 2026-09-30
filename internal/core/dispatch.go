@@ -57,6 +57,13 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		c.mu.Unlock()
 		c.listener().OnConnChanged("disconnected", "server shutdown")
 
+	case protocol.ChannelList:
+		var p protocol.ChannelListPayload
+		if err := env.DecodePayload(&p); err != nil {
+			return
+		}
+		c.applyChannelList(p.Channels)
+
 	case protocol.AuthFail:
 		// 握手后收到鉴权失败按断连处理（watch 会决定重连策略）。
 		c.mu.Lock()

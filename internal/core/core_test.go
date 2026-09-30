@@ -53,6 +53,11 @@ func startServer(t *testing.T) string {
 	return "ws://" + srv.ListenAddr() + opts.Path
 }
 
+// receivedMsg 记录入站消息的路由信息（from/group）用于群组断言。
+type receivedMsg struct {
+	from, group, typ, text string
+}
+
 // recordingListener 记录全部事件供断言。
 type recordingListener struct {
 	mu       sync.Mutex
@@ -60,9 +65,11 @@ type recordingListener struct {
 	joined   []appapi.Peer
 	left     []string
 	messages []string
+	recvd    []receivedMsg
 	progress []appapi.Transfer
 	done     []string
 	failed   []string
+	channels []appapi.Channel
 }
 
 func (l *recordingListener) OnConnChanged(s appapi.ConnState, _ string) {
@@ -83,9 +90,10 @@ func (l *recordingListener) OnPeerLeft(id string) {
 	l.mu.Unlock()
 }
 
-func (l *recordingListener) OnMessageReceived(_, _, _, _, text string) {
+func (l *recordingListener) OnMessageReceived(from, group, _, typ, text string) {
 	l.mu.Lock()
 	l.messages = append(l.messages, text)
+	l.recvd = append(l.recvd, receivedMsg{from: from, group: group, typ: typ, text: text})
 	l.mu.Unlock()
 }
 
@@ -108,7 +116,12 @@ func (l *recordingListener) OnTransferFailed(id, _ string) {
 }
 
 func (l *recordingListener) OnGroupMatrix(string, string, []byte) {}
-func (l *recordingListener) OnChannelUpdated([]appapi.Channel)    {}
+
+func (l *recordingListener) OnChannelUpdated(channels []appapi.Channel) {
+	l.mu.Lock()
+	l.channels = append([]appapi.Channel(nil), channels...)
+	l.mu.Unlock()
+}
 
 func (l *recordingListener) snapshot() (conns []appapi.ConnState, msgs, done, failed []string) {
 	l.mu.Lock()
@@ -117,6 +130,20 @@ func (l *recordingListener) snapshot() (conns []appapi.ConnState, msgs, done, fa
 		append([]string(nil), l.messages...),
 		append([]string(nil), l.done...),
 		append([]string(nil), l.failed...)
+}
+
+// channelSnapshot 返回最近一次 OnChannelUpdated 的频道列表拷贝。
+func (l *recordingListener) channelSnapshot() []appapi.Channel {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]appapi.Channel(nil), l.channels...)
+}
+
+// recvdSnapshot 返回收到消息的路由记录拷贝。
+func (l *recordingListener) recvdSnapshot() []receivedMsg {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]receivedMsg(nil), l.recvd...)
 }
 
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
@@ -268,8 +295,9 @@ func TestTextExchange(t *testing.T) {
 	if _, err := a.SendText(bID, "", ""); err == nil {
 		t.Fatal("empty text should fail")
 	}
-	if _, err := a.SendText(bID, "x", "group1"); err == nil {
-		t.Fatal("group send should be not-implemented")
+	// 向不存在的群组发送：信封可正常写出，服务器异步回 ERROR（非本地错误）。
+	if _, err := a.SendText("", "x", "group1"); err != nil {
+		t.Fatalf("group send write err = %v", err)
 	}
 }
 
@@ -417,18 +445,24 @@ func TestCancelFile(t *testing.T) {
 	}
 }
 
-// TestM4Stubs 群组 / 频道诚实边界。
+// TestM4Stubs 群组文件仍为诚实边界；频道方法在未连接时返回相应错误。
 func TestM4Stubs(t *testing.T) {
 	c := New(Options{})
 	t.Cleanup(c.Close)
 	if _, err := c.OfferFileToGroup("g", "x"); err != errNotImplemented {
 		t.Fatalf("err = %v", err)
 	}
-	if _, err := c.ChannelCreate("c"); err != errNotImplemented {
-		t.Fatalf("err = %v", err)
+	if _, err := c.ChannelCreate("  "); err != errEmptyText {
+		t.Fatalf("blank create err = %v", err)
 	}
-	if err := c.ChannelJoin("c"); err != errNotImplemented {
-		t.Fatalf("err = %v", err)
+	if _, err := c.ChannelCreate("c"); err == nil {
+		t.Fatal("create on disconnected client should fail")
+	}
+	if err := c.ChannelJoin("c"); err == nil {
+		t.Fatal("join on disconnected client should fail")
+	}
+	if err := c.ChannelJoin(""); err != errPeerNotFound {
+		t.Fatalf("blank join err = %v", err)
 	}
 	if chs := c.ChannelList(); chs == nil || len(chs) != 0 {
 		t.Fatalf("channels = %v", chs)

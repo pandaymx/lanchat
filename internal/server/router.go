@@ -35,6 +35,12 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.forward(c, env)
 	case protocol.FileOffer, protocol.FileAccept, protocol.FileReject, protocol.FileCancel, protocol.FileReverse:
 		h.forward(c, env)
+	case protocol.ChannelCreate:
+		h.onCreate(c, env)
+	case protocol.ChannelJoin:
+		h.onJoin(c, env)
+	case protocol.ChannelList:
+		h.onChannelList(c, env)
 	case protocol.RelayRequest:
 		h.onRelayRequest(c, env)
 	case protocol.RelayKey:
@@ -58,7 +64,56 @@ func (h *hub) routeText(c *Client, env *protocol.Envelope) {
 		})
 		return
 	}
-	h.forward(c, env)
+
+	switch env.Group {
+	case protocol.GroupUnicast:
+		h.forward(c, env)
+	case protocol.GroupBroadcast:
+		h.fanoutGroup(c, env, nil)
+	default:
+		// G2 自定义频道：由频道注册表给出成员，非成员发送被拒（消息仅成员可见）。
+		rcpt, err := h.channels.Recipients(env.Group, c.id)
+		if err != nil {
+			h.send(c, protocol.Error, protocol.ErrorPayload{
+				Code:    "not_channel_member",
+				Message: "仅频道成员可向该频道发消息",
+			})
+			return
+		}
+		h.fanoutGroup(c, env, rcpt)
+	}
+}
+
+// fanoutGroup 把已盖发送者印章的消息分发给 targets。
+// targets 为 nil 表示 G1 全体（除发送者外的所有在线客户端）。
+func (h *hub) fanoutGroup(c *Client, env *protocol.Envelope, targets []string) {
+	env.From = c.id
+	if targets == nil {
+		_, users := h.reg.snapshot()
+		targets = make([]string, 0, len(users))
+		for _, u := range users {
+			if u.ID != c.id {
+				targets = append(targets, u.ID)
+			}
+		}
+	}
+	delivered := 0
+	for _, id := range targets {
+		target, ok := h.reg.get(id)
+		if !ok {
+			continue
+		}
+		if target.enqueue(env) {
+			delivered++
+		} else {
+			h.drop(target)
+		}
+	}
+	status := "delivered"
+	if delivered == 0 {
+		status = "undeliverable"
+	}
+	h.ack(c, env.ID, status)
 }
 
 func (h *hub) routeSticker(c *Client, env *protocol.Envelope) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pandaymx/lanchat/internal/group"
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
@@ -37,6 +38,8 @@ type hub struct {
 
 	relaySrv  relayServer // 中继数据面（可为 nil，表示未启用）
 	relayHost string      // 宣告给客户端的中继主机
+
+	channels *group.Registry // G2 自定义频道注册表
 }
 
 // relayServer 是中继数据面的最小依赖接口。
@@ -45,7 +48,7 @@ type relayServer interface {
 }
 
 func newHub(opts Options, logf func(string, ...any)) *hub {
-	return &hub{
+	h := &hub{
 		opts:      opts,
 		reg:       newRegistry(),
 		auth:      newAuthenticator(opts.AuthMode, opts.PSKHash),
@@ -53,6 +56,8 @@ func newHub(opts Options, logf func(string, ...any)) *hub {
 		logf:      logf,
 		relayHost: opts.RelayHost,
 	}
+	h.channels = group.NewRegistry(channelSink{h: h})
+	return h
 }
 
 // queryResult 承载一次快照查询的结果。
@@ -146,6 +151,8 @@ func (h *hub) onUnregister(c *Client) {
 		return
 	}
 	_, rev, _ := h.reg.remove(c.id)
+	// 清理该成员的全部频道关系；Registry 会经 channelSink 下发更新后的频道列表。
+	h.channels.Remove(c.id)
 	payload := protocol.UserUpdatePayload{User: c.user(), Revision: rev}
 	h.fanoutExcept(c, protocol.UserLeave, payload)
 }
@@ -196,6 +203,7 @@ func (h *hub) send(c *Client, typ string, payload any) {
 func (h *hub) drop(c *Client) {
 	if cur, ok := h.reg.get(c.id); ok && cur == c {
 		_, rev, _ := h.reg.remove(c.id)
+		h.channels.Remove(c.id)
 		h.fanoutExcept(c, protocol.UserLeave, protocol.UserUpdatePayload{
 			User: c.user(), Revision: rev,
 		})

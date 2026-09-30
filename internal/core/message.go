@@ -9,20 +9,24 @@ import (
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
-// SendText 发送文本。M4 仅支持单播（group 必须为空）；全体 / 频道属 M9。
+// SendText 发送文本。group 为空表示单播，"*" 为 G1 全体，其余为 G2 频道。
 func (c *Client) SendText(to, text, group string) (string, error) {
 	if strings.TrimSpace(text) == "" {
 		return "", errEmptyText
 	}
-	if group != "" {
-		return "", errNotImplemented
-	}
-	if to == "" {
+	if group == "" && to == "" {
 		return "", errPeerNotFound
 	}
 	conn, err := c.connectedConn()
 	if err != nil {
 		return "", err
+	}
+	if group != "" {
+		env, err := c.sendGroup(conn, protocol.TextMsg, group, protocol.TextPayload{Text: text})
+		if err != nil {
+			return "", err
+		}
+		return env.ID, nil
 	}
 	env, err := c.sendTo(conn, protocol.TextMsg, to, protocol.TextPayload{Text: text})
 	if err != nil {

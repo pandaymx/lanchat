@@ -1,6 +1,8 @@
 package core
 
 import (
+	"strings"
+
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
@@ -43,22 +45,56 @@ func (c *Client) ResumeFile(transferID string) error {
 	return errPauseUnsupported
 }
 
-// OfferFileToGroup 群组发送属 M9，M4 明确拒绝。
+// OfferFileToGroup 群组文件发送属 M9 后续数据面 PR，当前未接线。
 func (c *Client) OfferFileToGroup(group, path string) (string, error) {
 	return "", errNotImplemented
 }
 
-// ChannelCreate G2 自定义频道属 M9。
+// ChannelCreate 创建 G2 自定义频道。服务器创建后会下发 CHANNEL_LIST，
+// 频道 ID 通过 OnChannelUpdated 事件获得，故此处返回空字符串。
 func (c *Client) ChannelCreate(name string) (string, error) {
-	return "", errNotImplemented
+	if strings.TrimSpace(name) == "" {
+		return "", errEmptyText
+	}
+	conn, err := c.connectedConn()
+	if err != nil {
+		return "", err
+	}
+	if _, err := c.sendTo(conn, protocol.ChannelCreate, "", protocol.ChannelCreatePayload{
+		Name: name,
+	}); err != nil {
+		return "", err
+	}
+	return "", nil
 }
 
-// ChannelJoin G2 自定义频道属 M9。
+// ChannelJoin 加入 G2 自定义频道（public 频道任意在线成员可加入）。
 func (c *Client) ChannelJoin(channelID string) error {
-	return errNotImplemented
+	if channelID == "" {
+		return errPeerNotFound
+	}
+	conn, err := c.connectedConn()
+	if err != nil {
+		return err
+	}
+	_, err = c.sendTo(conn, protocol.ChannelJoin, "", protocol.ChannelJoinPayload{
+		ChannelID: channelID,
+	})
+	return err
 }
 
-// ChannelList M4 无频道概念，返回空切片（非 nil，便于各端直接渲染）。
+// ChannelList 主动请求频道列表并同步返回当前本地缓存。
+// 最新列表由服务器经 CHANNEL_LIST 下发后通过 OnChannelUpdated 上抛。
 func (c *Client) ChannelList() []appapi.Channel {
-	return []appapi.Channel{}
+	conn, err := c.connectedConn()
+	if err == nil {
+		_, _ = c.sendTo(conn, protocol.ChannelList, "", nil)
+	}
+	c.mu.Lock()
+	out := make([]appapi.Channel, 0, len(c.channels))
+	for _, ch := range c.channels {
+		out = append(out, ch)
+	}
+	c.mu.Unlock()
+	return out
 }

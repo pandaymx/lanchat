@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/pandaymx/lanchat/compare/v0.10.0...v0.11.0) (2026-09-30)
+
+
+### Features
+
+* M6 Android 原生端 ([#30](https://github.com/pandaymx/lanchat/issues/30)) ([3dbb7df](https://github.com/pandaymx/lanchat/commit/3dbb7dfc1ed3dff84ac67608825ca9df06b5b796))
+
 ## [0.10.0](https://github.com/pandaymx/lanchat/compare/v0.9.1...v0.10.0) (2026-09-30)
 
 

@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">LANChat</string>
+    <string name="channel_name">LANChat 正在运行</string>
+    <string name="channel_desc">保持连接与文件传输</string>
+    <string name="notification_title">LANChat 正在运行</string>
+    <string name="notification_text">保持连接与文件传输</string>
+    <string name="default_nickname">Android 用户</string>
+</resources>

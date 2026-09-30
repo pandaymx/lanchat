@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/pandaymx/lanchat/compare/v0.12.0...v0.13.0) (2026-09-30)
+
+
+### Features
+
+* **protocol:** add candidates and token to group signaling [M9] ([#34](https://github.com/pandaymx/lanchat/issues/34)) ([9b930e8](https://github.com/pandaymx/lanchat/commit/9b930e8f497594d0daa32e3d1a836fa8d95e979f))
+
 ## [0.12.0](https://github.com/pandaymx/lanchat/compare/v0.11.0...v0.12.0) (2026-09-30)
 
 

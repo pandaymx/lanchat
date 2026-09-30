@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -81,6 +82,71 @@ func TestDecodePayloadEmpty(t *testing.T) {
 	env := &Envelope{}
 	if err := env.DecodePayload(&TextPayload{}); err != nil {
 		t.Errorf("empty payload decode should be nil, got %v", err)
+	}
+}
+
+// TestGroupOfferPayloadRoundTrip 验证数据面 Candidates/Token 可往返序列化。
+func TestGroupOfferPayloadRoundTrip(t *testing.T) {
+	offer := GroupOfferPayload{
+		GroupID:    "g1",
+		TransferID: "t1",
+		Name:       "f.bin",
+		Size:       123,
+		BlockCount: 2,
+		SHA256:     "abc",
+		Candidates: []string{"10.0.0.1:9000", "192.168.1.2:9000"},
+		Token:      "tok-1",
+	}
+	data, err := json.Marshal(offer)
+	if err != nil {
+		t.Fatalf("marshal offer: %v", err)
+	}
+	var got GroupOfferPayload
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal offer: %v", err)
+	}
+	if got.Token != offer.Token || len(got.Candidates) != len(offer.Candidates) {
+		t.Errorf("offer round trip mismatch: %+v", got)
+	}
+
+	join := GroupJoinPayload{
+		GroupID: "g1", TransferID: "t1",
+		Candidates: []string{"10.0.0.2:9001"}, Token: "tok-2",
+	}
+	jdata, err := json.Marshal(join)
+	if err != nil {
+		t.Fatalf("marshal join: %v", err)
+	}
+	var gotJoin GroupJoinPayload
+	if err := json.Unmarshal(jdata, &gotJoin); err != nil {
+		t.Fatalf("unmarshal join: %v", err)
+	}
+	if gotJoin.Token != join.Token || len(gotJoin.Candidates) != 1 {
+		t.Errorf("join round trip mismatch: %+v", gotJoin)
+	}
+}
+
+// TestGroupPayloadsBackwardCompatible 验证旧端发来的载荷（无新字段）可缺省解析。
+func TestGroupPayloadsBackwardCompatible(t *testing.T) {
+	for _, raw := range []string{
+		`{"groupID":"g1","transferID":"t1","name":"f","size":1,"blockCount":1,"sha256":"x"}`,
+		`{"groupID":"g1","transferID":"t1"}`,
+	} {
+		var offer GroupOfferPayload
+		if err := json.Unmarshal([]byte(raw), &offer); err != nil {
+			t.Errorf("offer default parse failed for %s: %v", raw, err)
+		}
+		if offer.Candidates != nil || offer.Token != "" {
+			t.Errorf("new fields must default to zero: %+v", offer)
+		}
+	}
+
+	var join GroupJoinPayload
+	if err := json.Unmarshal([]byte(`{"groupID":"g1","transferID":"t1"}`), &join); err != nil {
+		t.Fatalf("join default parse: %v", err)
+	}
+	if join.Candidates != nil || join.Token != "" {
+		t.Errorf("join new fields must default to zero: %+v", join)
 	}
 }
 

@@ -138,6 +138,9 @@ type FileDonePayload struct {
 }
 
 // GroupOfferPayload 是 GROUP_OFFER 的负载（1:N，方案 §9.3）。
+//
+// Candidates/Token 为块交换数据面（P2P）新增：Candidates 是源节点块端口的
+// ip:port 列表，Token 是本次分发握手用的一次性令牌。二者可缺省，旧端忽略。
 type GroupOfferPayload struct {
 	GroupID    string   `json:"groupID"`
 	TransferID string   `json:"transferID"`
@@ -146,12 +149,19 @@ type GroupOfferPayload struct {
 	BlockCount int      `json:"blockCount"`
 	SHA256     string   `json:"sha256"`
 	Seeders    []string `json:"seeders,omitempty"`
+	Candidates []string `json:"candidates,omitempty"`
+	Token      string   `json:"token,omitempty"`
 }
 
 // GroupJoinPayload 是 GROUP_JOIN / GROUP_LEAVE 的负载。
+//
+// Candidates/Token 用于数据面：接收方在 GROUP_JOIN 中回传自己的块端口候选，
+// 让源（及其他成员）可反向拨入；GROUP_LEAVE 时可缺省。
 type GroupJoinPayload struct {
-	GroupID    string `json:"groupID"`
-	TransferID string `json:"transferID"`
+	GroupID    string   `json:"groupID"`
+	TransferID string   `json:"transferID"`
+	Candidates []string `json:"candidates,omitempty"`
+	Token      string   `json:"token,omitempty"`
 }
 
 // GroupProgressPayload 是 GROUP_PROGRESS 的负载（块位图）。

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1](https://github.com/pandaymx/lanchat/compare/v0.16.0...v0.16.1) (2026-10-01)
+
+
+### Bug Fixes
+
+* **ci:** checkout repository in resolve job ([#45](https://github.com/pandaymx/lanchat/issues/45)) ([a5b31df](https://github.com/pandaymx/lanchat/commit/a5b31dfb2c03bc09b114a2409538337bfb17419a))
+
 ## [0.16.0](https://github.com/pandaymx/lanchat/compare/v0.15.0...v0.16.0) (2026-10-01)
 
 

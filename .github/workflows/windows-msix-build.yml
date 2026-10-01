@@ -1,0 +1,116 @@
+name: Windows MSIX
+
+on:
+  push:
+    branches:
+      - 'feat/**'
+      - 'fix/**'
+      - 'main'
+    paths:
+      - 'ui-win/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/windows-msix-build.yml'
+  pull_request:
+    paths:
+      - 'ui-win/**'
+      - 'cmd/**'
+      - 'internal/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/windows-msix-build.yml'
+  workflow_dispatch:
+
+jobs:
+  msix:
+    name: Build Store MSIX
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path "ui-win/src/LANChat.App/Package.appxmanifest" -Pattern 'Version="([0-9]+\.[0-9]+\.[0-9]+)\.[0-9]+"').Matches.Groups[1].Value
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Product version: $v"
+
+      - name: Build daemon
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/bin" | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" -o "dist/bin/lanchat-daemon.exe" ./cmd/lanchat-daemon
+
+      - name: IPC tests
+        shell: pwsh
+        run: dotnet test tests/LANChat.Ipc.Tests/LANChat.Ipc.Tests.csproj -c Release -p:Platform=x64 --logger "console;verbosity=minimal"
+        working-directory: ui-win
+
+      - name: Locate MSBuild
+        id: msbuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+          if (-not $msbuild) { throw "未找到 MSBuild" }
+          echo "path=$msbuild" >> $env:GITHUB_OUTPUT
+          Write-Host "MSBuild: $msbuild"
+
+      - name: Build MSIX (Store upload, unsigned for re-sign)
+        shell: pwsh
+        run: |
+          $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
+          & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
+            /restore /t:Build /p:Configuration=Release /p:Platform=x64 `
+            /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
+            /p:RestoreRuntimeIdentifier=win-x64 `
+            /p:WindowsPackageType=MSIX `
+            /p:WindowsAppSDKSelfContained=true `
+            /p:AppxPackageSigningEnabled=false `
+            /p:GenerateAppxPackageOnBuild=true `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
+            /p:GenerateAppInstallerFile=false `
+            "/p:DaemonPath=$daemon" `
+            /p:AppxPackageDir="$env:GITHUB_WORKSPACE\dist\AppPackages\\"
+        working-directory: ui-win
+
+      - name: Collect MSIX
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/out" | Out-Null
+          $pkgDir = Join-Path $env:GITHUB_WORKSPACE "dist/AppPackages"
+          $all = Get-ChildItem -Path $pkgDir -Recurse -Include *.msixupload,*.msix,*.appx |
+                 Where-Object { $_.FullName -notmatch '\\obj\\' }
+          # Store 上传优先 .msixupload，其次 .msix，最后 .appx
+          $pkg = $all | Where-Object Extension -eq '.msixupload' | Select-Object -First 1
+          if (-not $pkg) { $pkg = $all | Where-Object Extension -eq '.msix' | Select-Object -First 1 }
+          if (-not $pkg) { $pkg = $all | Select-Object -First 1 }
+          if (-not $pkg) { throw "未找到生成的 MSIX 文件" }
+          Write-Host "Found package: $($pkg.FullName)"
+          Copy-Item $pkg.FullName "dist/out/LANChat-$($env:VERSION)-windows-x64$($pkg.Extension)"
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Upload MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanchat-msix-x64-${{ github.run_number }}
+          path: dist/out/*
+          if-no-files-found: error

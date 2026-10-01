@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/pandaymx/lanchat/compare/v0.14.0...v0.15.0) (2026-10-01)
+
+
+### Features
+
+* **ui-win:** package app as MSIX for Microsoft Store ([#38](https://github.com/pandaymx/lanchat/issues/38)) ([6e1e57f](https://github.com/pandaymx/lanchat/commit/6e1e57f76f394b905fb674fc070938ef276f2578))
+
 ## [0.14.0](https://github.com/pandaymx/lanchat/compare/v0.13.0...v0.14.0) (2026-10-01)
 
 

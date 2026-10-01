@@ -1,0 +1,578 @@
+name: Release
+
+# 由 release-please 打出的 vX.Y.Z tag 触发；构建 daemon 全平台二进制与五端安装包
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（仅手动触发时使用，如 0.15.0）'
+        required: true
+        default: '0.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  daemon:
+    name: Build daemon (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          ext=""
+          [ "$GOOS" = windows ] && ext=".exe"
+          mkdir -p dist
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            ver="$GITHUB_REF_NAME"
+          else
+            ver="v${{ github.event.inputs.version }}"
+          fi
+          commit="${GITHUB_SHA::7}"
+          base="lanchat-daemon-${ver}-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags "-s -w -X main.commit=$commit" \
+            -o "dist/${base}${ext}" ./cmd/lanchat-daemon
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daemon-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  linux:
+    name: Build Linux package (GTK4, x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ui-linux
+
+      # gtk4-rs 0.9 needs GTK >= 4.16 (libadwaita-rs 0.7 needs >= 1.5).
+      # ubuntu-latest ships older system libraries, so take them from conda-forge.
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: gtk
+          auto-activate-base: false
+          channels: conda-forge
+          channel-priority: strict
+          use-only-tar-bz2: true
+          run-post: false
+          environment-file: configs/linux-gtk-environment.yml
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Build lanchat-ui
+        working-directory: ui-linux
+        shell: bash -l {0}
+        run: cargo build --release
+
+      - name: Build lanchat-daemon
+        shell: bash -l {0}
+        run: |
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X main.commit=${GITHUB_SHA::7}" \
+            -o dist/stage/lanchat-daemon ./cmd/lanchat-daemon
+
+      - name: Assemble tarball
+        shell: bash
+        run: |
+          mkdir -p dist/stage
+          cp ui-linux/target/release/lanchat-ui dist/stage/
+          chmod +x dist/stage/lanchat-ui dist/stage/lanchat-daemon
+          tar -C dist/stage -czf "dist/LANChat-${{ steps.ver.outputs.version }}-linux-x64.tar.gz" .
+          ls -lh dist/*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: dist/LANChat-*-linux-x64.tar.gz
+          if-no-files-found: error
+
+  android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platforms;android-36
+            build-tools;36.0.0
+
+      - name: Setup NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: gomobile init
+        run: gomobile init
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
+
+      - name: Generate AAR
+        run: |
+          mkdir -p ui-android/app/libs
+          gomobile bind -target=android -androidapi 26 -javapkg=dev.lanchat.bindings \
+            -o ui-android/app/libs/mobile.aar ./bindings/mobile
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Decode signing keystore
+        id: sign
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            mkdir -p .signing
+            printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > .signing/lanchat.jks
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::ANDROID_KEYSTORE_B64 未配置，改为构建 debug APK"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release APK
+        if: steps.sign.outputs.configured == 'true'
+        working-directory: ui-android
+        env:
+          KS_PATH: ${{ github.workspace }}/.signing/lanchat.jks
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$KS_PATH" \
+            -Pandroid.injected.signing.store.password="$KS_PASS" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
+
+      - name: Build debug APK (fallback)
+        if: steps.sign.outputs.configured != 'true'
+        working-directory: ui-android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          if [ "${{ steps.sign.outputs.configured }}" = "true" ]; then
+            cp ui-android/app/build/outputs/apk/release/app-release.apk \
+              "dist/LANChat-${{ steps.ver.outputs.version }}-android-release.apk"
+          else
+            cp ui-android/app/build/outputs/apk/debug/app-debug.apk \
+              "dist/LANChat-${{ steps.ver.outputs.version }}-android-debug.apk"
+          fi
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+  macos:
+    name: Build macOS package (unsigned, universal daemon)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Generate Xcode project
+        working-directory: ui-macos
+        run: xcodegen generate --spec project.yml
+
+      - name: Build app
+        working-directory: ui-macos
+        run: |
+          xcodebuild -project LANChat.xcodeproj -scheme LANChat \
+            -configuration Release -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO build
+
+      - name: Build universal daemon
+        run: |
+          mkdir -p dist/daemon
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X main.commit=${GITHUB_SHA::7}" \
+              -o "dist/daemon/lanchat-daemon-$arch" ./cmd/lanchat-daemon
+          done
+          lipo -create dist/daemon/lanchat-daemon-arm64 dist/daemon/lanchat-daemon-amd64 \
+            -output dist/daemon/lanchat-daemon
+
+      - name: Bundle daemon and zip
+        run: |
+          APP="ui-macos/build/DerivedData/Build/Products/Release/LANChat.app"
+          mkdir -p "$APP/Contents/Resources"
+          cp dist/daemon/lanchat-daemon "$APP/Contents/Resources/lanchat-daemon"
+          chmod +x "$APP/Contents/Resources/lanchat-daemon"
+          mkdir -p dist
+          ditto -c -k --keepParent "$APP" \
+            "dist/LANChat-${{ steps.ver.outputs.version }}-macos-universal-unsigned.zip"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: dist/LANChat-*-macos-universal-unsigned.zip
+          if-no-files-found: error
+
+  ios:
+    name: Build iOS Simulator package (unsigned)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Generate XCFramework
+        run: |
+          mkdir -p ui-ios/Frameworks
+          gomobile bind -target=ios -iosversion=16.0 -prefix=LC \
+            -o ui-ios/Frameworks/Mobile.xcframework ./bindings/mobile
+
+      - name: Generate Xcode project
+        working-directory: ui-ios
+        run: xcodegen generate
+
+      - name: Build for simulator
+        working-directory: ui-ios
+        run: |
+          xcodebuild -project LANChat.xcodeproj -scheme LANChat \
+            -configuration Release -sdk iphonesimulator -arch arm64 \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Zip simulator app
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent \
+            ui-ios/build/DerivedData/Build/Products/Release-iphonesimulator/LANChat.app \
+            "dist/LANChat-${{ steps.ver.outputs.version }}-ios-simulator-unsigned.zip"
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator
+          path: dist/LANChat-*-ios-simulator-unsigned.zip
+          if-no-files-found: error
+
+  windows-msi:
+    name: Build Windows MSI + portable zip (unsigned)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') {
+            $v = $Matches[1]
+          } else {
+            $v = '${{ github.event.inputs.version }}'
+          }
+          $build = [int]$Env:GITHUB_RUN_NUMBER
+          if ($build -gt 65534) { $build = $build % 65534 }
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          echo "msiVersion=$v.$build" >> $env:GITHUB_OUTPUT
+
+      - name: Build daemon
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/publish" | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" `
+            -o "dist/publish/lanchat-daemon.exe" ./cmd/lanchat-daemon
+
+      - name: Publish WinUI app (self-contained)
+        shell: pwsh
+        run: |
+          dotnet publish ui-win/src/LANChat.App/LANChat.App.csproj `
+            -c Release -p:Platform=x64 -r win-x64 `
+            --self-contained true `
+            -p:WindowsPackageType=None `
+            -p:WindowsAppSDKSelfContained=true `
+            -o dist/publish
+
+      - name: Install WiX v4
+        shell: pwsh
+        run: dotnet tool install --global wix --version 4.0.5
+
+      - name: Generate and build MSI
+        shell: pwsh
+        run: |
+          scripts/new-msi.ps1 -SourceDir dist/publish -OutputWxs dist/lanchat.wxs `
+            -Version '${{ steps.ver.outputs.msiVersion }}' `
+            -UpgradeCode "7B3E9A24-1C5F-4D6B-9E8A-2F0C5D8A3B17"
+          wix build -arch x64 -nologo `
+            -o "dist/LANChat-${{ steps.ver.outputs.version }}-windows-x64.msi" dist/lanchat.wxs
+
+      - name: Build portable zip
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/publish/* `
+            -DestinationPath "dist/LANChat-${{ steps.ver.outputs.version }}-windows-x64-portable.zip"
+
+      - name: List artifacts
+        shell: pwsh
+        run: Get-ChildItem dist -File | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi
+          path: |
+            dist/LANChat-*-windows-x64.msi
+            dist/LANChat-*-windows-x64-portable.zip
+          if-no-files-found: error
+
+  msix:
+    name: Build MSIX (Store + Sideload)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') {
+            $v = $Matches[1]
+          } else {
+            $v = '${{ github.event.inputs.version }}'
+          }
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $v"
+
+      - name: Build daemon
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/bin" | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" `
+            -o "dist/bin/lanchat-daemon.exe" ./cmd/lanchat-daemon
+
+      - name: Locate MSBuild
+        id: msbuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+          if (-not $msbuild) { throw "未找到 MSBuild" }
+          echo "path=$msbuild" >> $env:GITHUB_OUTPUT
+
+      - name: Create self-signed code-signing certificate (Sideload)
+        id: cert
+        shell: pwsh
+        run: |
+          $pwd = ConvertTo-SecureString -String "lanchat" -Force -AsPlainText
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+            -Subject "CN=B072FED8-68F4-4903-9942-BB0A460B36EF" `
+            -KeyUsage DigitalSignature -KeyAlgorithm RSA -KeyLength 2048 `
+            -CertStoreLocation "Cert:\CurrentUser\My"
+          $pfx = Join-Path $env:GITHUB_WORKSPACE "dist\lanchat-sideload.pfx"
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $pwd | Out-Null
+          $thumb = $cert.Thumbprint
+          echo "thumb=$thumb" >> $env:GITHUB_OUTPUT
+          Write-Host "Sideload cert thumbprint: $thumb"
+
+      - name: Build Sideload MSIX (signed)
+        shell: pwsh
+        run: |
+          $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
+          $pfx = Join-Path $env:GITHUB_WORKSPACE "dist\lanchat-sideload.pfx"
+          & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
+            /restore /t:Build /p:Configuration=Release /p:Platform=x64 `
+            /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
+            /p:RestoreRuntimeIdentifier=win-x64 `
+            /p:WindowsPackageType=MSIX /p:WindowsAppSDKSelfContained=true `
+            /p:GenerateAppxPackageOnBuild=true `
+            /p:UapAppxPackageBuildMode=SideloadOnly `
+            /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
+            /p:GenerateAppInstallerFile=true /p:AppInstallerUri="" `
+            /p:AppxPackageSigningEnabled=true `
+            "/p:AppxPackageSigningKeyFile=$pfx" `
+            /p:AppxPackageSigningKeyPassword=lanchat `
+            "/p:AppxPackageSigningThumbprint=${{ steps.cert.outputs.thumb }}" `
+            "/p:DaemonPath=$daemon" `
+            /p:AppxPackageDir="$env:GITHUB_WORKSPACE\dist\SideloadPackages\\"
+        working-directory: ui-win
+
+      - name: Build Store MSIX (unsigned for re-sign)
+        shell: pwsh
+        run: |
+          $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
+          & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
+            /restore /t:Build /p:Configuration=Release /p:Platform=x64 `
+            /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
+            /p:RestoreRuntimeIdentifier=win-x64 `
+            /p:WindowsPackageType=MSIX /p:WindowsAppSDKSelfContained=true `
+            /p:AppxPackageSigningEnabled=false `
+            /p:GenerateAppxPackageOnBuild=true `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
+            /p:GenerateAppInstallerFile=false `
+            "/p:DaemonPath=$daemon" `
+            /p:AppxPackageDir="$env:GITHUB_WORKSPACE\dist\StorePackages\\"
+        working-directory: ui-win
+
+      - name: Collect packages
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/out" | Out-Null
+          $v = '${{ steps.ver.outputs.version }}'
+          # Store 上传包
+          $store = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\StorePackages" -Recurse `
+            -Include *.msixupload,*.msix | Where-Object { $_.FullName -notmatch '\\obj\\' } |
+            Sort-Object Extension -Descending | Select-Object -First 1
+          if (-not $store) { throw "未找到 Store 包" }
+          Copy-Item $store.FullName "dist/out/LANChat-$v-windows-x64-Store$($store.Extension)"
+          # Sideload 主包 + 安装证书 + appinstaller
+          $side = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\SideloadPackages" -Recurse `
+            -Include *.msix | Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
+          if (-not $side) { throw "未找到 Sideload 包" }
+          Copy-Item $side.FullName "dist/out/LANChat-$v-windows-x64-Sideload.msix"
+          $appinst = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\SideloadPackages" -Recurse `
+            -Include *.appinstaller | Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
+          if ($appinst) { Copy-Item $appinst.FullName "dist/out/LANChat-$v-windows-x64.appinstaller" }
+          Copy-Item "$env:GITHUB_WORKSPACE\dist\lanchat-sideload.pfx" "dist/out/lanchat-sideload-cert.pfx"
+          Get-ChildItem dist/out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: msix-release
+          path: dist/out/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [daemon, linux, android, macos, ios, windows-msi, msix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p assets
+          find release -type f -exec cp -n {} assets/ \;
+          ls -lh assets
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

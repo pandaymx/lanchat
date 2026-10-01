@@ -9,12 +9,35 @@
     <EnableMsixTooling>true</EnableMsixTooling>
     <AssemblyName>LANChat</AssemblyName>
     <RootNamespace>LANChat</RootNamespace>
-    <!-- M4 先以解包方式构建（命令行可直接 build/run）；打包配置后续任务补齐 -->
-    <WindowsPackageType>None</WindowsPackageType>
+    <!-- MSIX 单项目打包：上架 Microsoft Store，由微软自动重签，无需自有代码签名证书 -->
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <!-- 自包含 Windows App SDK：不把运行时作为框架依赖，避免被判为框架包 -->
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <AppInstallerUri></AppInstallerUri>
+    <GenerateAppInstallerFile>false</GenerateAppInstallerFile>
+    <!-- Identity 三项与 Partner Center「产品标识」严格一致 -->
+    <AppxPackage>50B5921A.lan-chat</AppxPackage>
+    <AppxPublisherId>CN=B072FED8-68F4-4903-9942-BB0A460B36EF</AppxPublisherId>
+    <AppxPublisherDisplayName>皮皮萌宝</AppxPublisherDisplayName>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\LANChat.Launcher\LANChat.Launcher.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- 全套应用图标/磁贴资产 -->
+    <Content Include="Assets\**\*" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('$(DaemonPath)')">
+    <!-- CI 预先编译好的 Go daemon，作为包内容一并打入 MSIX 根目录 -->
+    <Content Include="$(DaemonPath)">
+      <Link>lanchat-daemon.exe</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

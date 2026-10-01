@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/pandaymx/lanchat/compare/v0.13.0...v0.14.0) (2026-10-01)
+
+
+### Features
+
+* **core:** wire group file swarm data plane [M9] ([#36](https://github.com/pandaymx/lanchat/issues/36)) ([5cfb99c](https://github.com/pandaymx/lanchat/commit/5cfb99c9149b008467cab729c85f026adbe7b8c3))
+
 ## [0.13.0](https://github.com/pandaymx/lanchat/compare/v0.12.0...v0.13.0) (2026-09-30)
 
 

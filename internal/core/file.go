@@ -77,6 +77,20 @@ func hashFile(f io.ReadSeeker, size int64) (string, error) {
 
 // RespondFile 应答入站邀请：接受则开始接收路径，拒绝则回 FILE_REJECT。
 func (c *Client) RespondFile(transferID string, accept bool, dest string) error {
+	if g, ok := c.getGroupTask(transferID); ok {
+		if g.source {
+			return errInvalidState
+		}
+		if !accept {
+			c.removeGroupTask(transferID)
+			g.teardown()
+			return nil
+		}
+		if dest == "" {
+			return errEmptyPath
+		}
+		return c.respondGroupFile(g, dest)
+	}
 	t, ok := c.getTransfer(transferID)
 	if !ok {
 		return errTransferGone

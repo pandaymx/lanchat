@@ -64,6 +64,15 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		}
 		c.applyChannelList(p.Channels)
 
+	case protocol.GroupOffer:
+		c.offerGroupInbound(env)
+	case protocol.GroupJoin:
+		c.routeGroupSignal(env, evJoin)
+	case protocol.GroupLeave:
+		c.routeGroupSignal(env, evLeave)
+	case protocol.GroupProgress:
+		c.routeGroupSignal(env, evProgress)
+
 	case protocol.AuthFail:
 		// 握手后收到鉴权失败按断连处理（watch 会决定重连策略）。
 		c.mu.Lock()
@@ -197,3 +206,27 @@ var (
 	_ = context.Background
 	_ = errors.New
 )
+
+// routeGroupSignal 把 GROUP_JOIN/LEAVE/PROGRESS 投递到对应群组任务。
+func (c *Client) routeGroupSignal(env *protocol.Envelope, kind groupEventKind) {
+	var transferID string
+	switch kind {
+	case evProgress:
+		var p protocol.GroupProgressPayload
+		if env.DecodePayload(&p) != nil {
+			return
+		}
+		transferID = p.TransferID
+	default:
+		var p protocol.GroupJoinPayload
+		if env.DecodePayload(&p) != nil {
+			return
+		}
+		transferID = p.TransferID
+	}
+	t, ok := c.getGroupTask(transferID)
+	if !ok {
+		return
+	}
+	t.post(groupEvent{kind: kind, from: env.From, env: env})
+}

@@ -45,11 +45,6 @@ func (c *Client) ResumeFile(transferID string) error {
 	return errPauseUnsupported
 }
 
-// OfferFileToGroup 群组文件发送属 M9 后续数据面 PR，当前未接线。
-func (c *Client) OfferFileToGroup(group, path string) (string, error) {
-	return "", errNotImplemented
-}
-
 // ChannelCreate 创建 G2 自定义频道。服务器创建后会下发 CHANNEL_LIST，
 // 频道 ID 通过 OnChannelUpdated 事件获得，故此处返回空字符串。
 func (c *Client) ChannelCreate(name string) (string, error) {

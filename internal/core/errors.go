@@ -25,10 +25,9 @@ var (
 	errFileNotFound  = errors.New("core: file not found")
 	errTransferGone  = errors.New("core: transfer not found or already finished")
 	errInvalidState  = errors.New("core: operation not allowed in current state")
+	errChecksum      = errors.New("core: file checksum mismatch")
+	errBadGroupHello = errors.New("core: bad group block hello")
 )
-
-// errNotImplemented 是 M4 诚实边界：群组 / 频道属 M9，M4 明确拒绝而非臆造。
-var errNotImplemented = errors.New("core: not implemented before M9")
 
 // errAuthFailed 是 establish 阶段鉴权失败的哨兵错误，Connect/watch 据此切换 auth_failed。
 var errAuthFailed = errors.New("core: authentication failed")

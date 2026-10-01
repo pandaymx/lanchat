@@ -1,6 +1,9 @@
 package core
 
 import (
+	"crypto/rand"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -167,4 +170,185 @@ func TestChannelCreateValidation(t *testing.T) {
 	if _, err := c.ChannelCreate("   "); err != errEmptyText {
 		t.Fatalf("空名称应报 errEmptyText，得到 %v", err)
 	}
+}
+
+// swarmNode 是群组文件测试中的一个节点：核心、回调与落盘目录。
+type swarmNode struct {
+	cl  *Client
+	l   *recordingListener
+	dir string
+}
+
+func newSwarmNode(t *testing.T, nick string) swarmNode {
+	t.Helper()
+	l := &recordingListener{}
+	cl := New(Options{Nickname: nick, Listener: l})
+	t.Cleanup(cl.Close)
+	return swarmNode{cl: cl, l: l, dir: t.TempDir()}
+}
+
+func connectSwarmNodes(t *testing.T, url string, nodes ...swarmNode) {
+	t.Helper()
+	for _, n := range nodes {
+		if err := n.cl.Connect(url, testPSK); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// waitForGroupTask 等待该节点出现群组文件任务（GROUP_OFFER 为异步投递）。
+func (n swarmNode) waitForGroupTask(t *testing.T) appapi.Transfer {
+	t.Helper()
+	var found appapi.Transfer
+	waitFor(t, 2*time.Second, func() bool {
+		for _, tr := range n.cl.GetState().Transfers {
+			if tr.Kind == appapi.PathSwarm || tr.Kind == appapi.PathChannel {
+				found = tr
+				return true
+			}
+		}
+		return false
+	})
+	return found
+}
+
+// writeRandomFile 写入 size 字节随机内容并返回路径与内容。
+func writeRandomFile(t *testing.T, dir, name string, size int) (string, []byte) {
+	t.Helper()
+	data := make([]byte, size)
+	if _, err := rand.Read(data); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path, data
+}
+
+const swarmTestSize = 3 * swarmChunk // 3 块：覆盖多块请求与成员间供块。
+
+// swarmChunk 是测试用“块大小”。真实 BlockSize 为 4 MiB，测试以整倍数控制块数，
+// 并在读完后比对原始内容。
+const swarmChunk = 4 << 20
+
+// TestGroupFileSwarm G1 群组文件 1:N：源向全体发送，两名接收者均收齐，
+// 且已完成的接收者可向后来的成员供块（swarm 扩散）。
+func TestGroupFileSwarm(t *testing.T) {
+	url := startServer(t)
+	src := newSwarmNode(t, "alice")
+	r1 := newSwarmNode(t, "bob")
+	r2 := newSwarmNode(t, "carol")
+	connectSwarmNodes(t, url, src, r1, r2)
+
+	srcPath, data := writeRandomFile(t, src.dir, "big.bin", swarmTestSize)
+	tid, err := src.cl.OfferFileToGroup("*", srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 两名接收者都收到 GROUP_OFFER 并接受。
+	for _, n := range []swarmNode{r1, r2} {
+		got := n.waitForGroupTask(t)
+		if got.ID != tid {
+			t.Fatalf("接收任务 ID 不匹配: got %s want %s", got.ID, tid)
+		}
+		dest := filepath.Join(n.dir, "big.bin")
+		if err := n.cl.RespondFile(tid, true, dest); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 三方均完成：源的 OnTransferDone（全部成员收齐）+ 两名接收者各自完成。
+	waitFor(t, 15*time.Second, func() bool {
+		_, _, done, _ := src.l.snapshot()
+		return len(done) == 1
+	})
+	for _, n := range []swarmNode{r1, r2} {
+		waitFor(t, 15*time.Second, func() bool {
+			_, _, done, _ := n.l.snapshot()
+			return len(done) == 1
+		})
+	}
+
+	// 落盘内容必须与源逐字节一致。
+	for _, n := range []swarmNode{r1, r2} {
+		got, err := os.ReadFile(filepath.Join(n.dir, "big.bin"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(data) {
+			t.Fatalf("接收内容与源不一致 (len got=%d want=%d)", len(got), len(data))
+		}
+	}
+
+	// 全部任务行应已清理。
+	for _, n := range []swarmNode{src, r1, r2} {
+		if len(n.cl.GetState().Transfers) != 0 {
+			t.Fatalf("完成后仍残留任务: %+v", n.cl.GetState().Transfers)
+		}
+	}
+}
+
+// TestGroupFileN1 N=1 退化：群组里只有一个接收者时等同单播，仍能收齐。
+func TestGroupFileN1(t *testing.T) {
+	url := startServer(t)
+	src := newSwarmNode(t, "alice")
+	r := newSwarmNode(t, "bob")
+	connectSwarmNodes(t, url, src, r)
+
+	srcPath, data := writeRandomFile(t, src.dir, "one.bin", swarmTestSize)
+	tid, err := src.cl.OfferFileToGroup("*", srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := r.waitForGroupTask(t)
+	if got.ID != tid {
+		t.Fatalf("接收任务 ID 不匹配: got %s want %s", got.ID, tid)
+	}
+	dest := filepath.Join(r.dir, "one.bin")
+	if err := r.cl.RespondFile(tid, true, dest); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 15*time.Second, func() bool {
+		_, _, done, _ := src.l.snapshot()
+		return len(done) == 1
+	})
+	waitFor(t, 15*time.Second, func() bool {
+		_, _, done, _ := r.l.snapshot()
+		return len(done) == 1
+	})
+
+	rcv, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(rcv) != string(data) {
+		t.Fatal("N=1 接收内容与源不一致")
+	}
+}
+
+// TestGroupFileReject 接收方拒绝后任务被清理，且不影响源继续分发。
+func TestGroupFileReject(t *testing.T) {
+	url := startServer(t)
+	src := newSwarmNode(t, "alice")
+	r := newSwarmNode(t, "bob")
+	connectSwarmNodes(t, url, src, r)
+
+	srcPath, _ := writeRandomFile(t, src.dir, "r.bin", swarmTestSize)
+	tid, err := src.cl.OfferFileToGroup("*", srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := r.waitForGroupTask(t); got.ID != tid {
+		t.Fatalf("接收任务 ID 不匹配: got %s want %s", got.ID, tid)
+	}
+	if err := r.cl.RespondFile(tid, false, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(r.cl.GetState().Transfers) == 0
+	})
 }

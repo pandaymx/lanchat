@@ -35,6 +35,14 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.forward(c, env)
 	case protocol.FileOffer, protocol.FileAccept, protocol.FileReject, protocol.FileCancel, protocol.FileReverse:
 		h.forward(c, env)
+	case protocol.GroupOffer:
+		h.onGroupOffer(c, env)
+	case protocol.GroupJoin:
+		h.onGroupJoin(c, env)
+	case protocol.GroupLeave:
+		h.onGroupLeave(c, env)
+	case protocol.GroupProgress:
+		h.onGroupProgress(c, env)
 	case protocol.ChannelCreate:
 		h.onCreate(c, env)
 	case protocol.ChannelJoin:

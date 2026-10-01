@@ -65,6 +65,10 @@ const (
 	ChannelCreate = "CHANNEL_CREATE"
 	// ChannelJoin G2 加入自定义频道。
 	ChannelJoin = "CHANNEL_JOIN"
+	// ChannelInvite G2 owner 邀请成员加入频道。
+	ChannelInvite = "CHANNEL_INVITE"
+	// ChannelLeave G2 成员主动退出频道。
+	ChannelLeave = "CHANNEL_LEAVE"
 	// ChannelList G2 频道列表。
 	ChannelList = "CHANNEL_LIST"
 

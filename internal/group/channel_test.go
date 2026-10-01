@@ -14,7 +14,7 @@ func (c *chanSink) OnChannel(ChannelEvent) { c.count++ }
 
 func TestChannelCreateJoinLeave(t *testing.T) {
 	reg := NewRegistry(&chanSink{})
-	id, err := reg.Create("设计组", "alice", false)
+	id, err := reg.Create("设计组", "alice", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,29 +39,29 @@ func TestChannelCreateJoinLeave(t *testing.T) {
 
 func TestChannelMessageMembersOnly(t *testing.T) {
 	reg := NewRegistry(&chanSink{})
-	id, _ := reg.Create("私密", "alice", false)
+	id, _ := reg.Create("私密", "alice", "", false)
 
 	// 非成员发送应被拒绝。
-	if _, err := reg.Recipients(id, "eve"); !errors.Is(err, errNotMember) {
-		t.Fatalf("非成员扇出 err=%v, want errNotMember", err)
+	if _, err := reg.Recipients(id, "eve"); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("非成员扇出 err=%v, want ErrNotMember", err)
 	}
 	// 不存在的频道。
-	if _, err := reg.Recipients("nope", "alice"); !errors.Is(err, errChannelNotFound) {
-		t.Fatalf("未知频道 err=%v, want errChannelNotFound", err)
+	if _, err := reg.Recipients("nope", "alice"); !errors.Is(err, ErrChannelNotFound) {
+		t.Fatalf("未知频道 err=%v, want ErrChannelNotFound", err)
 	}
 }
 
 func TestPrivateChannelRequiresInvite(t *testing.T) {
 	reg := NewRegistry(&chanSink{})
-	id, _ := reg.Create("私有", "alice", true)
+	id, _ := reg.Create("私有", "alice", "", true)
 
 	// 非受邀成员直接加入 private 频道被拒。
-	if err := reg.Join(id, "bob"); !errors.Is(err, errNotMember) {
-		t.Fatalf("未邀请加入 private err=%v, want errNotMember", err)
+	if err := reg.Join(id, "bob"); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("未邀请加入 private err=%v, want ErrNotMember", err)
 	}
 	// 非 owner 不能邀请。
-	if err := reg.Invite(id, "bob", "carol"); !errors.Is(err, errNotOwner) {
-		t.Fatalf("非 owner 邀请 err=%v, want errNotOwner", err)
+	if err := reg.Invite(id, "bob", "carol"); !errors.Is(err, ErrNotOwner) {
+		t.Fatalf("非 owner 邀请 err=%v, want ErrNotOwner", err)
 	}
 	// owner 邀请后可加入（成员关系已在 Invite 时建立）。
 	if err := reg.Invite(id, "alice", "bob"); err != nil {
@@ -74,7 +74,7 @@ func TestPrivateChannelRequiresInvite(t *testing.T) {
 
 func TestOwnerLeaveTransfersOwnership(t *testing.T) {
 	reg := NewRegistry(&chanSink{})
-	id, _ := reg.Create("组", "alice", false)
+	id, _ := reg.Create("组", "alice", "", false)
 	_ = reg.Join(id, "bob")
 	_ = reg.Join(id, "carol")
 
@@ -97,9 +97,32 @@ func TestOwnerLeaveTransfersOwnership(t *testing.T) {
 	}
 }
 
+func TestChannelTopicAndListFields(t *testing.T) {
+	reg := NewRegistry(&chanSink{})
+	id, err := reg.Create(" 公告组 ", "alice", " 每周五同步 ", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chans := reg.List()
+	if len(chans) != 1 {
+		t.Fatalf("频道数 = %d", len(chans))
+	}
+	c := chans[0]
+	if c.Topic != "每周五同步" {
+		t.Fatalf("topic = %q, want 每周五同步", c.Topic)
+	}
+	if !c.Private {
+		t.Fatal("private 标记应透传到 List")
+	}
+	// 非成员退出应返回 ErrNotMember。
+	if err := reg.Leave(id, "eve"); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("非成员 leave err=%v, want ErrNotMember", err)
+	}
+}
+
 func TestRemoveOfflineMember(t *testing.T) {
 	reg := NewRegistry(&chanSink{})
-	id, _ := reg.Create("组", "alice", false)
+	id, _ := reg.Create("组", "alice", "", false)
 	_ = reg.Join(id, "bob")
 
 	affected := reg.Remove("bob")

@@ -68,6 +68,7 @@ type ChannelInfo struct {
 	Name    string
 	OwnerID string
 	Private bool
+	Topic   string
 	Members []string
 }
 

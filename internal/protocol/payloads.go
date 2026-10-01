@@ -172,20 +172,37 @@ type GroupProgressPayload struct {
 }
 
 // Channel 是 G2 自定义频道（方案 §9.6）。
+//
+// Private/Topic 为 G2 补全新增字段，均带 omitempty，旧端可缺省解析。
 type Channel struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
 	OwnerID string   `json:"ownerID"`
+	Private bool     `json:"private,omitempty"`
+	Topic   string   `json:"topic,omitempty"`
 	Members []string `json:"members,omitempty"`
 }
 
 // ChannelCreatePayload 是 CHANNEL_CREATE 的负载。
 type ChannelCreatePayload struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
+	Private bool   `json:"private,omitempty"`
+	Topic   string `json:"topic,omitempty"`
 }
 
 // ChannelJoinPayload 是 CHANNEL_JOIN 的负载。
 type ChannelJoinPayload struct {
+	ChannelID string `json:"channelID"`
+}
+
+// ChannelInvitePayload 是 CHANNEL_INVITE 的负载：owner 邀请 MemberID 加入。
+type ChannelInvitePayload struct {
+	ChannelID string `json:"channelID"`
+	MemberID  string `json:"memberID"`
+}
+
+// ChannelLeavePayload 是 CHANNEL_LEAVE 的负载。
+type ChannelLeavePayload struct {
 	ChannelID string `json:"channelID"`
 }
 

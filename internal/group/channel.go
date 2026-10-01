@@ -11,10 +11,10 @@ import (
 
 // 频道操作错误。
 var (
-	errChannelNotFound = errors.New("group: channel not found")
-	errEmptyName       = errors.New("group: empty channel name")
-	errNotOwner        = errors.New("group: not channel owner")
-	errNotMember       = errors.New("group: not a channel member")
+	ErrChannelNotFound = errors.New("group: channel not found")
+	ErrEmptyName       = errors.New("group: empty channel name")
+	ErrNotOwner        = errors.New("group: not channel owner")
+	ErrNotMember       = errors.New("group: not a channel member")
 )
 
 // channel 是单个 G2 频道的运行时状态。
@@ -23,6 +23,7 @@ type channel struct {
 	name    string
 	ownerID string
 	private bool
+	topic   string
 	members map[string]bool
 }
 
@@ -41,15 +42,16 @@ func NewRegistry(sink EventSink) *Registry {
 }
 
 // Create 创建频道：创建者成为 owner 与首个成员。private 控制是否需邀请
-// 或 owner 审批才能加入。返回频道 ID。
-func (r *Registry) Create(name, ownerID string, private bool) (string, error) {
+// 或 owner 审批才能加入；topic 为可选频道简介。返回频道 ID。
+func (r *Registry) Create(name, ownerID, topic string, private bool) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", errEmptyName
+		return "", ErrEmptyName
 	}
 	id := uuid.NewString()
 	ch := &channel{
 		id: id, name: name, ownerID: ownerID, private: private,
+		topic:   strings.TrimSpace(topic),
 		members: map[string]bool{ownerID: true},
 	}
 	r.mu.Lock()
@@ -66,11 +68,11 @@ func (r *Registry) Join(channelID, memberID string) error {
 	ch, ok := r.channels[channelID]
 	if !ok {
 		r.mu.Unlock()
-		return errChannelNotFound
+		return ErrChannelNotFound
 	}
 	if ch.private && !ch.members[memberID] {
 		r.mu.Unlock()
-		return errNotMember
+		return ErrNotMember
 	}
 	ch.members[memberID] = true
 	r.mu.Unlock()
@@ -84,11 +86,11 @@ func (r *Registry) Invite(channelID, ownerID, memberID string) error {
 	ch, ok := r.channels[channelID]
 	if !ok {
 		r.mu.Unlock()
-		return errChannelNotFound
+		return ErrChannelNotFound
 	}
 	if ch.ownerID != ownerID {
 		r.mu.Unlock()
-		return errNotOwner
+		return ErrNotOwner
 	}
 	ch.members[memberID] = true
 	r.mu.Unlock()
@@ -103,11 +105,11 @@ func (r *Registry) Leave(channelID, memberID string) error {
 	ch, ok := r.channels[channelID]
 	if !ok {
 		r.mu.Unlock()
-		return errChannelNotFound
+		return ErrChannelNotFound
 	}
 	if !ch.members[memberID] {
 		r.mu.Unlock()
-		return errNotMember
+		return ErrNotMember
 	}
 	delete(ch.members, memberID)
 	remove := false
@@ -171,11 +173,11 @@ func (r *Registry) Recipients(channelID, senderID string) ([]string, error) {
 	ch, ok := r.channels[channelID]
 	if !ok {
 		r.mu.Unlock()
-		return nil, errChannelNotFound
+		return nil, ErrChannelNotFound
 	}
 	if !ch.members[senderID] {
 		r.mu.Unlock()
-		return nil, errNotMember
+		return nil, ErrNotMember
 	}
 	out := make([]string, 0, len(ch.members))
 	for id := range ch.members {
@@ -200,7 +202,7 @@ func (r *Registry) List() []ChannelInfo {
 		sort.Strings(members)
 		out = append(out, ChannelInfo{
 			ID: ch.id, Name: ch.name, OwnerID: ch.ownerID,
-			Private: ch.private, Members: members,
+			Private: ch.private, Topic: ch.topic, Members: members,
 		})
 	}
 	r.mu.Unlock()

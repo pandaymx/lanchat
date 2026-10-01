@@ -56,7 +56,8 @@ func (c *Client) applyChannelList(in []protocol.Channel) {
 	next := make(map[string]appapi.Channel, len(in))
 	for _, ch := range in {
 		next[ch.ID] = appapi.Channel{
-			ID: ch.ID, Name: ch.Name, OwnerID: ch.OwnerID, Members: ch.Members,
+			ID: ch.ID, Name: ch.Name, OwnerID: ch.OwnerID,
+			Private: ch.Private, Topic: ch.Topic, Members: ch.Members,
 		}
 	}
 	c.mu.Lock()

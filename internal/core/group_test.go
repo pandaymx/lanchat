@@ -78,7 +78,7 @@ func TestG2ChannelMembersOnly(t *testing.T) {
 	}
 
 	// a 创建频道，ID 经 CHANNEL_LIST 下发。
-	if _, err := a.ChannelCreate("dev"); err != nil {
+	if _, err := a.ChannelCreate("dev", "", false); err != nil {
 		t.Fatal(err)
 	}
 	var channelID string
@@ -143,6 +143,80 @@ func TestG2ChannelMembersOnly(t *testing.T) {
 	}
 }
 
+// TestG2PrivateInviteAndLeave private 频道：直接加入被拒，owner 邀请后成为成员，
+// 成员退出后频道消息不再送达。
+func TestG2PrivateInviteAndLeave(t *testing.T) {
+	url := startServer(t)
+	la := &recordingListener{}
+	a := New(Options{Nickname: "alice", Listener: la})
+	t.Cleanup(a.Close)
+	lb := &recordingListener{}
+	b := New(Options{Nickname: "bob", Listener: lb})
+	t.Cleanup(b.Close)
+
+	if err := a.Connect(url, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(url, testPSK); err != nil {
+		t.Fatal(err)
+	}
+
+	// 创建 private 频道，带 topic。
+	if _, err := a.ChannelCreate("私密", "内部讨论", true); err != nil {
+		t.Fatal(err)
+	}
+	var channelID string
+	waitFor(t, time.Second, func() bool {
+		for _, ch := range la.channelSnapshot() {
+			if ch.Name == "私密" {
+				channelID = ch.ID
+				return ch.Private && ch.Topic == "内部讨论"
+			}
+		}
+		return false
+	})
+
+	bID := b.GetState().SelfID
+
+	// b 直接加入 private 频道：服务器拒绝，b 不应进入成员列表。
+	if err := b.ChannelJoin(channelID); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if memberIn(lb.channelSnapshot(), channelID, bID) {
+		t.Fatal("未受邀成员不应出现在 private 频道中")
+	}
+
+	// owner a 邀请 b。
+	if err := a.ChannelInvite(channelID, bID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool {
+		return memberIn(lb.channelSnapshot(), channelID, bID)
+	})
+
+	// b 现在能收到频道消息。
+	if _, err := a.SendText("", "private hi", channelID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool { return len(lb.recvdSnapshot()) >= 1 })
+
+	// b 退出后不再收到频道消息。
+	if err := b.ChannelLeave(channelID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool {
+		return !memberIn(lb.channelSnapshot(), channelID, bID)
+	})
+	if _, err := a.SendText("", "after leave", channelID); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if msgs := lb.recvdSnapshot(); len(msgs) > 1 {
+		t.Fatalf("退出后 b 不应再收到消息: %+v", msgs)
+	}
+}
+
 // memberIn 判断频道列表中指定频道是否含某成员。
 func memberIn(channels []appapi.Channel, channelID, memberID string) bool {
 	for _, ch := range channels {
@@ -167,7 +241,7 @@ func TestChannelCreateValidation(t *testing.T) {
 	if err := c.Connect(url, testPSK); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.ChannelCreate("   "); err != errEmptyText {
+	if _, err := c.ChannelCreate("   ", "", false); err != errEmptyText {
 		t.Fatalf("空名称应报 errEmptyText，得到 %v", err)
 	}
 }

@@ -87,6 +87,8 @@ type Channel struct {
 	ID      string   `json:"id"`
 	Name    string   `json:"name"`
 	OwnerID string   `json:"ownerId"`
+	Private bool     `json:"private,omitempty"`
+	Topic   string   `json:"topic,omitempty"`
 	Members []string `json:"members"`
 }
 
@@ -135,10 +137,14 @@ type API interface {
 	// PickDownloadDir 设置默认下载目录（UI 用原生对话框选择后回调 core）。
 	PickDownloadDir(path string) error
 
-	// ChannelCreate 创建 G2 自定义频道。
-	ChannelCreate(name string) (channelID string, err error)
-	// ChannelJoin 加入 G2 自定义频道。
+	// ChannelCreate 创建 G2 自定义频道；private 频道仅可经 ChannelInvite 加入。
+	ChannelCreate(name, topic string, private bool) (channelID string, err error)
+	// ChannelJoin 加入 G2 自定义频道（private 频道会被拒绝）。
 	ChannelJoin(channelID string) error
+	// ChannelInvite 邀请在线成员加入频道（仅 owner）。
+	ChannelInvite(channelID, memberID string) error
+	// ChannelLeave 退出 G2 自定义频道。
+	ChannelLeave(channelID string) error
 	// ChannelList 列出当前可见频道。
 	ChannelList() []Channel
 }

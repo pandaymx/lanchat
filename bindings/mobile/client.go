@@ -104,11 +104,21 @@ func (c *Client) SetNickname(name string) error { return c.core.SetNickname(name
 // PickDownloadDir 设置默认下载目录。
 func (c *Client) PickDownloadDir(path string) error { return c.core.PickDownloadDir(path) }
 
-// ChannelCreate 创建 G2 自定义频道（M9，当前返回 not implemented）。
-func (c *Client) ChannelCreate(name string) (string, error) { return c.core.ChannelCreate(name) }
+// ChannelCreate 创建 G2 自定义频道；private 频道仅可经 ChannelInvite 加入。
+func (c *Client) ChannelCreate(name, topic string, private bool) (string, error) {
+	return c.core.ChannelCreate(name, topic, private)
+}
 
-// ChannelJoin 加入 G2 自定义频道（M9，当前返回 not implemented）。
+// ChannelJoin 加入 G2 自定义频道（private 频道会被拒绝）。
 func (c *Client) ChannelJoin(channelID string) error { return c.core.ChannelJoin(channelID) }
+
+// ChannelInvite 邀请在线成员加入频道（仅 owner）。
+func (c *Client) ChannelInvite(channelID, memberID string) error {
+	return c.core.ChannelInvite(channelID, memberID)
+}
+
+// ChannelLeave 退出 G2 自定义频道。
+func (c *Client) ChannelLeave(channelID string) error { return c.core.ChannelLeave(channelID) }
 
 // ChannelList 列出当前可见频道。
 func (c *Client) ChannelList() []Channel { return fromChannels(c.core.ChannelList()) }
@@ -186,7 +196,10 @@ func fromTransfer(t appapi.Transfer) Transfer {
 }
 
 func fromChannel(ch appapi.Channel) Channel {
-	return Channel{ID: ch.ID, Name: ch.Name, OwnerID: ch.OwnerID, Members: ch.Members}
+	return Channel{
+		ID: ch.ID, Name: ch.Name, OwnerID: ch.OwnerID,
+		Private: ch.Private, Topic: ch.Topic, Members: ch.Members,
+	}
 }
 
 func fromState(s appapi.State) *State {

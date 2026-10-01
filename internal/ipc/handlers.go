@@ -36,6 +36,8 @@ var handlers = map[string]handler{
 	"PickDownloadDir":  hPickDownloadDir,
 	"ChannelCreate":    hChannelCreate,
 	"ChannelJoin":      hChannelJoin,
+	"ChannelInvite":    hChannelInvite,
+	"ChannelLeave":     hChannelLeave,
 	"ChannelList": func(api appapi.API, _ json.RawMessage) (interface{}, *rpcErr) {
 		return api.ChannelList(), nil
 	},
@@ -236,7 +238,9 @@ func hPickDownloadDir(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr
 }
 
 type channelCreateParams struct {
-	Name string `json:"name"`
+	Name    string `json:"name"`
+	Topic   string `json:"topic"`
+	Private bool   `json:"private"`
 }
 
 func hChannelCreate(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
@@ -244,7 +248,7 @@ func hChannelCreate(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) 
 	if rerr != nil {
 		return nil, rerr
 	}
-	id, err := api.ChannelCreate(p.Name)
+	id, err := api.ChannelCreate(p.Name, p.Topic, p.Private)
 	if err != nil {
 		return nil, apiErr(err)
 	}
@@ -263,6 +267,33 @@ func hChannelJoin(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
 		return nil, rerr
 	}
 	if err := api.ChannelJoin(p.ChannelID); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+type channelInviteParams struct {
+	ChannelID string `json:"channelID"`
+	MemberID  string `json:"memberID"`
+}
+
+func hChannelInvite(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[channelInviteParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.ChannelInvite(p.ChannelID, p.MemberID); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+func hChannelLeave(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[channelJoinParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.ChannelLeave(p.ChannelID); err != nil {
 		return nil, apiErr(err)
 	}
 	return struct{}{}, nil

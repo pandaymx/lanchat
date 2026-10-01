@@ -27,7 +27,8 @@ func (s channelSink) toProtocol(in []group.ChannelInfo) []protocol.Channel {
 	out := make([]protocol.Channel, 0, len(in))
 	for _, c := range in {
 		out = append(out, protocol.Channel{
-			ID: c.ID, Name: c.Name, OwnerID: c.OwnerID, Members: c.Members,
+			ID: c.ID, Name: c.Name, OwnerID: c.OwnerID,
+			Private: c.Private, Topic: c.Topic, Members: c.Members,
 		})
 	}
 	return out
@@ -42,9 +43,55 @@ func (h *hub) onCreate(c *Client, env *protocol.Envelope) {
 		})
 		return
 	}
-	if _, err := h.channels.Create(p.Name, c.id, false); err != nil {
+	if _, err := h.channels.Create(p.Name, c.id, p.Topic, p.Private); err != nil {
 		h.send(c, protocol.Error, protocol.ErrorPayload{
 			Code: "invalid_channel", Message: "频道创建失败",
+		})
+		return
+	}
+	h.ack(c, env.ID, "delivered")
+}
+
+// onInvite 处理 CHANNEL_INVITE：仅 owner 可邀请成员。
+func (h *hub) onInvite(c *Client, env *protocol.Envelope) {
+	var p protocol.ChannelInvitePayload
+	if err := env.DecodePayload(&p); err != nil || isBlank(p.ChannelID) || isBlank(p.MemberID) {
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code: "invalid_channel", Message: "频道邀请消息非法",
+		})
+		return
+	}
+	if _, ok := h.reg.get(p.MemberID); !ok {
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code: "peer_not_found", Message: "被邀请成员不在线或不存在",
+		})
+		return
+	}
+	if err := h.channels.Invite(p.ChannelID, c.id, p.MemberID); err != nil {
+		code := "channel_unavailable"
+		if err == group.ErrNotOwner {
+			code = "not_channel_owner"
+		}
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code: code, Message: "频道不存在或无邀请权限",
+		})
+		return
+	}
+	h.ack(c, env.ID, "delivered")
+}
+
+// onLeave 处理 CHANNEL_LEAVE：成员主动退出频道。
+func (h *hub) onLeave(c *Client, env *protocol.Envelope) {
+	var p protocol.ChannelLeavePayload
+	if err := env.DecodePayload(&p); err != nil || isBlank(p.ChannelID) {
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code: "invalid_channel", Message: "频道退出消息非法",
+		})
+		return
+	}
+	if err := h.channels.Leave(p.ChannelID, c.id); err != nil {
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code: "channel_unavailable", Message: "频道不存在或未加入",
 		})
 		return
 	}

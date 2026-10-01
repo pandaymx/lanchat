@@ -36,6 +36,9 @@ type stubAPI struct {
 	gotTransferID string
 	gotName       string
 	gotPath       string
+	gotTopic      string
+	gotPrivate    bool
+	gotMemberID   string
 }
 
 type (
@@ -86,8 +89,8 @@ func (s *stubAPI) PickDownloadDir(path string) error {
 	return s.downloadErr
 }
 
-func (s *stubAPI) ChannelCreate(name string) (string, error) {
-	s.gotName = name
+func (s *stubAPI) ChannelCreate(name, topic string, private bool) (string, error) {
+	s.gotName, s.gotTopic, s.gotPrivate = name, topic, private
 	return s.channelID, s.channelCErr
 }
 
@@ -95,6 +98,17 @@ func (s *stubAPI) ChannelJoin(id string) error {
 	s.gotTransferID = id
 	return s.channelJErr
 }
+
+func (s *stubAPI) ChannelInvite(id, memberID string) error {
+	s.gotTransferID, s.gotMemberID = id, memberID
+	return s.channelJErr
+}
+
+func (s *stubAPI) ChannelLeave(id string) error {
+	s.gotTransferID = id
+	return s.channelJErr
+}
+
 func (s *stubAPI) ChannelList() []appapi.Channel { return s.channels }
 
 // startServer 在临时本地传输（Unix socket / 命名管道）上启动服务端，
@@ -419,6 +433,18 @@ func TestChannelCreateAndJoin(t *testing.T) {
 	resp = call(t, c, "ChannelJoin", map[string]string{"channelID": "cid-9"})
 	if resp.Error != nil || api.gotTransferID != "cid-9" {
 		t.Fatalf("ChannelJoin 失败: %+v", resp.Error)
+	}
+
+	resp = call(t, c, "ChannelInvite", map[string]string{
+		"channelID": "cid-9", "memberID": "bob",
+	})
+	if resp.Error != nil || api.gotMemberID != "bob" {
+		t.Fatalf("ChannelInvite 失败: %+v", resp.Error)
+	}
+
+	resp = call(t, c, "ChannelLeave", map[string]string{"channelID": "cid-9"})
+	if resp.Error != nil || api.gotTransferID != "cid-9" {
+		t.Fatalf("ChannelLeave 失败: %+v", resp.Error)
 	}
 }
 

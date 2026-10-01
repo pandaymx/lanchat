@@ -45,6 +45,10 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.onGroupProgress(c, env)
 	case protocol.ChannelCreate:
 		h.onCreate(c, env)
+	case protocol.ChannelInvite:
+		h.onInvite(c, env)
+	case protocol.ChannelLeave:
+		h.onLeave(c, env)
 	case protocol.ChannelJoin:
 		h.onJoin(c, env)
 	case protocol.ChannelList:

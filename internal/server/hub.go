@@ -40,6 +40,8 @@ type hub struct {
 	relayHost string      // 宣告给客户端的中继主机
 
 	channels *group.Registry // G2 自定义频道注册表
+
+	swarms *swarmSessions // 群组文件分发会话表（服务端 swarm 无感，仅转发）
 }
 
 // relayServer 是中继数据面的最小依赖接口。
@@ -57,6 +59,7 @@ func newHub(opts Options, logf func(string, ...any)) *hub {
 		relayHost: opts.RelayHost,
 	}
 	h.channels = group.NewRegistry(channelSink{h: h})
+	h.swarms = newSwarmSessions()
 	return h
 }
 
@@ -153,6 +156,8 @@ func (h *hub) onUnregister(c *Client) {
 	_, rev, _ := h.reg.remove(c.id)
 	// 清理该成员的全部频道关系；Registry 会经 channelSink 下发更新后的频道列表。
 	h.channels.Remove(c.id)
+	// 清理该成员涉及的群组文件分发会话并通知其余成员。
+	h.notifyGroupOffline(c.id)
 	payload := protocol.UserUpdatePayload{User: c.user(), Revision: rev}
 	h.fanoutExcept(c, protocol.UserLeave, payload)
 }
@@ -204,6 +209,7 @@ func (h *hub) drop(c *Client) {
 	if cur, ok := h.reg.get(c.id); ok && cur == c {
 		_, rev, _ := h.reg.remove(c.id)
 		h.channels.Remove(c.id)
+		h.notifyGroupOffline(c.id)
 		h.fanoutExcept(c, protocol.UserLeave, protocol.UserUpdatePayload{
 			User: c.user(), Revision: rev,
 		})

@@ -45,9 +45,10 @@ type Client struct {
 	deviceID string
 	os       string
 
-	peers     map[string]appapi.Peer
-	transfers map[string]*transferTask
-	channels  map[string]appapi.Channel
+	peers      map[string]appapi.Peer
+	transfers  map[string]*transferTask
+	groupTasks map[string]*groupTask
+	channels   map[string]appapi.Channel
 
 	browser *discover.Browser
 
@@ -95,6 +96,7 @@ func New(opts Options) *Client {
 		heartbeat:   protocol.HeartbeatIntervalSec,
 		peers:       map[string]appapi.Peer{},
 		transfers:   map[string]*transferTask{},
+		groupTasks:  map[string]*groupTask{},
 		channels:    map[string]appapi.Channel{},
 		cb:          opts.Listener,
 		runCtx:      runCtx,
@@ -122,10 +124,17 @@ func (c *Client) Close() {
 		for _, t := range c.transfers {
 			tasks = append(tasks, t)
 		}
+		gtasks := make([]*groupTask, 0, len(c.groupTasks))
+		for _, g := range c.groupTasks {
+			gtasks = append(gtasks, g)
+		}
 		c.mu.Unlock()
 
 		for _, t := range tasks {
 			t.cancel()
+		}
+		for _, g := range gtasks {
+			g.teardown()
 		}
 		if conn != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
@@ -142,9 +151,12 @@ func (c *Client) GetState() appapi.State {
 	for _, p := range c.peers {
 		peers = append(peers, p)
 	}
-	transfers := make([]appapi.Transfer, 0, len(c.transfers))
+	transfers := make([]appapi.Transfer, 0, len(c.transfers)+len(c.groupTasks))
 	for _, t := range c.transfers {
 		transfers = append(transfers, t.snapshot())
+	}
+	for _, g := range c.groupTasks {
+		transfers = append(transfers, g.currentSnapshot())
 	}
 	channels := make([]appapi.Channel, 0, len(c.channels))
 	for _, ch := range c.channels {

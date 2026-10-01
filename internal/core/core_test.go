@@ -445,12 +445,15 @@ func TestCancelFile(t *testing.T) {
 	}
 }
 
-// TestM4Stubs 群组文件仍为诚实边界；频道方法在未连接时返回相应错误。
+// TestM4Stubs 群组/频道方法在未连接时返回相应错误。
 func TestM4Stubs(t *testing.T) {
 	c := New(Options{})
 	t.Cleanup(c.Close)
-	if _, err := c.OfferFileToGroup("g", "x"); err != errNotImplemented {
+	if _, err := c.OfferFileToGroup("g", "x"); err != errNotConnected {
 		t.Fatalf("err = %v", err)
+	}
+	if _, err := c.OfferFileToGroup("", "x"); err != errPeerNotFound {
+		t.Fatalf("empty group err = %v", err)
 	}
 	if _, err := c.ChannelCreate("  "); err != errEmptyText {
 		t.Fatalf("blank create err = %v", err)

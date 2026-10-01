@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/pandaymx/lanchat/compare/v0.15.0...v0.16.0) (2026-10-01)
+
+
+### Features
+
+* **group:** complete G2 private channels with invite and leave [M9] ([#41](https://github.com/pandaymx/lanchat/issues/41)) ([4554835](https://github.com/pandaymx/lanchat/commit/45548359fe58655aada8f2eba5eaf28fa386333d))
+
 ## [0.15.0](https://github.com/pandaymx/lanchat/compare/v0.14.0...v0.15.0) (2026-10-01)
 
 

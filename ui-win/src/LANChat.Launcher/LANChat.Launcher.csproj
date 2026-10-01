@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- 无窗口后台程序：被 FullTrustProcessLauncher 拉起后读取配置并启动 daemon -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <AssemblyName>LANChat.Launcher</AssemblyName>
+    <RootNamespace>LANChat.Launcher</RootNamespace>
+    <!-- 不需要 WinUI，仅用 WinRT 的 Windows.Storage / System 命名空间 -->
+    <UseWinUI>false</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+  </PropertyGroup>
+</Project>

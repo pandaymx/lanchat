@@ -1,23 +1,81 @@
 name: Release
 
-# 由 release-please 打出的 vX.Y.Z tag 触发；构建 daemon 全平台二进制与五端安装包
+# 触发方式：
+# 1. workflow_run：release-please 工作流成功后触发（release-please 用 GITHUB_TOKEN 打 tag，
+#    该 tag 不会触发 push 事件工作流，故必须监听 workflow_run）
+# 2. push tags：人类手动 push 的 tag
+# 3. workflow_dispatch：回填历史版本（如 v0.16.0）
 on:
+  workflow_run:
+    workflows: ['release-please']
+    types: [completed]
+    branches: [main]
   push:
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
-      version:
-        description: '版本号（仅手动触发时使用，如 0.15.0）'
+      tag:
+        description: '要发布的 tag（如 v0.16.0），构建基于当前工作流所在 ref'
         required: true
-        default: '0.0.0'
+        default: 'v0.16.0'
 
 permissions:
   contents: write
 
 jobs:
+  resolve:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.r.outputs.tag }}
+      ref: ${{ steps.r.outputs.ref }}
+      do_build: ${{ steps.r.outputs.do_build }}
+    steps:
+      - name: Resolve
+        id: r
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF: ${{ github.ref }}
+          INPUT_TAG: ${{ inputs.tag }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          do_build=false; tag=""; ref=""
+          case "$EVENT_NAME" in
+            push)
+              tag="${EVENT_REF#refs/tags/}"
+              ref="$tag"
+              do_build=true
+              ;;
+            workflow_dispatch)
+              tag="$INPUT_TAG"
+              ref="$GITHUB_SHA"
+              git ls-remote --tags origin "refs/tags/$tag" | grep -q . \
+                || { echo "::error::tag $tag 不存在"; exit 1; }
+              do_build=true
+              ;;
+            workflow_run)
+              # 仅当 workflow_run 指向的提交恰好带 v* tag 时才构建
+              tags="$(git ls-remote --tags origin | awk -v s="$HEAD_SHA" '$1==s{print $2}' | sed 's#refs/tags/##; s#\^{}##')"
+              tag="$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
+              if [ -n "$tag" ]; then
+                ref="$HEAD_SHA"
+                do_build=true
+                echo "release-please 提交 $HEAD_SHA 带 tag $tag，开始构建"
+              else
+                echo "该提交无发布 tag，跳过（普通 release-please PR 合并）"
+              fi
+              ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "do_build=$do_build" >> "$GITHUB_OUTPUT"
+
   daemon:
     name: Build daemon (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: resolve
+    if: needs.resolve.outputs.do_build == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -29,6 +87,8 @@ jobs:
           - { goos: windows, goarch: amd64 }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -40,19 +100,14 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '0'
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           set -euo pipefail
           ext=""
           [ "$GOOS" = windows ] && ext=".exe"
           mkdir -p dist
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            ver="$GITHUB_REF_NAME"
-          else
-            ver="v${{ github.event.inputs.version }}"
-          fi
-          commit="${GITHUB_SHA::7}"
-          base="lanchat-daemon-${ver}-${GOOS}-${GOARCH}"
-          go build -trimpath -ldflags "-s -w -X main.commit=$commit" \
+          base="lanchat-daemon-${TAG}-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags "-s -w -X main.commit=${GITHUB_SHA::7}" \
             -o "dist/${base}${ext}" ./cmd/lanchat-daemon
           ls -lh dist
 
@@ -64,9 +119,13 @@ jobs:
 
   linux:
     name: Build Linux package (GTK4, x64)
+    needs: resolve
+    if: needs.resolve.outputs.do_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -91,12 +150,6 @@ jobs:
           run-post: false
           environment-file: configs/linux-gtk-environment.yml
 
-      - name: Resolve version
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-
       - name: Build lanchat-ui
         working-directory: ui-linux
         shell: bash -l {0}
@@ -111,11 +164,13 @@ jobs:
 
       - name: Assemble tarball
         shell: bash
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           mkdir -p dist/stage
           cp ui-linux/target/release/lanchat-ui dist/stage/
           chmod +x dist/stage/lanchat-ui dist/stage/lanchat-daemon
-          tar -C dist/stage -czf "dist/LANChat-${{ steps.ver.outputs.version }}-linux-x64.tar.gz" .
+          tar -C dist/stage -czf "dist/LANChat-${TAG#v}-linux-x64.tar.gz" .
           ls -lh dist/*.tar.gz
 
       - uses: actions/upload-artifact@v4
@@ -126,9 +181,13 @@ jobs:
 
   android:
     name: Build Android APK
+    needs: resolve
+    if: needs.resolve.outputs.do_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -173,12 +232,6 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
 
-      - name: Resolve version
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-
       - name: Decode signing keystore
         id: sign
         env:
@@ -214,14 +267,16 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Collect APK
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           mkdir -p dist
           if [ "${{ steps.sign.outputs.configured }}" = "true" ]; then
             cp ui-android/app/build/outputs/apk/release/app-release.apk \
-              "dist/LANChat-${{ steps.ver.outputs.version }}-android-release.apk"
+              "dist/LANChat-${TAG#v}-android-release.apk"
           else
             cp ui-android/app/build/outputs/apk/debug/app-debug.apk \
-              "dist/LANChat-${{ steps.ver.outputs.version }}-android-debug.apk"
+              "dist/LANChat-${TAG#v}-android-debug.apk"
           fi
           ls -lh dist
 
@@ -233,9 +288,13 @@ jobs:
 
   macos:
     name: Build macOS package (unsigned, universal daemon)
+    needs: resolve
+    if: needs.resolve.outputs.do_build == 'true'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -244,12 +303,6 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
-
-      - name: Resolve version
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Generate Xcode project
         working-directory: ui-macos
@@ -275,6 +328,8 @@ jobs:
             -output dist/daemon/lanchat-daemon
 
       - name: Bundle daemon and zip
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           APP="ui-macos/build/DerivedData/Build/Products/Release/LANChat.app"
           mkdir -p "$APP/Contents/Resources"
@@ -282,7 +337,7 @@ jobs:
           chmod +x "$APP/Contents/Resources/lanchat-daemon"
           mkdir -p dist
           ditto -c -k --keepParent "$APP" \
-            "dist/LANChat-${{ steps.ver.outputs.version }}-macos-universal-unsigned.zip"
+            "dist/LANChat-${TAG#v}-macos-universal-unsigned.zip"
           ls -lh dist
 
       - uses: actions/upload-artifact@v4
@@ -293,9 +348,13 @@ jobs:
 
   ios:
     name: Build iOS Simulator package (unsigned)
+    needs: resolve
+    if: needs.resolve.outputs.do_build == 'true'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -309,12 +368,6 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
-
-      - name: Resolve version
-        id: ver
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then v="${GITHUB_REF_NAME#v}"; else v='${{ github.event.inputs.version }}'; fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
 
       - name: Generate XCFramework
         run: |
@@ -336,11 +389,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO build
 
       - name: Zip simulator app
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
           mkdir -p dist
           ditto -c -k --keepParent \
             ui-ios/build/DerivedData/Build/Products/Release-iphonesimulator/LANChat.app \
-            "dist/LANChat-${{ steps.ver.outputs.version }}-ios-simulator-unsigned.zip"
+            "dist/LANChat-${TAG#v}-ios-simulator-unsigned.zip"
           ls -lh dist
 
       - uses: actions/upload-artifact@v4
@@ -351,9 +406,13 @@ jobs:
 
   windows-msi:
     name: Build Windows MSI + portable zip (unsigned)
+    needs: resolve
+    if: needs.resolve.outputs.do_build == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -364,15 +423,11 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      - name: Resolve version
+      - name: Resolve versions
         id: ver
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') {
-            $v = $Matches[1]
-          } else {
-            $v = '${{ github.event.inputs.version }}'
-          }
+          $v = '${{ needs.resolve.outputs.tag }}'.TrimStart('v')
           $build = [int]$Env:GITHUB_RUN_NUMBER
           if ($build -gt 65534) { $build = $build % 65534 }
           echo "version=$v" >> $env:GITHUB_OUTPUT
@@ -405,8 +460,9 @@ jobs:
           scripts/new-msi.ps1 -SourceDir dist/publish -OutputWxs dist/lanchat.wxs `
             -Version '${{ steps.ver.outputs.msiVersion }}' `
             -UpgradeCode "7B3E9A24-1C5F-4D6B-9E8A-2F0C5D8A3B17"
+          $v = '${{ steps.ver.outputs.version }}'
           wix build -arch x64 -nologo `
-            -o "dist/LANChat-${{ steps.ver.outputs.version }}-windows-x64.msi" dist/lanchat.wxs
+            -o "dist/LANChat-$v-windows-x64.msi" dist/lanchat.wxs
 
       - name: Build portable zip
         shell: pwsh
@@ -428,9 +484,13 @@ jobs:
 
   msix:
     name: Build MSIX (Store + Sideload)
+    needs: resolve
+    if: needs.resolve.outputs.do_build == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
 
       - uses: actions/setup-go@v5
         with:
@@ -445,11 +505,7 @@ jobs:
         id: ver
         shell: pwsh
         run: |
-          if ($env:GITHUB_REF -match '^refs/tags/v(.+)$') {
-            $v = $Matches[1]
-          } else {
-            $v = '${{ github.event.inputs.version }}'
-          }
+          $v = '${{ needs.resolve.outputs.tag }}'.TrimStart('v')
           echo "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Version: $v"
 
@@ -554,11 +610,10 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [daemon, linux, android, macos, ios, windows-msi, msix]
+    needs: [resolve, daemon, linux, android, macos, ios, windows-msi, msix]
+    if: needs.resolve.outputs.do_build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -573,6 +628,7 @@ jobs:
       - name: Create / update release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.resolve.outputs.tag }}
           files: assets/*
           generate_release_notes: true
           fail_on_unmatched_files: true

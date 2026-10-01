@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+    xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+    xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+    xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+    xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+    xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+    IgnorableNamespaces="uap uap3 rescap desktop com">
+
+  <Identity
+      Name="50B5921A.lan-chat"
+      Publisher="CN=B072FED8-68F4-4903-9942-BB0A460B36EF"
+      Version="0.13.0.0" />
+
+  <Properties>
+    <DisplayName>lan-chat</DisplayName>
+    <PublisherDisplayName>皮皮萌宝</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="zh-cn" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+  </Dependencies>
+
+  <Applications>
+    <Application
+        Id="App"
+        Executable="LANChat.exe"
+        EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+          DisplayName="lan-chat"
+          Description="局域网即时通信"
+          BackgroundColor="#2563EB"
+          Square150x150Logo="Assets\Logo150x150.png"
+          Square44x44Logo="Assets\Logo44x44.png">
+        <uap:DefaultTile
+            Wide310x150Logo="Assets\Wide310x150.png"
+            Square310x310Logo="Assets\Logo310x310.png"
+            Square71x71Logo="Assets\SmallLogo71x71.png">
+          <uap:ShowNameOnTiles>
+            <uap:ShowOn Tile="square150x150Logo" />
+            <uap:ShowOn Tile="wide310x150Logo" />
+            <uap:ShowOn Tile="square310x310Logo" />
+          </uap:ShowNameOnTiles>
+        </uap:DefaultTile>
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- 完全信任启动器：由 UI 通过 FullTrustProcessLauncher 调用 -->
+        <desktop:Extension
+            Category="windows.fullTrustProcess"
+            Executable="LANChat.Launcher.exe">
+          <desktop:FullTrustProcess>
+            <desktop:ParameterGroup GroupId="lanchat" Parameters="" />
+          </desktop:FullTrustProcess>
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

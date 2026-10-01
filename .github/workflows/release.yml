@@ -1,0 +1,210 @@
+name: Release
+
+# 由 release-please 打出的 vX.Y.Z tag 触发；构建 daemon 全平台二进制与 Windows MSIX
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（仅手动触发时使用，如 0.13.0）'
+        required: true
+        default: '0.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  daemon:
+    name: Build daemon (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          ext=""
+          [ "$GOOS" = windows ] && ext=".exe"
+          mkdir -p dist
+          ver="${GITHUB_REF_NAME:-v${{ github.event.inputs.version }}}"
+          commit="${GITHUB_SHA::7}"
+          base="lanchat-daemon-${ver}-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags "-s -w -X main.commit=$commit" \
+            -o "dist/${base}${ext}" ./cmd/lanchat-daemon
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daemon-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  msix:
+    name: Build MSIX (Store + Sideload)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Resolve version
+        id: ver
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -match '^v(.+)$') {
+            $v = $Matches[1]
+          } else {
+            $v = '${{ github.event.inputs.version }}'
+          }
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Version: $v"
+
+      - name: Build daemon
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/bin" | Out-Null
+          go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" `
+            -o "dist/bin/lanchat-daemon.exe" ./cmd/lanchat-daemon
+
+      - name: Locate MSBuild
+        id: msbuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+          if (-not $msbuild) { throw "未找到 MSBuild" }
+          echo "path=$msbuild" >> $env:GITHUB_OUTPUT
+
+      - name: Create self-signed code-signing certificate (Sideload)
+        id: cert
+        shell: pwsh
+        run: |
+          $pwd = ConvertTo-SecureString -String "lanchat" -Force -AsPlainText
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+            -Subject "CN=B072FED8-68F4-4903-9942-BB0A460B36EF" `
+            -KeyUsage DigitalSignature -KeyAlgorithm RSA -KeyLength 2048 `
+            -CertStoreLocation "Cert:\CurrentUser\My"
+          $pfx = Join-Path $env:GITHUB_WORKSPACE "dist\lanchat-sideload.pfx"
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $pwd | Out-Null
+          $thumb = $cert.Thumbprint
+          echo "thumb=$thumb" >> $env:GITHUB_OUTPUT
+          Write-Host "Sideload cert thumbprint: $thumb"
+
+      - name: Build Sideload MSIX (signed)
+        shell: pwsh
+        run: |
+          $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
+          $pfx = Join-Path $env:GITHUB_WORKSPACE "dist\lanchat-sideload.pfx"
+          & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
+            /restore /t:Build /p:Configuration=Release /p:Platform=x64 `
+            /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
+            /p:RestoreRuntimeIdentifier=win-x64 `
+            /p:WindowsPackageType=MSIX /p:WindowsAppSDKSelfContained=true `
+            /p:GenerateAppxPackageOnBuild=true `
+            /p:UapAppxPackageBuildMode=SideloadOnly `
+            /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
+            /p:GenerateAppInstallerFile=true /p:AppInstallerUri="" `
+            /p:AppxPackageSigningEnabled=true `
+            "/p:AppxPackageSigningKeyFile=$pfx" `
+            /p:AppxPackageSigningKeyPassword=lanchat `
+            "/p:AppxPackageSigningThumbprint=${{ steps.cert.outputs.thumb }}" `
+            "/p:DaemonPath=$daemon" `
+            /p:AppxPackageDir="$env:GITHUB_WORKSPACE\dist\SideloadPackages\\"
+        working-directory: ui-win
+
+      - name: Build Store MSIX (unsigned for re-sign)
+        shell: pwsh
+        run: |
+          $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
+          & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
+            /restore /t:Build /p:Configuration=Release /p:Platform=x64 `
+            /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
+            /p:RestoreRuntimeIdentifier=win-x64 `
+            /p:WindowsPackageType=MSIX /p:WindowsAppSDKSelfContained=true `
+            /p:AppxPackageSigningEnabled=false `
+            /p:GenerateAppxPackageOnBuild=true `
+            /p:UapAppxPackageBuildMode=StoreUpload `
+            /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
+            /p:GenerateAppInstallerFile=false `
+            "/p:DaemonPath=$daemon" `
+            /p:AppxPackageDir="$env:GITHUB_WORKSPACE\dist\StorePackages\\"
+        working-directory: ui-win
+
+      - name: Collect packages
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "dist/out" | Out-Null
+          $v = '${{ steps.ver.outputs.version }}'
+          # Store 上传包
+          $store = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\StorePackages" -Recurse `
+            -Include *.msixupload,*.msix | Where-Object { $_.FullName -notmatch '\\obj\\' } |
+            Sort-Object Extension -Descending | Select-Object -First 1
+          if (-not $store) { throw "未找到 Store 包" }
+          Copy-Item $store.FullName "dist/out/LANChat-$v-windows-x64-Store$($store.Extension)"
+          # Sideload 主包 + 安装证书 + appinstaller
+          $side = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\SideloadPackages" -Recurse `
+            -Include *.msix | Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
+          if (-not $side) { throw "未找到 Sideload 包" }
+          Copy-Item $side.FullName "dist/out/LANChat-$v-windows-x64-Sideload.msix"
+          $appinst = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\SideloadPackages" -Recurse `
+            -Include *.appinstaller | Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
+          if ($appinst) { Copy-Item $appinst.FullName "dist/out/LANChat-$v-windows-x64.appinstaller" }
+          Copy-Item "$env:GITHUB_WORKSPACE\dist\lanchat-sideload.pfx" "dist/out/lanchat-sideload-cert.pfx"
+          Get-ChildItem dist/out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: msix-release
+          path: dist/out/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [daemon, msix]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+
+      - name: Flatten artifacts
+        run: |
+          mkdir -p assets
+          find release -type f -exec cp -n {} assets/ \;
+          ls -lh assets
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

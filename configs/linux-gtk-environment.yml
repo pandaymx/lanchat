@@ -1,0 +1,9 @@
+name: gtk
+channels:
+  - conda-forge
+dependencies:
+  # gtk4-rs 0.9 requires GTK >= 4.16; libadwaita-rs 0.7 requires >= 1.5.
+  - gtk4 >=4.16
+  - libadwaita >=1.5
+  - pkg-config
+  - compilers

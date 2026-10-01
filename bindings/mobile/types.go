@@ -81,6 +81,8 @@ type Channel struct {
 	ID      string
 	Name    string
 	OwnerID string
+	Private bool
+	Topic   string
 	Members []string
 }
 

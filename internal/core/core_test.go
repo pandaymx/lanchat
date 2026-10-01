@@ -455,10 +455,10 @@ func TestM4Stubs(t *testing.T) {
 	if _, err := c.OfferFileToGroup("", "x"); err != errPeerNotFound {
 		t.Fatalf("empty group err = %v", err)
 	}
-	if _, err := c.ChannelCreate("  "); err != errEmptyText {
+	if _, err := c.ChannelCreate("  ", "", false); err != errEmptyText {
 		t.Fatalf("blank create err = %v", err)
 	}
-	if _, err := c.ChannelCreate("c"); err == nil {
+	if _, err := c.ChannelCreate("c", "", false); err == nil {
 		t.Fatal("create on disconnected client should fail")
 	}
 	if err := c.ChannelJoin("c"); err == nil {
@@ -466,6 +466,12 @@ func TestM4Stubs(t *testing.T) {
 	}
 	if err := c.ChannelJoin(""); err != errPeerNotFound {
 		t.Fatalf("blank join err = %v", err)
+	}
+	if err := c.ChannelInvite("c", "p"); err == nil {
+		t.Fatal("invite on disconnected client should fail")
+	}
+	if err := c.ChannelLeave("c"); err == nil {
+		t.Fatal("leave on disconnected client should fail")
 	}
 	if chs := c.ChannelList(); chs == nil || len(chs) != 0 {
 		t.Fatalf("channels = %v", chs)

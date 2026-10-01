@@ -47,7 +47,7 @@ func (c *Client) ResumeFile(transferID string) error {
 
 // ChannelCreate 创建 G2 自定义频道。服务器创建后会下发 CHANNEL_LIST，
 // 频道 ID 通过 OnChannelUpdated 事件获得，故此处返回空字符串。
-func (c *Client) ChannelCreate(name string) (string, error) {
+func (c *Client) ChannelCreate(name, topic string, private bool) (string, error) {
 	if strings.TrimSpace(name) == "" {
 		return "", errEmptyText
 	}
@@ -56,7 +56,7 @@ func (c *Client) ChannelCreate(name string) (string, error) {
 		return "", err
 	}
 	if _, err := c.sendTo(conn, protocol.ChannelCreate, "", protocol.ChannelCreatePayload{
-		Name: name,
+		Name: name, Topic: topic, Private: private,
 	}); err != nil {
 		return "", err
 	}
@@ -73,6 +73,36 @@ func (c *Client) ChannelJoin(channelID string) error {
 		return err
 	}
 	_, err = c.sendTo(conn, protocol.ChannelJoin, "", protocol.ChannelJoinPayload{
+		ChannelID: channelID,
+	})
+	return err
+}
+
+// ChannelInvite 邀请在线成员加入频道（仅 owner，权限由服务器强制）。
+func (c *Client) ChannelInvite(channelID, memberID string) error {
+	if channelID == "" || memberID == "" {
+		return errPeerNotFound
+	}
+	conn, err := c.connectedConn()
+	if err != nil {
+		return err
+	}
+	_, err = c.sendTo(conn, protocol.ChannelInvite, "", protocol.ChannelInvitePayload{
+		ChannelID: channelID, MemberID: memberID,
+	})
+	return err
+}
+
+// ChannelLeave 退出 G2 自定义频道。
+func (c *Client) ChannelLeave(channelID string) error {
+	if channelID == "" {
+		return errPeerNotFound
+	}
+	conn, err := c.connectedConn()
+	if err != nil {
+		return err
+	}
+	_, err = c.sendTo(conn, protocol.ChannelLeave, "", protocol.ChannelLeavePayload{
 		ChannelID: channelID,
 	})
 	return err

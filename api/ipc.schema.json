@@ -78,10 +78,18 @@
       "result": {}
     },
     "ChannelCreate": {
-      "params": { "name": "string" },
+      "params": { "name": "string", "topic": "string?", "private": "bool?" },
       "result": { "channelID": "string" }
     },
     "ChannelJoin": {
+      "params": { "channelID": "string" },
+      "result": {}
+    },
+    "ChannelInvite": {
+      "params": { "channelID": "string", "memberID": "string" },
+      "result": {}
+    },
+    "ChannelLeave": {
       "params": { "channelID": "string" },
       "result": {}
     },
@@ -167,6 +175,8 @@
       "id": "string",
       "name": "string",
       "ownerId": "string",
+      "private": "bool?",
+      "topic": "string?",
       "members": "string[]"
     }
   }

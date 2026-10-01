@@ -32,6 +32,8 @@ jobs:
       ref: ${{ steps.r.outputs.ref }}
       do_build: ${{ steps.r.outputs.do_build }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Resolve
         id: r
         env:

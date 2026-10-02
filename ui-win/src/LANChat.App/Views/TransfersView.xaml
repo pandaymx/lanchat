@@ -35,12 +35,18 @@
                                                Text="{Binding Name}"
                                                TextTrimming="CharacterEllipsis"
                                                FontWeight="SemiBold" />
-                                    <Border Grid.Column="1"
-                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
-                                            CornerRadius="4"
-                                            Padding="6,1">
-                                        <TextBlock Text="{Binding Direction}" FontSize="11" />
-                                    </Border>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4">
+                                        <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                                CornerRadius="4"
+                                                Padding="6,1">
+                                            <TextBlock Text="{Binding Kind}" FontSize="11" />
+                                        </Border>
+                                        <Border Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                                CornerRadius="4"
+                                                Padding="6,1">
+                                            <TextBlock Text="{Binding Direction}" FontSize="11" />
+                                        </Border>
+                                    </StackPanel>
                                 </Grid>
 
                                 <ProgressBar Minimum="0"
@@ -52,10 +58,15 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0"
-                                               FontSize="11"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                               Text="{Binding State}" />
+                                    <StackPanel Grid.Column="0" Spacing="2">
+                                        <TextBlock FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   Text="{Binding State}" />
+                                        <TextBlock FontSize="11"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   Text="{Binding GroupId}"
+                                                   Visibility="{Binding HasGroup, Converter={StaticResource BoolToVisibilityConverter}}" />
+                                    </StackPanel>
                                     <TextBlock Grid.Column="1"
                                                FontSize="11"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"

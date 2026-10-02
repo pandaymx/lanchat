@@ -71,7 +71,7 @@ class ChatEngine {
     suspend fun connect(addr: String, psk: String): Unit = ioOp { client!!.connect(addr, psk) }
 
     suspend fun browseServers(): List<ServerInfo> = ioOp {
-        client!!.browseServersJSON.toServerList()
+        client!!.browseServersJSON().toServerList()
     }
 
     suspend fun sendText(to: String, text: String, group: String = ""): String =

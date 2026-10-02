@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.6](https://github.com/pandaymx/lanchat/compare/v0.17.5...v0.17.6) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** disable appinstaller generation for sideload MSIX ([#65](https://github.com/pandaymx/lanchat/issues/65)) ([e5b3dd1](https://github.com/pandaymx/lanchat/commit/e5b3dd101ab6260bfe5e9f9e86f98dba5d34ea4b))
+
 ## [0.17.5](https://github.com/pandaymx/lanchat/compare/v0.17.4...v0.17.5) (2026-10-02)
 
 

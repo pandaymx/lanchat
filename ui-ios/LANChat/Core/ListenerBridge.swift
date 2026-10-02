@@ -47,7 +47,13 @@ final class ListenerBridge: NSObject, LCMobileListener {
         // M9 群组能力，M8 不处理矩阵。
     }
 
-    func onChannelUpdated(_ channels: [LCChannel]?) {
-        emit(.channelsUpdated((channels ?? []).map(ChatEngine.toModel)))
+    func onChannelUpdated(_ payload: Data?) {
+        // Go 侧 gomobile 不支持结构体切片，改传 []appapi.Channel 的 JSON。
+        guard let payload,
+              let dtos = try? JSONDecoder().decode([ChannelJSON].self, from: payload) else {
+            emit(.channelsUpdated([]))
+            return
+        }
+        emit(.channelsUpdated(dtos.map { $0.toModel() }))
     }
 }

@@ -65,6 +65,80 @@ jobs:
           done
           exit $fail
 
+  # ui-android 在 PR 阶段从来没被编译过：gomobile 生成的 Java 名字只有 Get* 前缀的方法
+  # 才会变成 Kotlin 属性语法可访问的 getter，browseServersJSON 这类漏括号的调用、
+  # 缺 `import dev.lanchat.R` 这类错误，每次都要等 release 构建跑到
+  # :app:compileReleaseKotlin 才暴露，还连带 publish 整个发版失败（v0.18~v0.23 全挂在这）。
+  # 这里只编译不签名不打包，把发现点从发版提前到 PR。
+  android-compile:
+    name: Android compile (Kotlin + resources)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # 同 release.yml：cmdline-tools 新版已无废弃的 tools 包
+          packages: 'cmdline-tools;latest'
+
+      - name: Accept SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android SDK packages
+        # API 37 的平台包带次版本号，不存在 platforms;android-37
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+
+      - name: Setup NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r26d
+          add-to-path: false
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: gomobile init
+        run: gomobile init
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
+
+      - name: Add gomobile dependency
+        run: go get golang.org/x/mobile@latest
+
+      - name: Generate AAR
+        run: |
+          mkdir -p ui-android/app/libs
+          gomobile bind -target=android -androidapi 26 -javapkg=dev.lanchat.bindings \
+            -o ui-android/app/libs/mobile.aar ./bindings/mobile
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
+
+      - name: Compile release Kotlin
+        working-directory: ui-android
+        # compileReleaseKotlin 依赖 processReleaseResources，R 类与 strings.xml 键名
+        # 是否对得上一并校验；release 变体而非 debug，才能编到本次挂掉的同一份代码。
+        run: ./gradlew compileReleaseKotlin --no-daemon
+
   scope-boundary:
     name: scope boundary (per AGENTS.md §2)
     runs-on: ubuntu-latest

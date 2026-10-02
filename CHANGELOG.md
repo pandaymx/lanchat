@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.17.1](https://github.com/pandaymx/lanchat/compare/v0.17.0...v0.17.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **bindings:** use JSON bytes for slice types to unblock gomobile ([#56](https://github.com/pandaymx/lanchat/issues/56)) ([81a5e51](https://github.com/pandaymx/lanchat/commit/81a5e51f56ea9251de2b53e2aabfd6583bcaca0a))
+
+## [0.17.0](https://github.com/pandaymx/lanchat/compare/v0.16.3...v0.17.0) (2026-10-02)
+
+
+### Features
+
+* **group:** encrypt swarm data plane with AES-GCM and relay fallback [M9] ([#54](https://github.com/pandaymx/lanchat/issues/54)) ([36b5d30](https://github.com/pandaymx/lanchat/commit/36b5d303408f6efbafce78ec8fe82f8d9d285ca6))
+
 ## [0.16.3](https://github.com/pandaymx/lanchat/compare/v0.16.2...v0.16.3) (2026-10-02)
 
 

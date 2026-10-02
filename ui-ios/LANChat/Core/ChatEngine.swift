@@ -92,6 +92,12 @@ final class ChatEngine {
         }
     }
 
+    /// 频道群聊文本：group 为频道 ID，to 留空（对齐 core.SendText 语义）。
+    @discardableResult
+    func sendGroupText(group: String, text: String) async throws -> String {
+        try await runOnIOThrowing { try $0.sendText("", text: text, group: group) ?? "" }
+    }
+
     @discardableResult
     func offerFile(to: String, path: String) async throws -> String {
         try await runOnIOThrowing { c in
@@ -99,6 +105,41 @@ final class ChatEngine {
             let transferID = c.offerFile(to, path: path, error: &err)
             if let err { throw err }
             return transferID
+        }
+    }
+
+    /// 频道群文件（kind=channel）；底层就绪前由 Go 返回错误。
+    @discardableResult
+    func offerFileToGroup(group: String, path: String) async throws -> String {
+        try await runOnIOThrowing { try $0.offerFile(toGroup: group, path: path) ?? "" }
+    }
+
+    @discardableResult
+    func channelCreate(name: String, topic: String, private isPrivate: Bool) async throws -> String {
+        try await runOnIOThrowing { try $0.channelCreate(name, topic: topic, private: isPrivate) ?? "" }
+    }
+
+    func channelJoin(channelID: String) async throws {
+        try await runOnIOThrowing { try $0.channelJoin(channelID) }
+    }
+
+    /// 邀请在线成员加入频道（仅 owner）。
+    func channelInvite(channelID: String, memberID: String) async throws {
+        try await runOnIOThrowing { try $0.channelInvite(channelID, memberID: memberID) }
+    }
+
+    /// 退出频道。
+    func channelLeave(channelID: String) async throws {
+        try await runOnIOThrowing { try $0.channelLeave(channelID) }
+    }
+
+    func channelList() async -> [Channel] {
+        await runOnIO { client in
+            guard let data = client.channelListJSON(),
+                  let dtos = try? JSONDecoder().decode([ChannelJSON].self, from: data) else {
+                return []
+            }
+            return dtos.map { $0.toModel() }
         }
     }
 
@@ -211,10 +252,19 @@ struct ChannelJSON: Decodable {
     let id: String
     let name: String
     let ownerId: String
+    let topic: String?
+    let isPrivate: Bool?
     let members: [String]?
 
+    enum CodingKeys: String, CodingKey {
+        case id, name, ownerId, topic, members
+        case isPrivate = "private"
+    }
+
     func toModel() -> Channel {
-        Channel(id: id, name: name, ownerId: ownerId, members: members ?? [])
+        Channel(id: id, name: name, ownerId: ownerId,
+                topic: topic ?? "", isPrivate: isPrivate ?? false,
+                members: members ?? [])
     }
 }
 

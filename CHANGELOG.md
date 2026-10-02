@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/pandaymx/lanchat/compare/v0.21.0...v0.21.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** 预检 Android 签名凭据并在失效时降级 debug 包 ([#96](https://github.com/pandaymx/lanchat/issues/96)) ([8edde63](https://github.com/pandaymx/lanchat/commit/8edde634f1b2d182d8f4821862d5d506a9428ef8))
+
 ## [0.21.0](https://github.com/pandaymx/lanchat/compare/v0.20.0...v0.21.0) (2026-10-02)
 
 

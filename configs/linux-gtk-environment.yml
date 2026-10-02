@@ -6,4 +6,5 @@ dependencies:
   - gtk4 >=4.16
   - libadwaita >=1.5
   - pkg-config
+  - zlib
   - compilers

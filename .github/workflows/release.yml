@@ -202,6 +202,9 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        with:
+          # 禁用对已废弃的 SDK 'tools' 包的默认安装（新版 cmdline-tools 已无此包）
+          packages: 'cmdline-tools;latest'
 
       - name: Accept SDK licenses
         run: yes | sdkmanager --licenses || true
@@ -378,6 +381,9 @@ jobs:
 
       - name: Add gomobile dependency
         run: go get golang.org/x/mobile@latest
+
+      - name: gomobile init
+        run: gomobile init
 
       - name: Generate XCFramework
         run: |
@@ -582,6 +588,7 @@ jobs:
             /p:RestoreRuntimeIdentifier=win-x64 `
             /p:WindowsPackageType=MSIX /p:WindowsAppSDKSelfContained=true `
             /p:AppxPackageSigningEnabled=false `
+            /p:AppxPackageSigningKeyFile="" `
             /p:GenerateAppxPackageOnBuild=true `
             /p:UapAppxPackageBuildMode=StoreUpload `
             /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `

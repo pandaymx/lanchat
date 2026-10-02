@@ -42,15 +42,17 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-        # setup-dotnet 自带的 cache: true 需要 packages.lock.json（本仓库没开
-        # RestorePackagesWithLockFile），打开后 Setup .NET 直接报
-        # "Dependencies lock file is not found" 并让作业失败，
-        # 见 PR #113 的 windows-msix-build 失败日志。
-        # 改为显式缓存 NuGet global-packages：包目录按 id/version 内容寻址，
-        # 缓存不全时 restore 只会补下缺失的包，不会用错版本。
-        # key 只由 csproj/props/targets 与 runner 平台决定，三个 Windows 作业
-        # （release.yml 的 windows-msi / msix + windows-msix-build.yml）共用一份，
-        # ui-win 的 PR 构建会把 Release 需要的包提前喂热。
+
+      # 不用 setup-dotnet 自带的 cache: true：它要求仓库里已有 packages.lock.json，
+      # 本项目没开 RestorePackagesWithLockFile，打开后 Setup .NET 直接报
+      # "Dependencies lock file is not found" 并让作业失败
+      # （PR #113 首版 8a676fb 的 windows-msix-build 实跑日志）。
+      # 改为显式缓存 NuGet global-packages：包目录按 id/version 内容寻址，
+      # 缓存不全时 restore 只会补下缺失的包，不会用错版本。
+      # key 只由 csproj/props/targets 与 runner 平台决定，三个 Windows 作业
+      # （release.yml 的 windows-msi / msix + windows-msix-build.yml）共用同一份，
+      # ui-win 的 PR 构建会把 Release 需要的包提前喂热。
+      # 冷跑基线：Build MSIX 60s，缓存条目 439 MB。
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:

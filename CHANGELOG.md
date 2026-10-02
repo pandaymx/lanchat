@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.11](https://github.com/pandaymx/lanchat/compare/v0.17.10...v0.17.11) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-android:** gomobile Peer/Transfer 字段访问名改为 ID/OS ([#76](https://github.com/pandaymx/lanchat/issues/76)) ([d5e22c1](https://github.com/pandaymx/lanchat/commit/d5e22c18da96832ef2a913af5e619021e460c541))
+
 ## [0.17.10](https://github.com/pandaymx/lanchat/compare/v0.17.9...v0.17.10) (2026-10-02)
 
 

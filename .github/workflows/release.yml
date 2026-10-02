@@ -34,6 +34,7 @@ jobs:
   resolve:
     name: Resolve release tag
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       tag: ${{ steps.r.outputs.tag }}
       ref: ${{ steps.r.outputs.ref }}
@@ -86,6 +87,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       matrix:
         include:
@@ -132,6 +134,7 @@ jobs:
     if: needs.resolve.outputs.do_build == 'true'
     # GTK4 / libadwaita 直接取系统包，见下方 Install GTK4 / libadwaita 的说明。
     runs-on: ubuntu-26.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -192,6 +195,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -470,6 +474,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: macos-15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -530,6 +535,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: macos-15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -593,22 +599,22 @@ jobs:
 
   windows-msi:
     name: Build Windows MSI + portable zip (unsigned)
-    needs: resolve
+    needs: [resolve, daemon]
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.ref }}
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+          # NuGet global-packages 缓存。刻意不指定 cache-dependency-path：
+          # 与 windows-msix-build.yml 使用同一套默认 pattern，两者落在同一个
+          # cache key 上，ui-win 的 PR 构建可以把 Release 需要的包提前喂热。
+          cache: true
 
       - name: Resolve versions
         id: ver
@@ -620,12 +626,23 @@ jobs:
           echo "version=$v" >> $env:GITHUB_OUTPUT
           echo "msiVersion=$v.$build" >> $env:GITHUB_OUTPUT
 
-      - name: Build daemon
+      # daemon 由 daemon 矩阵交叉编译好并作为制品上传，这里直接取，
+      # 不再在本作业装一遍 Go（v0.23.3 那次 setup-go 单步 31s）。
+      # 顺带让 MSI / MSIX / tarball 里的 daemon 出自同一次编译，构建参数不可能漂移。
+      - name: Fetch daemon from the matrix build
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-windows-amd64
+          path: dist/bin
+
+      - name: Normalize daemon binary name
         shell: pwsh
+        # 矩阵产物名为 lanchat-daemon-<tag>-windows-amd64.exe，
+        # 归一化成后续步骤约定的 dist/bin/lanchat-daemon.exe。
         run: |
-          New-Item -ItemType Directory -Force -Path "dist/bin" | Out-Null
-          go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" `
-            -o "dist/bin/lanchat-daemon.exe" ./cmd/lanchat-daemon
+          $exe = Get-ChildItem "dist/bin" -Filter "lanchat-daemon-*.exe" | Select-Object -First 1
+          if (-not $exe) { throw "dist/bin 下没有 daemon-windows-amd64 制品" }
+          Move-Item $exe.FullName "dist/bin/lanchat-daemon.exe" -Force
 
       - name: Publish WinUI app (self-contained, unpackaged)
         shell: pwsh
@@ -684,22 +701,20 @@ jobs:
 
   msix:
     name: Build MSIX (Store + Sideload)
-    needs: resolve
+    needs: [resolve, daemon]
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.ref }}
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
+          # 与 windows-msi / windows-msix-build.yml 同一套默认 pattern，共享 cache key。
+          cache: true
 
       - name: Resolve version
         id: ver
@@ -709,12 +724,19 @@ jobs:
           echo "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Version: $v"
 
-      - name: Build daemon
+      # 同 windows-msi：取 daemon 矩阵的制品，不在本作业再装一遍 Go。
+      - name: Fetch daemon from the matrix build
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-windows-amd64
+          path: dist/bin
+
+      - name: Normalize daemon binary name
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "dist/bin" | Out-Null
-          go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" `
-            -o "dist/bin/lanchat-daemon.exe" ./cmd/lanchat-daemon
+          $exe = Get-ChildItem "dist/bin" -Filter "lanchat-daemon-*.exe" | Select-Object -First 1
+          if (-not $exe) { throw "dist/bin 下没有 daemon-windows-amd64 制品" }
+          Move-Item $exe.FullName "dist/bin/lanchat-daemon.exe" -Force
 
       - name: Locate MSBuild
         id: msbuild
@@ -817,6 +839,7 @@ jobs:
     needs: [resolve, daemon, linux, android, macos, ios, windows-msi, msix]
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4

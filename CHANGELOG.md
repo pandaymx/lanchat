@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/pandaymx/lanchat/compare/v0.23.0...v0.23.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-ios:** 频道方法补 NSErrorPointer，onChange 回退 iOS 16 API ([#102](https://github.com/pandaymx/lanchat/issues/102)) ([d5830b0](https://github.com/pandaymx/lanchat/commit/d5830b01563759295f946b32e2eb31daeb70834d))
+
 ## [0.23.0](https://github.com/pandaymx/lanchat/compare/v0.22.0...v0.23.0) (2026-10-02)
 
 

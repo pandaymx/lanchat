@@ -5,6 +5,16 @@ dependencies:
   # gtk4-rs 0.9 requires GTK >= 4.16; libadwaita-rs 0.7 requires >= 1.5.
   - gtk4 >=4.16
   - libadwaita >=1.5
-  - pkg-config
+  # GTK 栈的传递依赖；cairo-sys / pango-sys 等通过 pkg-config 直接探测它们，
+  # 不显式安装时 conda 不保证 .pc 与头文件就位（曾报 freetype2 not found）。
+  - cairo
+  - pango
+  - gdk-pixbuf
+  - glib
+  - harfbuzz
+  - freetype
+  - fontconfig
+  - expat
   - zlib
+  - pkg-config
   - compilers

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.7](https://github.com/pandaymx/lanchat/compare/v0.17.6...v0.17.7) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-android:** bump compileSdk to 37 for androidx 2.10 requirements ([#69](https://github.com/pandaymx/lanchat/issues/69)) ([d23af6b](https://github.com/pandaymx/lanchat/commit/d23af6be2c2b7865becef538a5a6fd9b6d718d79))
+
 ## [0.17.6](https://github.com/pandaymx/lanchat/compare/v0.17.5...v0.17.6) (2026-10-02)
 
 

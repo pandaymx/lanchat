@@ -72,14 +72,14 @@
             </ListView.ItemTemplate>
         </ListView>
 
-        <!-- WinUI 的 Border 继承 Decorator，没有 IsEnabled；禁用状态放在内层 Grid 上 -->
+        <!-- WinUI 3 的 IsEnabled 只声明在 Control 上，Border/Grid/StackPanel 用它会报 WMC0011，
+             因此逐个绑到可交互控件 -->
         <Border Grid.Row="2"
                 Padding="10,8"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="0,1,0,0">
-            <Grid ColumnSpacing="8"
-                  IsEnabled="{Binding Chat.CanSend}">
+            <Grid ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
@@ -87,13 +87,16 @@
                 </Grid.ColumnDefinitions>
                 <Button Grid.Column="0"
                         Content="文件"
+                        IsEnabled="{Binding Chat.CanSend}"
                         Command="{Binding Chat.PickFileCommand}" />
                 <TextBox Grid.Column="1"
                          PlaceholderText="输入消息，Enter 发送"
+                         IsEnabled="{Binding Chat.CanSend}"
                          Text="{Binding Chat.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                          KeyDown="DraftBox_KeyDown" />
                 <Button Grid.Column="2"
                         Content="发送"
+                        IsEnabled="{Binding Chat.CanSend}"
                         Command="{Binding Chat.SendCommand}" />
             </Grid>
         </Border>

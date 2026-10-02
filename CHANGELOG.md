@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.12](https://github.com/pandaymx/lanchat/compare/v0.17.11...v0.17.12) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-ios:** 修正 init 首参数标签与 getState 闭包参数 ([#80](https://github.com/pandaymx/lanchat/issues/80)) ([db3b75f](https://github.com/pandaymx/lanchat/commit/db3b75f2f2d34d0e7580a2d472a2662f107f6776))
+
 ## [0.17.11](https://github.com/pandaymx/lanchat/compare/v0.17.10...v0.17.11) (2026-10-02)
 
 

@@ -1,10 +1,13 @@
 package core
 
 import (
+	"encoding/base64"
+
 	"github.com/google/uuid"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
+	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
 // OfferFileToGroup 发起群组文件 1:N 发送：打开文件 → SHA-256 → 监听块端口
@@ -30,12 +33,22 @@ func (c *Client) OfferFileToGroup(group, path string) (string, error) {
 
 	id := uuid.NewString()
 	token := uuid.NewString()
+
+	// 生成本次群文件的对称密钥：源持有它供每条数据连接派生密钥，
+	// 并在成员加入时经 GROUP_KEY 单播分发。
+	fileKey, err := transfer.GenerateFileKey()
+	if err != nil {
+		_ = info.file.Close()
+		return "", err
+	}
+
 	src := newSourceBlockSource(info.file, info.size)
-	g := newSourceGroupTask(c, group, id, info.name, info.size, sum, src, nil)
-	tr := newBlockTransport(c.selfID, token, g.deliverBlock, func(peer string) {
-		c.notifyGroupDown(id, peer)
-	})
+	g := newSourceGroupTask(c, group, id, info.name, info.size, sum, src, fileKey)
+	tr := newBlockTransport(c.selfID, token, g.deliverBlock, g.onPeerTransport)
+	tr.blockDirect = c.forceRelay
+	tr.onRelayRequest = func(peer string) { c.requestGroupRelay(id, peer) }
 	g.tr = tr
+	tr.setFileKey(fileKey)
 	cand, err := tr.listenOn()
 	if err != nil {
 		_ = info.file.Close()
@@ -96,16 +109,17 @@ func (c *Client) respondGroupFile(t *groupTask, destPath string) error {
 		return err
 	}
 	token := uuid.NewString()
-	tr := newBlockTransport(c.selfID, token, t.deliverBlock, func(peer string) {
-		c.notifyGroupDown(t.id, peer)
-	})
+	tr := newBlockTransport(c.selfID, token, t.deliverBlock, t.onPeerTransport)
+	tr.blockDirect = c.forceRelay
+	tr.onRelayRequest = func(peer string) { c.requestGroupRelay(t.id, peer) }
 	cand, err := tr.listenOn()
 	if err != nil {
 		src.close()
 		return err
 	}
 
-	// 先登记源候选与源签发 token，再回报 JOIN，随后启动 swarm。
+	// 先登记源候选与源签发 token，再回报 JOIN，随后启动 swarm。接收方的
+	// fileKey 来自源的 GROUP_KEY，到位前不发起直连拨号（见 setFileKey）。
 	tr.setCandidates(t.peerName, t.cand[t.peerName])
 	tr.setPeerToken(t.peerName, t.tok[t.peerName])
 	t.src = src
@@ -131,13 +145,50 @@ func (c *Client) respondGroupFile(t *groupTask, destPath string) error {
 	return nil
 }
 
-// notifyGroupDown 通知某成员块连接失败。
-func (c *Client) notifyGroupDown(transferID, peer string) {
-	t, ok := c.getGroupTask(transferID)
+// requestGroupRelay 由 blockTransport 在直连失败时回调：经信令向服务器请求
+// 与对端成员配对的中继会话（RELAY_GRANT 由服务器分别下发双方）。
+func (c *Client) requestGroupRelay(transferID, peer string) {
+	conn, err := c.connectedConn()
+	if err != nil {
+		return
+	}
+	_, _ = c.sendTo(conn, protocol.RelayRequest, "", protocol.RelayRequestPayload{
+		TransferID: transferID,
+		PeerID:     peer,
+	})
+}
+
+// deliverGroupKey 收到源单播的 GROUP_KEY：解码并登记到群任务，此后才能
+// 建立加密块连接（直连或中继）。
+func (c *Client) deliverGroupKey(env *protocol.Envelope) {
+	var p protocol.GroupKeyPayload
+	if err := env.DecodePayload(&p); err != nil || p.TransferID == "" || p.FileKey == "" {
+		return
+	}
+	t, ok := c.getGroupTask(p.TransferID)
 	if !ok {
 		return
 	}
-	t.post(groupEvent{kind: evDown, from: peer})
+	key, err := base64.StdEncoding.DecodeString(p.FileKey)
+	if err != nil || len(key) == 0 {
+		return
+	}
+	t.applyFileKey(key)
+}
+
+// deliverGroupRelayGrant 把群文件中继授权投递到对应群任务（PeerID 标明
+// 对端成员）；返回是否已按群任务消费。
+func (c *Client) deliverGroupRelayGrant(env *protocol.Envelope) bool {
+	var p protocol.RelayGrantPayload
+	if err := env.DecodePayload(&p); err != nil || p.TransferID == "" || p.PeerID == "" {
+		return false
+	}
+	t, ok := c.getGroupTask(p.TransferID)
+	if !ok {
+		return false
+	}
+	t.applyRelayGrant(p)
+	return true
 }
 
 var _ = appapi.TransferActive

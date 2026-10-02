@@ -60,6 +60,8 @@ const (
 	GroupLeave = "GROUP_LEAVE"
 	// GroupProgress 群组分发进度（块位图）。
 	GroupProgress = "GROUP_PROGRESS"
+	// GroupKey 源向新加入成员单播分发本次群文件的对称密钥（base64）。
+	GroupKey = "GROUP_KEY"
 
 	// ChannelCreate G2 创建自定义频道。
 	ChannelCreate = "CHANNEL_CREATE"

@@ -55,7 +55,7 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.onChannelList(c, env)
 	case protocol.RelayRequest:
 		h.onRelayRequest(c, env)
-	case protocol.RelayKey:
+	case protocol.RelayKey, protocol.GroupKey:
 		h.forward(c, env)
 	case protocol.PresenceUpdate:
 		h.onPresenceUpdate(c, env)

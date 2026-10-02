@@ -53,6 +53,46 @@ func startServer(t *testing.T) string {
 	return "ws://" + srv.ListenAddr() + opts.Path
 }
 
+// startServerWithRelay 启动同时承载中继数据面的测试服务器，返回 WS URL。
+func startServerWithRelay(t *testing.T) string {
+	t.Helper()
+	hash, err := config.HashPSK(testPSK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := server.Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lctp",
+		AuthMode:          config.AuthModePSK,
+		PSKHash:           hash,
+		HeartbeatInterval: 5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		ShutdownGrace:     time.Second,
+		RelayListen:       "127.0.0.1:0",
+		RelayHost:         "127.0.0.1",
+	}
+	srv, err := server.New(opts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-serveErr:
+		case <-time.After(2 * time.Second):
+		}
+	})
+	select {
+	case <-srv.Ready():
+	case <-time.After(time.Second):
+		t.Fatal("server not ready")
+	}
+	return "ws://" + srv.ListenAddr() + opts.Path
+}
+
 // receivedMsg 记录入站消息的路由信息（from/group）用于群组断言。
 type receivedMsg struct {
 	from, group, typ, text string
@@ -137,6 +177,13 @@ func (l *recordingListener) channelSnapshot() []appapi.Channel {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]appapi.Channel(nil), l.channels...)
+}
+
+// progressSnapshot 返回全部任务进度事件的拷贝。
+func (l *recordingListener) progressSnapshot() []appapi.Transfer {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]appapi.Transfer(nil), l.progress...)
 }
 
 // recvdSnapshot 返回收到消息的路由记录拷贝。

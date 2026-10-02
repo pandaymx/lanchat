@@ -202,10 +202,12 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platforms;android-36
-            build-tools;36.0.0
+
+      - name: Accept SDK licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Setup NDK
         id: ndk
@@ -224,6 +226,9 @@ jobs:
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
+
+      - name: Add gomobile dependency
+        run: go get golang.org/x/mobile@latest
 
       - name: Generate AAR
         run: |
@@ -292,7 +297,7 @@ jobs:
     name: Build macOS package (unsigned, universal daemon)
     needs: resolve
     if: needs.resolve.outputs.do_build == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -352,7 +357,7 @@ jobs:
     name: Build iOS Simulator package (unsigned)
     needs: resolve
     if: needs.resolve.outputs.do_build == 'true'
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -370,6 +375,9 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      - name: Add gomobile dependency
+        run: go get golang.org/x/mobile@latest
 
       - name: Generate XCFramework
         run: |

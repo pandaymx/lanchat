@@ -62,8 +62,10 @@ class ChatEngine {
 
     suspend fun connect(addr: String, psk: String): Unit = ioOp { client!!.connect(addr, psk) }
 
+    // gomobile 只把 Get* 前缀的 Go 方法生成成 Java getter（stateJSON 可用属性语法），
+    // BrowseServersJSON / ChannelListJSON 没有 Get 前缀，生成的是普通方法，必须带括号调用。
     suspend fun browseServers(): List<ServerInfo> =
-        ioOp { decodeServers(client!!.browseServersJSON) }
+        ioOp { decodeServers(client!!.browseServersJSON()) }
 
     suspend fun sendText(to: String, text: String, group: String = ""): String =
         ioOp { client!!.sendText(to, text, group) }
@@ -102,7 +104,7 @@ class ChatEngine {
         ioOp { client!!.channelLeave(channelId) }
 
     suspend fun channelList(): List<Channel> =
-        ioOp { decodeChannels(client!!.channelListJSON) }
+        ioOp { decodeChannels(client!!.channelListJSON()) }
 
     private suspend fun <T> ioOp(block: () -> T): T =
         withContext(Dispatchers.IO) {

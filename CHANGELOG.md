@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.3](https://github.com/pandaymx/lanchat/compare/v0.23.2...v0.23.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-ios:** 修大文件弹窗捕获错误 + 补 PR 级 Swift 编译门禁 ([#108](https://github.com/pandaymx/lanchat/issues/108)) ([c5807b4](https://github.com/pandaymx/lanchat/commit/c5807b4908120bb5efb7e2b3a8e9bb85aa74848a))
+
 ## [0.23.2](https://github.com/pandaymx/lanchat/compare/v0.23.1...v0.23.2) (2026-10-02)
 
 

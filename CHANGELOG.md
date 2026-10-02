@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/pandaymx/lanchat/compare/v0.16.3...v0.17.0) (2026-10-02)
+
+
+### Features
+
+* **group:** encrypt swarm data plane with AES-GCM and relay fallback [M9] ([#54](https://github.com/pandaymx/lanchat/issues/54)) ([36b5d30](https://github.com/pandaymx/lanchat/commit/36b5d303408f6efbafce78ec8fe82f8d9d285ca6))
+
 ## [0.16.3](https://github.com/pandaymx/lanchat/compare/v0.16.2...v0.16.3) (2026-10-02)
 
 

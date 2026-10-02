@@ -2,7 +2,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // AGP 9.0 起内置 Kotlin 支持，org.jetbrains.kotlin.android 插件
+    // 不再需要，显式应用反而会构建失败；Compose 编译器插件仍需保留。
     alias(libs.plugins.kotlin.compose)
 }
 

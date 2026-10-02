@@ -210,7 +210,9 @@ jobs:
         run: yes | sdkmanager --licenses || true
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
+        # API 37 的平台包带次版本号（android-37.0/37.1/37.2），
+        # 不存在 platforms;android-37 这个包，sdkmanager 会报 Failed to find package
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
 
       - name: Setup NDK
         id: ndk

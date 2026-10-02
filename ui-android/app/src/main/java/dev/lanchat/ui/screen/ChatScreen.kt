@@ -43,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.lanchat.R
 import dev.lanchat.model.Channel
 import dev.lanchat.model.ChatMessage
 import dev.lanchat.model.Conversations
@@ -131,6 +132,9 @@ fun ChannelChatScreen(
     }
 }
 
+// TopAppBar 仍是 Material3 实验 API，调用方必须显式 opt-in，否则 release 编译报
+// "This material API is experimental"。
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ConversationScaffold(
     title: String,

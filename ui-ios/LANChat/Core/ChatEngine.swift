@@ -46,7 +46,7 @@ final class ChatEngine {
                 self?.onEvent?(event)
             }
         }
-        client = LCMobileClient(init: nickname, osName: "ios",
+        client = LCMobileClient(nickname, osName: "ios",
                                 downloadDir: downloadDir, listener: bridge)
     }
 
@@ -58,8 +58,8 @@ final class ChatEngine {
     // ---- 同步阻塞 API 包一层后台线程 + async ----
 
     func getState() async -> FullState {
-        await runOnIO { [client] in
-            guard let data = client?.getStateJSON(),
+        await runOnIO { c in
+            guard let data = c.getStateJSON(),
                   let dto = try? JSONDecoder().decode(StateJSON.self, from: data) else {
                 return FullState(conn: "disconnected", server: "", selfId: "", nickname: "",
                                  peers: [], transfers: [], channels: [])

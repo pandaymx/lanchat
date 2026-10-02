@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.14](https://github.com/pandaymx/lanchat/compare/v0.17.13...v0.17.14) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-ios:** 线程包装闭包参数补 [@escaping](https://github.com/escaping) ([#84](https://github.com/pandaymx/lanchat/issues/84)) ([285ff7a](https://github.com/pandaymx/lanchat/commit/285ff7a2d55c4e0e24ad6971ba6fe532c7646095))
+
 ## [0.17.13](https://github.com/pandaymx/lanchat/compare/v0.17.12...v0.17.13) (2026-10-02)
 
 

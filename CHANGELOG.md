@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.2](https://github.com/pandaymx/lanchat/compare/v0.23.1...v0.23.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-android:** 修编译错误并在 PR 阶段加 Android 编译门禁 ([#104](https://github.com/pandaymx/lanchat/issues/104)) ([b4db13b](https://github.com/pandaymx/lanchat/commit/b4db13b351d0971ad788d2133aede68b202464ae))
+
 ## [0.23.1](https://github.com/pandaymx/lanchat/compare/v0.23.0...v0.23.1) (2026-10-02)
 
 

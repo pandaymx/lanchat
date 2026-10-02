@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.4](https://github.com/pandaymx/lanchat/compare/v0.17.3...v0.17.4) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** remove -arch flag from iOS simulator xcodebuild ([#63](https://github.com/pandaymx/lanchat/issues/63)) ([eeef609](https://github.com/pandaymx/lanchat/commit/eeef60912c64e21b4d49aac0bdec804cf15c9f57))
+
 ## [0.17.3](https://github.com/pandaymx/lanchat/compare/v0.17.2...v0.17.3) (2026-10-02)
 
 

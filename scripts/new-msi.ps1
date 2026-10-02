@@ -75,7 +75,6 @@ Line 1 ('<Package Name="LANChat" Manufacturer="LANChat" Version="' + $Version + 
 Line 1 ('           UpgradeCode="' + $UpgradeCode + '" Scope="perMachine" Compressed="yes">')
 Line 2 '<MajorUpgrade DowngradeErrorMessage="A newer version of LANChat is already installed." />'
 Line 2 '<MediaTemplate EmbedCab="yes" />'
-Line 0 ''
 
 # Directory tree (no components here).
 Line 2 '<StandardDirectory Id="ProgramFiles64Folder">'
@@ -94,10 +93,29 @@ foreach ($chain in $folderChains) {
 }
 Line 3 '</Directory>'
 Line 2 '</StandardDirectory>'
+
+# Start Menu shortcut (inside Package; its component is referenced by the Feature).
+Line 2 '<StandardDirectory Id="ProgramMenuFolder">'
+Line 3 '<Directory Id="ProgramMenuLANChat" Name="LANChat">'
+Line 4 '<Component Id="StartMenuShortcut" Guid="*">'
+Line 5 '<Shortcut Id="StartMenuLANChatShortcut" Name="LANChat"'
+Line 6 'Target="[APPLICATIONFOLDER]LANChat.exe" WorkingDirectory="APPLICATIONFOLDER" />'
+Line 5 '<RemoveFolder Id="RemoveProgramMenuLANChat" Directory="ProgramMenuLANChat" On="uninstall" />'
+Line 5 '<RegistryValue Root="HKLM" Key="Software\LANChat" Name="startMenuInstalled" Type="integer" Value="1" KeyPath="yes" />'
+Line 4 '</Component>'
+Line 3 '</Directory>'
+Line 2 '</StandardDirectory>'
+
+Line 2 '<Feature Id="Main" Title="LANChat" Level="1">'
+Line 3 '<ComponentGroupRef Id="AppFiles" />'
+Line 3 '<ComponentRef Id="StartMenuShortcut" />'
+Line 2 '</Feature>'
+Line 1 '</Package>'
 Line 0 ''
 
-# All components live in one ComponentGroup (a fragment). Each component references
-# its target directory explicitly, so WiX pulls the whole group via ComponentGroupRef.
+# All file components live in one Fragment (sibling of Package, never nested
+# inside it). Each component references its target directory explicitly, so WiX
+# pulls the whole group via the ComponentGroupRef above.
 Line 1 '<Fragment>'
 Line 2 '<ComponentGroup Id="AppFiles">'
 foreach ($e in ($entries | Sort-Object Rel)) {
@@ -109,26 +127,6 @@ foreach ($e in ($entries | Sort-Object Rel)) {
 }
 Line 2 '</ComponentGroup>'
 Line 1 '</Fragment>'
-Line 0 ''
-
-# Start Menu shortcut.
-Line 2 '<StandardDirectory Id="ProgramMenuFolder">'
-Line 3 '<Directory Id="ProgramMenuLANChat" Name="LANChat">'
-Line 4 '<Component Id="StartMenuShortcut" Guid="*">'
-Line 5 '<Shortcut Id="StartMenuLANChatShortcut" Name="LANChat"'
-Line 6 'Target="[APPLICATIONFOLDER]LANChat.exe" WorkingDirectory="APPLICATIONFOLDER" />'
-Line 5 '<RemoveFolder Id="RemoveProgramMenuLANChat" Directory="ProgramMenuLANChat" On="uninstall" />'
-Line 5 '<RegistryValue Root="HKLM" Key="Software\LANChat" Name="startMenuInstalled" Type="integer" Value="1" KeyPath="yes" />'
-Line 4 '</Component>'
-Line 3 '</Directory>'
-Line 2 '</StandardDirectory>'
-Line 0 ''
-
-Line 2 '<Feature Id="Main" Title="LANChat" Level="1">'
-Line 3 '<ComponentGroupRef Id="AppFiles" />'
-Line 3 '<ComponentRef Id="StartMenuShortcut" />'
-Line 2 '</Feature>'
-Line 1 '</Package>'
 Line 0 '</Wix>'
 
 $outDir = Split-Path $OutputWxs -Parent

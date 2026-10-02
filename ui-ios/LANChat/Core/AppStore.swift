@@ -10,6 +10,7 @@ final class AppStore: ObservableObject {
     @Published var transfers: [Transfer] = []
     @Published var discoveredServers: [ServerInfo] = []
     @Published var messagesByPeer: [String: [ChatMessage]] = [:]
+    @Published var channels: [Channel] = []
     @Published var busy = false
     @Published var error: String?
 
@@ -78,6 +79,76 @@ final class AppStore: ObservableObject {
         }
     }
 
+    // MARK: - 频道（M9）
+
+    /// 创建频道；成功后由 channel.updated 事件驱动刷新。
+    func createChannel(name: String, topic: String, isPrivate: Bool) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            error = "请输入频道名称"
+            return
+        }
+        let cleanedTopic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+        run {
+            _ = try await self.engine.channelCreate(name: trimmed,
+                                                    topic: cleanedTopic,
+                                                    private: isPrivate)
+        }
+    }
+
+    func joinChannel(_ channel: Channel) {
+        run {
+            try await self.engine.channelJoin(channelID: channel.id)
+            await self.refresh()
+        }
+    }
+
+    /// owner 邀请在线成员加入频道。
+    func inviteMember(_ channel: Channel, memberID: String) {
+        run {
+            try await self.engine.channelInvite(channelID: channel.id, memberID: memberID)
+            await self.refresh()
+        }
+    }
+
+    /// 退出频道。
+    func leaveChannel(_ channel: Channel) {
+        run {
+            try await self.engine.channelLeave(channelID: channel.id)
+            await self.refresh()
+        }
+    }
+
+    /// 频道群文本：按 group(频道ID) 归类。
+    func sendGroupText(channel: Channel, text: String) {
+        let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty else { return }
+        run {
+            let msgId = try await self.engine.sendGroupText(group: channel.id, text: content)
+            self.appendMessage(ChatMessage(id: msgId, peerId: self.selfId, text: content,
+                                           inbound: false, timestamp: Date(), group: channel.id))
+        }
+    }
+
+    /// 频道群文件；path 须在 security-scoped 访问期间可用。
+    func offerFileToGroup(channel: Channel, path: String) {
+        run {
+            _ = try await self.engine.offerFileToGroup(group: channel.id, path: path)
+            await self.refresh()
+        }
+    }
+
+    /// 当前用户是否为频道成员。
+    func isMember(_ channel: Channel) -> Bool {
+        !selfId.isEmpty && channel.members.contains(selfId)
+    }
+
+    /// 由用户 ID 解析展示名（频道消息 / 成员列表使用）。
+    func displayName(_ id: String) -> String {
+        if id == selfId { return settings.nickname }
+        return peers.first { $0.id == id }?.nickname ?? id
+    }
+
     func acceptTransfer(_ t: Transfer) {
         run {
             try await self.engine.acceptInbound(transferId: t.id, name: t.name)
@@ -119,9 +190,11 @@ final class AppStore: ObservableObject {
         case let .peerLeft(id):
             peers.removeAll { $0.id == id }
 
-        case let .message(from, _, msgId, _, text):
+        case let .message(from, group, msgId, _, text):
+            // 频道消息按 group(频道ID) 归类；group 为空则按 1:1 对端归类。
             appendMessage(ChatMessage(id: msgId, peerId: from, text: text,
-                                      inbound: true, timestamp: Date()))
+                                      inbound: true, timestamp: Date(),
+                                      group: group.isEmpty ? nil : group))
 
         case let .progress(t):
             upsertTransfer(t)
@@ -149,6 +222,7 @@ final class AppStore: ObservableObject {
         selfId = s.selfId
         peers = s.peers
         transfers = s.transfers
+        channels = s.channels
     }
 
     private func upsertTransfer(_ t: Transfer) {

@@ -43,6 +43,17 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      # NuGet 缓存试过两轮，实测不划算，别再往这里加：
+      # 1) setup-dotnet 的 cache: true 需要 packages.lock.json（本仓库没开
+      #    RestorePackagesWithLockFile），打开后 Setup .NET 直接报
+      #    "Dependencies lock file is not found" 让作业失败 —— PR #113 首版 8a676fb
+      #    触发本工作流时当场红在 Setup .NET。
+      # 2) 换成显式 actions/cache 缓存 ~/.nuget/packages（条目 439 MB），命中跑
+      #    75814c6 对比冷跑 2487050：restore 花 10s，Build MSIX 60s → 50s，
+      #    作业总时长 159s → 150s，落在噪声里。这个项目的 restore 只占构建的
+      #    十秒级，缓存下载把省下的时间又吃回去，还多了一个会失败的步骤。
+      #    Windows 侧真正稳的收益是 release.yml 里「复用 daemon 矩阵制品」那条。
+
       - name: Read version
         id: ver
         shell: pwsh

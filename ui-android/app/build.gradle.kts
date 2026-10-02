@@ -9,7 +9,8 @@ plugins {
 
 android {
     namespace = "dev.lanchat"
-    compileSdk = 36
+    // androidx.navigation 2.10+ 等依赖要求 compileSdk >= 37
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "dev.lanchat"

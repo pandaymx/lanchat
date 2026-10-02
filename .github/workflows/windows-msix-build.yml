@@ -43,23 +43,16 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # 不用 setup-dotnet 自带的 cache: true：它要求仓库里已有 packages.lock.json，
-      # 本项目没开 RestorePackagesWithLockFile，打开后 Setup .NET 直接报
-      # "Dependencies lock file is not found" 并让作业失败
-      # （PR #113 首版 8a676fb 的 windows-msix-build 实跑日志）。
-      # 改为显式缓存 NuGet global-packages：包目录按 id/version 内容寻址，
-      # 缓存不全时 restore 只会补下缺失的包，不会用错版本。
-      # key 只由 csproj/props/targets 与 runner 平台决定，三个 Windows 作业
-      # （release.yml 的 windows-msi / msix + windows-msix-build.yml）共用同一份，
-      # ui-win 的 PR 构建会把 Release 需要的包提前喂热。
-      # 冷跑基线：Build MSIX 60s，缓存条目 439 MB。
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: lanchat-nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.props', '**/*.targets') }}
-          restore-keys: |
-            lanchat-nuget-${{ runner.os }}-
+      # NuGet 缓存试过两轮，实测不划算，别再往这里加：
+      # 1) setup-dotnet 的 cache: true 需要 packages.lock.json（本仓库没开
+      #    RestorePackagesWithLockFile），打开后 Setup .NET 直接报
+      #    "Dependencies lock file is not found" 让作业失败 —— PR #113 首版 8a676fb
+      #    触发本工作流时当场红在 Setup .NET。
+      # 2) 换成显式 actions/cache 缓存 ~/.nuget/packages（条目 439 MB），命中跑
+      #    75814c6 对比冷跑 2487050：restore 花 10s，Build MSIX 60s → 50s，
+      #    作业总时长 159s → 150s，落在噪声里。这个项目的 restore 只占构建的
+      #    十秒级，缓存下载把省下的时间又吃回去，还多了一个会失败的步骤。
+      #    Windows 侧真正稳的收益是 release.yml 里「复用 daemon 矩阵制品」那条。
 
       - name: Read version
         id: ver

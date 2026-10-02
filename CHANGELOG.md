@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.2](https://github.com/pandaymx/lanchat/compare/v0.16.1...v0.16.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** repair android sdk, macos runner and gomobile dependency ([#47](https://github.com/pandaymx/lanchat/issues/47)) ([84628e9](https://github.com/pandaymx/lanchat/commit/84628e988769466a9bca09f28f1cb3ce482718cc))
+
 ## [0.16.1](https://github.com/pandaymx/lanchat/compare/v0.16.0...v0.16.1) (2026-10-01)
 
 

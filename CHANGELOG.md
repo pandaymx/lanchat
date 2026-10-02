@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/pandaymx/lanchat/compare/v0.22.0...v0.23.0) (2026-10-02)
+
+
+### Features
+
+* **ui-win:** G2 channels with group chat [M9] ([#88](https://github.com/pandaymx/lanchat/issues/88)) ([563597d](https://github.com/pandaymx/lanchat/commit/563597d1d80ca91d07acc0d88002ee4c03f689e7))
+
 ## [0.22.0](https://github.com/pandaymx/lanchat/compare/v0.21.1...v0.22.0) (2026-10-02)
 
 

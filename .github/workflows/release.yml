@@ -210,7 +210,7 @@ jobs:
         run: yes | sdkmanager --licenses || true
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: sdkmanager "platforms;android-37" "build-tools;36.0.0"
 
       - name: Setup NDK
         id: ndk

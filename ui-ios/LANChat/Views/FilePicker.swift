@@ -38,8 +38,8 @@ struct FilePicker: UIViewControllerRepresentable {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             if Int64(size) > FileSize.largeFileThreshold {
                 DispatchQueue.main.async {
-                    Self.confirmLargeFile(name: url.lastPathComponent) { [parent] in
-                        parent.onPicked(url)
+                    Self.confirmLargeFile(name: url.lastPathComponent) { [self] in
+                        self.parent.onPicked(url)
                     }
                 }
             } else {

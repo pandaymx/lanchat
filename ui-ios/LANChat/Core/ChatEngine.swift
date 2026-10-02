@@ -3,9 +3,10 @@ import Foundation
 // gomobile Client（LCMobileClient）的 Swift 封装。
 //
 // gomobile 把 Go 包绑定为 ObjC（LC* 前缀），经桥接头导入 Swift：
-//   - 门面包级函数 NewClient  -> LCMobile.newClient(...)
+//   - 门面包级函数 NewClient  -> LCMobileNewClient(...) / LCMobileClient(init:...)
 //   - *mobile.Client          -> LCMobileClient
-//   - mobile.Listener         -> LCMobileListener 协议
+//   - mobile.Listener 协议    -> LCMobileListenerProtocol
+//     （同名 @interface LCMobileListener 是供子类化的基类）
 //
 // gomobile 无法绑定结构体切片 / []string，故查询方法均返回 JSON（Data），
 // 由本文件统一用 ChannelJSON 等 DTO 解码为本地模型。
@@ -45,7 +46,8 @@ final class ChatEngine {
                 self?.onEvent?(event)
             }
         }
-        client = LCMobile.newClient(nickname, "ios", downloadDir, bridge)
+        client = LCMobileClient(init: nickname, osName: "ios",
+                                downloadDir: downloadDir, listener: bridge)
     }
 
     func close() {
@@ -57,7 +59,7 @@ final class ChatEngine {
 
     func getState() async -> FullState {
         await runOnIO { [client] in
-            guard let data = client?.stateJSON(),
+            guard let data = client?.getStateJSON(),
                   let dto = try? JSONDecoder().decode(StateJSON.self, from: data) else {
                 return FullState(conn: "disconnected", server: "", selfId: "", nickname: "",
                                  peers: [], transfers: [], channels: [])
@@ -82,12 +84,22 @@ final class ChatEngine {
 
     @discardableResult
     func sendText(to: String, text: String) async throws -> String {
-        try await runOnIOThrowing { try $0.sendText(to, text: text, group: "") ?? "" }
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let msgID = c.sendText(to, text: text, group: "", error: &err)
+            if let err { throw err }
+            return msgID
+        }
     }
 
     @discardableResult
     func offerFile(to: String, path: String) async throws -> String {
-        try await runOnIOThrowing { try $0.offerFile(to, path: path) ?? "" }
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let transferID = c.offerFile(to, path: path, error: &err)
+            if let err { throw err }
+            return transferID
+        }
     }
 
     func respondFile(transferId: String, accept: Bool, dest: String) async throws {

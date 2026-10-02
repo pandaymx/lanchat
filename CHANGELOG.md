@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/pandaymx/lanchat/compare/v0.20.0...v0.21.0) (2026-10-02)
+
+
+### Features
+
+* **ui-ios:** add G2 channels with group chat and large-file boundary [M9] ([#90](https://github.com/pandaymx/lanchat/issues/90)) ([3552660](https://github.com/pandaymx/lanchat/commit/3552660053315ed7e992ce71e3885568bd6aa7e8))
+
 ## [0.20.0](https://github.com/pandaymx/lanchat/compare/v0.19.0...v0.20.0) (2026-10-02)
 
 

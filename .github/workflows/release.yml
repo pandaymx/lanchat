@@ -23,6 +23,13 @@ on:
 permissions:
   contents: write
 
+# gomobile 版本集中在此，不再用 @latest。
+# x/mobile 没有打 tag，@latest 每次解析到当期 pseudo-version，上游一合入
+# 同一个 tag 就会在不同时间构建出不同的 AAR/XCFramework —— 既不可复现，
+# 也让「发版失败」可能是上游变更而非本仓库改动引起。
+env:
+  GOMOBILE_VERSION: v0.0.0-20260908204917-8b95e45f8d3e
+
 jobs:
   resolve:
     name: Resolve release tag
@@ -200,6 +207,12 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          # Gradle 缓存：与 ci.yml 的 android-compile 用完全相同的写法（不额外指定
+          # cache-dependency-path），两个工作流因此落在同一个 cache key 上 ——
+          # Release 构建能直接命中刚才 PR 跑出来的 Gradle 分发 + 依赖缓存。
+          # 收益实证：ci.yml 的 android-compile 全程 158s（日志 Cache restored from key: gradle-…），
+          # 而本作业未开缓存时 Build release APK 单步 196s。
+          cache: gradle
 
       - uses: android-actions/setup-android@v3
         with:
@@ -223,7 +236,7 @@ jobs:
 
       - name: Install gomobile
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@${{ env.GOMOBILE_VERSION }}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: gomobile init
@@ -233,7 +246,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
 
       - name: Add gomobile dependency
-        run: go get golang.org/x/mobile@latest
+        run: go get golang.org/x/mobile@${{ env.GOMOBILE_VERSION }}
 
       - name: Generate AAR
         run: |
@@ -530,14 +543,14 @@ jobs:
 
       - name: Install gomobile
         run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@${{ env.GOMOBILE_VERSION }}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
       - name: Add gomobile dependency
-        run: go get golang.org/x/mobile@latest
+        run: go get golang.org/x/mobile@${{ env.GOMOBILE_VERSION }}
 
       - name: gomobile init
         run: gomobile init

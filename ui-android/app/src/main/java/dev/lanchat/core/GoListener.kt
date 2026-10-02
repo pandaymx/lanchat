@@ -27,9 +27,9 @@ class GoListener(
         onEvent(
             CoreEvent.PeerJoined(
                 Peer(
-                    id = peer.iD.orEmpty(),
+                    id = peer.ID.orEmpty(),
                     nickname = peer.nickname.orEmpty(),
-                    os = peer.oS.orEmpty(),
+                    os = peer.OS.orEmpty(),
                     status = peer.status.orEmpty(),
                 ),
             ),
@@ -101,7 +101,7 @@ class GoListener(
     }
 
     private fun GoTransfer.toModel(): Transfer = Transfer(
-        id = iD.orEmpty(),
+        id = ID.orEmpty(),
         direction = direction.orEmpty(),
         state = state.orEmpty(),
         kind = kind.orEmpty(),

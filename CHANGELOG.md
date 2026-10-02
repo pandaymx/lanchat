@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.15](https://github.com/pandaymx/lanchat/compare/v0.17.14...v0.17.15) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-android:** gomobile 字段改显式 getter 并解码 browseServersJSON ([#85](https://github.com/pandaymx/lanchat/issues/85)) ([364f8b2](https://github.com/pandaymx/lanchat/commit/364f8b2f7e54d7604761015ac503ee854e9f0c04))
+
 ## [0.17.14](https://github.com/pandaymx/lanchat/compare/v0.17.13...v0.17.14) (2026-10-02)
 
 

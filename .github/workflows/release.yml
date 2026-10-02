@@ -571,7 +571,9 @@ jobs:
             /p:GenerateAppxPackageOnBuild=true `
             /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
-            /p:GenerateAppInstallerFile=true /p:AppInstallerUri="" `
+            # 无托管下载地址，AppInstallerUri 必填但无法提供，
+            # 关闭 .appinstaller 生成，否则 WinAppSdkGenerateAppInstallerFile 报 MSB4044
+            /p:GenerateAppInstallerFile=false `
             /p:AppxPackageSigningEnabled=true `
             "/p:PackageCertificateKeyFile=$pfx" `
             /p:PackageCertificatePassword=lanchat `

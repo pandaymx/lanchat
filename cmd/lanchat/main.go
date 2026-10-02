@@ -73,11 +73,14 @@ func usage() {
                   [--auth-mode psk|none] [--psk-hash hash]
                   [--heartbeat-sec n] [--idle-timeout-sec n] [--shutdown-grace-sec n]
                   [--relay-enabled] [--relay-listen addr] [--relay-host ip] [--relay-force]
+                  [--discover] [--server-name name] [--server-id id]
   lanchat browse  [--timeout sec]
   lanchat genpsk
   lanchat version
 
 配置优先级: CLI flag > 环境变量 LANCHAT_* > yaml 文件 > 默认值
+mDNS 发现:  默认开启，启动后 lanchat browse 即可看到本服务；
+            --discover=false（或 LANCHAT_DISCOVERY_ENABLED=0）关闭广告
 `)
 }
 
@@ -100,6 +103,7 @@ func runServe(args []string) error {
 	fs.StringVar(&relayListen, "relay-listen", "", "中继 TCP 监听地址，如 :19100")
 	fs.StringVar(&relayHost, "relay-host", "", "宣告给客户端的中继主机（LAN IP）")
 	fs.BoolVar(&relayForce, "relay-force", false, "强制走中继、跳过直连（测试/排障）")
+	registerDiscoveryFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -127,12 +131,25 @@ func runServe(args []string) error {
 		return err
 	}
 
+	disc, err := resolveDiscovery(fs, cfg.Server.Path, cfg.Server.AuthMode)
+	if err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// mDNS 广告随信令端口就绪后启动，随本函数返回注销（§18.4 场景 1）。
+	shutdownDiscovery := startDiscovery(ctx, srv, disc, log.Printf)
+
 	log.Printf("lanchat %s 启动：监听 %s，WS 路径 %s，鉴权 %s，协议 %s",
 		version, opts.Listen, opts.Path, opts.AuthMode, protocol.ProtocolVersion)
-	return srv.Serve(ctx)
+	serveErr := srv.Serve(ctx)
+	// 先取消 ctx 再等广告协程收尾：Serve 可能在 Ready() 之前就失败（端口被占），
+	// 此时广告协程还卡在等待就绪上，不取消就会把退出路径挂死。
+	stop()
+	shutdownDiscovery()
+	return serveErr
 }
 
 // explicitFlags 从已解析的 FlagSet 提取用户显式给出的 flag（键为 config 包约定的 flagKey）。

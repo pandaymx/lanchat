@@ -562,6 +562,9 @@ jobs:
 
       - name: Build Sideload MSIX (signed)
         shell: pwsh
+        # 无托管下载地址，AppInstallerUri 必填但无法提供；
+        # 关闭 .appinstaller 生成，否则 WinAppSdkGenerateAppInstallerFile 报 MSB4044。
+        # 注意：说明性注释不能放在反引号续行中间，否则会打断 PowerShell 续行。
         run: |
           $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
           $pfx = Join-Path $env:GITHUB_WORKSPACE "dist\lanchat-sideload.pfx"
@@ -573,8 +576,6 @@ jobs:
             /p:GenerateAppxPackageOnBuild=true `
             /p:UapAppxPackageBuildMode=SideloadOnly `
             /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
-            # 无托管下载地址，AppInstallerUri 必填但无法提供，
-            # 关闭 .appinstaller 生成，否则 WinAppSdkGenerateAppInstallerFile 报 MSB4044
             /p:GenerateAppInstallerFile=false `
             /p:AppxPackageSigningEnabled=true `
             "/p:PackageCertificateKeyFile=$pfx" `

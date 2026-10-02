@@ -1,12 +1,12 @@
 package dev.lanchat.core
 
-import dev.lanchat.bindings.mobile.Channel as GoChannel
 import dev.lanchat.bindings.mobile.Listener
 import dev.lanchat.bindings.mobile.Peer as GoPeer
 import dev.lanchat.bindings.mobile.Transfer as GoTransfer
 import dev.lanchat.model.Channel
 import dev.lanchat.model.Peer
 import dev.lanchat.model.Transfer
+import org.json.JSONArray
 
 /**
  * 实现 gomobile 生成的 Listener 接口。
@@ -75,15 +75,28 @@ class GoListener(
         // M9 群组能力，M6 暂不处理矩阵。
     }
 
-    override fun onChannelUpdated(channels: Array<GoChannel>?) {
-        val list = channels?.map {
-            Channel(
-                id = it.iD.orEmpty(),
-                name = it.name.orEmpty(),
-                ownerId = it.ownerID.orEmpty(),
-                members = it.members?.toList() ?: emptyList(),
-            )
-        } ?: emptyList()
+    override fun onChannelUpdated(payload: ByteArray?) {
+        // Go 侧 gomobile 不支持结构体切片，改传 []appapi.Channel 的 JSON。
+        if (payload == null) {
+            onEvent(CoreEvent.ChannelsUpdated(emptyList()))
+            return
+        }
+        val list = buildList {
+            val arr = JSONArray(String(payload, Charsets.UTF_8))
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(
+                    Channel(
+                        id = o.optString("id"),
+                        name = o.optString("name"),
+                        ownerId = o.optString("ownerId"),
+                        members = o.optJSONArray("members")?.let { a ->
+                            (0 until a.length()).map { a.getString(it) }
+                        } ?: emptyList(),
+                    ),
+                )
+            }
+        }
         onEvent(CoreEvent.ChannelsUpdated(list))
     }
 

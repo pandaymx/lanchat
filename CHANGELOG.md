@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.8](https://github.com/pandaymx/lanchat/compare/v0.17.7...v0.17.8) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** 安装 platforms;android-37.0 而非 android-37 ([#71](https://github.com/pandaymx/lanchat/issues/71)) ([898dbc7](https://github.com/pandaymx/lanchat/commit/898dbc788fdb3607741869222c4291f5632b0e97))
+
 ## [0.17.7](https://github.com/pandaymx/lanchat/compare/v0.17.6...v0.17.7) (2026-10-02)
 
 

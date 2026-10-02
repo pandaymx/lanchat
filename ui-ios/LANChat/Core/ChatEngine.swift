@@ -95,7 +95,13 @@ final class ChatEngine {
     /// 频道群聊文本：group 为频道 ID，to 留空（对齐 core.SendText 语义）。
     @discardableResult
     func sendGroupText(group: String, text: String) async throws -> String {
-        try await runOnIOThrowing { try $0.sendText("", text: text, group: group) ?? "" }
+        // gomobile 把 (string, error) 生成成 error: NSErrorPointer 出参，不自动 throw。
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let msgID = c.sendText("", text: text, group: group, error: &err)
+            if let err { throw err }
+            return msgID
+        }
     }
 
     @discardableResult
@@ -111,12 +117,22 @@ final class ChatEngine {
     /// 频道群文件（kind=channel）；底层就绪前由 Go 返回错误。
     @discardableResult
     func offerFileToGroup(group: String, path: String) async throws -> String {
-        try await runOnIOThrowing { try $0.offerFile(toGroup: group, path: path) ?? "" }
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let transferID = c.offerFile(toGroup: group, path: path, error: &err)
+            if let err { throw err }
+            return transferID
+        }
     }
 
     @discardableResult
     func channelCreate(name: String, topic: String, private isPrivate: Bool) async throws -> String {
-        try await runOnIOThrowing { try $0.channelCreate(name, topic: topic, private: isPrivate) ?? "" }
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let channelID = c.channelCreate(name, topic: topic, private: isPrivate, error: &err)
+            if let err { throw err }
+            return channelID
+        }
     }
 
     func channelJoin(channelID: String) async throws {

@@ -55,10 +55,10 @@ struct FilePicker: UIViewControllerRepresentable {
 
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             if Int64(size) > FileSize.largeFileThreshold {
+                let name = url.lastPathComponent
+                let message = String(format: parent.scenario.largeFileMessage, name)
                 DispatchQueue.main.async {
-                    Self.confirmLargeFile(name: url.lastPathComponent,
-                                          message: String(format: parent.scenario.largeFileMessage,
-                                                          name)) { [parent] in
+                    Self.confirmLargeFile(message: message) { [parent] in
                         parent.onPicked(url)
                     }
                 }
@@ -67,7 +67,7 @@ struct FilePicker: UIViewControllerRepresentable {
             }
         }
 
-        private static func confirmLargeFile(name: String, message: String,
+        private static func confirmLargeFile(message: String,
                                              confirm: @escaping () -> Void) {
             guard let scene = UIApplication.shared.connectedScenes
                 .compactMap({ $0 as? UIWindowScene }).first,

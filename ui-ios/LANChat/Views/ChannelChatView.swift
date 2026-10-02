@@ -34,7 +34,7 @@ struct ChannelChatView: View {
                     }
                     .padding(.vertical, 8)
                 }
-                .onChange(of: thread.count) { _, _ in
+                .onChange(of: thread.count) { _ in
                     if let last = thread.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
@@ -86,7 +86,7 @@ struct ChannelChatView: View {
             }
             .ignoresSafeArea()
         }
-        .onChange(of: store.isMember(live)) { _, isMember in
+        .onChange(of: store.isMember(live)) { isMember in
             // 退出频道后自动返回列表。
             if !isMember { dismiss() }
         }

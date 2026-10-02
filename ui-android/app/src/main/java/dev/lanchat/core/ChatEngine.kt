@@ -58,27 +58,21 @@ class ChatEngine {
         client = null
     }
 
-    suspend fun getState(): FullState = ioOp {
-        val data = client!!.stateJSON
-        if (data == null) {
-            FullState(conn = "disconnected", server = "", selfId = "", nickname = "",
-                peers = emptyList(), transfers = emptyList(), channels = emptyList())
-        } else {
-            JSONObject(String(data, Charsets.UTF_8)).toFullState()
-        }
-    }
+    suspend fun getState(): FullState = ioOp { decodeState(client!!.stateJSON) }
 
     suspend fun connect(addr: String, psk: String): Unit = ioOp { client!!.connect(addr, psk) }
 
-    suspend fun browseServers(): List<ServerInfo> = ioOp {
-        JSONArray(String(client!!.browseServersJSON(), Charsets.UTF_8)).toServerList()
-    }
+    suspend fun browseServers(): List<ServerInfo> =
+        ioOp { decodeServers(client!!.browseServersJSON) }
 
     suspend fun sendText(to: String, text: String, group: String = ""): String =
         ioOp { client!!.sendText(to, text, group) }
 
     suspend fun offerFile(to: String, path: String): String =
         ioOp { client!!.offerFile(to, path) }
+
+    suspend fun offerFileToGroup(group: String, path: String): String =
+        ioOp { client!!.offerFileToGroup(group, path) }
 
     suspend fun respondFile(transferId: String, accept: Boolean, dest: String): Unit =
         ioOp { client!!.respondFile(transferId, accept, dest) }
@@ -94,6 +88,22 @@ class ChatEngine {
 
     suspend fun pickDownloadDir(path: String): Unit = ioOp { client!!.pickDownloadDir(path) }
 
+    /** 创建频道；private 频道仅可经邀请加入。返回值频道 ID 当前为空（以 channel.updated 为准）。 */
+    suspend fun channelCreate(name: String, topic: String, private: Boolean): Unit =
+        ioOp { client!!.channelCreate(name, topic, private) }
+
+    suspend fun channelJoin(channelId: String): Unit =
+        ioOp { client!!.channelJoin(channelId) }
+
+    suspend fun channelInvite(channelId: String, memberId: String): Unit =
+        ioOp { client!!.channelInvite(channelId, memberId) }
+
+    suspend fun channelLeave(channelId: String): Unit =
+        ioOp { client!!.channelLeave(channelId) }
+
+    suspend fun channelList(): List<Channel> =
+        ioOp { decodeChannels(client!!.channelListJSON) }
+
     private suspend fun <T> ioOp(block: () -> T): T =
         withContext(Dispatchers.IO) {
             try {
@@ -102,71 +112,114 @@ class ChatEngine {
                 throw e
             }
         }
-
-    // ---- JSON（appapi DTO） → 本地模型 ----
-
-    private fun JSONObject.toFullState(): FullState = FullState(
-        conn = optString("conn", "disconnected"),
-        server = optString("server"),
-        selfId = optString("selfId"),
-        nickname = optString("nickname"),
-        peers = optJSONArray("peers").toPeerList(),
-        transfers = optJSONArray("transfers").toTransferList(),
-        channels = optJSONArray("channels").toChannelList(),
-    )
-
-    private fun JSONObject.toPeer(): Peer = Peer(
-        id = optString("id"),
-        nickname = optString("nickname"),
-        os = optString("os"),
-        status = optString("status"),
-    )
-
-    private fun JSONObject.toServer(): ServerInfo = ServerInfo(
-        name = optString("name"),
-        id = optString("id"),
-        addr = optString("addr"),
-        version = optString("version"),
-        authMode = optString("authMode").ifEmpty { "psk" },
-    )
-
-    private fun JSONObject.toTransfer(): Transfer = Transfer(
-        id = optString("id"),
-        direction = optString("direction"),
-        state = optString("state"),
-        kind = optString("kind"),
-        peerId = optString("peerId"),
-        groupId = optString("groupId"),
-        name = optString("name"),
-        size = optLong("size"),
-        bytesDone = optLong("bytesDone"),
-        speedBps = optLong("speedBps"),
-        viaRelay = optBoolean("viaRelay"),
-        errorReason = optString("errorReason"),
-    )
-
-    private fun JSONObject.toChannel(): Channel = Channel(
-        id = optString("id"),
-        name = optString("name"),
-        ownerId = optString("ownerId"),
-        members = optJSONArray("members").toStringList(),
-    )
-
-    private fun JSONArray?.toPeerList(): List<Peer> =
-        this?.let { (0 until length()).map { getJSONObject(it).toPeer() } } ?: emptyList()
-
-    private fun JSONArray?.toServerList(): List<ServerInfo> =
-        this?.let { (0 until length()).map { getJSONObject(it).toServer() } } ?: emptyList()
-
-    private fun JSONArray?.toTransferList(): List<Transfer> =
-        this?.let { (0 until length()).map { getJSONObject(it).toTransfer() } } ?: emptyList()
-
-    private fun JSONArray?.toChannelList(): List<Channel> =
-        this?.let { (0 until length()).map { getJSONObject(it).toChannel() } } ?: emptyList()
-
-    private fun JSONArray?.toStringList(): List<String> =
-        this?.let { (0 until length()).map { getString(it) } } ?: emptyList()
 }
+
+// ---- Go JSON 快照 → 本地模型 ----
+
+internal fun decodeState(payload: ByteArray?): FullState {
+    if (payload == null) return FullState()
+    val json = JSONObject(String(payload))
+    return FullState(
+        conn = json.optString("conn", "disconnected"),
+        server = json.optString("server"),
+        selfId = json.optString("selfId"),
+        nickname = json.optString("nickname"),
+        peers = json.optJSONArray("peers").toPeerList(),
+        transfers = json.optJSONArray("transfers").toTransferList(),
+        channels = json.optJSONArray("channels").toChannelList(),
+    )
+}
+
+internal fun decodeServers(payload: ByteArray?): List<ServerInfo> {
+    val array = payload?.toJsonArray() ?: return emptyList()
+    return buildList {
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            add(
+                ServerInfo(
+                    name = item.optString("name"),
+                    id = item.optString("id"),
+                    addr = item.optString("addr"),
+                    version = item.optString("version"),
+                    authMode = item.optString("authMode").ifEmpty { "psk" },
+                ),
+            )
+        }
+    }
+}
+
+internal fun decodeChannels(payload: ByteArray?): List<Channel> =
+    payload.toJsonArray().toChannelList()
+
+private fun JSONArray?.toChannelList(): List<Channel> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (i in 0 until length()) {
+            val item = optJSONObject(i) ?: continue
+            add(
+                Channel(
+                    id = item.optString("id"),
+                    name = item.optString("name"),
+                    ownerId = item.optString("ownerId"),
+                    private = item.optBoolean("private", false),
+                    topic = item.optString("topic"),
+                    members = item.optJSONArray("members").toStringList(),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toPeerList(): List<Peer> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (i in 0 until length()) {
+            val item = optJSONObject(i) ?: continue
+            add(
+                Peer(
+                    id = item.optString("id"),
+                    nickname = item.optString("nickname"),
+                    os = item.optString("os"),
+                    status = item.optString("status"),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toTransferList(): List<Transfer> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (i in 0 until length()) {
+            val item = optJSONObject(i) ?: continue
+            add(
+                Transfer(
+                    id = item.optString("id"),
+                    direction = item.optString("direction"),
+                    state = item.optString("state"),
+                    kind = item.optString("kind"),
+                    peerId = item.optString("peerId"),
+                    groupId = item.optString("groupId"),
+                    name = item.optString("name"),
+                    size = item.optLong("size"),
+                    bytesDone = item.optLong("bytesDone"),
+                    speedBps = item.optLong("speedBps"),
+                    viaRelay = item.optBoolean("viaRelay", false),
+                    errorReason = item.optString("errorReason"),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toStringList(): List<String> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (i in 0 until length()) add(optString(i))
+    }
+}
+
+private fun ByteArray?.toJsonArray(): JSONArray? = this?.let { JSONArray(String(it)) }
 
 /** 拼接目录与文件名（Go 侧运行时按 Linux 风格处理路径）。 */
 private fun joinPath(dir: String, name: String): String =

@@ -72,13 +72,14 @@
             </ListView.ItemTemplate>
         </ListView>
 
+        <!-- WinUI 的 Border 继承 Decorator，没有 IsEnabled；禁用状态放在内层 Grid 上 -->
         <Border Grid.Row="2"
                 Padding="10,8"
-                IsEnabled="{Binding Chat.CanSend}"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="0,1,0,0">
-            <Grid ColumnSpacing="8">
+            <Grid ColumnSpacing="8"
+                  IsEnabled="{Binding Chat.CanSend}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />

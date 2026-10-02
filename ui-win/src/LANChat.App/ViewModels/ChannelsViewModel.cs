@@ -89,6 +89,9 @@ public sealed record ChannelItem
     public Channel Channel { get; }
     public bool IsMember { get; }
 
+    /// <summary>成员数展示文案；XAML 里 StringFormat 的 {0} 会被编译器误解析，故在视图模型侧拼好。</summary>
+    public string MemberCountText => $"{Channel.Members.Count} 名成员";
+
     public ChannelItem(Channel channel, string? selfId)
     {
         Channel = channel;

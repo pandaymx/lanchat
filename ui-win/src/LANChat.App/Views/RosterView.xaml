@@ -100,7 +100,7 @@
                                     </Border>
                                     <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Channel.Name}" FontWeight="SemiBold" />
-                                        <TextBlock Text="{Binding Channel.Members.Count, StringFormat='{0} 名成员'}"
+                                        <TextBlock Text="{Binding MemberCountText}"
                                                    FontSize="12"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </StackPanel>

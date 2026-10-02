@@ -42,11 +42,22 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-          # NuGet global-packages 缓存，省下每次 PR 的 restore。
-          # 刻意不指定 cache-dependency-path：与 release.yml 的两个 Windows 作业
-          # 使用同一套默认 pattern，两者落在同一个 cache key 上，
-          # 于是 ui-win 的 PR 构建会把 Release 需要的包提前喂热。
-          cache: true
+        # setup-dotnet 自带的 cache: true 需要 packages.lock.json（本仓库没开
+        # RestorePackagesWithLockFile），打开后 Setup .NET 直接报
+        # "Dependencies lock file is not found" 并让作业失败，
+        # 见 PR #113 的 windows-msix-build 失败日志。
+        # 改为显式缓存 NuGet global-packages：包目录按 id/version 内容寻址，
+        # 缓存不全时 restore 只会补下缺失的包，不会用错版本。
+        # key 只由 csproj/props/targets 与 runner 平台决定，三个 Windows 作业
+        # （release.yml 的 windows-msi / msix + windows-msix-build.yml）共用一份，
+        # ui-win 的 PR 构建会把 Release 需要的包提前喂热。
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: lanchat-nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/*.props', '**/*.targets') }}
+          restore-keys: |
+            lanchat-nuget-${{ runner.os }}-
 
       - name: Read version
         id: ver

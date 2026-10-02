@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.2](https://github.com/pandaymx/lanchat/compare/v0.17.1...v0.17.2) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-ios:** decode JSON bindings payloads with JSONDecoder ([#57](https://github.com/pandaymx/lanchat/issues/57)) ([8484591](https://github.com/pandaymx/lanchat/commit/84845914419d87da1ede0213afb02127cecfd0b7))
+
 ## [0.17.1](https://github.com/pandaymx/lanchat/compare/v0.17.0...v0.17.1) (2026-10-02)
 
 

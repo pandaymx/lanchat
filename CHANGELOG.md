@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/pandaymx/lanchat/compare/v0.18.0...v0.19.0) (2026-10-02)
+
+
+### Features
+
+* **ui-android:** add G2 channels with group chat and foreground transfer [M9] ([#91](https://github.com/pandaymx/lanchat/issues/91)) ([687241b](https://github.com/pandaymx/lanchat/commit/687241b5293280b3ffd491a338d9b8c2cea9fada))
+
 ## [0.18.0](https://github.com/pandaymx/lanchat/compare/v0.17.15...v0.18.0) (2026-10-02)
 
 

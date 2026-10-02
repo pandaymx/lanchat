@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.3](https://github.com/pandaymx/lanchat/compare/v0.16.2...v0.16.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** repair release build failures for windows, android, linux, ios ([#49](https://github.com/pandaymx/lanchat/issues/49)) ([20aebbe](https://github.com/pandaymx/lanchat/commit/20aebbe379ccfa25d2c994680b88c816d9cd69a1))
+
 ## [0.16.2](https://github.com/pandaymx/lanchat/compare/v0.16.1...v0.16.2) (2026-10-02)
 
 

@@ -66,6 +66,10 @@ type Client struct {
 
 	// gen 标识当前会话，重连后递增；过期会话的 watcher 据此退出。
 	gen uint64
+
+	// forceRelay 为仅测试使用的钩子：禁止群文件数据面直连（外拨与入站均
+	// 拒绝），确定性迫使传输回退中继。生产代码路径恒为 false。
+	forceRelay bool
 }
 
 // Options 构造客户端时的参数。

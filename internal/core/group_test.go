@@ -302,6 +302,10 @@ func writeRandomFile(t *testing.T, dir, name string, size int) (string, []byte) 
 
 const swarmTestSize = 3 * swarmChunk // 3 块：覆盖多块请求与成员间供块。
 
+// swarmWaitTimeout 是群文件传输完成的等待上限：-race 全量并发负载下加密
+// 数据面 + 12 MiB 落盘偶发较慢，放宽以避免环境性 flaky。
+const swarmWaitTimeout = 30 * time.Second
+
 // swarmChunk 是测试用“块大小”。真实 BlockSize 为 4 MiB，测试以整倍数控制块数，
 // 并在读完后比对原始内容。
 const swarmChunk = 4 << 20
@@ -334,12 +338,12 @@ func TestGroupFileSwarm(t *testing.T) {
 	}
 
 	// 三方均完成：源的 OnTransferDone（全部成员收齐）+ 两名接收者各自完成。
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, swarmWaitTimeout, func() bool {
 		_, _, done, _ := src.l.snapshot()
 		return len(done) == 1
 	})
 	for _, n := range []swarmNode{r1, r2} {
-		waitFor(t, 15*time.Second, func() bool {
+		waitFor(t, swarmWaitTimeout, func() bool {
 			_, _, done, _ := n.l.snapshot()
 			return len(done) == 1
 		})
@@ -386,11 +390,11 @@ func TestGroupFileN1(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, swarmWaitTimeout, func() bool {
 		_, _, done, _ := src.l.snapshot()
 		return len(done) == 1
 	})
-	waitFor(t, 15*time.Second, func() bool {
+	waitFor(t, swarmWaitTimeout, func() bool {
 		_, _, done, _ := r.l.snapshot()
 		return len(done) == 1
 	})
@@ -401,6 +405,60 @@ func TestGroupFileN1(t *testing.T) {
 	}
 	if string(rcv) != string(data) {
 		t.Fatal("N=1 接收内容与源不一致")
+	}
+}
+
+// TestGroupFileRelayFallback 直连失败时回退中继：接收方在接受前把源候选
+// 替换为不可达地址，迫使裁决拨号方直连失败 → RELAY_REQUEST/GRANT → 中继
+// 数据面完成。验证落盘内容一致且任务进度曾带 ViaRelay=true。
+func TestGroupFileRelayFallback(t *testing.T) {
+	url := startServerWithRelay(t)
+	src := newSwarmNode(t, "alice")
+	rcv := newSwarmNode(t, "bob")
+	// 双方都禁止直连：单条 TCP 双向承载帧，必须让「外拨」与「入站」两个
+	// 方向同时失败，才能确定性迫使传输经中继配对完成。
+	src.cl.forceRelay = true
+	rcv.cl.forceRelay = true
+	connectSwarmNodes(t, url, src, rcv)
+
+	srcPath, data := writeRandomFile(t, src.dir, "relay.bin", swarmTestSize)
+	tid, err := src.cl.OfferFileToGroup("*", srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := rcv.waitForGroupTask(t)
+	if got.ID != tid {
+		t.Fatalf("接收任务 ID 不匹配: got %s want %s", got.ID, tid)
+	}
+
+	dest := filepath.Join(rcv.dir, "relay.bin")
+	if err := rcv.cl.RespondFile(tid, true, dest); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 20*time.Second, func() bool {
+		_, _, done, _ := rcv.l.snapshot()
+		return len(done) == 1
+	})
+
+	out, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != string(data) {
+		t.Fatal("中继回退后落盘内容与源不一致")
+	}
+
+	// 进度流中应出现过 ViaRelay=true（⚠ 中继徽章）。
+	relayed := false
+	for _, p := range rcv.l.progressSnapshot() {
+		if p.ID == tid && p.ViaRelay {
+			relayed = true
+		}
+	}
+	if !relayed {
+		t.Fatal("接收方进度未出现 ViaRelay=true，回退可能未发生")
 	}
 }
 

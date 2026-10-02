@@ -72,6 +72,13 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		c.routeGroupSignal(env, evLeave)
 	case protocol.GroupProgress:
 		c.routeGroupSignal(env, evProgress)
+	case protocol.GroupKey:
+		c.deliverGroupKey(env)
+	case protocol.RelayGrant:
+		// 群文件 grant 带 PeerID，优先投递群任务；未消费再按 1:1 任务路由。
+		if !c.deliverGroupRelayGrant(env) {
+			c.routeToTransfer(env)
+		}
 
 	case protocol.AuthFail:
 		// 握手后收到鉴权失败按断连处理（watch 会决定重连策略）。

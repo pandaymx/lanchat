@@ -34,11 +34,18 @@ func (h *hub) onRelayRequest(c *Client, env *protocol.Envelope) {
 		relayAddr = h.relaySrv.AdvertiseAddr(h.relayHost)
 	}
 
-	grant := protocol.RelayGrantPayload{
+	// 双方收到的 grant 各自标明对端成员，客户端据此路由到对应群任务
+	// （1:1 路径下 PeerID 仅为附加信息，不影响既有行为）。
+	h.send(peer, protocol.RelayGrant, protocol.RelayGrantPayload{
 		TransferID: p.TransferID,
 		RelayID:    relayID,
 		RelayAddr:  relayAddr,
-	}
-	h.send(peer, protocol.RelayGrant, grant)
-	h.send(c, protocol.RelayGrant, grant)
+		PeerID:     c.id,
+	})
+	h.send(c, protocol.RelayGrant, protocol.RelayGrantPayload{
+		TransferID: p.TransferID,
+		RelayID:    relayID,
+		RelayAddr:  relayAddr,
+		PeerID:     p.PeerID,
+	})
 }

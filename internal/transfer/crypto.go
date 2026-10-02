@@ -15,10 +15,14 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 )
 
 // hkdfInfo 是 KEK 派生的上下文绑定信息，防止跨协议复用。
 const hkdfInfo = "lanchat/relay-kek/v1"
+
+// groupConnInfo 是群文件块连接密钥派生的上下文绑定信息。
+const groupConnInfo = "lanchat/group-conn/v1"
 
 // generateX25519 生成一对一次性 X25519 密钥。
 func generateX25519() (*ecdh.PrivateKey, error) {
@@ -121,6 +125,29 @@ func WrapKey(kek, fileKey []byte) (string, error) { return wrapKey(kek, fileKey)
 
 // UnwrapKey 用 KEK 解密信封还原文件密钥。
 func UnwrapKey(kek []byte, wrapped string) ([]byte, error) { return unwrapKey(kek, wrapped) }
+
+// DeriveGroupConnKey 为一条群文件块连接派生独立的 AES-256 连接密钥。
+//
+// 派生输入 = ECDH(priv, peerPub)（每连接一次性临时 X25519）+ salt=fileKey
+// （本次群文件对称密钥）。把 fileKey 混入 HKDF salt 的作用：
+//   - 每条连接拿到独立密钥，避免多连接共用 fileKey 时 GCM nonce 冲突；
+//   - 被动观察者拿不到 fileKey，即便记录全部流量也无法推导连接密钥；
+//   - 中间人（含被攻陷的中继）即使替换 HELLO 中的临时公钥，因双方算出的
+//     ECDH 值都被各自 fileKey 绑定，其无法完成两边一致的 MITM。
+func DeriveGroupConnKey(priv *ecdh.PrivateKey, peerPub *ecdh.PublicKey, fileKey []byte) ([]byte, error) {
+	secret, err := priv.ECDH(peerPub)
+	if err != nil {
+		return nil, fmt.Errorf("transfer: group ecdh: %w", err)
+	}
+	key, err := hkdf.Key(sha256.New, secret, fileKey, groupConnInfo, 32)
+	if err != nil {
+		return nil, fmt.Errorf("transfer: group hkdf: %w", err)
+	}
+	return key, nil
+}
+
+// NewEncConn 用给定密钥在 raw 之上构造透明 AES-GCM 加密连接（net.Conn）。
+func NewEncConn(raw net.Conn, key []byte) (net.Conn, error) { return newEncConn(raw, key) }
 
 // newGCM 以 32 字节密钥构造 AES-256-GCM。
 func newGCM(key []byte) (cipher.AEAD, error) {

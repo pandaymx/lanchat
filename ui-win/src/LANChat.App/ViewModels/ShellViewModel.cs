@@ -13,9 +13,13 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
 
     public LoginViewModel Login { get; }
     public RosterViewModel Roster { get; }
+    public ChannelsViewModel Channels { get; }
     public ChatViewModel Chat { get; }
     public TransfersViewModel Transfers { get; }
     public SettingsViewModel Settings { get; }
+
+    /// <summary>当前用户 id（频道成员判定用）。</summary>
+    public string? SelfId { get; private set; }
 
     [ObservableProperty]
     private ConnState _conn = ConnState.Disconnected;
@@ -36,6 +40,7 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
         _ui = ui;
         Login = new LoginViewModel(services, ui);
         Roster = new RosterViewModel(services, ui);
+        Channels = new ChannelsViewModel(services, ui);
         Chat = new ChatViewModel(services, ui);
         Transfers = new TransfersViewModel(services, ui);
         Settings = new SettingsViewModel(services, ui);
@@ -72,6 +77,7 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
                     OnPropertyChanged(nameof(ShowLogin));
                     Login.HandleConnChanged(conn, reason);
                     Roster.HandleConnChanged(conn);
+                    Channels.HandleConnChanged(conn);
                 });
                 break;
             case "peer.joined":
@@ -84,6 +90,11 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
                 break;
             case "msg.received":
                 _ui.Post(() => Chat.HandleMessageReceived(parameters));
+                break;
+            case "channel.updated":
+                var channels = parameters.GetProperty("channels")
+                    .Deserialize<IReadOnlyList<Channel>>(Ipc.IpcClient.JsonOptions) ?? [];
+                _ui.Post(() => ApplyChannels(channels));
                 break;
             case "transfer.progress":
                 var transfer = parameters.GetProperty("transfer")
@@ -117,10 +128,24 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
             Conn = state.Conn;
             OnPropertyChanged(nameof(IsConnected));
             OnPropertyChanged(nameof(ShowLogin));
+            SelfId = state.SelfId;
+            Chat.SelfId = state.SelfId ?? "";
             Roster.ReplacePeers(state.Peers);
             Transfers.ReplaceTransfers(state.Transfers);
+            ApplyChannels(state.Channels);
             Login.Initialize(state);
         });
+    }
+
+    /// <summary>把 channel.updated / GetState 的频道快照同步到列表与当前会话。</summary>
+    private void ApplyChannels(IReadOnlyList<Channel> channels)
+    {
+        Channels.ReplaceChannels(channels, SelfId);
+        if (Chat.CurrentChannel is { Id: var currentId })
+        {
+            var updated = channels.FirstOrDefault(c => c.Id == currentId);
+            Chat.HandleChannelUpdated(updated);
+        }
     }
 
     internal static ConnState ParseConn(string? value) => value switch

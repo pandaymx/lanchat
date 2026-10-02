@@ -40,6 +40,7 @@ public partial class App : Application
         _shell = new ShellViewModel(_services, uiThread);
         _shell.Chat.PeerResolver = id => _shell.Roster.FindPeer(id);
         _shell.Roster.SelectedPeerChanged += peer => _shell.Chat.SelectConversation(peer);
+        _shell.Channels.SelectedChannelChanged += channel => _shell.Chat.SelectChannelConversation(channel);
 
         _window.Initialize(_shell, uiThread);
         await _shell.InitializeAsync();

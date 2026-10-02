@@ -15,9 +15,29 @@
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="0,0,0,1">
-            <TextBlock Text="{Binding Chat.CurrentPeer.Nickname, FallbackValue=选择联系人开始聊天}"
-                       FontSize="16"
-                       FontWeight="SemiBold" />
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0"
+                           Text="{Binding Chat.ConversationTitle, FallbackValue=选择联系人或频道开始聊天}"
+                           FontSize="16"
+                           FontWeight="SemiBold" />
+                <Button Grid.Column="1"
+                        Content="加入频道"
+                        FontSize="12"
+                        Padding="8,2"
+                        Visibility="{Binding Chat.CanJoinChannel, Converter={StaticResource BoolToVisibilityConverter}}"
+                        Click="JoinChannelButton_Click" />
+                <Button Grid.Column="2"
+                        Content="成员"
+                        FontSize="12"
+                        Padding="8,2"
+                        Visibility="{Binding Chat.CurrentChannel, Converter={StaticResource NullToVisibilityConverter}}"
+                        Click="MembersButton_Click" />
+            </Grid>
         </Border>
 
         <ListView Grid.Row="1"
@@ -52,6 +72,8 @@
             </ListView.ItemTemplate>
         </ListView>
 
+        <!-- WinUI 3 的 IsEnabled 只声明在 Control 上，Border/Grid/StackPanel 用它会报 WMC0011，
+             因此逐个绑到可交互控件 -->
         <Border Grid.Row="2"
                 Padding="10,8"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -65,13 +87,16 @@
                 </Grid.ColumnDefinitions>
                 <Button Grid.Column="0"
                         Content="文件"
+                        IsEnabled="{Binding Chat.CanSend}"
                         Command="{Binding Chat.PickFileCommand}" />
                 <TextBox Grid.Column="1"
                          PlaceholderText="输入消息，Enter 发送"
+                         IsEnabled="{Binding Chat.CanSend}"
                          Text="{Binding Chat.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                          KeyDown="DraftBox_KeyDown" />
                 <Button Grid.Column="2"
                         Content="发送"
+                        IsEnabled="{Binding Chat.CanSend}"
                         Command="{Binding Chat.SendCommand}" />
             </Grid>
         </Border>

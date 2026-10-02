@@ -18,4 +18,7 @@ public sealed record Transfer
 
     /// <summary>0~1 的进度，供进度条绑定。</summary>
     public double Progress => Size > 0 ? (double)BytesDone / Size : 0;
+
+    /// <summary>是否为群组（频道 / swarm）传输，用于列表展示 groupId。</summary>
+    public bool HasGroup => !string.IsNullOrEmpty(GroupId);
 }

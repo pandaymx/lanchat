@@ -8,6 +8,9 @@ public sealed record ChatMessage
     public string FromName { get; init; } = "";
     public string Text { get; init; } = "";
 
+    /// <summary>群聊消息所属频道 id（msg.received 的 group；单播为空）。</summary>
+    public string? GroupId { get; init; }
+
     /// <summary>text / sticker。</summary>
     public string Type { get; init; } = "text";
 

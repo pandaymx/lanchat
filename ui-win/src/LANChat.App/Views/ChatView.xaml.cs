@@ -32,6 +32,37 @@ public sealed partial class ChatView : UserControl
         shell.Chat.IncomingFileOffer += OnIncomingFileOffer;
     }
 
+    private async void JoinChannelButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell?.Chat.CurrentChannel is { } channel)
+        {
+            await _shell.Channels.JoinAsync(channel);
+        }
+    }
+
+    private async void MembersButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is null)
+        {
+            return;
+        }
+
+        var panel = new StackPanel { Spacing = 4 };
+        foreach (var member in _shell.Chat.CurrentMembers)
+        {
+            panel.Children.Add(new TextBlock { Text = member });
+        }
+
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "频道成员",
+            Content = new ScrollViewer { Content = panel, MaxHeight = 320 },
+            CloseButtonText = "关闭",
+        };
+        await dialog.ShowAsync();
+    }
+
     private void DraftBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
         if (e.Key == Windows.System.VirtualKey.Enter)
@@ -41,7 +72,7 @@ public sealed partial class ChatView : UserControl
         }
     }
 
-    private async void OnFilePickRequested(Models.Peer peer)
+    private async void OnFilePickRequested()
     {
         if (_shell is null || _mainWindow is null)
         {

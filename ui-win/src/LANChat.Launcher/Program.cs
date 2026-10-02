@@ -18,16 +18,17 @@ internal static class Program
 
     private static void Main()
     {
+        string? logDir = null;
         try
         {
-            var local = ApplicationData.Current.LocalFolder.Path;
-            var configPath = Path.Combine(local, ConfigFile);
+            logDir = ResolveLocalStateDir();
+            var configPath = Path.Combine(logDir, ConfigFile);
             var config = LoadConfig(configPath);
 
             var daemonPath = Path.Combine(AppContext.BaseDirectory, DaemonExe);
             if (!File.Exists(daemonPath))
             {
-                Log(local, $"未找到 {DaemonExe}：{daemonPath}");
+                Log(logDir, $"未找到 {DaemonExe}：{daemonPath}");
                 return;
             }
 
@@ -57,12 +58,33 @@ internal static class Program
         {
             try
             {
-                Log(ApplicationData.Current.LocalFolder.Path, ex.ToString());
+                Log(logDir ?? ResolveLocalStateDir(), ex.ToString());
             }
             catch
             {
                 // 已无法记录日志，静默退出
             }
+        }
+    }
+
+    /// <summary>
+    /// UI 与 Launcher 共享的 daemon 配置目录。
+    /// MSIX 下为包内 LocalState；unpackaged 进程没有包标识，
+    /// ApplicationData.Current 会抛 InvalidOperationException，
+    /// 此时回退到与 Settings.cs 一致的 %APPDATA%\LANChat。
+    /// </summary>
+    private static string ResolveLocalStateDir()
+    {
+        try
+        {
+            return ApplicationData.Current.LocalFolder.Path;
+        }
+        catch (InvalidOperationException)
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var dir = Path.Combine(appData, "LANChat");
+            Directory.CreateDirectory(dir);
+            return dir;
         }
     }
 

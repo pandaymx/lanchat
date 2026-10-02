@@ -571,9 +571,9 @@ jobs:
             /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
             /p:GenerateAppInstallerFile=true /p:AppInstallerUri="" `
             /p:AppxPackageSigningEnabled=true `
-            "/p:AppxPackageSigningKeyFile=$pfx" `
-            /p:AppxPackageSigningKeyPassword=lanchat `
-            "/p:AppxPackageSigningThumbprint=${{ steps.cert.outputs.thumb }}" `
+            "/p:PackageCertificateKeyFile=$pfx" `
+            /p:PackageCertificatePassword=lanchat `
+            "/p:PackageCertificateThumbprint=${{ steps.cert.outputs.thumb }}" `
             "/p:DaemonPath=$daemon" `
             /p:AppxPackageDir="$env:GITHUB_WORKSPACE\dist\SideloadPackages\\"
         working-directory: ui-win

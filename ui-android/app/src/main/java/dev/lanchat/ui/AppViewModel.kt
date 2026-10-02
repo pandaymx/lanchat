@@ -4,7 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.lanchat.core.CoreEvent
 import dev.lanchat.core.ServiceLocator
+import dev.lanchat.model.Channel
 import dev.lanchat.model.ChatMessage
+import dev.lanchat.model.Conversations
 import dev.lanchat.model.Peer
 import dev.lanchat.model.ServerInfo
 import dev.lanchat.model.Transfer
@@ -21,7 +23,8 @@ data class AppUi(
     val nickname: String = "",
     val peers: List<Peer> = emptyList(),
     val transfers: List<Transfer> = emptyList(),
-    val messagesByPeer: Map<String, List<ChatMessage>> = emptyMap(),
+    val channels: List<Channel> = emptyList(),
+    val messagesByConversation: Map<String, List<ChatMessage>> = emptyMap(),
     val discoveredServers: List<ServerInfo> = emptyList(),
     val busy: Boolean = false,
     val error: String? = null,
@@ -56,6 +59,7 @@ class AppViewModel : ViewModel() {
                     nickname = state.nickname,
                     peers = state.peers,
                     transfers = state.transfers,
+                    channels = state.channels,
                 )
             }
         }
@@ -95,10 +99,79 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun sendChannelText(channelId: String, text: String) {
+        val content = text.trim()
+        if (content.isEmpty()) return
+        launchOp {
+            val msgId = engine.sendText(to = "", text = content, group = channelId)
+            appendMessage(
+                ChatMessage(
+                    peerId = "",
+                    msgId = msgId,
+                    text = content,
+                    inbound = false,
+                    timestamp = System.currentTimeMillis(),
+                    group = channelId,
+                ),
+            )
+        }
+    }
+
     fun offerFile(to: String, path: String) {
         launchOp {
             engine.offerFile(to, path)
             refresh()
+        }
+    }
+
+    fun offerFileToChannel(channelId: String, path: String) {
+        launchOp {
+            engine.offerFileToGroup(channelId, path)
+            refresh()
+        }
+    }
+
+    fun createChannel(name: String, topic: String, private: Boolean) {
+        val channelName = name.trim()
+        if (channelName.isEmpty()) {
+            _ui.update { it.copy(error = "请输入频道名称") }
+            return
+        }
+        launchOp {
+            engine.channelCreate(channelName, topic.trim(), private)
+        }
+    }
+
+    fun joinChannel(channelId: String) {
+        launchOp {
+            engine.channelJoin(channelId)
+        }
+    }
+
+    fun inviteMember(channelId: String, memberId: String) {
+        launchOp {
+            engine.channelInvite(channelId, memberId)
+        }
+    }
+
+    fun leaveChannel(channelId: String) {
+        launchOp {
+            engine.channelLeave(channelId)
+            _ui.update {
+                it.copy(
+                    messagesByConversation = Conversations.removeGroup(
+                        it.messagesByConversation,
+                        channelId,
+                    ),
+                )
+            }
+        }
+    }
+
+    fun refreshChannels() {
+        launchOp {
+            val channels = engine.channelList()
+            _ui.update { it.copy(channels = channels) }
         }
     }
 
@@ -141,15 +214,30 @@ class AppViewModel : ViewModel() {
                 state.copy(peers = state.peers.filter { it.id != event.peerId })
             }
 
-            is CoreEvent.Message -> appendMessage(
-                ChatMessage(
-                    peerId = event.from,
-                    msgId = event.msgId,
-                    text = event.text,
-                    inbound = true,
-                    timestamp = System.currentTimeMillis(),
-                ),
-            )
+            is CoreEvent.Message -> {
+                val group = event.group
+                appendMessage(
+                    if (group.isNotEmpty()) {
+                        ChatMessage(
+                            peerId = event.from,
+                            msgId = event.msgId,
+                            text = event.text,
+                            inbound = true,
+                            timestamp = System.currentTimeMillis(),
+                            group = group,
+                            senderId = event.from,
+                        )
+                    } else {
+                        ChatMessage(
+                            peerId = event.from,
+                            msgId = event.msgId,
+                            text = event.text,
+                            inbound = true,
+                            timestamp = System.currentTimeMillis(),
+                        )
+                    },
+                )
+            }
 
             is CoreEvent.Progress -> upsertTransfer(event.transfer)
             is CoreEvent.Done -> _ui.update { state ->
@@ -185,8 +273,12 @@ class AppViewModel : ViewModel() {
 
     private fun appendMessage(message: ChatMessage) {
         _ui.update { state ->
-            val list = (state.messagesByPeer[message.peerId] ?: emptyList()) + message
-            state.copy(messagesByPeer = state.messagesByPeer + (message.peerId to list))
+            state.copy(
+                messagesByConversation = Conversations.append(
+                    state.messagesByConversation,
+                    message,
+                ),
+            )
         }
     }
 

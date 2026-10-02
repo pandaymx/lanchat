@@ -43,7 +43,22 @@ struct Channel: Codable, Identifiable, Hashable {
     let id: String
     var name: String
     var ownerId: String
+    var isPrivate: Bool?
+    var topic: String?
     var members: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, ownerId, members, topic
+        case isPrivate = "private"
+    }
+
+    /// 侧栏副标题：优先显示主题，无主题时显示成员数。
+    var subtitle: String {
+        if let topic, !topic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return topic
+        }
+        return "\(members.count) 名成员"
+    }
 }
 
 struct FullState: Codable {
@@ -62,6 +77,8 @@ struct ChatMessage: Identifiable, Hashable {
     let text: String
     let inbound: Bool
     let timestamp: Date
+    /// 频道消息的发送者昵称（单聊不显示，故可缺省）。
+    var senderName: String? = nil
 }
 
 // 各方法 result 包装。

@@ -148,7 +148,7 @@ impl Transfer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
 pub struct Channel {
     #[serde(default)]
     pub id: String,
@@ -156,6 +156,10 @@ pub struct Channel {
     pub name: String,
     #[serde(default, rename = "ownerId")]
     pub owner_id: String,
+    #[serde(default)]
+    pub private: bool,
+    #[serde(default)]
+    pub topic: String,
     #[serde(default)]
     pub members: Vec<String>,
 }
@@ -181,7 +185,12 @@ pub struct State {
 /// 一条聊天消息（UI 本地模型；来自 msg.received 或自己发送回执）。
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
+    /// 会话归属键：单播为对端 peer_id；频道为 channelID。
     pub peer_id: String,
+    /// 频道消息的发送者 ID；单播为空。
+    pub sender_id: String,
+    /// 非空表示该消息属于 G2 频道（值为 channelID）。
+    pub group: String,
     pub msg_id: String,
     pub text: String,
     pub inbound: bool,

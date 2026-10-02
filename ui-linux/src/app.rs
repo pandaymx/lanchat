@@ -6,9 +6,9 @@
 use crate::daemon::ensure_daemon;
 use crate::ipc::{default_socket_path, IpcClient, Notification};
 use crate::models::{
-    format_size, format_speed, ChatMessage, ConnState, ServerInfo, State, Transfer,
+    format_size, format_speed, Channel, ChatMessage, ConnState, ServerInfo, State, Transfer,
 };
-use crate::state::AppState;
+use crate::state::{AppState, ChatTarget};
 use adw::prelude::*;
 use anyhow::Result;
 use gdk::Display;
@@ -44,6 +44,12 @@ struct OfferParams {
 }
 
 #[derive(Serialize)]
+struct OfferGroupParams {
+    group: String,
+    path: String,
+}
+
+#[derive(Serialize)]
 struct RespondParams {
     #[serde(rename = "transferID")]
     transfer_id: String,
@@ -75,9 +81,13 @@ enum UiEvent {
     State(Result<State>),
     Discovered(Result<Vec<ServerInfo>>),
     Connected(Result<()>),
-    /// (peer_id, 发送文本, 响应 msgID)
-    TextSent(String, String, Result<String>),
+    /// 文本发送回执：(会话键, group, 文本, 响应 msgID)
+    TextSent(String, String, String, Result<String>),
     OfferSent(Result<String>),
+    ChannelCreated(Result<String>),
+    ChannelJoined(String, Result<()>),
+    ChannelInvited(String, Result<()>),
+    ChannelLeft(String, Result<()>),
     Responded(Result<()>),
     Canceled(String, Result<()>),
     NickSet(Result<()>),
@@ -110,12 +120,18 @@ struct Widgets {
     send_btn: gtk::Button,
     file_btn: gtk::Button,
     transfers_btn: gtk::Button,
+    channels_btn: gtk::Button,
     nick_btn: gtk::Button,
     dirdir_btn: gtk::Button,
 
     // 传输窗口
     transfers_win: gtk::Window,
     transfers_list: gtk::ListBox,
+
+    // 频道窗口
+    channels_win: gtk::Window,
+    channels_list: gtk::ListBox,
+    new_channel_btn: gtk::Button,
 }
 
 pub struct AppCtx {
@@ -261,6 +277,8 @@ fn build_ui(app: &adw::Application) -> Widgets {
 
     let transfers_btn = gtk::Button::with_label("传输列表");
     transfers_btn.set_halign(Align::Start);
+    let channels_btn = gtk::Button::with_label("频道");
+    channels_btn.set_halign(Align::Start);
     let nick_btn = gtk::Button::with_label("修改昵称");
     nick_btn.set_halign(Align::Start);
     let dirdir_btn = gtk::Button::with_label("默认下载目录");
@@ -274,6 +292,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     sidebar.append(&me_label);
     sidebar.append(&conn_badge);
     sidebar.append(&transfers_btn);
+    sidebar.append(&channels_btn);
     sidebar.append(&nick_btn);
     sidebar.append(&dirdir_btn);
     sidebar.append(&roster_scroll);
@@ -347,6 +366,38 @@ fn build_ui(app: &adw::Application) -> Widgets {
         .build();
     transfers_win.set_hide_on_close(true);
 
+    // --- 频道窗口 ---
+    let new_channel_btn = gtk::Button::with_label("新建频道");
+    new_channel_btn.add_css_class("pill");
+    new_channel_btn.add_css_class("suggested-action");
+    let btn_wrap = gtk::Box::new(Orientation::Horizontal, 0);
+    btn_wrap.set_halign(Align::Center);
+    btn_wrap.append(&new_channel_btn);
+
+    let channels_list = gtk::ListBox::new();
+    channels_list.set_selection_mode(gtk::SelectionMode::None);
+    channels_list.add_css_class("boxed-list");
+    let c_scroll = gtk::ScrolledWindow::new();
+    c_scroll.set_min_content_width(460);
+    c_scroll.set_min_content_height(300);
+    c_scroll.set_child(Some(&channels_list));
+
+    let channels_content = gtk::Box::new(Orientation::Vertical, 12);
+    channels_content.set_margin_top(12);
+    channels_content.set_margin_bottom(12);
+    channels_content.set_margin_start(12);
+    channels_content.set_margin_end(12);
+    channels_content.append(&btn_wrap);
+    channels_content.append(&c_scroll);
+
+    let channels_win = gtk::Window::builder()
+        .title("频道")
+        .default_width(500)
+        .default_height(420)
+        .child(&channels_content)
+        .build();
+    channels_win.set_hide_on_close(true);
+
     let stack = gtk::Stack::new();
     stack.add_named(&login_clamp, Some("login"));
     stack.add_named(&main_split, Some("main"));
@@ -382,10 +433,14 @@ fn build_ui(app: &adw::Application) -> Widgets {
         send_btn,
         file_btn,
         transfers_btn,
+        channels_btn,
         nick_btn,
         dirdir_btn,
         transfers_win,
         transfers_list,
+        channels_win,
+        channels_list,
+        new_channel_btn,
     }
 }
 
@@ -457,7 +512,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 let idx = row.index();
                 if idx >= 0 {
                     if let Some(peer) = cx.state.borrow().peers.get(idx as usize).cloned() {
-                        cx.state.borrow_mut().current_chat = Some(peer.id.clone());
+                        cx.state.borrow_mut().current_chat = ChatTarget::Peer(peer.id.clone());
                         cx.widgets.chat_header.set_text(&peer.nickname);
                         cx.render_messages();
                     }
@@ -471,12 +526,10 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
-            let peer_id = match cx.state.borrow().current_chat.clone() {
-                Some(id) => id,
-                None => {
-                    cx.toast("请先选择联系人");
-                    return;
-                }
+            let target = cx.state.borrow().current_chat.clone();
+            let Some(key) = target.key().map(|s| s.to_string()) else {
+                cx.toast("请先选择联系人或频道");
+                return;
             };
             let buffer = cx.widgets.input.buffer();
             let text = buffer
@@ -486,10 +539,15 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 return;
             }
             if let Some(ipc) = cx.ipc.borrow().clone() {
+                let group = if target.is_channel() {
+                    key.clone()
+                } else {
+                    String::new()
+                };
                 let params = SendTextParams {
-                    to: peer_id.clone(),
+                    to: key.clone(),
                     text: text.clone(),
-                    group: None,
+                    group: Some(group.clone()),
                 };
                 let tx = cx.ui_tx.clone();
                 buffer.set_text("");
@@ -500,7 +558,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                             .map(|s| s.to_string())
                             .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
                     });
-                    let _ = tx.try_send(UiEvent::TextSent(peer_id, text, res));
+                    let _ = tx.try_send(UiEvent::TextSent(key, group, text, res));
                 });
             }
         }
@@ -511,13 +569,12 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
-            let peer_id = match cx.state.borrow().current_chat.clone() {
-                Some(id) => id,
-                None => {
-                    cx.toast("请先选择联系人");
-                    return;
-                }
+            let target = cx.state.borrow().current_chat.clone();
+            let Some(key) = target.key().map(|s| s.to_string()) else {
+                cx.toast("请先选择联系人或频道");
+                return;
             };
+            let is_channel = target.is_channel();
             let dialog = gtk::FileDialog::new();
             dialog.open(
                 Some(&cx.widgets.window),
@@ -530,22 +587,43 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                             if let Some(path) = file.path() {
                                 let path = path.to_string_lossy().to_string();
                                 if let Some(ipc) = cx.ipc.borrow().clone() {
-                                    let params = OfferParams { to: peer_id, path };
                                     let tx = cx.ui_tx.clone();
-                                    crate::spawn_rt(async move {
-                                        let r = ipc
-                                            .invoke("OfferFile", Some(&params))
-                                            .await
-                                            .and_then(|v| {
-                                                v.get("transferID")
-                                                    .and_then(|t| t.as_str())
-                                                    .map(|s| s.to_string())
-                                                    .ok_or_else(|| {
-                                                        anyhow::anyhow!("响应缺少 transferID")
-                                                    })
-                                            });
-                                        let _ = tx.try_send(UiEvent::OfferSent(r));
-                                    });
+                                    if is_channel {
+                                        let params = OfferGroupParams {
+                                            group: key.clone(),
+                                            path,
+                                        };
+                                        crate::spawn_rt(async move {
+                                            let r = ipc
+                                                .invoke("OfferFileToGroup", Some(&params))
+                                                .await
+                                                .and_then(|v| {
+                                                    v.get("transferID")
+                                                        .and_then(|t| t.as_str())
+                                                        .map(|s| s.to_string())
+                                                        .ok_or_else(|| {
+                                                            anyhow::anyhow!("响应缺少 transferID")
+                                                        })
+                                                });
+                                            let _ = tx.try_send(UiEvent::OfferSent(r));
+                                        });
+                                    } else {
+                                        let params = OfferParams { to: key, path };
+                                        crate::spawn_rt(async move {
+                                            let r = ipc
+                                                .invoke("OfferFile", Some(&params))
+                                                .await
+                                                .and_then(|v| {
+                                                    v.get("transferID")
+                                                        .and_then(|t| t.as_str())
+                                                        .map(|s| s.to_string())
+                                                        .ok_or_else(|| {
+                                                            anyhow::anyhow!("响应缺少 transferID")
+                                                        })
+                                                });
+                                            let _ = tx.try_send(UiEvent::OfferSent(r));
+                                        });
+                                    }
                                 }
                             }
                         }
@@ -562,6 +640,74 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         move |_| {
             cx.render_transfers();
             cx.widgets.transfers_win.present();
+        }
+    ));
+
+    // 打开频道窗口
+    ctx.widgets.channels_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            cx.render_channels();
+            cx.widgets.channels_win.present();
+        }
+    ));
+
+    // 新建频道：名称 + 主题 + 私有开关（对齐 ChannelCreate{name, topic?, private?}）。
+    ctx.widgets.new_channel_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let name_row = adw::EntryRow::new();
+            name_row.set_title("名称");
+
+            let topic_row = adw::EntryRow::new();
+            topic_row.set_title("主题（可选）");
+
+            let private_row = adw::SwitchRow::new();
+            private_row.set_title("私有频道");
+            private_row.set_subtitle("仅受邀成员可加入");
+
+            let extra = gtk::ListBox::new();
+            extra.add_css_class("boxed-list");
+            extra.set_selection_mode(gtk::SelectionMode::None);
+            extra.append(&name_row);
+            extra.append(&topic_row);
+            extra.append(&private_row);
+
+            let dialog = adw::AlertDialog::new(Some("新建频道"), None);
+            dialog.set_extra_child(Some(&extra));
+            dialog.add_responses(&[("cancel", "取消"), ("ok", "创建")]);
+            dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+            dialog.set_close_response("cancel");
+            dialog.choose(
+                &cx.widgets.window,
+                None::<&gio::Cancellable>,
+                clone!(
+                    #[strong]
+                    cx,
+                    move |response| {
+                        if response == "ok" {
+                            let name = name_row.text().to_string();
+                            if name.trim().is_empty() {
+                                cx.toast("请填写频道名称");
+                                return;
+                            }
+                            let topic = topic_row.text().to_string();
+                            let private = private_row.is_active();
+                            if let Some(ipc) = cx.ipc.borrow().clone() {
+                                let tx = cx.ui_tx.clone();
+                                crate::spawn_rt(async move {
+                                    let r = ipc
+                                        .channel_create(name.trim(), topic.trim(), private)
+                                        .await;
+                                    let _ = tx.try_send(UiEvent::ChannelCreated(r));
+                                });
+                            }
+                        }
+                    }
+                ),
+            );
         }
     ));
 
@@ -692,17 +838,19 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
             // 最终是否成功以 conn.changed 为准
             ctx.sync_state();
         }
-        UiEvent::TextSent(peer_id, text, res) => match res {
+        UiEvent::TextSent(key, group, text, res) => match res {
             Ok(msg_id) => {
                 let now = now_secs();
                 ctx.state.borrow_mut().push_message(ChatMessage {
-                    peer_id: peer_id.clone(),
+                    peer_id: key.clone(),
+                    sender_id: String::new(),
+                    group,
                     msg_id,
                     text,
                     inbound: false,
                     ts: now,
                 });
-                if ctx.state.borrow().current_chat.as_deref() == Some(&peer_id) {
+                if ctx.state.borrow().current_chat.key() == Some(key.as_str()) {
                     ctx.render_messages();
                 }
             }
@@ -713,6 +861,38 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                 ctx.toast(&format!("文件发起失败：{e}"));
             }
         }
+        UiEvent::ChannelCreated(res) => match res {
+            Ok(id) => {
+                ctx.toast("频道已创建");
+                ctx.render_channels();
+                open_channel(ctx, &id);
+            }
+            Err(e) => ctx.toast(&format!("创建频道失败：{e}")),
+        },
+        UiEvent::ChannelJoined(id, res) => match res {
+            Ok(()) => {
+                ctx.toast("已加入频道");
+                ctx.render_channels();
+                open_channel(ctx, &id);
+            }
+            Err(e) => ctx.toast(&format!("加入频道失败：{e}")),
+        },
+        UiEvent::ChannelInvited(_id, res) => match res {
+            Ok(()) => ctx.toast("已邀请成员"),
+            Err(e) => ctx.toast(&format!("邀请失败：{e}")),
+        },
+        UiEvent::ChannelLeft(id, res) => match res {
+            Ok(()) => {
+                ctx.toast("已退出频道");
+                if ctx.state.borrow().current_chat.key() == Some(id.as_str()) {
+                    ctx.state.borrow_mut().current_chat = ChatTarget::None;
+                    ctx.widgets.chat_header.set_text("选择一个联系人开始聊天");
+                    ctx.render_messages();
+                }
+                ctx.render_channels();
+            }
+            Err(e) => ctx.toast(&format!("退出频道失败：{e}")),
+        },
         UiEvent::Responded(res) => {
             if let Err(e) = res {
                 ctx.toast(&format!("应答失败：{e}"));
@@ -800,8 +980,8 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             if let Some(id) = p.get("peerId").and_then(|v| v.as_str()) {
                 let id = id.to_string();
                 ctx.state.borrow_mut().peers.retain(|x| x.id != id);
-                if ctx.state.borrow().current_chat.as_deref() == Some(&id) {
-                    ctx.state.borrow_mut().current_chat = None;
+                if ctx.state.borrow().current_chat.key() == Some(id.as_str()) {
+                    ctx.state.borrow_mut().current_chat = ChatTarget::None;
                     ctx.widgets.chat_header.set_text("选择一个联系人开始聊天");
                     ctx.render_messages();
                 }
@@ -811,6 +991,11 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
         "msg.received" => {
             let from = p
                 .get("from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let group = p
+                .get("group")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -824,14 +1009,23 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            // 频道消息按 group（channelID）归类，sender 记录在 sender_id；
+            // 单播按 from 归类。
+            let (conv_key, sender_id) = if group.is_empty() {
+                (from.clone(), String::new())
+            } else {
+                (group.clone(), from.clone())
+            };
             ctx.state.borrow_mut().push_message(ChatMessage {
-                peer_id: from.clone(),
+                peer_id: conv_key.clone(),
+                sender_id,
+                group,
                 msg_id,
                 text,
                 inbound: true,
                 ts: now_secs(),
             });
-            if ctx.state.borrow().current_chat.as_deref() == Some(&from) {
+            if ctx.state.borrow().current_chat.key() == Some(conv_key.as_str()) {
                 ctx.render_messages();
             } else {
                 ctx.toast("收到新消息");
@@ -884,10 +1078,135 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 ctx.toast(&format!("传输失败：{reason}"));
             }
         }
-        // M9 事件：M5 安全忽略
-        "group.matrix" | "channel.updated" => {}
+        // M9 G1 矩阵事件：当前 UI 不展示位图进度，安全忽略。
+        "group.matrix" => {}
+        "channel.updated" => {
+            if let Some(channels) = parse_channel_updated(p) {
+                ctx.state.borrow_mut().channels = channels;
+                ctx.render_channels();
+                // 若正在查看频道，刷新标题中的成员信息。
+                if let ChatTarget::Channel(id) = &ctx.state.borrow().current_chat {
+                    if let Some(ch) = ctx.state.borrow().channel(id).cloned() {
+                        ctx.widgets.chat_header.set_text(&channel_header_text(&ch));
+                    }
+                }
+            }
+        }
         other => tracing::debug!("未处理通知：{other}"),
     }
+}
+
+/// 解析 channel.updated payload：{channels: Channel[]}。
+fn parse_channel_updated(p: &serde_json::Value) -> Option<Vec<Channel>> {
+    p.get("channels")
+        .cloned()
+        .and_then(|v| serde_json::from_value(v).ok())
+}
+
+/// 频道会话标题：名称 + 成员数（私有频道加锁；有主题则追加）。
+fn channel_header_text(ch: &Channel) -> String {
+    let lock = if ch.private { "🔒 " } else { "" };
+    let topic = if ch.topic.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", ch.topic)
+    };
+    format!("{lock}# {}（{} 名成员）{topic}", ch.name, ch.members.len())
+}
+
+/// 切换到频道会话：取消 roster 选中、设置会话键与标题、渲染消息。
+fn open_channel(ctx: &Rc<AppCtx>, channel_id: &str) {
+    let Some(ch) = ctx.state.borrow().channel(channel_id).cloned() else {
+        return;
+    };
+    ctx.widgets.roster.unselect_all();
+    ctx.state.borrow_mut().current_chat = ChatTarget::Channel(ch.id.clone());
+    ctx.widgets.chat_header.set_text(&channel_header_text(&ch));
+    ctx.render_messages();
+}
+
+/// 邀请成员对话框：列出在线 peers，已是成员者禁用并标注；点击即邀请。
+fn invite_member_dialog(ctx: &Rc<AppCtx>, channel_id: &str) {
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    list.set_selection_mode(gtk::SelectionMode::Single);
+
+    let st = ctx.state.borrow();
+    let self_id = st.self_id.clone();
+    let members: Vec<String> = st
+        .channel(channel_id)
+        .map(|c| c.members.clone())
+        .unwrap_or_default();
+
+    let candidates = st
+        .peers
+        .iter()
+        .filter(|p| p.id != self_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    drop(st);
+
+    if candidates.is_empty() {
+        let row = adw::ActionRow::new();
+        row.set_title("暂无可邀请的在线成员");
+        row.set_sensitive(false);
+        list.append(&row);
+    }
+    for peer in &candidates {
+        let already = members.iter().any(|m| m == &peer.id);
+        let row = adw::ActionRow::new();
+        row.set_title(&peer.nickname);
+        row.set_subtitle(if already { "已是成员" } else { &peer.os });
+        if already {
+            row.set_sensitive(false);
+        }
+        list.append(&row);
+    }
+
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_min_content_height(280);
+    scroll.set_child(Some(&list));
+
+    let dialog = adw::AlertDialog::new(Some("邀请成员加入频道"), None);
+    dialog.set_extra_child(Some(&scroll));
+    dialog.add_responses(&[("close", "关闭")]);
+    dialog.set_close_response("close");
+
+    // 行选中（仅非成员行可点）→ 邀请后关闭。
+    list.connect_row_activated(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        #[strong]
+        dialog,
+        #[strong]
+        candidates,
+        #[strong]
+        members,
+        #[strong(rename_to = cid)]
+        channel_id.to_string(),
+        move |_, row| {
+            let idx = row.index();
+            if idx < 0 || idx as usize >= candidates.len() {
+                return;
+            }
+            let member_id = candidates[idx as usize].id.clone();
+            if members.iter().any(|m| m == &member_id) {
+                return;
+            }
+            if let Some(ipc) = cx.ipc.borrow().clone() {
+                let cid2 = cid.clone();
+                let mid = member_id.clone();
+                let tx = cx.ui_tx.clone();
+                crate::spawn_rt(async move {
+                    let r = ipc.channel_invite(&cid2, &mid).await;
+                    let _ = tx.try_send(UiEvent::ChannelInvited(cid2, r));
+                });
+            }
+            dialog.close();
+        }
+    ));
+
+    dialog.present(Some(&ctx.widgets.window));
 }
 
 /// 对所有 pending 状态的 inbound 传输弹一次接收确认。
@@ -1051,17 +1370,150 @@ impl AppCtx {
         }
     }
 
+    fn render_channels(self: &Rc<Self>) {
+        clear_listbox(&self.widgets.channels_list);
+        let st = self.state.borrow();
+        let self_id = st.self_id.clone();
+        if st.channels.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("暂无频道，点击上方「新建频道」");
+            row.set_sensitive(false);
+            self.widgets.channels_list.append(&row);
+            return;
+        }
+        for ch in &st.channels {
+            let row = adw::ActionRow::new();
+            row.set_title(&ch.name);
+            let members_text = ch
+                .members
+                .iter()
+                .map(|id| {
+                    if id == &self_id {
+                        "我".to_string()
+                    } else {
+                        st.peer(id).map(|p| p.nickname.clone()).unwrap_or_else(|| {
+                            id.get(0..6).map(|s| s.to_string()).unwrap_or_default()
+                        })
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("、");
+            let is_owner = ch.owner_id == self_id;
+            let prefix = if ch.private { "🔒 私有 · " } else { "" };
+            let topic_text = if ch.topic.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{} · ", ch.topic)
+            };
+            row.set_subtitle(&format!(
+                "{prefix}{topic_text}{}{}名成员：{members_text}",
+                if is_owner { "我是频道主 · " } else { "" },
+                ch.members.len()
+            ));
+
+            let member = ch.members.iter().any(|m| m == &self_id);
+            let channel_id = ch.id.clone();
+            if member {
+                // 仅 owner 显示「邀请」入口。
+                if is_owner {
+                    let invite_btn = gtk::Button::with_label("邀请");
+                    invite_btn.connect_clicked(clone!(
+                        #[strong(rename_to = cx)]
+                        self,
+                        #[strong]
+                        channel_id,
+                        move |_| {
+                            invite_member_dialog(&cx, &channel_id);
+                        }
+                    ));
+                    row.add_suffix(&invite_btn);
+                }
+
+                // 已加入频道显示「退出」按钮。
+                let leave_btn = gtk::Button::with_label("退出");
+                leave_btn.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    #[strong]
+                    channel_id,
+                    move |_| {
+                        if let Some(ipc) = cx.ipc.borrow().clone() {
+                            let id = channel_id.clone();
+                            let tx = cx.ui_tx.clone();
+                            crate::spawn_rt(async move {
+                                let r = ipc.channel_leave(&id).await;
+                                let _ = tx.try_send(UiEvent::ChannelLeft(id, r));
+                            });
+                        }
+                    }
+                ));
+                row.add_suffix(&leave_btn);
+
+                let open_btn = gtk::Button::with_label("进入");
+                open_btn.add_css_class("suggested-action");
+                open_btn.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    #[strong]
+                    channel_id,
+                    move |_| {
+                        open_channel(&cx, &channel_id);
+                        cx.widgets.channels_win.close();
+                    }
+                ));
+                row.add_suffix(&open_btn);
+            } else {
+                let join_btn = gtk::Button::with_label("加入");
+                join_btn.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    #[strong]
+                    channel_id,
+                    move |_| {
+                        if let Some(ipc) = cx.ipc.borrow().clone() {
+                            let id = channel_id.clone();
+                            let tx = cx.ui_tx.clone();
+                            crate::spawn_rt(async move {
+                                let r = ipc.channel_join(&id).await;
+                                let _ = tx.try_send(UiEvent::ChannelJoined(id, r));
+                            });
+                        }
+                    }
+                ));
+                row.add_suffix(&join_btn);
+            }
+            self.widgets.channels_list.append(&row);
+        }
+    }
+
     fn render_messages(&self) {
         clear_listbox(&self.widgets.msg_list);
         let st = self.state.borrow();
-        let Some(peer_id) = st.current_chat.clone() else {
+        let target = st.current_chat.clone();
+        let Some(conv_key) = target.key().map(|s| s.to_string()) else {
             return;
         };
-        let Some(msgs) = st.messages.get(&peer_id) else {
+        let Some(msgs) = st.messages.get(&conv_key) else {
             return;
         };
         for m in msgs {
-            let bubble = gtk::Label::new(Some(&m.text));
+            let label_text = if target.is_channel() && m.inbound {
+                let who = st
+                    .peer(&m.sender_id)
+                    .map(|p| p.nickname.clone())
+                    .unwrap_or_else(|| {
+                        m.sender_id
+                            .get(0..6)
+                            .map(|s| s.to_string())
+                            .unwrap_or_default()
+                    });
+                glib::markup_escape_text(&format!("{who}：{}", m.text)).to_string()
+            } else {
+                glib::markup_escape_text(&m.text).to_string()
+            };
+            let bubble = gtk::Label::new(None);
+            bubble.set_use_markup(true);
+            bubble.set_label(&label_text);
             bubble.set_wrap(true);
             bubble.set_max_width_chars(60);
             bubble.set_xalign(if m.inbound { 0.0 } else { 1.0 });
@@ -1108,6 +1560,14 @@ impl AppCtx {
                 path_badge.add_css_class("warning");
             }
 
+            let kind_badge = gtk::Label::new(Some(match t.kind {
+                crate::models::PathKind::Unicast => "单播",
+                crate::models::PathKind::Swarm => "群播",
+                crate::models::PathKind::Channel => "频道",
+            }));
+            kind_badge.add_css_class("caption-heading");
+            kind_badge.add_css_class("dim-label");
+
             let state_label = gtk::Label::new(Some(t.state.label()));
             state_label.add_css_class("dim-label");
             state_label.add_css_class("caption");
@@ -1119,10 +1579,15 @@ impl AppCtx {
             let meta = gtk::Box::new(Orientation::Horizontal, 8);
             meta.append(&state_label);
             meta.append(&speed);
+            meta.append(&kind_badge);
             meta.append(&path_badge);
 
             let name_label = gtk::Label::builder()
-                .label(format!("{} · {}", t.direction.label(), t.name))
+                .label(if t.kind == crate::models::PathKind::Channel {
+                    format!("{} · #{} · {}", t.direction.label(), t.group_id, t.name)
+                } else {
+                    format!("{} · {}", t.direction.label(), t.name)
+                })
                 .halign(Align::Start)
                 .build();
 
@@ -1220,4 +1685,51 @@ fn load_css() {
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_updated_parsed() {
+        let p = serde_json::json!({
+            "channels": [
+                {"id": "c1", "name": "运维", "ownerId": "p1", "members": ["p1", "p2"]}
+            ]
+        });
+        let channels = parse_channel_updated(&p).expect("应解析成功");
+        assert_eq!(channels.len(), 1);
+        assert_eq!(channels[0].id, "c1");
+        assert_eq!(channel_header_text(&channels[0]), "# 运维（2 名成员）");
+    }
+
+    #[test]
+    fn channel_header_shows_private_and_topic() {
+        let ch = Channel {
+            id: "c1".into(),
+            name: "运维".into(),
+            owner_id: "p1".into(),
+            private: true,
+            topic: "值班".into(),
+            members: vec!["p1".into()],
+        };
+        assert_eq!(channel_header_text(&ch), "🔒 # 运维（1 名成员） · 值班");
+    }
+
+    #[test]
+    fn channel_updated_missing_channels() {
+        let p = serde_json::json!({});
+        assert!(parse_channel_updated(&p).is_none());
+        let p = serde_json::json!({"channels": "not-an-array"});
+        assert!(parse_channel_updated(&p).is_none());
+    }
+
+    #[test]
+    fn chat_target_keys() {
+        assert_eq!(ChatTarget::None.key(), None);
+        assert_eq!(ChatTarget::Peer("p1".into()).key(), Some("p1"));
+        assert!(ChatTarget::Channel("c1".into()).is_channel());
+        assert!(!ChatTarget::Peer("p1".into()).is_channel());
+    }
 }

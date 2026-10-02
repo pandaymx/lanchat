@@ -114,6 +114,60 @@ impl IpcClient {
     pub fn shutdown(&self) {
         let _ = self.tx.send(Cmd::Shutdown);
     }
+
+    /// ChannelCreate 创建 G2 自定义频道，返回 channelID。
+    /// `topic` 为频道主题（可空）；`private` 为真时仅可经 ChannelInvite 加入。
+    pub async fn channel_create(&self, name: &str, topic: &str, private: bool) -> Result<String> {
+        let params = serde_json::json!({
+            "name": name,
+            "topic": topic,
+            "private": private,
+        });
+        let v = self.invoke("ChannelCreate", Some(&params)).await?;
+        v.get("channelID")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("响应缺少 channelID"))
+    }
+
+    /// ChannelJoin 加入指定频道（private 频道会被后端拒绝）。
+    pub async fn channel_join(&self, channel_id: &str) -> Result<()> {
+        let params = serde_json::json!({ "channelID": channel_id });
+        self.invoke("ChannelJoin", Some(&params)).await.map(|_| ())
+    }
+
+    /// ChannelInvite 邀请在线成员加入频道（仅 owner，后端校验）。
+    pub async fn channel_invite(&self, channel_id: &str, member_id: &str) -> Result<()> {
+        let params = serde_json::json!({
+            "channelID": channel_id,
+            "memberID": member_id,
+        });
+        self.invoke("ChannelInvite", Some(&params))
+            .await
+            .map(|_| ())
+    }
+
+    /// ChannelLeave 退出指定频道。
+    pub async fn channel_leave(&self, channel_id: &str) -> Result<()> {
+        let params = serde_json::json!({ "channelID": channel_id });
+        self.invoke("ChannelLeave", Some(&params)).await.map(|_| ())
+    }
+
+    /// ChannelList 列出当前可见频道。
+    pub async fn channel_list(&self) -> Result<Vec<crate::models::Channel>> {
+        let v = self.invoke::<()>("ChannelList", None).await?;
+        serde_json::from_value(v).map_err(Into::into)
+    }
+
+    /// OfferFileToGroup 向频道（group=channelID）发起文件发送，返回 transferID。
+    pub async fn offer_file_to_group(&self, group: &str, path: &str) -> Result<String> {
+        let params = serde_json::json!({ "group": group, "path": path });
+        let v = self.invoke("OfferFileToGroup", Some(&params)).await?;
+        v.get("transferID")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| anyhow!("响应缺少 transferID"))
+    }
 }
 
 struct Actor<N, R> {
@@ -379,6 +433,85 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(n.method, "peer.joined");
+
+        stop.notify_waiters();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 频道相关方法的请求/响应往返。
+    #[tokio::test]
+    async fn channel_methods_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("lanchat-test-chan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("chan.sock");
+        let listener = tokio::net::UnixListener::bind(&sock).unwrap();
+
+        // 假 daemon：按 method 回契约规定的 result；同时记录创建参数。
+        let captured = Arc::new(std::sync::Mutex::new(None::<Value>));
+        let cap2 = captured.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let (conn, _) = listener.accept().await.unwrap();
+            let (read_half, mut write_half) = conn.into_split();
+            let mut reader = BufReader::new(read_half);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).await.unwrap() == 0 {
+                    return;
+                }
+                let frame: Value = serde_json::from_str(line.trim()).unwrap();
+                let id = frame["id"].clone();
+                let method = frame["method"].as_str().unwrap();
+                if method == "ChannelCreate" {
+                    *cap2.lock().unwrap() = frame.get("params").cloned();
+                }
+                let result = match method {
+                    "ChannelCreate" => serde_json::json!({"channelID": "c-9"}),
+                    "ChannelJoin" => serde_json::json!({}),
+                    "ChannelInvite" => serde_json::json!({}),
+                    "ChannelLeave" => serde_json::json!({}),
+                    "ChannelList" => serde_json::json!([
+                        {"id": "c-9", "name": "运维", "ownerId": "p1", "members": ["p1"]}
+                    ]),
+                    "OfferFileToGroup" => serde_json::json!({"transferID": "t-9"}),
+                    m => panic!("意外方法 {m}"),
+                };
+                let resp = serde_json::json!({"jsonrpc":"2.0","id":id,"result":result});
+                write_half
+                    .write_all(resp.to_string().as_bytes())
+                    .await
+                    .unwrap();
+                write_half.write_u8(b'\n').await.unwrap();
+            }
+        });
+
+        let stop = Arc::new(Notify::new());
+        let client = IpcClient::start(sock.clone(), |_| {}, || {}, stop.clone());
+
+        assert_eq!(
+            client
+                .channel_create("运维", "值班频道", true)
+                .await
+                .unwrap(),
+            "c-9"
+        );
+        // 创建参数序列化对齐 schema：name / topic / private。
+        let params = captured.lock().unwrap().clone().unwrap();
+        assert_eq!(params["name"], "运维");
+        assert_eq!(params["topic"], "值班频道");
+        assert_eq!(params["private"], true);
+
+        client.channel_join("c-9").await.unwrap();
+        client.channel_invite("c-9", "p7").await.unwrap();
+        client.channel_leave("c-9").await.unwrap();
+        let list = client.channel_list().await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].name, "运维");
+        assert_eq!(
+            client.offer_file_to_group("c-9", "/tmp/a").await.unwrap(),
+            "t-9"
+        );
 
         stop.notify_waiters();
         let _ = std::fs::remove_dir_all(&dir);

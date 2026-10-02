@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.13](https://github.com/pandaymx/lanchat/compare/v0.17.12...v0.17.13) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-win:** MSI unpackaged 直接拉起 daemon，避开包标识 API ([#82](https://github.com/pandaymx/lanchat/issues/82)) ([1151680](https://github.com/pandaymx/lanchat/commit/1151680702e846a2f820cad91a95b2d988b5278b))
+
 ## [0.17.12](https://github.com/pandaymx/lanchat/compare/v0.17.11...v0.17.12) (2026-10-02)
 
 

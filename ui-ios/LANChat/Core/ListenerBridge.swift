@@ -1,10 +1,15 @@
 import Foundation
 
-/// 实现 gomobile 生成的 LCMobileListener 协议。
+/// 实现 gomobile 生成的 LCMobileListenerProtocol 协议。
+///
+/// 注意：gomobile 对可由宿主实现的接口同时生成
+///   - @protocol LCMobileListener（Swift 导入名：LCMobileListenerProtocol）
+///   - @interface LCMobileListener（供子类化的基类，占用 LCMobileListener 名字）
+/// 因此协议一致性必须写 LCMobileListenerProtocol。
 ///
 /// 这些方法由 Go 后台 goroutine 调用（非主线程）；这里先做 DTO 转换，
 /// 再通过 ChatEngine 的派发闭包切回主线程。
-final class ListenerBridge: NSObject, LCMobileListener {
+final class ListenerBridge: NSObject, LCMobileListenerProtocol {
     private let emit: (CoreEvent) -> Void
 
     init(emit: @escaping (CoreEvent) -> Void) {
@@ -15,9 +20,9 @@ final class ListenerBridge: NSObject, LCMobileListener {
         emit(.connChanged(state: state ?? "", reason: reason ?? ""))
     }
 
-    func onPeerJoined(_ peer: LCPeer?) {
+    func onPeerJoined(_ peer: LCMobilePeer?) {
         guard let peer else { return }
-        emit(.peerJoined(ChatEngine.toModel(peer)))
+        emit(.peerJoined(Self.toModel(peer)))
     }
 
     func onPeerLeft(_ peerID: String?) {
@@ -30,9 +35,9 @@ final class ListenerBridge: NSObject, LCMobileListener {
                       type: typ ?? "", text: text ?? ""))
     }
 
-    func onTransferProgress(_ t: LCTransfer?) {
+    func onTransferProgress(_ t: LCMobileTransfer?) {
         guard let t else { return }
-        emit(.progress(ChatEngine.toModel(t)))
+        emit(.progress(Self.toModel(t)))
     }
 
     func onTransferDone(_ transferID: String?) {
@@ -55,5 +60,18 @@ final class ListenerBridge: NSObject, LCMobileListener {
             return
         }
         emit(.channelsUpdated(dtos.map { $0.toModel() }))
+    }
+
+    // MARK: - gomobile 对象 -> 本地模型
+
+    private static func toModel(_ p: LCMobilePeer) -> Peer {
+        Peer(id: p.id_, nickname: p.nickname, os: p.os, status: p.status)
+    }
+
+    private static func toModel(_ t: LCMobileTransfer) -> Transfer {
+        Transfer(id: t.id_, direction: t.direction, state: t.state, kind: t.kind,
+                 peerId: t.peerID, groupId: t.groupID, name: t.name,
+                 size: t.size, bytesDone: t.bytesDone, speedBps: t.speedBps,
+                 viaRelay: t.viaRelay, errorReason: t.errorReason)
     }
 }

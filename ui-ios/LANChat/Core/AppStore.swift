@@ -162,11 +162,11 @@ final class AppStore: ObservableObject {
         messagesByPeer[m.peerId] = list
     }
 
-    private func run(_ block: @escaping () async -> Void) {
+    private func run(_ block: @escaping () async throws -> Void) {
         Task {
             busy = true
             do {
-                await block()
+                try await block()
             } catch {
                 self.error = error.localizedDescription
             }

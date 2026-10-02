@@ -25,6 +25,13 @@ func lanInterfaces() []string {
 	return names
 }
 
+// LanInterfaceNames 返回 mDNS 广告将使用的局域网网卡名，供服务端启动日志排障
+// （browse 发现不到服务器时先看这里）。返回空表示未识别到真实局域网网卡，
+// 此时 NewAdvertiser 回退到全部多播网卡。
+func LanInterfaceNames() []string {
+	return lanInterfaces()
+}
+
 // multicastIfaces 返回当前活动且支持多播、并至少有一个地址的网卡。
 func multicastIfaces() []net.Interface {
 	var out []net.Interface

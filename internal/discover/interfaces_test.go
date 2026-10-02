@@ -36,3 +36,16 @@ func TestIsCGNAT(t *testing.T) {
 		}
 	}
 }
+
+// TestLanInterfaceNames 校验导出给服务端启动日志的排障视图与内部选择逻辑同源：
+// 不泄漏虚拟/隧道网卡，且给出的名字都能在本机解析。
+func TestLanInterfaceNames(t *testing.T) {
+	for _, name := range LanInterfaceNames() {
+		if isVirtualIface(name) {
+			t.Errorf("LanInterfaceNames 不应返回虚拟网卡 %q", name)
+		}
+		if _, err := net.InterfaceByName(name); err != nil {
+			t.Errorf("LanInterfaceNames 返回了不存在的网卡 %q: %v", name, err)
+		}
+	}
+}

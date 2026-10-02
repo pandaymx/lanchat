@@ -86,7 +86,8 @@ final class ChatStore: ObservableObject {
             if let p = try? decoder.decode(MsgParams.self, from: params) {
                 append(ChatMessage(
                     id: p.msgId, peerId: p.from, text: p.text,
-                    inbound: true, timestamp: Date()))
+                    inbound: true, timestamp: Date()),
+                       threadKey: p.group)
             }
         case "transfer.progress":
             if let p = try? decoder.decode(ProgressParams.self, from: params) {
@@ -109,10 +110,11 @@ final class ChatStore: ObservableObject {
         }
     }
 
-    private func append(_ msg: ChatMessage) {
-        var list = messages[msg.peerId] ?? []
+    private func append(_ msg: ChatMessage, threadKey: String? = nil) {
+        let key = (threadKey?.isEmpty == false) ? threadKey! : msg.peerId
+        var list = messages[key] ?? []
         list.append(msg)
-        messages[msg.peerId] = list
+        messages[key] = list
     }
 
     private func upsertTransfer(_ t: Transfer) {
@@ -174,6 +176,87 @@ final class ChatStore: ObservableObject {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    // MARK: - 频道（G2 自定义频道，方法集合严格对齐 ipc.schema.json）
+
+    func createChannel(name: String, topic: String, isPrivate: Bool) async {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let trimmedTopic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            _ = try await ipc.call("ChannelCreate",
+                                   params: ["name": trimmed,
+                                            "topic": trimmedTopic,
+                                            "private": isPrivate],
+                                   as: ChannelIDResult.self)
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func joinChannel(_ channelID: String) async {
+        do {
+            _ = try await ipc.call("ChannelJoin", params: ["channelID": channelID])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// 邀请在线成员加入频道（后端仅允许 owner，越权会返回错误提示）。
+    func inviteMember(channelID: String, memberID: String) async {
+        do {
+            _ = try await ipc.call("ChannelInvite",
+                                   params: ["channelID": channelID,
+                                            "memberID": memberID])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// 退出频道；退出后频道消息不再对本端可见。
+    func leaveChannel(channelID: String) async {
+        do {
+            _ = try await ipc.call("ChannelLeave", params: ["channelID": channelID])
+            messages[channelID] = nil
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// 频道群文本：group 为频道 ID；to 留空（group 优先）。
+    func sendChannelText(channelID: String, text: String) async {
+        guard !text.isEmpty else { return }
+        do {
+            let r = try await ipc.call(
+                "SendText",
+                params: ["to": "", "text": text, "group": channelID],
+                as: MsgIDResult.self)
+            append(ChatMessage(id: r.msgID, peerId: selfId, text: text,
+                               inbound: false, timestamp: Date()),
+                   threadKey: channelID)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func offerFileToChannel(channelID: String, path: String) async {
+        do {
+            _ = try await ipc.call("OfferFileToGroup",
+                                   params: ["group": channelID, "path": path],
+                                   as: TransferIDResult.self)
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func isMember(_ channel: Channel) -> Bool {
+        channel.members.contains(selfId)
     }
 
     func respondFile(transferId: String, accept: Bool) async {

@@ -78,23 +78,30 @@ struct ChatView: View {
     }
 }
 
-private struct BubbleRow: View {
+struct BubbleRow: View {
     let message: ChatMessage
     let isSelf: Bool
 
     var body: some View {
-        HStack {
-            if isSelf { Spacer(minLength: 60) }
-            Text(message.text)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(isSelf ? Color.accentColor.opacity(0.18) : Color(nsColor: .windowBackgroundColor))
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 0.5))
-                .textSelection(.enabled)
-            if !isSelf { Spacer(minLength: 60) }
+        VStack(alignment: isSelf ? .trailing : .leading, spacing: 2) {
+            if !isSelf, let name = message.senderName {
+                Text(name)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            HStack {
+                if isSelf { Spacer(minLength: 60) }
+                Text(message.text)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(isSelf ? Color.accentColor.opacity(0.18) : Color(nsColor: .windowBackgroundColor))
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.gray.opacity(0.2), lineWidth: 0.5))
+                    .textSelection(.enabled)
+                if !isSelf { Spacer(minLength: 60) }
+            }
         }
     }
 }

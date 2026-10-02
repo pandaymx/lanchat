@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.3](https://github.com/pandaymx/lanchat/compare/v0.17.2...v0.17.3) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** complete linux gtk deps and correct msix cert properties ([#58](https://github.com/pandaymx/lanchat/issues/58)) ([53001f7](https://github.com/pandaymx/lanchat/commit/53001f7c41d37a774a55df02d0273e8cd26e3c14))
+
 ## [0.17.2](https://github.com/pandaymx/lanchat/compare/v0.17.1...v0.17.2) (2026-10-02)
 
 

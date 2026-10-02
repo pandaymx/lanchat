@@ -456,12 +456,15 @@ jobs:
       - name: Build daemon
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "dist/publish" | Out-Null
+          New-Item -ItemType Directory -Force -Path "dist/bin" | Out-Null
           go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" `
-            -o "dist/publish/lanchat-daemon.exe" ./cmd/lanchat-daemon
+            -o "dist/bin/lanchat-daemon.exe" ./cmd/lanchat-daemon
 
-      - name: Publish WinUI app (self-contained)
+      - name: Publish WinUI app (self-contained, unpackaged)
         shell: pwsh
+        # WindowsPackageType=None => 无包标识的 unpackaged 应用。
+        # 此时 LANChat.exe 直接 Process.Start 同目录的 lanchat-daemon.exe，
+        # 不走 MSIX 的 FullTrustProcessLauncher / ApplicationData 路径。
         run: |
           dotnet publish ui-win/src/LANChat.App/LANChat.App.csproj `
             -c Release -p:Platform=x64 -r win-x64 `
@@ -469,6 +472,16 @@ jobs:
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
             -o dist/publish
+
+      - name: Stage daemon next to the app
+        shell: pwsh
+        # publish 之后再拷入，避免依赖「publish 不会清理输出目录」这一隐式假设。
+        # UI 用 AppContext.BaseDirectory 定位 daemon，二者必须同级。
+        run: |
+          Copy-Item dist/bin/lanchat-daemon.exe dist/publish/lanchat-daemon.exe -Force
+          foreach ($f in 'LANChat.exe','lanchat-daemon.exe') {
+            if (-not (Test-Path "dist/publish/$f")) { throw "dist/publish 缺少 $f" }
+          }
 
       - name: Install WiX v4
         shell: pwsh

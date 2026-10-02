@@ -122,7 +122,7 @@ final class ChatEngine {
 
     // MARK: - 线程包装
 
-    private func runOnIO<T>(_ block: @Sendable (LCMobileClient) -> T) async -> T {
+    private func runOnIO<T>(_ block: @escaping @Sendable (LCMobileClient) -> T) async -> T {
         await withCheckedContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async { [client] in
                 guard let client else {
@@ -133,7 +133,7 @@ final class ChatEngine {
         }
     }
 
-    private func runOnIOThrowing<T>(_ block: @Sendable (LCMobileClient) throws -> T) async throws -> T {
+    private func runOnIOThrowing<T>(_ block: @escaping @Sendable (LCMobileClient) throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async { [client] in
                 guard let client else {

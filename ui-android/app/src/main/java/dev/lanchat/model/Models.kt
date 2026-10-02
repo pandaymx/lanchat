@@ -61,6 +61,8 @@ data class Channel(
     val id: String,
     val name: String,
     val ownerId: String = "",
+    val private: Boolean = false,
+    val topic: String = "",
     val members: List<String> = emptyList(),
 )
 
@@ -80,4 +82,8 @@ data class ChatMessage(
     val text: String,
     val inbound: Boolean,
     val timestamp: Long,
+    /** 群组（频道）ID；空表示 1:1 单播消息。 */
+    val group: String = "",
+    /** 群消息发送者 ID；仅群消息且入站时有意义。 */
+    val senderId: String = "",
 )

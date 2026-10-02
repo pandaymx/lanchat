@@ -1,6 +1,8 @@
 package mobile
 
 import (
+	"encoding/json"
+
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/core"
 )
@@ -9,19 +11,22 @@ import (
 //
 // 回调来自 Go 后台 goroutine（收泵 / 传输 runner），宿主侧更新 UI
 // 必须自行切回主线程（Android: runOnUiThread / Handler；iOS: DispatchQueue.main）。
+//
+// gomobile 对 interface 方法的参数类型支持有限：只接受基础类型、[]byte 与
+// 单个结构体指针，结构体切片需序列化为 JSON []byte 由宿主自行反序列化。
 type Listener interface {
 	// OnConnChanged 连接状态变化。
 	OnConnChanged(state string, reason string)
-	// OnPeerJoined 新用户上线。
-	OnPeerJoined(peer Peer)
+	// OnPeerJoined 新用户上线（指针类型：gomobile 不支持值结构体参数）。
+	OnPeerJoined(peer *Peer)
 	// OnPeerLeft 用户下线。
 	OnPeerLeft(peerID string)
 
 	// OnMessageReceived 收到文本 / 表情。
 	OnMessageReceived(from string, group string, msgID string, typ string, text string)
 
-	// OnTransferProgress 传输进度更新。
-	OnTransferProgress(t Transfer)
+	// OnTransferProgress 传输进度更新（指针类型，原因同 OnPeerJoined）。
+	OnTransferProgress(t *Transfer)
 	// OnTransferDone 传输完成（含校验通过）。
 	OnTransferDone(transferID string)
 	// OnTransferFailed 传输失败。
@@ -30,7 +35,8 @@ type Listener interface {
 	// OnGroupMatrix 群组任务的块可用性矩阵更新（G1/G2）。
 	OnGroupMatrix(groupID string, transferID string, haveBitmap []byte)
 	// OnChannelUpdated 频道列表 / 成员变化。
-	OnChannelUpdated(channels []Channel)
+	// payload 为 []appapi.Channel 的 JSON，宿主侧自行反序列化。
+	OnChannelUpdated(payload []byte)
 }
 
 // Client 是暴露给移动端的客户端门面，内部持有唯一的 *core.Client。
@@ -55,14 +61,15 @@ func NewClient(nickname string, osName string, downloadDir string, listener List
 // Close 释放核心资源（幂等）。应绑定到应用 / 前台服务生命周期。
 func (c *Client) Close() { c.core.Close() }
 
-// GetState 返回连接态 + 自己 + 在线表 + 传输快照。
-func (c *Client) GetState() *State { return fromState(c.core.GetState()) }
+// GetStateJSON 返回全量快照（appapi.State 的 JSON）：
+// 连接态 + 自己 + 在线表 + 传输 + 频道。结构体切片无法直接跨绑定，故走 JSON。
+func (c *Client) GetStateJSON() []byte { return mustJSON(c.core.GetState()) }
 
 // Connect 手动连接指定中心节点。
 func (c *Client) Connect(addr string, psk string) error { return c.core.Connect(addr, psk) }
 
-// BrowseServers 触发 mDNS 重扫并返回当前候选。
-func (c *Client) BrowseServers() []Server { return fromServers(c.core.BrowseServers()) }
+// BrowseServersJSON 触发 mDNS 重扫并返回当前候选（[]appapi.Server 的 JSON）。
+func (c *Client) BrowseServersJSON() []byte { return mustJSON(c.core.BrowseServers()) }
 
 // SendText 发送文本；group 为空表示单播，其余为群组（M6 仅单播）。
 func (c *Client) SendText(to string, text string, group string) (string, error) {
@@ -120,8 +127,18 @@ func (c *Client) ChannelInvite(channelID, memberID string) error {
 // ChannelLeave 退出 G2 自定义频道。
 func (c *Client) ChannelLeave(channelID string) error { return c.core.ChannelLeave(channelID) }
 
-// ChannelList 列出当前可见频道。
-func (c *Client) ChannelList() []Channel { return fromChannels(c.core.ChannelList()) }
+// ChannelListJSON 列出当前可见频道（[]appapi.Channel 的 JSON）。
+func (c *Client) ChannelListJSON() []byte { return mustJSON(c.core.ChannelList()) }
+
+// mustJSON 序列化；这些 DTO 只含基础类型，序列化不会失败，失败时返回 nil
+// 由宿主按空列表处理。
+func mustJSON(v any) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	return data
+}
 
 // listenerBridge 把 appapi.Listener 事件转成 mobile.Listener（DTO 值拷贝）。
 type listenerBridge struct {
@@ -135,7 +152,8 @@ func (b *listenerBridge) OnConnChanged(state appapi.ConnState, reason string) {
 }
 
 func (b *listenerBridge) OnPeerJoined(peer appapi.Peer) {
-	b.out.OnPeerJoined(fromPeer(peer))
+	p := Peer{ID: peer.ID, Nickname: peer.Nickname, OS: peer.OS, Status: peer.Status}
+	b.out.OnPeerJoined(&p)
 }
 
 func (b *listenerBridge) OnPeerLeft(peerID string) { b.out.OnPeerLeft(peerID) }
@@ -145,41 +163,7 @@ func (b *listenerBridge) OnMessageReceived(from, group, msgID, typ, text string)
 }
 
 func (b *listenerBridge) OnTransferProgress(t appapi.Transfer) {
-	b.out.OnTransferProgress(fromTransfer(t))
-}
-
-func (b *listenerBridge) OnTransferDone(transferID string) { b.out.OnTransferDone(transferID) }
-
-func (b *listenerBridge) OnTransferFailed(transferID, reason string) {
-	b.out.OnTransferFailed(transferID, reason)
-}
-
-func (b *listenerBridge) OnGroupMatrix(groupID, transferID string, haveBitmap []byte) {
-	b.out.OnGroupMatrix(groupID, transferID, haveBitmap)
-}
-
-func (b *listenerBridge) OnChannelUpdated(channels []appapi.Channel) {
-	b.out.OnChannelUpdated(fromChannels(channels))
-}
-
-// ---- appapi → mobile 值拷贝转换 ----
-
-func fromPeer(p appapi.Peer) Peer {
-	return Peer{ID: p.ID, Nickname: p.Nickname, OS: p.OS, Status: p.Status}
-}
-
-func fromServer(s appapi.Server) Server {
-	return Server{
-		Name:     s.Name,
-		ID:       s.ID,
-		Addr:     s.Addr,
-		Version:  s.Version,
-		AuthMode: s.AuthMode,
-	}
-}
-
-func fromTransfer(t appapi.Transfer) Transfer {
-	return Transfer{
+	tr := Transfer{
 		ID:          t.ID,
 		Direction:   string(t.Direction),
 		State:       string(t.State),
@@ -193,67 +177,19 @@ func fromTransfer(t appapi.Transfer) Transfer {
 		ViaRelay:    t.ViaRelay,
 		ErrorReason: t.ErrorReason,
 	}
+	b.out.OnTransferProgress(&tr)
 }
 
-func fromChannel(ch appapi.Channel) Channel {
-	return Channel{
-		ID: ch.ID, Name: ch.Name, OwnerID: ch.OwnerID,
-		Private: ch.Private, Topic: ch.Topic, Members: ch.Members,
-	}
+func (b *listenerBridge) OnTransferDone(transferID string) { b.out.OnTransferDone(transferID) }
+
+func (b *listenerBridge) OnTransferFailed(transferID, reason string) {
+	b.out.OnTransferFailed(transferID, reason)
 }
 
-func fromState(s appapi.State) *State {
-	return &State{
-		Conn:      string(s.Conn),
-		Server:    s.Server,
-		SelfID:    s.SelfID,
-		Nickname:  s.Nickname,
-		Peers:     fromPeers(s.Peers),
-		Transfers: fromTransfers(s.Transfers),
-		Channels:  fromChannels(s.Channels),
-	}
+func (b *listenerBridge) OnGroupMatrix(groupID, transferID string, haveBitmap []byte) {
+	b.out.OnGroupMatrix(groupID, transferID, haveBitmap)
 }
 
-func fromPeers(in []appapi.Peer) []Peer {
-	if len(in) == 0 {
-		return []Peer{}
-	}
-	out := make([]Peer, len(in))
-	for i, p := range in {
-		out[i] = fromPeer(p)
-	}
-	return out
-}
-
-func fromServers(in []appapi.Server) []Server {
-	if len(in) == 0 {
-		return []Server{}
-	}
-	out := make([]Server, len(in))
-	for i, s := range in {
-		out[i] = fromServer(s)
-	}
-	return out
-}
-
-func fromTransfers(in []appapi.Transfer) []Transfer {
-	if len(in) == 0 {
-		return []Transfer{}
-	}
-	out := make([]Transfer, len(in))
-	for i, t := range in {
-		out[i] = fromTransfer(t)
-	}
-	return out
-}
-
-func fromChannels(in []appapi.Channel) []Channel {
-	if len(in) == 0 {
-		return []Channel{}
-	}
-	out := make([]Channel, len(in))
-	for i, ch := range in {
-		out[i] = fromChannel(ch)
-	}
-	return out
+func (b *listenerBridge) OnChannelUpdated(channels []appapi.Channel) {
+	b.out.OnChannelUpdated(mustJSON(channels))
 }

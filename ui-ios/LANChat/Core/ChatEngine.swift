@@ -7,6 +7,9 @@ import Foundation
 //   - *mobile.Client          -> LCMobileClient
 //   - mobile.Listener         -> LCMobileListener 协议
 //
+// gomobile 无法绑定结构体切片 / []string，故查询方法均返回 JSON（Data），
+// 由本文件统一用 ChannelJSON 等 DTO 解码为本地模型。
+//
 // Listener 回调来自 Go 后台 goroutine（非主线程），这里统一
 // DispatchQueue.main 切回主线程后再投递给 @MainActor 的 AppStore。
 
@@ -54,21 +57,26 @@ final class ChatEngine {
 
     func getState() async -> FullState {
         await runOnIO { [client] in
-            guard let s = client?.state() else {
+            guard let data = client?.stateJSON(),
+                  let dto = try? JSONDecoder().decode(StateJSON.self, from: data) else {
                 return FullState(conn: "disconnected", server: "", selfId: "", nickname: "",
                                  peers: [], transfers: [], channels: [])
             }
-            return Self.toModel(s)
+            return dto.toModel()
         }
     }
 
     func connect(addr: String, psk: String) async throws {
-        try await runOnIOThrowing { try $0.connect(addr, psk) }
+        try await runOnIOThrowing { try $0.connect(addr, psk: psk) }
     }
 
     func browseServers() async -> [ServerInfo] {
         await runOnIO { client in
-            (client.browseServers() as? [LCServer] ?? []).map(Self.toModel)
+            guard let data = client.browseServersJSON(),
+                  let dtos = try? JSONDecoder().decode([ServerJSON].self, from: data) else {
+                return []
+            }
+            return dtos.map { $0.toModel() }
         }
     }
 
@@ -128,43 +136,6 @@ final class ChatEngine {
             }
         }
     }
-
-    // MARK: - 绑定类型 → 本地模型
-
-    static func toModel(_ p: LCPeer) -> Peer {
-        Peer(id: p.iD ?? "", nickname: p.nickname ?? "", os: p.oS ?? "", status: p.status ?? "")
-    }
-
-    static func toModel(_ s: LCServer) -> ServerInfo {
-        ServerInfo(name: s.name ?? "", id: s.iD ?? "", addr: s.addr ?? "",
-                   version: s.version ?? "",
-                   authMode: (s.authMode?.isEmpty ?? true) ? "psk" : s.authMode!)
-    }
-
-    static func toModel(_ t: LCTransfer) -> Transfer {
-        Transfer(id: t.iD ?? "", direction: t.direction ?? "", state: t.state ?? "",
-                 kind: t.kind ?? "", peerId: t.peerID ?? "", groupId: t.groupID ?? "",
-                 name: t.name ?? "", size: t.size, bytesDone: t.bytesDone,
-                 speedBps: t.speedBps, viaRelay: t.viaRelay,
-                 errorReason: t.errorReason ?? "")
-    }
-
-    static func toModel(_ c: LCChannel) -> Channel {
-        Channel(id: c.iD ?? "", name: c.name ?? "", ownerId: c.ownerID ?? "",
-                members: c.members as? [String] ?? [])
-    }
-
-    static func toModel(_ s: LCState) -> FullState {
-        FullState(
-            conn: s.conn ?? "disconnected",
-            server: s.server ?? "",
-            selfId: s.selfID ?? "",
-            nickname: s.nickname ?? "",
-            peers: (s.peers as? [LCPeer] ?? []).map(toModel),
-            transfers: (s.transfers as? [LCTransfer] ?? []).map(toModel),
-            channels: (s.channels as? [LCChannel] ?? []).map(toModel)
-        )
-    }
 }
 
 enum EngineError: LocalizedError {
@@ -173,6 +144,87 @@ enum EngineError: LocalizedError {
         switch self {
         case .notStarted: return "核心尚未启动"
         }
+    }
+}
+
+// MARK: - JSON DTO（字段对应 internal/appapi 的 json tag）
+
+struct PeerJSON: Decodable {
+    let id: String
+    let nickname: String
+    let os: String
+    let status: String
+
+    func toModel() -> Peer {
+        Peer(id: id, nickname: nickname, os: os, status: status)
+    }
+}
+
+struct ServerJSON: Decodable {
+    let name: String
+    let id: String
+    let addr: String
+    let version: String
+    let authMode: String?
+
+    func toModel() -> ServerInfo {
+        ServerInfo(name: name, id: id, addr: addr, version: version,
+                   authMode: (authMode?.isEmpty ?? true) ? "psk" : authMode!)
+    }
+}
+
+struct TransferJSON: Decodable {
+    let id: String
+    let direction: String
+    let state: String
+    let kind: String
+    let peerId: String?
+    let groupId: String?
+    let name: String
+    let size: Int64
+    let bytesDone: Int64
+    let speedBps: Int64
+    let viaRelay: Bool
+    let errorReason: String?
+
+    func toModel() -> Transfer {
+        Transfer(id: id, direction: direction, state: state, kind: kind,
+                 peerId: peerId ?? "", groupId: groupId ?? "", name: name,
+                 size: size, bytesDone: bytesDone, speedBps: speedBps,
+                 viaRelay: viaRelay, errorReason: errorReason ?? "")
+    }
+}
+
+struct ChannelJSON: Decodable {
+    let id: String
+    let name: String
+    let ownerId: String
+    let members: [String]?
+
+    func toModel() -> Channel {
+        Channel(id: id, name: name, ownerId: ownerId, members: members ?? [])
+    }
+}
+
+struct StateJSON: Decodable {
+    let conn: String
+    let server: String?
+    let selfId: String?
+    let nickname: String
+    let peers: [PeerJSON]?
+    let transfers: [TransferJSON]?
+    let channels: [ChannelJSON]?
+
+    func toModel() -> FullState {
+        FullState(
+            conn: conn.isEmpty ? "disconnected" : conn,
+            server: server ?? "",
+            selfId: selfId ?? "",
+            nickname: nickname,
+            peers: peers?.map { $0.toModel() } ?? [],
+            transfers: transfers?.map { $0.toModel() } ?? [],
+            channels: channels?.map { $0.toModel() } ?? []
+        )
     }
 }
 

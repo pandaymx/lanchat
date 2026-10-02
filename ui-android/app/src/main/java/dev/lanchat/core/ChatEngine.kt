@@ -1,12 +1,7 @@
 package dev.lanchat.core
 
-import dev.lanchat.bindings.mobile.Channel as GoChannel
 import dev.lanchat.bindings.mobile.Client as GoClient
 import dev.lanchat.bindings.mobile.Mobile
-import dev.lanchat.bindings.mobile.Peer as GoPeer
-import dev.lanchat.bindings.mobile.Server as GoServer
-import dev.lanchat.bindings.mobile.Transfer as GoTransfer
-import dev.lanchat.bindings.mobile.State as GoState
 import dev.lanchat.model.Channel
 import dev.lanchat.model.FullState
 import dev.lanchat.model.Peer
@@ -17,6 +12,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlin.coroutines.cancellation.CancellationException
 
 /** 核心上行事件（已转换为本地模型，线程由实现方切回主线程）。 */
@@ -61,12 +58,21 @@ class ChatEngine {
         client = null
     }
 
-    suspend fun getState(): FullState = ioOp { client!!.state.toModel() }
+    suspend fun getState(): FullState = ioOp {
+        val data = client!!.stateJSON
+        if (data == null) {
+            FullState(conn = "disconnected", server = "", selfId = "", nickname = "",
+                peers = emptyList(), transfers = emptyList(), channels = emptyList())
+        } else {
+            JSONObject(String(data, Charsets.UTF_8)).toFullState()
+        }
+    }
 
     suspend fun connect(addr: String, psk: String): Unit = ioOp { client!!.connect(addr, psk) }
 
-    suspend fun browseServers(): List<ServerInfo> =
-        ioOp { client!!.browseServers().map { it.toModel() } }
+    suspend fun browseServers(): List<ServerInfo> = ioOp {
+        client!!.browseServersJSON.toServerList()
+    }
 
     suspend fun sendText(to: String, text: String, group: String = ""): String =
         ioOp { client!!.sendText(to, text, group) }
@@ -97,50 +103,69 @@ class ChatEngine {
             }
         }
 
-    // ---- 绑定类型 → 本地模型 ----
+    // ---- JSON（appapi DTO） → 本地模型 ----
 
-    private fun GoState.toModel(): FullState = FullState(
-        conn = conn ?: "disconnected",
-        server = server.orEmpty(),
-        selfId = selfID.orEmpty(),
-        nickname = nickname.orEmpty(),
-        peers = peers?.map { it.toModel() } ?: emptyList(),
-        transfers = transfers?.map { it.toModel() } ?: emptyList(),
-        channels = channels?.map { it.toModel() } ?: emptyList(),
+    private fun JSONObject.toFullState(): FullState = FullState(
+        conn = optString("conn", "disconnected"),
+        server = optString("server"),
+        selfId = optString("selfId"),
+        nickname = optString("nickname"),
+        peers = optJSONArray("peers").toPeerList(),
+        transfers = optJSONArray("transfers").toTransferList(),
+        channels = optJSONArray("channels").toChannelList(),
     )
 
-    private fun GoPeer.toModel(): Peer =
-        Peer(id = iD.orEmpty(), nickname = nickname.orEmpty(), os = oS.orEmpty(), status = status.orEmpty())
-
-    private fun GoServer.toModel(): ServerInfo = ServerInfo(
-        name = name.orEmpty(),
-        id = iD.orEmpty(),
-        addr = addr.orEmpty(),
-        version = version.orEmpty(),
-        authMode = authMode.orEmpty().ifEmpty { "psk" },
+    private fun JSONObject.toPeer(): Peer = Peer(
+        id = optString("id"),
+        nickname = optString("nickname"),
+        os = optString("os"),
+        status = optString("status"),
     )
 
-    private fun GoTransfer.toModel(): Transfer = Transfer(
-        id = iD.orEmpty(),
-        direction = direction.orEmpty(),
-        state = state.orEmpty(),
-        kind = kind.orEmpty(),
-        peerId = peerID.orEmpty(),
-        groupId = groupID.orEmpty(),
-        name = name.orEmpty(),
-        size = size,
-        bytesDone = bytesDone,
-        speedBps = speedBps,
-        viaRelay = viaRelay,
-        errorReason = errorReason.orEmpty(),
+    private fun JSONObject.toServer(): ServerInfo = ServerInfo(
+        name = optString("name"),
+        id = optString("id"),
+        addr = optString("addr"),
+        version = optString("version"),
+        authMode = optString("authMode").ifEmpty { "psk" },
     )
 
-    private fun GoChannel.toModel(): Channel = Channel(
-        id = iD.orEmpty(),
-        name = name.orEmpty(),
-        ownerId = ownerID.orEmpty(),
-        members = members?.toList() ?: emptyList(),
+    private fun JSONObject.toTransfer(): Transfer = Transfer(
+        id = optString("id"),
+        direction = optString("direction"),
+        state = optString("state"),
+        kind = optString("kind"),
+        peerId = optString("peerId"),
+        groupId = optString("groupId"),
+        name = optString("name"),
+        size = optLong("size"),
+        bytesDone = optLong("bytesDone"),
+        speedBps = optLong("speedBps"),
+        viaRelay = optBoolean("viaRelay"),
+        errorReason = optString("errorReason"),
     )
+
+    private fun JSONObject.toChannel(): Channel = Channel(
+        id = optString("id"),
+        name = optString("name"),
+        ownerId = optString("ownerId"),
+        members = optJSONArray("members").toStringList(),
+    )
+
+    private fun JSONArray?.toPeerList(): List<Peer> =
+        this?.let { (0 until length()).map { getJSONObject(it).toPeer() } } ?: emptyList()
+
+    private fun JSONArray?.toServerList(): List<ServerInfo> =
+        this?.let { (0 until length()).map { getJSONObject(it).toServer() } } ?: emptyList()
+
+    private fun JSONArray?.toTransferList(): List<Transfer> =
+        this?.let { (0 until length()).map { getJSONObject(it).toTransfer() } } ?: emptyList()
+
+    private fun JSONArray?.toChannelList(): List<Channel> =
+        this?.let { (0 until length()).map { getJSONObject(it).toChannel() } } ?: emptyList()
+
+    private fun JSONArray?.toStringList(): List<String> =
+        this?.let { (0 until length()).map { getString(it) } } ?: emptyList()
 }
 
 /** 拼接目录与文件名（Go 侧运行时按 Linux 风格处理路径）。 */

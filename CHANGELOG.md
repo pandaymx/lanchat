@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.10](https://github.com/pandaymx/lanchat/compare/v0.17.9...v0.17.10) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-android:** browseServersJSON 需作为方法调用 ([#75](https://github.com/pandaymx/lanchat/issues/75)) ([4663617](https://github.com/pandaymx/lanchat/commit/4663617cf2f0c74668a3f52a888032de3bbe31d4))
+
 ## [0.17.9](https://github.com/pandaymx/lanchat/compare/v0.17.8...v0.17.9) (2026-10-02)
 
 

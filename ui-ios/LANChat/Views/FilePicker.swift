@@ -55,11 +55,13 @@ struct FilePicker: UIViewControllerRepresentable {
 
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             if Int64(size) > FileSize.largeFileThreshold {
+                // 先取出宿主再进闭包：捕获列表里写 [parent] 会被要求显式 self。
+                let host = parent
                 let name = url.lastPathComponent
-                let message = String(format: parent.scenario.largeFileMessage, name)
+                let message = String(format: host.scenario.largeFileMessage, name)
                 DispatchQueue.main.async {
-                    Self.confirmLargeFile(message: message) { [parent] in
-                        parent.onPicked(url)
+                    Self.confirmLargeFile(message: message) {
+                        host.onPicked(url)
                     }
                 }
             } else {

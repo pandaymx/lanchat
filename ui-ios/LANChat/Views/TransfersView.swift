@@ -31,6 +31,13 @@ private struct TransferRow: View {
                 Image(systemName: t.isIncoming ? "arrow.down.circle" : "arrow.up.circle")
                 Text(t.name).lineLimit(1)
                 Spacer()
+                if t.kind == "channel" {
+                    Text("频道")
+                        .font(.caption2)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(.thinMaterial, in: Capsule())
+                        .foregroundStyle(.secondary)
+                }
                 if t.viaRelay {
                     Text("⚠ 中继")
                         .font(.caption2)
@@ -72,14 +79,19 @@ private struct TransferRow: View {
     }
 
     private var stateText: String {
+        let action: String
         switch t.state {
-        case "active": return t.isIncoming ? "接收中" : "发送中"
-        case "pending": return "等待应答"
-        case "paused": return "已暂停"
-        case "done": return "已完成"
-        case "failed": return "失败"
-        case "canceled": return "已取消"
-        default: return t.state
+        case "active": action = t.isIncoming ? "接收中" : "发送中"
+        case "pending": action = "等待应答"
+        case "paused": action = "已暂停"
+        case "done": action = "已完成"
+        case "failed": action = "失败"
+        case "canceled": action = "已取消"
+        default: action = t.state
         }
+        guard t.kind == "channel", let channel = store.channels.first(where: { $0.id == t.groupId }) else {
+            return action
+        }
+        return "\(action) · \(channel.name)"
     }
 }

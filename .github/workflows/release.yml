@@ -244,46 +244,201 @@ jobs:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
 
-      - name: Decode signing keystore
+      # 签名凭据预检：把「能不能签」这件事在打包前问清楚，并给出可执行的结论。
+      # 历史故障：keystore 能被 storepass 打开，但 ANDROID_KEY_PASSWORD 恢复不出私钥，
+      # AGP 直到 :app:packageRelease 才抛出 KeytoolException「Cannot recover key」，
+      # 白烧 4 分钟构建且连带 publish 整个 release 失败。
+      # 常见成因是 keytool 生成的库实为 PKCS12（JDK9+ 默认），其 keypass 恒等于 storepass。
+      - name: Validate signing credentials
         id: sign
         env:
+          KS_PATH: ${{ github.workspace }}/.signing/lanchat.jks
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
-            mkdir -p .signing
-            printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > .signing/lanchat.jks
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::ANDROID_KEYSTORE_B64 未配置，改为构建 debug APK"
-            echo "configured=false" >> "$GITHUB_OUTPUT"
+          # 不用 -e：所有失败路径都由本步骤显式判定并降级，避免半路中断导致
+          # $GITHUB_OUTPUT 里没有 ready，后续 if 判断失真。
+          set -uo pipefail
+
+          # 约定：任何输出只允许出现 secret 的「名字」，绝不回显其值。
+          out() {
+            echo "ready=$1" >> "$GITHUB_OUTPUT"
+            if [ -n "${2:-}" ]; then echo "key_pass_source=$2" >> "$GITHUB_OUTPUT"; fi
+          }
+          abort() {
+            echo "::warning::Android 签名不可用：$1"
+            {
+              echo "### Android 签名降级为 debug APK"
+              echo ""
+              echo "- 原因：$1"
+              echo "- 修复：核对仓库 secrets \`ANDROID_KEYSTORE_B64\` / \`ANDROID_KEYSTORE_PASSWORD\` /"
+              echo "  \`ANDROID_KEY_ALIAS\` / \`ANDROID_KEY_PASSWORD\`；若库为 PKCS12，则"
+              echo "  \`ANDROID_KEY_PASSWORD\` 必须与 \`ANDROID_KEYSTORE_PASSWORD\` 相同。"
+            } >> "$GITHUB_STEP_SUMMARY"
+            out false ""
+            exit 0
+          }
+
+          # 1) 未配置任何签名 secret 属预期状态（AGENTS.md §9），只提示不告警。
+          if [ -z "${ANDROID_KEYSTORE_B64:-}" ]; then
+            echo "::notice::未配置 ANDROID_KEYSTORE_B64，按 debug APK 发布（AGENTS.md §9 无签名制品）"
+            out false ""
+            exit 0
           fi
 
+          # 2) 配置了一半更容易误诊：空口令会探出与真实原因无关的失败。
+          missing=""
+          [ -n "${KS_PASS:-}" ]   || missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -n "${KEY_ALIAS:-}" ] || missing="$missing ANDROID_KEY_ALIAS"
+          [ -n "${KEY_PASS:-}" ]  || missing="$missing ANDROID_KEY_PASSWORD"
+          [ -z "$missing" ] || abort "已配置 ANDROID_KEYSTORE_B64 但缺少 secret：${missing# }"
+
+          # 3) 解码并校验长度，捕获 secret 换行/截断导致的「伪 keystore」。
+          mkdir -p "$(dirname "$KS_PATH")"
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$KS_PATH" \
+            || abort "ANDROID_KEYSTORE_B64 解码失败（非法 base64）"
+          size=$(wc -c < "$KS_PATH" | tr -d ' ')
+          [ "$size" -gt 256 ] || abort "解码后 keystore 仅 ${size} 字节，疑似 secret 被截断"
+          # 魔数仅用于报告：JKS 为 0xFEEDFEED，PKCS12 是 DER SEQUENCE（0x30 开头）。
+          case "$(od -An -tx1 -N4 "$KS_PATH" | tr -d ' \n')" in
+            feedfeed) echo "keystore：${size} 字节，格式 JKS" ;;
+            30*)      echo "keystore：${size} 字节，格式 PKCS12（该格式 keypass 恒等于 storepass）" ;;
+            *)        echo "keystore：${size} 字节，格式待探针判定" ;;
+          esac
+
+          # 4) 探针动作与 AGP 打包时完全一致：KeyStore.getKey(alias, keyPassword)。
+          #    不用 keytool -importkeystore —— 它会把 PKCS12 的 srckeypass 归一成 storepass，
+          #    恰好探不出「keypass 不匹配」这个真实故障点。
+          WORK=$(mktemp -d)
+          trap 'rm -rf "$WORK"' EXIT
+          cat > "$WORK/KeyProbe.java" <<'JAVA'
+          import java.io.FileInputStream;
+          import java.io.InputStream;
+          import java.security.KeyStore;
+          import java.security.UnrecoverableKeyException;
+
+          public final class KeyProbe {
+              public static void main(String[] args) throws Exception {
+                  if (args.length < 2) { System.out.println("BADARGS"); return; }
+                  KeyStore ks = load(args[0], pass("KS_PASS"));
+                  if (ks == null) { System.out.println("UNOPENABLE"); return; }
+                  if (!ks.containsAlias(args[1])) { System.out.println("NOALIAS"); return; }
+                  try {
+                      System.out.println(ks.getKey(args[1], pass("PROBE_PASS")) != null ? "OK" : "UNRECOVERABLE");
+                  } catch (UnrecoverableKeyException wrongKeyPass) {
+                      System.out.println("UNRECOVERABLE");
+                  }
+              }
+
+              // PKCS12 与 JKS 都试一遍，AGP 也不要求调用方指定 storetype。
+              private static KeyStore load(String file, char[] storePass) {
+                  for (String type : new String[] {"PKCS12", "JKS"}) {
+                      try (InputStream in = new FileInputStream(file)) {
+                          KeyStore ks = KeyStore.getInstance(type);
+                          ks.load(in, storePass);
+                          return ks;
+                      } catch (Exception notThisType) {
+                          // 换下一种 storetype 再试
+                      }
+                  }
+                  return null;
+              }
+
+              private static char[] pass(String envName) {
+                  String value = System.getenv(envName);
+                  return value == null ? new char[0] : value.toCharArray();
+              }
+          }
+          JAVA
+
+          probe() { # $1=候选私钥口令 → 打印状态词，任何情况下都不回显口令
+            local result rc
+            result=$(PROBE_PASS="$1" java "$WORK/KeyProbe.java" "$KS_PATH" "$KEY_ALIAS" 2>/dev/null | tail -1)
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              echo "PROBE_ERROR"
+            else
+              echo "${result//[^A-Z_]/}"
+            fi
+          }
+
+          # 5) 先用配置的 ANDROID_KEY_PASSWORD，失败再用 ANDROID_KEYSTORE_PASSWORD，
+          #    两者都不行才降级；每条分支都指到具体 secret，便于人工修复。
+          first=$(probe "$KEY_PASS")
+          if [ "$first" = OK ]; then
+            echo "签名凭据校验通过：私钥由 ANDROID_KEY_PASSWORD 恢复"
+            out true ANDROID_KEY_PASSWORD
+            exit 0
+          fi
+
+          second=$(probe "$KS_PASS")
+          case "$second" in
+            OK)
+              # 自愈：PKCS12 库（JDK9+ keytool 默认格式）的 keypass 恒等于 storepass，
+              # 此时 ANDROID_KEY_PASSWORD 是个多余或过期的值，直接用 storepass 签，
+              # 签名身份不变，不必重跑构建。
+              echo "::notice::ANDROID_KEY_PASSWORD 恢复不了私钥，本次改用 ANDROID_KEYSTORE_PASSWORD 签名"
+              {
+                echo "### Android 签名口令来源已回退"
+                echo ""
+                echo "- \`ANDROID_KEY_PASSWORD\`（探针状态 ${first}）恢复不了私钥，"
+                echo "  本次已自动改用 \`ANDROID_KEYSTORE_PASSWORD\`，产物仍为 release 签名包。"
+                echo "- 建议把 \`ANDROID_KEY_PASSWORD\` 更新为与 \`ANDROID_KEYSTORE_PASSWORD\` 相同，消除该回退。"
+              } >> "$GITHUB_STEP_SUMMARY"
+              out true ANDROID_KEYSTORE_PASSWORD
+              ;;
+            UNOPENABLE)
+              abort "ANDROID_KEYSTORE_PASSWORD 打不开 keystore：口令不正确或库已损坏（ANDROID_KEY_PASSWORD 探针状态：${first}）"
+              ;;
+            NOALIAS)
+              abort "keystore 可打开，但库里没有 ANDROID_KEY_ALIAS 指定的别名条目（只报状态，不打印别名）"
+              ;;
+            UNRECOVERABLE)
+              abort "ANDROID_KEY_PASSWORD 与 ANDROID_KEYSTORE_PASSWORD 都恢复不出该别名私钥"
+              ;;
+            *)
+              abort "签名探针无法运行（需 JDK 11+ 的单文件源码模式），状态：${second}"
+              ;;
+          esac
+
       - name: Build release APK
-        if: steps.sign.outputs.configured == 'true'
+        if: steps.sign.outputs.ready == 'true'
         working-directory: ui-android
         env:
           KS_PATH: ${{ github.workspace }}/.signing/lanchat.jks
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_PASS_FROM: ${{ steps.sign.outputs.key_pass_source }}
         run: |
+          set -uo pipefail
+          # 口令来源由预检确定，避免把错误口令交给 AGP 后在 packageRelease 才炸。
+          if [ "$KEY_PASS_FROM" = "ANDROID_KEYSTORE_PASSWORD" ]; then
+            SIGN_PASS="$KS_PASS"
+          else
+            SIGN_PASS="$KEY_PASS"
+          fi
           ./gradlew assembleRelease --no-daemon \
             -Pandroid.injected.signing.store.file="$KS_PATH" \
             -Pandroid.injected.signing.store.password="$KS_PASS" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
-            -Pandroid.injected.signing.key.password="$KEY_PASS"
+            -Pandroid.injected.signing.key.password="$SIGN_PASS"
 
       - name: Build debug APK (fallback)
-        if: steps.sign.outputs.configured != 'true'
+        if: steps.sign.outputs.ready != 'true'
         working-directory: ui-android
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Collect APK
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
+          SIGNED: ${{ steps.sign.outputs.ready }}
         run: |
+          set -uo pipefail
           mkdir -p dist
-          if [ "${{ steps.sign.outputs.configured }}" = "true" ]; then
+          if [ "$SIGNED" = "true" ]; then
             cp ui-android/app/build/outputs/apk/release/app-release.apk \
               "dist/LANChat-${TAG#v}-android-release.apk"
           else

@@ -72,4 +72,8 @@ dependencies {
     implementation(libs.androidx.documentfile)
 
     debugImplementation(libs.androidx.ui.tooling)
+
+    testImplementation(libs.junit)
+    // 纯 JVM 版 org.json：生产代码使用 Android 内置同名 API，测试借此无需设备即可运行。
+    testImplementation(libs.org.json)
 }

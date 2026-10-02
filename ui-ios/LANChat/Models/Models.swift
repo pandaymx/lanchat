@@ -49,6 +49,10 @@ struct Channel: Identifiable, Equatable, Hashable {
     var id: String
     var name: String
     var ownerId: String
+    /// 频道主题（可缺省）。
+    var topic: String
+    /// 是否为私有频道；私有频道仅可经 owner 邀请加入。
+    var isPrivate: Bool
     var members: [String]
 }
 
@@ -70,4 +74,6 @@ struct ChatMessage: Identifiable, Equatable {
     let text: String
     let inbound: Bool
     let timestamp: Date
+    /// 所属频道 ID；nil 表示 1:1 单播消息。
+    var group: String?
 }

@@ -5,4 +5,43 @@
     <string name="notification_title">LANChat 正在运行</string>
     <string name="notification_text">保持连接与文件传输</string>
     <string name="default_nickname">Android 用户</string>
+
+    <!-- 主导航 -->
+    <string name="tab_peers">联系人</string>
+    <string name="tab_channels">频道</string>
+    <string name="tab_transfers">传输</string>
+
+    <!-- 通用动作 -->
+    <string name="action_back">返回</string>
+    <string name="action_send">发送</string>
+    <string name="action_send_file">发送文件</string>
+    <string name="dialog_create">创建</string>
+    <string name="dialog_cancel">取消</string>
+
+    <!-- 聊天 -->
+    <string name="chat_input_placeholder">输入消息</string>
+
+    <!-- 频道 -->
+    <string name="channels_empty">还没有频道，点击右下角创建一个吧</string>
+    <string name="channels_refresh">刷新频道</string>
+    <string name="channel_create">新建频道</string>
+    <string name="channel_name_label">频道名称</string>
+    <string name="channel_join">加入</string>
+    <string name="channel_open">进入频道</string>
+    <string name="channel_members_count">成员：%1$d 人</string>
+    <string name="channel_large_file_hint">文件较大，群分发可能耗时较久；后台传输由前台服务保持</string>
+    <string name="channel_private">私有频道</string>
+    <string name="channel_private_icon">私有频道</string>
+    <string name="channel_topic_label">主题</string>
+    <string name="channel_invite">邀请成员</string>
+    <string name="channel_invite_title">邀请成员加入 %1$s</string>
+    <string name="channel_invite_confirm">发送邀请</string>
+    <string name="channel_leave">退出频道</string>
+    <string name="channel_no_invitable_peers">暂无可邀请的在线成员</string>
+
+    <!-- 传输 -->
+    <string name="transfer_channel_inbound">频道接收 · %1$s</string>
+    <string name="transfer_channel_outbound">频道分发 · %1$s</string>
+    <string name="transfer_swarm_inbound">群组接收 · %1$s</string>
+    <string name="transfer_swarm_outbound">群组分发 · %1$s</string>
 </resources>

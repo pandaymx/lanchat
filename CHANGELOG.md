@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.21.0](https://github.com/pandaymx/lanchat/compare/v0.20.0...v0.21.0) (2026-10-02)
+
+
+### Features
+
+* **ui-ios:** add G2 channels with group chat and large-file boundary [M9] ([#90](https://github.com/pandaymx/lanchat/issues/90)) ([3552660](https://github.com/pandaymx/lanchat/commit/3552660053315ed7e992ce71e3885568bd6aa7e8))
+
+## [0.20.0](https://github.com/pandaymx/lanchat/compare/v0.19.0...v0.20.0) (2026-10-02)
+
+
+### Features
+
+* **ui-macos:** add G2 channel list, create/join/invite/leave and group chat [M9] ([#89](https://github.com/pandaymx/lanchat/issues/89)) ([719d74b](https://github.com/pandaymx/lanchat/commit/719d74b23635a63dcd8a0fd22fc3f21dd8757133))
+
+## [0.19.0](https://github.com/pandaymx/lanchat/compare/v0.18.0...v0.19.0) (2026-10-02)
+
+
+### Features
+
+* **ui-android:** add G2 channels with group chat and foreground transfer [M9] ([#91](https://github.com/pandaymx/lanchat/issues/91)) ([687241b](https://github.com/pandaymx/lanchat/commit/687241b5293280b3ffd491a338d9b8c2cea9fada))
+
+## [0.18.0](https://github.com/pandaymx/lanchat/compare/v0.17.15...v0.18.0) (2026-10-02)
+
+
+### Features
+
+* **ui-linux:** add G2 channel list, create/join/invite/leave and group chat [M9] ([#92](https://github.com/pandaymx/lanchat/issues/92)) ([a2af8e7](https://github.com/pandaymx/lanchat/commit/a2af8e7528840ca9efb6e19d589249aa2409d46e))
+
 ## [0.17.15](https://github.com/pandaymx/lanchat/compare/v0.17.14...v0.17.15) (2026-10-02)
 
 

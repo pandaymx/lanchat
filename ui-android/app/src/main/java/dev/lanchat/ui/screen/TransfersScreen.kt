@@ -16,7 +16,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import dev.lanchat.R
 import dev.lanchat.model.Formatters
 import dev.lanchat.model.Transfer
 import dev.lanchat.model.TransferState
@@ -114,8 +116,27 @@ private fun TransferCard(transfer: Transfer, vm: AppViewModel) {
     }
 }
 
-private fun directionLabel(transfer: Transfer): String =
-    if (transfer.direction == "inbound") "接收自 ${transfer.peerId}" else "发送给 ${transfer.peerId}"
+@Composable
+private fun directionLabel(transfer: Transfer): String = when {
+    transfer.kind == "channel" && transfer.groupId.isNotEmpty() -> {
+        if (transfer.direction == "inbound") {
+            stringResource(R.string.transfer_channel_inbound, transfer.groupId)
+        } else {
+            stringResource(R.string.transfer_channel_outbound, transfer.groupId)
+        }
+    }
+
+    transfer.kind == "swarm" && transfer.groupId.isNotEmpty() -> {
+        if (transfer.direction == "inbound") {
+            stringResource(R.string.transfer_swarm_inbound, transfer.groupId)
+        } else {
+            stringResource(R.string.transfer_swarm_outbound, transfer.groupId)
+        }
+    }
+
+    transfer.direction == "inbound" -> "接收自 ${transfer.peerId}"
+    else -> "发送给 ${transfer.peerId}"
+}
 
 private fun stateLabel(state: String): String = when (state) {
     TransferState.PENDING -> "等待"

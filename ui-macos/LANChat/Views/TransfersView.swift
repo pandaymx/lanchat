@@ -17,7 +17,7 @@ struct TransfersView: View {
             } else {
                 List {
                     ForEach(store.transfers) { t in
-                        TransferRow(transfer: t) {
+                        TransferRow(transfer: t, scopeName: scopeName(for: t)) {
                             Task { await store.respondFile(transferId: t.id, accept: true) }
                         } onDecline: {
                             Task { await store.respondFile(transferId: t.id, accept: false) }
@@ -30,13 +30,35 @@ struct TransfersView: View {
         }
         .frame(minWidth: 460, minHeight: 380)
     }
+
+    /// 频道（kind=channel）传输显示频道名；G1 全体显示“全体”；单播不显示。
+    private func scopeName(for t: Transfer) -> String? {
+        switch t.kind {
+        case "channel":
+            return store.channels.first(where: { $0.id == t.groupId })?.name
+                ?? t.groupId.map { String($0.prefix(8)) }
+        case "swarm":
+            return "全体"
+        default:
+            return nil
+        }
+    }
 }
 
 private struct TransferRow: View {
     let transfer: Transfer
+    var scopeName: String?
     let onAccept: () -> Void
     let onDecline: () -> Void
     let onCancel: () -> Void
+
+    private var scopeBadge: String? {
+        switch transfer.kind {
+        case "channel": return "# " + (scopeName ?? "")
+        case "swarm": return scopeName
+        default: return nil
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -44,6 +66,14 @@ private struct TransferRow: View {
                 Image(systemName: transfer.isIncoming ? "arrow.down" : "arrow.up")
                     .foregroundColor(.secondary)
                 Text(transfer.name).font(.body).lineLimit(1)
+                if let scope = scopeBadge {
+                    Text(scope)
+                        .font(.caption2)
+                        .lineLimit(1)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.blue.opacity(0.18))
+                        .cornerRadius(4)
+                }
                 if transfer.viaRelay {
                     Text("⚠ 中继")
                         .font(.caption2)

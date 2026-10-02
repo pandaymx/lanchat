@@ -171,6 +171,16 @@ type GroupProgressPayload struct {
 	HaveBitmap json.RawMessage `json:"haveBitmap,omitempty"`
 }
 
+// GroupKeyPayload 是 GROUP_KEY 的负载：源把本次群文件对称密钥（base64，
+// 32 字节 AES-256 密钥）经信令单播给新加入成员。群文件信令本身经
+// WSS/PSK 通道保护；持有该密钥是参与数据面加解密的前提，离开分发后
+// 成员不再收到后续会话密钥。
+type GroupKeyPayload struct {
+	GroupID    string `json:"groupID"`
+	TransferID string `json:"transferID"`
+	FileKey    string `json:"fileKey"`
+}
+
 // Channel 是 G2 自定义频道（方案 §9.6）。
 //
 // Private/Topic 为 G2 补全新增字段，均带 omitempty，旧端可缺省解析。
@@ -220,10 +230,13 @@ type RelayRequestPayload struct {
 
 // RelayGrantPayload 是 RELAY_GRANT 的负载。
 // RelayAddr 是中继数据面 TCP 地址 host:port（可缺省，老端忽略）。
+// PeerID 为群文件回退新增：标明本次配对的对端成员，客户端据此把 grant
+// 投递到对应群任务（1:1 路径缺省，旧行为不变）。
 type RelayGrantPayload struct {
 	TransferID string `json:"transferID"`
 	RelayID    string `json:"relayID"`
 	RelayAddr  string `json:"relayAddr,omitempty"`
+	PeerID     string `json:"peerID,omitempty"`
 }
 
 // RelayKeyPayload 是 RELAY_KEY 的负载。

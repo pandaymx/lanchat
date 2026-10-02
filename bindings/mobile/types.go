@@ -51,15 +51,6 @@ type Peer struct {
 	Status   string
 }
 
-// Server mDNS 浏览到的中心节点候选。
-type Server struct {
-	Name     string
-	ID       string
-	Addr     string
-	Version  string
-	AuthMode string
-}
-
 // Transfer 一个文件传输任务的快照。
 type Transfer struct {
 	ID          string
@@ -76,23 +67,5 @@ type Transfer struct {
 	ErrorReason string
 }
 
-// Channel G2 自定义频道。
-type Channel struct {
-	ID      string
-	Name    string
-	OwnerID string
-	Private bool
-	Topic   string
-	Members []string
-}
-
-// State GetState 返回的全量快照。
-type State struct {
-	Conn      string
-	Server    string
-	SelfID    string
-	Nickname  string
-	Peers     []Peer
-	Transfers []Transfer
-	Channels  []Channel
-}
+// 注：Server / Channel / 全量 State 含结构体切片或 []string，gomobile 无法绑定，
+// 对应查询方法（GetStateJSON / BrowseServersJSON / ChannelListJSON）直接返回 JSON。

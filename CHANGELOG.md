@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/pandaymx/lanchat/compare/v0.21.1...v0.22.0) (2026-10-02)
+
+
+### Features
+
+* **discover:** serve 注册 mDNS 广告，browse 秒级可见 [M2] ([#98](https://github.com/pandaymx/lanchat/issues/98)) ([f471f4f](https://github.com/pandaymx/lanchat/commit/f471f4f312acea2b630d48aa492bd9a7577d934f))
+
 ## [0.21.1](https://github.com/pandaymx/lanchat/compare/v0.21.0...v0.21.1) (2026-10-02)
 
 

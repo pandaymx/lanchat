@@ -130,7 +130,8 @@ jobs:
     name: Build Linux package (GTK4, x64)
     needs: resolve
     if: needs.resolve.outputs.do_build == 'true'
-    runs-on: ubuntu-latest
+    # GTK4 / libadwaita 直接取系统包，见下方 Install GTK4 / libadwaita 的说明。
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -147,26 +148,24 @@ jobs:
         with:
           workspaces: ui-linux
 
-      # gtk4-rs 0.9 needs GTK >= 4.16 (libadwaita-rs 0.7 needs >= 1.5).
-      # ubuntu-latest ships older system libraries, so take them from conda-forge.
-      - uses: conda-incubator/setup-miniconda@v3
-        with:
-          activate-environment: gtk
-          auto-activate-base: false
-          channels: conda-forge
-          channel-priority: strict
-          use-only-tar-bz2: true
-          run-post: false
-          environment-file: configs/linux-gtk-environment.yml
+      # gtk4-rs 0.9 需要 GTK >= 4.16，libadwaita-rs 0.7 需要 >= 1.5 且用到 v1_6。
+      # 原先从 conda-forge 取库，是因为 ubuntu-latest（24.04）的系统版本不够；
+      # rust-ci.yml 已在 ubuntu-26.04 上用系统包跑通 cargo clippy --all-targets
+      # （会真正执行 gtk4/adw 的 build script 做版本校验），故此处改用 apt，
+      # 省下 setup-miniconda 每次 62–67s 的环境求解与下载。
+      - name: Install GTK4 / libadwaita
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-4-dev libadwaita-1-dev
 
       - name: Build lanchat-ui
         working-directory: ui-linux
-        shell: bash -l {0}
         run: cargo build --release
 
       - name: Build lanchat-daemon
-        shell: bash -l {0}
         run: |
+          mkdir -p dist/stage
           CGO_ENABLED=0 go build -trimpath \
             -ldflags "-s -w -X main.commit=${GITHUB_SHA::7}" \
             -o dist/stage/lanchat-daemon ./cmd/lanchat-daemon

@@ -398,8 +398,10 @@ jobs:
       - name: Build for simulator
         working-directory: ui-ios
         run: |
+          # destination 已隐含架构，Xcode 16 下不得再显式指定 -arch，
+          # 否则报错：destination implies architecture
           xcodebuild -project LANChat.xcodeproj -scheme LANChat \
-            -configuration Release -sdk iphonesimulator -arch arm64 \
+            -configuration Release -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath build/DerivedData \
             CODE_SIGNING_ALLOWED=NO build

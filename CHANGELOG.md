@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.5](https://github.com/pandaymx/lanchat/compare/v0.17.4...v0.17.5) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ui-android:** drop kotlin.android plugin for AGP 9 built-in Kotlin ([#64](https://github.com/pandaymx/lanchat/issues/64)) ([d879cc5](https://github.com/pandaymx/lanchat/commit/d879cc52ccb012afd88c65c5fddbaee20b71dd22))
+
 ## [0.17.4](https://github.com/pandaymx/lanchat/compare/v0.17.3...v0.17.4) (2026-10-02)
 
 

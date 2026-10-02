@@ -19,7 +19,6 @@ final class SettingsStore: ObservableObject {
         nickname = defaults.string(forKey: Keys.nickname) ?? ("macOS-" + (Host.current().localizedName ?? "user"))
         downloadDir = defaults.string(forKey: Keys.downloadDir) ?? SettingsStore.defaultDownloadDir()
         stopDaemonOnExit = defaults.bool(forKey: Keys.stopDaemon)
-        self.defaults = defaults
     }
 
     static func defaultDownloadDir() -> String {

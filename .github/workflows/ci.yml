@@ -79,3 +79,84 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: scripts/check-scope.sh
+
+  # ui-ios 的 Swift 只能在 macOS 上编译，而 Release 作业的 ios 构建只在带 v* tag
+  # 的提交上跑（见 release.yml 的 resolve），导致 iOS 端代码合并前从未被编译过，
+  # 只能等发版时由 Release 连续报错。这里补一道 PR 级编译门禁：
+  # 仅当改动涉及 iOS 端 / gomobile 绑定时运行，只编译、不签名、不产出发布物。
+  ios-changes:
+    name: detect ui-ios changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Filter changed paths
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          n="$(git diff --name-only "$BASE_SHA"...HEAD \
+            | grep -cE '^(ui-ios/|bindings/mobile/|\.github/workflows/ci\.yml$|go\.(mod|sum)$)' || true)"
+          if [ "${n:-0}" -gt 0 ]; then
+            echo "本次 PR 涉及 iOS 端，启动 macos 编译门禁"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ios-compile:
+    name: iOS compile check (gomobile + Swift)
+    needs: ios-changes
+    if: needs.ios-changes.outputs.changed == 'true'
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Add gomobile dependency
+        run: go get golang.org/x/mobile@latest
+
+      - name: gomobile init
+        run: gomobile init
+
+      - name: Generate XCFramework
+        run: |
+          mkdir -p ui-ios/Frameworks
+          gomobile bind -target=ios -iosversion=16.0 -prefix=LC \
+            -o ui-ios/Frameworks/Mobile.xcframework ./bindings/mobile
+
+      - name: Generate Xcode project
+        working-directory: ui-ios
+        run: xcodegen generate
+
+      - name: Build for simulator
+        working-directory: ui-ios
+        run: |
+          # 与 Release 作业的 ios 构建参数保持一致：destination 已隐含架构，
+          # Xcode 16 下不得再显式指定 -arch。
+          xcodebuild -project LANChat.xcodeproj -scheme LANChat \
+            -configuration Release -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build

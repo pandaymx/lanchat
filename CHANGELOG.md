@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/pandaymx/lanchat/compare/v0.19.0...v0.20.0) (2026-10-02)
+
+
+### Features
+
+* **ui-macos:** add G2 channel list, create/join/invite/leave and group chat [M9] ([#89](https://github.com/pandaymx/lanchat/issues/89)) ([719d74b](https://github.com/pandaymx/lanchat/commit/719d74b23635a63dcd8a0fd22fc3f21dd8757133))
+
 ## [0.19.0](https://github.com/pandaymx/lanchat/compare/v0.18.0...v0.19.0) (2026-10-02)
 
 

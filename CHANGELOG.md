@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/pandaymx/lanchat/compare/v1.0.0...v1.1.0) (2026-10-03)
+
+
+### Features
+
+* **ci:** 性能基线复测门禁 + 每日定时 ([#116](https://github.com/pandaymx/lanchat/issues/116)) ([365d3bf](https://github.com/pandaymx/lanchat/commit/365d3bfa425024bb4b31c559dad55e0207d11dd2))
+
 ## [0.24.0](https://github.com/pandaymx/lanchat/compare/v0.23.4...v0.24.0) (2026-10-03)
 
 

@@ -931,13 +931,21 @@ jobs:
           EOF
           cat assets/version.json
 
+      - name: Generate release notes
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          UNSIGNED: 'true'
+        run: |
+          chmod +x scripts/generate-release-notes.sh
+          scripts/generate-release-notes.sh > release-body.md
+
       - name: Create / update release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve.outputs.tag }}
           files: assets/*
-          generate_release_notes: true
+          body_path: release-body.md
           fail_on_unmatched_files: true
 
       - name: Attest build provenance

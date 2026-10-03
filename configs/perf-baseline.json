@@ -1,0 +1,11 @@
+{
+  "description": "性能基线数据 — 由 scripts/perf-baseline.sh 读取并对比",
+  "tests": {
+    "TestPerf_1GiB_Throughput": {
+      "throughput_mbps": 110,
+      "heap_growth_mib": 20,
+      "tolerance_pct": 20
+    }
+  },
+  "updated": "2026-10-03"
+}

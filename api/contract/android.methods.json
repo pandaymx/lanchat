@@ -1,0 +1,21 @@
+{
+  "platform": "android",
+  "description": "Android (Kotlin) — gomobile in-process bindings",
+  "methods": [
+    "BrowseServers",
+    "CancelFile",
+    "ChannelCreate",
+    "ChannelJoin",
+    "ChannelInvite",
+    "ChannelLeave",
+    "ChannelList",
+    "Connect",
+    "GetState",
+    "OfferFile",
+    "OfferFileToGroup",
+    "PickDownloadDir",
+    "RespondFile",
+    "SendText",
+    "SetNickname"
+  ]
+}

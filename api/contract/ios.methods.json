@@ -1,0 +1,20 @@
+{
+  "platform": "ios",
+  "description": "iOS (Swift/UIKit) — gomobile in-process bindings",
+  "methods": [
+    "BrowseServers",
+    "CancelFile",
+    "ChannelCreate",
+    "ChannelJoin",
+    "ChannelInvite",
+    "ChannelLeave",
+    "ChannelList",
+    "Connect",
+    "GetState",
+    "OfferFile",
+    "OfferFileToGroup",
+    "RespondFile",
+    "SendText",
+    "SetNickname"
+  ]
+}

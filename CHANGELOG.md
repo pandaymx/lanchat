@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/pandaymx/lanchat/compare/v0.23.4...v0.24.0) (2026-10-03)
+
+
+### Features
+
+* **ci:** 契约测试 — schema × 五端方法清单自动校验 ([#114](https://github.com/pandaymx/lanchat/issues/114)) ([394254e](https://github.com/pandaymx/lanchat/commit/394254e30cb08bf59348fd6a1e1649e75fe28fba))
+
 ## [0.23.4](https://github.com/pandaymx/lanchat/compare/v0.23.3...v0.23.4) (2026-10-02)
 
 

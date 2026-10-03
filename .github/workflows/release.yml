@@ -22,6 +22,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 # gomobile 版本集中在此，不再用 @latest。
 # x/mobile 没有打 tag，@latest 每次解析到当期 pseudo-version，上游一合入
@@ -836,9 +838,63 @@ jobs:
           path: dist/out/*
           if-no-files-found: error
 
+  # ─── 门禁校验：确认 Go CI 在 tag 指向的提交上已通过 ─────────────
+  verify-gate:
+    name: Verify Go CI passed
+    needs: [resolve, daemon, linux, android, macos, ios, windows-msi, msix]
+    if: needs.resolve.outputs.do_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+
+      - name: Check Go CI status on tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_REF: ${{ needs.resolve.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # 获取 tag 指向的 commit SHA
+          COMMIT=$(git rev-parse "$TAG_REF^{commit}")
+          echo "检查 Go CI 在提交 $COMMIT 上的状态 ..."
+
+          # 轮询等待 Go CI 完成（最多 5 分钟）
+          DEADLINE=$((SECONDS + 300))
+          while [ $SECONDS -lt $DEADLINE ]; do
+            # 查询 ci.yml 工作流在该 commit 上的 run 状态
+            STATUS=$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=$COMMIT&event=push&status=completed" \
+              --jq '.workflow_runs[] | select(.name == "Go CI") | .conclusion' | head -1)
+
+            if [ "$STATUS" = "success" ]; then
+              echo "Go CI 在 $COMMIT 上已通过"
+              exit 0
+            elif [ -n "$STATUS" ] && [ "$STATUS" != "null" ]; then
+              echo "::error::Go CI 在 $COMMIT 上状态为 $STATUS（期望 success）"
+              exit 1
+            fi
+
+            # 也检查 in_progress / queued
+            RUNNING=$(gh api "repos/{owner}/{repo}/actions/runs?head_sha=$COMMIT&event=push" \
+              --jq '[.workflow_runs[] | select(.name == "Go CI" and (.status == "in_progress" or .status == "queued"))] | length')
+            if [ "$RUNNING" -gt 0 ]; then
+              echo "Go CI 仍在运行中，等待 ..."
+              sleep 15
+              continue
+            fi
+
+            echo "::error::未找到 Go CI 在 $COMMIT 上的运行记录"
+            exit 1
+          done
+
+          echo "::error::等待 Go CI 超时（5 分钟）"
+          exit 1
+
   publish:
     name: Publish GitHub Release
-    needs: [resolve, daemon, linux, android, macos, ios, windows-msi, msix]
+    needs: [resolve, daemon, linux, android, macos, ios, windows-msi, msix, verify-gate]
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -854,10 +910,38 @@ jobs:
           find release -type f -exec cp -n {} assets/ \;
           ls -lh assets
 
+      - name: Generate SHA256SUMS
+        working-directory: assets
+        run: |
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Generate version.json
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+          COMMIT: ${{ needs.resolve.outputs.ref }}
+        run: |
+          cat > assets/version.json <<EOF
+          {
+            "version": "${TAG#v}",
+            "tag": "$TAG",
+            "commit": "$COMMIT",
+            "published_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          cat assets/version.json
+
       - name: Create / update release
+        id: create_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve.outputs.tag }}
           files: assets/*
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: assets/*
+          subject-name: lanchat-${{ needs.resolve.outputs.tag }}

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/pandaymx/lanchat/compare/v0.24.0...v0.25.0) (2026-10-03)
+
+
+### Features
+
+* **ci:** SHA256SUMS + 构建来源证明 + verify-gate ([#118](https://github.com/pandaymx/lanchat/issues/118)) ([c88e7d6](https://github.com/pandaymx/lanchat/commit/c88e7d6a3e2acd4bc68d780f58cac0d5819df459))
+
 ## [0.24.0](https://github.com/pandaymx/lanchat/compare/v0.23.4...v0.24.0) (2026-10-03)
 
 

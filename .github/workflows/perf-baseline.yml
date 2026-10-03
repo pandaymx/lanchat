@@ -1,0 +1,35 @@
+name: Perf baseline
+
+on:
+  schedule:
+    # 每天 09:00 UTC 跑一次性能基线
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'internal/transfer/**'
+      - 'test/integration/perf_*'
+      - 'configs/perf-baseline.json'
+
+permissions:
+  contents: read
+
+jobs:
+  perf:
+    name: 性能基线复测
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run perf baseline
+        run: |
+          chmod +x scripts/perf-baseline.sh
+          scripts/perf-baseline.sh

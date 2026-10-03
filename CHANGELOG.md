@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.23.4](https://github.com/pandaymx/lanchat/compare/v0.23.3...v0.23.4) (2026-10-02)
+
+
+### Performance Improvements
+
+* **ci:** Release 启用 Gradle 缓存并固定 gomobile 版本 ([#110](https://github.com/pandaymx/lanchat/issues/110)) ([81df3c8](https://github.com/pandaymx/lanchat/commit/81df3c8d78494a657845153d83084a557ca3ab88))
+* **ci:** Release 的 Linux 作业改用系统 GTK4 ([#112](https://github.com/pandaymx/lanchat/issues/112)) ([a9a2751](https://github.com/pandaymx/lanchat/commit/a9a27515a3b3481434ebeafe69d2c52cbf5726eb))
+* **ci:** Windows 作业复用 daemon 制品，全作业补 timeout-minutes ([#113](https://github.com/pandaymx/lanchat/issues/113)) ([c18ce4e](https://github.com/pandaymx/lanchat/commit/c18ce4ea762f853e3cac92f9e4f79ecaa110a766))
+
 ## [0.23.3](https://github.com/pandaymx/lanchat/compare/v0.23.2...v0.23.3) (2026-10-02)
 
 

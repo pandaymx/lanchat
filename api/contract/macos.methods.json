@@ -1,0 +1,19 @@
+{
+  "platform": "macos",
+  "description": "macOS (Swift/AppKit) — JSON-RPC over unix socket",
+  "methods": [
+    "BrowseServers",
+    "CancelFile",
+    "ChannelCreate",
+    "ChannelJoin",
+    "ChannelInvite",
+    "ChannelLeave",
+    "Connect",
+    "GetState",
+    "OfferFile",
+    "OfferFileToGroup",
+    "RespondFile",
+    "SendText",
+    "SetNickname"
+  ]
+}

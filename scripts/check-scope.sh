@@ -25,8 +25,8 @@ COMMON_PATHS='(^go\.(mod|sum)$)|((^|/)\.github/)|(^\.golangci\.(yml|yaml)$)|((^|
 case "$branch" in
   # ci/chore 分支需优先匹配，避免分支名中同时含里程碑关键词（如 chore/m4-*）被误判。
   *ci*|*chore*)
-    # A8 平台/发版：公共文件全部放行
-    OWNED_PATHS="$COMMON_PATHS"
+    # A8 平台/发版：公共文件 + 契约校验 manifest 放行
+    OWNED_PATHS="$COMMON_PATHS|(^api/contract/)"
     ;;
   *m0*|*contract*|*appapi*)
     # A0 契约管家：协议 + 契约（契约冻结是一切起点）

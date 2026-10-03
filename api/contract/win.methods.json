@@ -1,0 +1,18 @@
+{
+  "platform": "win",
+  "description": "Windows (C#/WinUI) — JSON-RPC over named pipe",
+  "methods": [
+    "BrowseServers",
+    "CancelFile",
+    "ChannelCreate",
+    "ChannelJoin",
+    "ChannelList",
+    "Connect",
+    "GetState",
+    "OfferFile",
+    "OfferFileToGroup",
+    "RespondFile",
+    "SendText",
+    "SetNickname"
+  ]
+}

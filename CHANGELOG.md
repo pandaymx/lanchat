@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.0](https://github.com/pandaymx/lanchat/compare/v1.0.0...v1.1.0) (2026-10-04)
+
+
+### Features
+
+* **ci:** 三端原生构建+单测门禁（Win/macOS/Android） ([#115](https://github.com/pandaymx/lanchat/issues/115)) ([ff44e86](https://github.com/pandaymx/lanchat/commit/ff44e86cc141358b9898668087aa7552d42c1c44))
+* **ci:** 性能基线复测门禁 + 每日定时 ([#116](https://github.com/pandaymx/lanchat/issues/116)) ([365d3bf](https://github.com/pandaymx/lanchat/commit/365d3bfa425024bb4b31c559dad55e0207d11dd2))
+* **ci:** 自定义 release notes + 未签名安全提示 ([#117](https://github.com/pandaymx/lanchat/issues/117)) ([e9faac1](https://github.com/pandaymx/lanchat/commit/e9faac14321bc1cffde282badf642e98faf5c866))
+
 ## [0.24.0](https://github.com/pandaymx/lanchat/compare/v0.23.4...v0.24.0) (2026-10-03)
 
 

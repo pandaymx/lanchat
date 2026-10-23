@@ -899,6 +899,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.ref }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:

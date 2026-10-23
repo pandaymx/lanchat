@@ -43,6 +43,8 @@ pub struct AppState {
     pub channels: Vec<Channel>,
     /// 会话键（peer_id 或 channelID）→ 消息列表。
     pub messages: HashMap<String, Vec<ChatMessage>>,
+    /// transfer_id → 群发块矩阵摘要（group.matrix）。
+    pub matrix_summary: HashMap<String, String>,
     pub current_chat: ChatTarget,
     pub discovered: Vec<ServerInfo>,
 }
@@ -52,7 +54,7 @@ impl AppState {
         Self::default()
     }
 
-    /// 用 GetState 全量结果覆盖（保留本地聊天记录）。
+    /// 用 GetState 全量结果覆盖（合并核心持久化的聊天历史记录）。
     pub fn apply_full_state(&mut self, s: State) {
         self.conn = s.conn;
         self.conn_reason.clear();
@@ -62,6 +64,33 @@ impl AppState {
         self.peers = s.peers;
         self.transfers = s.transfers;
         self.channels = s.channels;
+        for m in s.messages {
+            let inbound = !self.self_id.is_empty() && m.from != self.self_id;
+            let (conv_key, sender_id) = if !m.group.is_empty() {
+                (m.group.clone(), m.from.clone())
+            } else if inbound {
+                (m.from.clone(), String::new())
+            } else {
+                (m.to.clone(), String::new())
+            };
+            if conv_key.is_empty() {
+                continue;
+            }
+            let text = if m.msg_type == "STICKER_MSG" || m.msg_type == "sticker" {
+                format!("[表情] {}", m.text)
+            } else {
+                m.text
+            };
+            self.push_message(ChatMessage {
+                peer_id: conv_key,
+                sender_id,
+                group: m.group,
+                msg_id: m.id,
+                text,
+                inbound,
+                ts: m.ts,
+            });
+        }
     }
 
     pub fn upsert_transfer(&mut self, t: Transfer) {
@@ -102,10 +131,11 @@ impl AppState {
     }
 
     pub fn push_message(&mut self, msg: ChatMessage) {
-        self.messages
-            .entry(msg.peer_id.clone())
-            .or_default()
-            .push(msg);
+        let list = self.messages.entry(msg.peer_id.clone()).or_default();
+        if !msg.msg_id.is_empty() && list.iter().any(|x| x.msg_id == msg.msg_id) {
+            return;
+        }
+        list.push(msg);
     }
 
     pub fn unread_count(&self, peer_id: &str) -> usize {

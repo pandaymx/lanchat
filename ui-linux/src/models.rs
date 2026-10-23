@@ -165,6 +165,28 @@ pub struct Channel {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct HistoryMessage {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
+    #[serde(default)]
+    pub group: String,
+    #[serde(default, rename = "type")]
+    pub msg_type: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default, rename = "replyTo")]
+    pub reply_to: String,
+    #[serde(default)]
+    pub mentions: Vec<String>,
+    #[serde(default)]
+    pub ts: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct State {
     #[serde(default)]
     pub conn: ConnState,
@@ -180,9 +202,11 @@ pub struct State {
     pub transfers: Vec<Transfer>,
     #[serde(default)]
     pub channels: Vec<Channel>,
+    #[serde(default)]
+    pub messages: Vec<HistoryMessage>,
 }
 
-/// 一条聊天消息（UI 本地模型；来自 msg.received 或自己发送回执）。
+/// 一条聊天消息（UI 本地模型；来自 msg.received、GetState 历史或自己发送回执）。
 #[derive(Debug, Clone)]
 pub struct ChatMessage {
     /// 会话归属键：单播为对端 peer_id；频道为 channelID。
@@ -195,6 +219,63 @@ pub struct ChatMessage {
     pub text: String,
     pub inbound: bool,
     pub ts: i64,
+}
+
+/// 解析 base64 编码的块位图并生成紧凑块矩阵进度文本（如 `▓▓▓░░░ 3/6 块`）。
+pub fn format_matrix_summary(b64: &str, size: i64) -> Option<String> {
+    let bytes = decode_base64(b64)?;
+    let total_blocks = ((size + (4 * 1024 * 1024) - 1) / (4 * 1024 * 1024)).max(1) as usize;
+    let have_blocks = bytes
+        .iter()
+        .map(|b| b.count_ones() as usize)
+        .sum::<usize>()
+        .min(total_blocks);
+    let cells = total_blocks.min(8);
+    let filled = if total_blocks > 0 {
+        (have_blocks * cells + total_blocks - 1) / total_blocks
+    } else {
+        0
+    }
+    .min(cells);
+    let bar: String = (0..cells)
+        .map(|i| if i < filled { '▓' } else { '░' })
+        .collect();
+    Some(format!("{bar} {have_blocks}/{total_blocks} 块"))
+}
+
+fn decode_base64(input: &str) -> Option<Vec<u8>> {
+    let clean: Vec<u8> = input
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace() && *b != b'=')
+        .collect();
+    if clean.is_empty() {
+        return Some(Vec::new());
+    }
+    let val = |b: u8| -> Option<u8> {
+        match b {
+            b'A'..=b'Z' => Some(b - b'A'),
+            b'a'..=b'z' => Some(b - b'a' + 26),
+            b'0'..=b'9' => Some(b - b'0' + 52),
+            b'+' | b'-' => Some(62),
+            b'/' | b'_' => Some(63),
+            _ => None,
+        }
+    };
+    let mut out = Vec::with_capacity(clean.len() * 3 / 4);
+    for chunk in clean.chunks(4) {
+        let b0 = val(chunk[0])?;
+        let b1 = *chunk.get(1).and_then(|c| val(*c).as_ref())?;
+        out.push((b0 << 2) | (b1 >> 4));
+        if let Some(&c2) = chunk.get(2) {
+            let b2 = val(c2)?;
+            out.push((b1 << 4) | (b2 >> 2));
+            if let Some(&c3) = chunk.get(3) {
+                let b3 = val(c3)?;
+                out.push((b2 << 6) | b3);
+            }
+        }
+    }
+    Some(out)
 }
 
 /// 人类可读字节数。

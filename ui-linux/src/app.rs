@@ -6,7 +6,8 @@
 use crate::daemon::ensure_daemon;
 use crate::ipc::{default_socket_path, IpcClient, Notification};
 use crate::models::{
-    format_size, format_speed, Channel, ChatMessage, ConnState, ServerInfo, State, Transfer,
+    format_matrix_summary, format_size, format_speed, Channel, ChatMessage, ConnState, ServerInfo,
+    State, Transfer,
 };
 use crate::state::{AppState, ChatTarget};
 use adw::prelude::*;
@@ -81,7 +82,7 @@ enum UiEvent {
     State(Result<State>),
     Discovered(Result<Vec<ServerInfo>>),
     Connected(Result<()>),
-    /// 文本发送回执：(会话键, group, 文本, 响应 msgID)
+    /// 文本/表情发送回执：(会话键, group, 文本, 响应 msgID)
     TextSent(String, String, String, Result<String>),
     OfferSent(Result<String>),
     ChannelCreated(Result<String>),
@@ -89,6 +90,8 @@ enum UiEvent {
     ChannelInvited(String, Result<()>),
     ChannelLeft(String, Result<()>),
     Responded(Result<()>),
+    Paused(String, Result<()>),
+    Resumed(String, Result<()>),
     Canceled(String, Result<()>),
     NickSet(Result<()>),
     DirSet(Result<()>),
@@ -118,6 +121,7 @@ struct Widgets {
     msg_scroll: gtk::ScrolledWindow,
     input: gtk::TextView,
     send_btn: gtk::Button,
+    sticker_btn: gtk::Button,
     file_btn: gtk::Button,
     transfers_btn: gtk::Button,
     channels_btn: gtk::Button,
@@ -326,9 +330,11 @@ fn build_ui(app: &adw::Application) -> Widgets {
 
     let send_btn = gtk::Button::with_label("发送");
     send_btn.add_css_class("suggested-action");
+    let sticker_btn = gtk::Button::with_label("表情");
     let file_btn = gtk::Button::with_label("文件");
     let btn_row = gtk::Box::new(Orientation::Horizontal, 6);
     btn_row.set_halign(Align::End);
+    btn_row.append(&sticker_btn);
     btn_row.append(&file_btn);
     btn_row.append(&send_btn);
 
@@ -431,6 +437,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
         msg_scroll,
         input,
         send_btn,
+        sticker_btn,
         file_btn,
         transfers_btn,
         channels_btn,
@@ -559,6 +566,46 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                             .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
                     });
                     let _ = tx.try_send(UiEvent::TextSent(key, group, text, res));
+                });
+            }
+        }
+    ));
+
+    // 发送表情贴纸（SendSticker）
+    ctx.widgets.sticker_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let target = cx.state.borrow().current_chat.clone();
+            let Some(key) = target.key().map(|s| s.to_string()) else {
+                cx.toast("请先选择联系人或频道");
+                return;
+            };
+            let group = if target.is_channel() {
+                key.clone()
+            } else {
+                String::new()
+            };
+            if let Some(ipc) = cx.ipc.borrow().clone() {
+                let sticker = "🎉".to_string();
+                let params = OfferParams {
+                    to: key.clone(),
+                    path: sticker.clone(),
+                };
+                let tx = cx.ui_tx.clone();
+                crate::spawn_rt(async move {
+                    let res = ipc.invoke("SendSticker", Some(&params)).await.and_then(|v| {
+                        v.get("msgID")
+                            .and_then(|m| m.as_str())
+                            .map(|s| s.to_string())
+                            .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
+                    });
+                    let _ = tx.try_send(UiEvent::TextSent(
+                        key,
+                        group,
+                        format!("[表情] {sticker}"),
+                        res,
+                    ));
                 });
             }
         }
@@ -898,6 +945,25 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                 ctx.toast(&format!("应答失败：{e}"));
             }
         }
+        UiEvent::Paused(id, res) => match res {
+            Ok(()) => {
+                if let Some(slot) = ctx.state.borrow_mut().transfers.iter_mut().find(|x| x.id == id) {
+                    slot.state = crate::models::TransferState::Paused;
+                    slot.speed_bps = 0;
+                }
+                ctx.render_transfers();
+            }
+            Err(e) => ctx.toast(&format!("暂停失败：{e}")),
+        },
+        UiEvent::Resumed(id, res) => match res {
+            Ok(()) => {
+                if let Some(slot) = ctx.state.borrow_mut().transfers.iter_mut().find(|x| x.id == id) {
+                    slot.state = crate::models::TransferState::Active;
+                }
+                ctx.render_transfers();
+            }
+            Err(e) => ctx.toast(&format!("恢复失败：{e}")),
+        },
         UiEvent::Canceled(id, res) => match res {
             Ok(()) => {
                 ctx.state.borrow_mut().remove_transfer(&id);
@@ -1004,11 +1070,20 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let text = p
+            let msg_type = p
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("text");
+            let raw_text = p
                 .get("text")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            let text = if msg_type == "STICKER_MSG" || msg_type == "sticker" {
+                format!("[表情] {raw_text}")
+            } else {
+                raw_text
+            };
             // 频道消息按 group（channelID）归类，sender 记录在 sender_id；
             // 单播按 from 归类。
             let (conv_key, sender_id) = if group.is_empty() {
@@ -1078,8 +1153,29 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 ctx.toast(&format!("传输失败：{reason}"));
             }
         }
-        // M9 G1 矩阵事件：当前 UI 不展示位图进度，安全忽略。
-        "group.matrix" => {}
+        // M9/M10 群组块可用性矩阵：解析位图并更新对应传输行的块矩阵展示。
+        "group.matrix" => {
+            if let (Some(id), Some(b64)) = (
+                p.get("transferId").and_then(|v| v.as_str()),
+                p.get("haveBitmap").and_then(|v| v.as_str()),
+            ) {
+                let size = ctx
+                    .state
+                    .borrow()
+                    .transfers
+                    .iter()
+                    .find(|t| t.id == id)
+                    .map(|t| t.size)
+                    .unwrap_or(0);
+                if let Some(summary) = format_matrix_summary(b64, size) {
+                    ctx.state
+                        .borrow_mut()
+                        .matrix_summary
+                        .insert(id.to_string(), summary);
+                    ctx.render_transfers();
+                }
+            }
+        }
         "channel.updated" => {
             if let Some(channels) = parse_channel_updated(p) {
                 ctx.state.borrow_mut().channels = channels;
@@ -1371,6 +1467,11 @@ impl AppCtx {
     }
 
     fn render_channels(self: &Rc<Self>) {
+        if let Some(ipc) = self.ipc.borrow().clone() {
+            crate::spawn_rt(async move {
+                let _ = ipc.invoke::<()>("ChannelList", None).await;
+            });
+        }
         clear_listbox(&self.widgets.channels_list);
         let st = self.state.borrow();
         let self_id = st.self_id.clone();
@@ -1581,6 +1682,12 @@ impl AppCtx {
             meta.append(&speed);
             meta.append(&kind_badge);
             meta.append(&path_badge);
+            if let Some(matrix_text) = st.matrix_summary.get(&t.id) {
+                let matrix_badge = gtk::Label::new(Some(matrix_text));
+                matrix_badge.add_css_class("caption");
+                matrix_badge.add_css_class("dim-label");
+                meta.append(&matrix_badge);
+            }
 
             let name_label = gtk::Label::builder()
                 .label(if t.kind == crate::models::PathKind::Channel {
@@ -1598,6 +1705,30 @@ impl AppCtx {
 
             let row = adw::ActionRow::new();
             row.set_child(Some(&body));
+
+            if t.state == crate::models::TransferState::Active {
+                let pause = gtk::Button::with_label("暂停");
+                let id = t.id.clone();
+                pause.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |_| {
+                        pause_transfer(&cx, &id);
+                    }
+                ));
+                row.add_suffix(&pause);
+            } else if t.state == crate::models::TransferState::Paused {
+                let resume = gtk::Button::with_label("继续");
+                let id = t.id.clone();
+                resume.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |_| {
+                        resume_transfer(&cx, &id);
+                    }
+                ));
+                row.add_suffix(&resume);
+            }
 
             let active = matches!(
                 t.state,
@@ -1626,6 +1757,34 @@ impl AppCtx {
             }
             self.widgets.transfers_list.append(&row);
         }
+    }
+}
+
+fn pause_transfer(ctx: &Rc<AppCtx>, id: &str) {
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let transfer_id = id.to_string();
+        let params = IdParams {
+            transfer_id: transfer_id.clone(),
+        };
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let r = ipc.invoke("PauseFile", Some(&params)).await.map(|_| ());
+            let _ = tx.try_send(UiEvent::Paused(transfer_id, r));
+        });
+    }
+}
+
+fn resume_transfer(ctx: &Rc<AppCtx>, id: &str) {
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let transfer_id = id.to_string();
+        let params = IdParams {
+            transfer_id: transfer_id.clone(),
+        };
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let r = ipc.invoke("ResumeFile", Some(&params)).await.map(|_| ());
+            let _ = tx.try_send(UiEvent::Resumed(transfer_id, r));
+        });
     }
 }
 

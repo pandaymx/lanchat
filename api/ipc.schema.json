@@ -189,6 +189,8 @@
       "text": "string",
       "replyTo": "string?",
       "mentions": "string[]?",
+      "revoked": "bool?",
+      "readBy": "string[]?",
       "ts": "int64"
     }
   }

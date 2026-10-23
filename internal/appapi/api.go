@@ -92,7 +92,7 @@ type Channel struct {
 	Members []string `json:"members"`
 }
 
-// ChatMessage 本地历史消息快照（M10：随 GetState 可选返回，支持重启后恢复会话记录、引用回复与 @提及）。
+// ChatMessage 本地历史消息快照（M10/M11a：随 GetState 可选返回，支持重启后恢复会话记录、引用回复、@提及、撤回与已读回执）。
 type ChatMessage struct {
 	ID       string   `json:"id"`
 	From     string   `json:"from"`
@@ -102,6 +102,8 @@ type ChatMessage struct {
 	Text     string   `json:"text"`
 	ReplyTo  string   `json:"replyTo,omitempty"`
 	Mentions []string `json:"mentions,omitempty"`
+	Revoked  bool     `json:"revoked,omitempty"`
+	ReadBy   []string `json:"readBy,omitempty"`
 	TS       int64    `json:"ts"`
 }
 

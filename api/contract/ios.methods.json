@@ -13,7 +13,11 @@
     "GetState",
     "OfferFile",
     "OfferFileToGroup",
+    "PauseFile",
+    "PickDownloadDir",
     "RespondFile",
+    "ResumeFile",
+    "SendSticker",
     "SendText",
     "SetNickname"
   ]

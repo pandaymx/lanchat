@@ -8,6 +8,7 @@ struct ChannelChatView: View {
 
     @State private var draft = ""
     @State private var showPicker = false
+    @State private var showStickerPicker = false
     @State private var showMembers = false
 
     /// 实时频道快照（channel 为进入时的快照，成员 / 主题需跟随 store 更新）。
@@ -43,6 +44,13 @@ struct ChannelChatView: View {
 
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
+                Button {
+                    showStickerPicker = true
+                } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.title3)
+                        .frame(width: 34, height: 34)
+                }
                 Button {
                     showPicker = true
                 } label: {
@@ -83,6 +91,13 @@ struct ChannelChatView: View {
             FilePicker(scenario: .channel) { url in
                 store.offerFileToGroup(channel: channel, path: url.path)
                 showPicker = false
+            }
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showStickerPicker) {
+            FilePicker { url in
+                store.sendSticker(to: channel.id, path: url.path, group: channel.id)
+                showStickerPicker = false
             }
             .ignoresSafeArea()
         }

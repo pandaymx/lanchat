@@ -7,6 +7,7 @@ struct ChatView: View {
 
     @State private var draft = ""
     @State private var showPicker = false
+    @State private var showStickerPicker = false
 
     private var thread: [ChatMessage] {
         store.messagesByPeer[peer.id] ?? []
@@ -33,6 +34,13 @@ struct ChatView: View {
 
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
+                Button {
+                    showStickerPicker = true
+                } label: {
+                    Image(systemName: "face.smiling")
+                        .font(.title3)
+                        .frame(width: 34, height: 34)
+                }
                 Button {
                     showPicker = true
                 } label: {
@@ -61,6 +69,13 @@ struct ChatView: View {
             FilePicker { url in
                 store.offerFile(to: peer.id, path: url.path)
                 showPicker = false
+            }
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showStickerPicker) {
+            FilePicker { url in
+                store.sendSticker(to: peer.id, path: url.path)
+                showStickerPicker = false
             }
             .ignoresSafeArea()
         }

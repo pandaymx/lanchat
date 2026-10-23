@@ -59,6 +59,11 @@ private struct TransferRow: View {
                 HStack {
                     Text("\(Formatters.size(t.bytesDone)) / \(Formatters.size(t.size))")
                         .font(.caption2).foregroundStyle(.secondary)
+                    if let matrix = store.matrixSummary[t.id], !matrix.isEmpty {
+                        Text(matrix)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     if t.isActive {
                         Text(Formatters.speed(t.speedBps))
@@ -69,9 +74,16 @@ private struct TransferRow: View {
                     Text(t.errorReason).font(.caption2).foregroundStyle(.red)
                 }
                 if t.isActive || t.state == "paused" {
-                    Button("取消", role: .destructive) { store.cancelTransfer(t) }
-                        .buttonStyle(.bordered)
-                        .font(.caption)
+                    HStack {
+                        if t.isActive {
+                            Button("暂停") { store.pauseTransfer(t) }
+                        } else if t.state == "paused" {
+                            Button("继续") { store.resumeTransfer(t) }
+                        }
+                        Button("取消", role: .destructive) { store.cancelTransfer(t) }
+                    }
+                    .buttonStyle(.bordered)
+                    .font(.caption)
                 }
             }
         }

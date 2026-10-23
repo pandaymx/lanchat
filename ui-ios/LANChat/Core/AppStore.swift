@@ -10,6 +10,7 @@ final class AppStore: ObservableObject {
     @Published var transfers: [Transfer] = []
     @Published var discoveredServers: [ServerInfo] = []
     @Published var messagesByPeer: [String: [ChatMessage]] = [:]
+    @Published var matrixSummary: [String: String] = [:]
     @Published var channels: [Channel] = []
     @Published var busy = false
     @Published var error: String?
@@ -31,6 +32,7 @@ final class AppStore: ObservableObject {
     /// 应用启动：创建核心并拉取快照。
     func bootstrap() async {
         engine.start(nickname: settings.nickname)
+        try? await engine.pickDownloadDir(settings.downloadDir)
         await applyState(await engine.getState())
         await browseServers()
     }
@@ -68,6 +70,15 @@ final class AppStore: ObservableObject {
             let msgId = try await self.engine.sendText(to: to, text: content)
             self.appendMessage(ChatMessage(id: msgId, peerId: to, text: content,
                                            inbound: false, timestamp: Date()))
+        }
+    }
+
+    func sendSticker(to: String, path: String, group: String? = nil) {
+        run {
+            let msgId = try await self.engine.sendSticker(to: to, path: path)
+            let name = URL(fileURLWithPath: path).lastPathComponent
+            self.appendMessage(ChatMessage(id: msgId, peerId: to, text: "[贴纸: \(name)]",
+                                           inbound: false, timestamp: Date(), group: group))
         }
     }
 
@@ -170,6 +181,20 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func pauseTransfer(_ t: Transfer) {
+        run {
+            try await self.engine.pauseFile(t.id)
+            await self.refresh()
+        }
+    }
+
+    func resumeTransfer(_ t: Transfer) {
+        run {
+            try await self.engine.resumeFile(t.id)
+            await self.refresh()
+        }
+    }
+
     // MARK: - 事件处理
 
     private func handle(_ event: CoreEvent) {
@@ -211,6 +236,13 @@ final class AppStore: ObservableObject {
                 transfers[idx].errorReason = reason
             }
 
+        case let .groupMatrix(_, transferId, haveBitmap):
+            let size = transfers.first(where: { $0.id == transferId })?.size ?? 0
+            let summary = formatMatrixSummary(haveBitmap: haveBitmap, size: size)
+            if !summary.isEmpty {
+                matrixSummary[transferId] = summary
+            }
+
         case .channelsUpdated:
             Task { await refresh() }
         }
@@ -223,6 +255,9 @@ final class AppStore: ObservableObject {
         peers = s.peers
         transfers = s.transfers
         channels = s.channels
+        for m in s.messages {
+            appendMessage(m)
+        }
     }
 
     private func upsertTransfer(_ t: Transfer) {
@@ -232,8 +267,12 @@ final class AppStore: ObservableObject {
     }
 
     private func appendMessage(_ m: ChatMessage) {
-        let list = (messagesByPeer[m.peerId] ?? []) + [m]
-        messagesByPeer[m.peerId] = list
+        let key = (m.group?.isEmpty == false) ? m.group! : m.peerId
+        var list = messagesByPeer[key] ?? []
+        if !list.contains(where: { $0.id == m.id }) {
+            list.append(m)
+            messagesByPeer[key] = list
+        }
     }
 
     private func run(_ block: @escaping () async throws -> Void) {

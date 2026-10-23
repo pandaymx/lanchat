@@ -23,6 +23,7 @@ enum CoreEvent {
     case progress(Transfer)
     case done(String)
     case failed(transferId: String, reason: String)
+    case groupMatrix(groupId: String, transferId: String, haveBitmap: Data)
     case channelsUpdated([Channel])
 }
 
@@ -62,7 +63,7 @@ final class ChatEngine {
             guard let data = c.getStateJSON(),
                   let dto = try? JSONDecoder().decode(StateJSON.self, from: data) else {
                 return FullState(conn: "disconnected", server: "", selfId: "", nickname: "",
-                                 peers: [], transfers: [], channels: [])
+                                 peers: [], transfers: [], channels: [], messages: [])
             }
             return dto.toModel()
         }
@@ -99,6 +100,16 @@ final class ChatEngine {
         try await runOnIOThrowing { c in
             var err: NSError?
             let msgID = c.sendText("", text: text, group: group, error: &err)
+            if let err { throw err }
+            return msgID
+        }
+    }
+
+    @discardableResult
+    func sendSticker(to: String, path: String) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let msgID = c.sendSticker(to, path: path, error: &err)
             if let err { throw err }
             return msgID
         }
@@ -171,6 +182,18 @@ final class ChatEngine {
 
     func cancelFile(_ transferId: String) async throws {
         try await runOnIOThrowing { try $0.cancelFile(transferId) }
+    }
+
+    func pauseFile(_ transferId: String) async throws {
+        try await runOnIOThrowing { try $0.pauseFile(transferId) }
+    }
+
+    func resumeFile(_ transferId: String) async throws {
+        try await runOnIOThrowing { try $0.resumeFile(transferId) }
+    }
+
+    func pickDownloadDir(_ path: String) async throws {
+        try await runOnIOThrowing { try $0.pickDownloadDir(path) }
     }
 
     func setNickname(_ name: String) async throws {
@@ -284,6 +307,25 @@ struct ChannelJSON: Decodable {
     }
 }
 
+struct HistoryMessageJSON: Decodable {
+    let id: String
+    let from: String
+    let to: String?
+    let group: String?
+    let type: String
+    let text: String
+    let ts: Int64
+
+    func toModel(selfId: String) -> ChatMessage {
+        let inbound = !selfId.isEmpty ? (from != selfId) : false
+        let peer = inbound ? from : ((to?.isEmpty == false) ? to! : from)
+        let date = ts > 0 ? Date(timeIntervalSince1970: TimeInterval(ts) / 1000.0) : Date()
+        return ChatMessage(id: id, peerId: peer, text: text,
+                           inbound: inbound, timestamp: date,
+                           group: (group?.isEmpty == false) ? group : nil)
+    }
+}
+
 struct StateJSON: Decodable {
     let conn: String
     let server: String?
@@ -292,16 +334,19 @@ struct StateJSON: Decodable {
     let peers: [PeerJSON]?
     let transfers: [TransferJSON]?
     let channels: [ChannelJSON]?
+    let messages: [HistoryMessageJSON]?
 
     func toModel() -> FullState {
-        FullState(
+        let myId = selfId ?? ""
+        return FullState(
             conn: conn.isEmpty ? "disconnected" : conn,
             server: server ?? "",
-            selfId: selfId ?? "",
+            selfId: myId,
             nickname: nickname,
             peers: peers?.map { $0.toModel() } ?? [],
             transfers: transfers?.map { $0.toModel() } ?? [],
-            channels: channels?.map { $0.toModel() } ?? []
+            channels: channels?.map { $0.toModel() } ?? [],
+            messages: messages?.map { $0.toModel(selfId: myId) } ?? []
         )
     }
 }

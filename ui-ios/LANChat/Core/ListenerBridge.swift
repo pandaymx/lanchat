@@ -49,7 +49,7 @@ final class ListenerBridge: NSObject, LCMobileListenerProtocol {
     }
 
     func onGroupMatrix(_ groupID: String?, transferID: String?, haveBitmap: Data?) {
-        // M9 群组能力，M8 不处理矩阵。
+        emit(.groupMatrix(groupId: groupID ?? "", transferId: transferID ?? "", haveBitmap: haveBitmap ?? Data()))
     }
 
     func onChannelUpdated(_ payload: Data?) {

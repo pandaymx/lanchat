@@ -65,6 +65,7 @@ struct FullState {
     var peers: [Peer]
     var transfers: [Transfer]
     var channels: [Channel]
+    var messages: [ChatMessage] = []
 }
 
 /// 一条聊天消息（本地聚合，UI 使用）。
@@ -76,4 +77,34 @@ struct ChatMessage: Identifiable, Equatable {
     let timestamp: Date
     /// 所属频道 ID；nil 表示 1:1 单播消息。
     var group: String?
+}
+
+/// 将 group.matrix 的 haveBitmap 转为紧凑块进度摘要（如 "▓▓▓░░░ 4/8 块"）。
+func formatMatrixSummary(haveBitmap: Data, size: Int64) -> String {
+    guard !haveBitmap.isEmpty else { return "" }
+    let chunkSize: Int64 = 1024 * 1024
+    let totalChunks: Int
+    if size > 0 {
+        totalChunks = Int((size + chunkSize - 1) / chunkSize)
+    } else {
+        totalChunks = haveBitmap.count * 8
+    }
+    guard totalChunks > 0 else { return "" }
+    var have = 0
+    let slots = min(totalChunks, 8)
+    var bar = ""
+    for i in 0..<totalChunks {
+        let byteIdx = i / 8
+        let bitIdx = i % 8
+        let bit = byteIdx < haveBitmap.count && ((haveBitmap[byteIdx] >> bitIdx) & 1) == 1
+        if bit { have += 1 }
+    }
+    for s in 0..<slots {
+        let idx = s * totalChunks / slots
+        let byteIdx = idx / 8
+        let bitIdx = idx % 8
+        let bit = byteIdx < haveBitmap.count && ((haveBitmap[byteIdx] >> bitIdx) & 1) == 1
+        bar.append(bit ? "▓" : "░")
+    }
+    return "\(bar) \(have)/\(totalChunks) 块"
 }

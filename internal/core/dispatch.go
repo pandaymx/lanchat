@@ -7,6 +7,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
@@ -41,6 +42,17 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		if err := env.DecodePayload(&p); err != nil {
 			return
 		}
+		c.history.append(appapi.ChatMessage{
+			ID:       env.ID,
+			From:     env.From,
+			To:       env.To,
+			Group:    env.Group,
+			Type:     protocol.TextMsg,
+			Text:     p.Text,
+			ReplyTo:  p.ReplyTo,
+			Mentions: p.Mentions,
+			TS:       env.TS,
+		})
 		c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.TextMsg, p.Text)
 
 	case protocol.StickerMsg:
@@ -48,6 +60,15 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		if err := env.DecodePayload(&p); err != nil {
 			return
 		}
+		c.history.append(appapi.ChatMessage{
+			ID:    env.ID,
+			From:  env.From,
+			To:    env.To,
+			Group: env.Group,
+			Type:  protocol.StickerMsg,
+			Text:  p.Name,
+			TS:    env.TS,
+		})
 		// M4 表情以名称引用（UI 本地缓存贴纸资源）；b64 缺省时不展开。
 		c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.StickerMsg, p.Name)
 

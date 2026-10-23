@@ -398,20 +398,55 @@ func TestNoopListener(t *testing.T) {
 	l.OnChannelUpdated(nil)
 }
 
-// TestResumeFile 恢复在 M4 不支持。
+// TestResumeFile 验证 1:1 与群组传输的暂停 / 恢复与群组取消状态机。
 func TestResumeFile(t *testing.T) {
 	c := New(Options{})
 	t.Cleanup(c.Close)
 	if err := c.ResumeFile("missing"); err != errTransferGone {
 		t.Fatalf("missing err = %v", err)
 	}
+	if err := c.PauseFile("missing"); err != errTransferGone {
+		t.Fatalf("pause missing err = %v", err)
+	}
 	task, err := newTransferTask(c, "t", appapi.TransferOutbound, "p", "f", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c.addTransfer(task)
-	if err := c.ResumeFile("t"); err != errPauseUnsupported {
-		t.Fatalf("err = %v", err)
+	if err := c.ResumeFile("t"); err != errInvalidState {
+		t.Fatalf("resume pending err = %v", err)
+	}
+	if err := c.PauseFile("t"); err != errInvalidState {
+		t.Fatalf("pause pending err = %v", err)
+	}
+	task.setState(appapi.TransferActive)
+	if err := c.PauseFile("t"); err != nil {
+		t.Fatalf("pause active err = %v", err)
+	}
+	if got := task.snapshot().State; got != appapi.TransferPaused {
+		t.Fatalf("state after pause = %s, want paused", got)
+	}
+	if err := c.ResumeFile("t"); err != nil {
+		t.Fatalf("resume paused err = %v", err)
+	}
+	if got := task.snapshot().State; got != appapi.TransferActive {
+		t.Fatalf("state after resume = %s, want active", got)
+	}
+
+	g := newReceiverGroupTask(c, "*", "gt-1", "demo.bin", 1024, "sha", "p1")
+	g.emitPending()
+	c.addGroupTask(g)
+	if err := c.PauseFile("gt-1"); err != nil {
+		t.Fatalf("pause group err = %v", err)
+	}
+	if err := c.ResumeFile("gt-1"); err != nil {
+		t.Fatalf("resume group err = %v", err)
+	}
+	if err := c.CancelFile("gt-1"); err != nil {
+		t.Fatalf("cancel group err = %v", err)
+	}
+	if _, ok := c.getGroupTask("gt-1"); ok {
+		t.Fatal("group task should be removed after CancelFile")
 	}
 }
 

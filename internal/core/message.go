@@ -21,21 +21,36 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if group != "" {
-		env, err := c.sendGroup(conn, protocol.TextMsg, group, protocol.TextPayload{Text: text})
-		if err != nil {
-			return "", err
-		}
-		return env.ID, nil
+	replyTo, mentions := extractMentionsAndReply(text)
+	payload := protocol.TextPayload{
+		Text:     text,
+		ReplyTo:  replyTo,
+		Mentions: mentions,
 	}
-	env, err := c.sendTo(conn, protocol.TextMsg, to, protocol.TextPayload{Text: text})
+	var env *protocol.Envelope
+	if group != "" {
+		env, err = c.sendGroup(conn, protocol.TextMsg, group, payload)
+	} else {
+		env, err = c.sendTo(conn, protocol.TextMsg, to, payload)
+	}
 	if err != nil {
 		return "", err
 	}
+	c.history.append(appapi.ChatMessage{
+		ID:       env.ID,
+		From:     c.selfIDValue(),
+		To:       to,
+		Group:    group,
+		Type:     protocol.TextMsg,
+		Text:     text,
+		ReplyTo:  replyTo,
+		Mentions: mentions,
+		TS:       env.TS,
+	})
 	return env.ID, nil
 }
 
-// SendSticker 发送表情。M4 仅支持单播，贴纸以名称引用（UI 本地缓存）。
+// SendSticker 发送表情。支持单播对端 ID 或已加入的频道 ID（贴纸以名称/路径引用）。
 func (c *Client) SendSticker(to, path string) (string, error) {
 	if to == "" {
 		return "", errPeerNotFound
@@ -47,11 +62,39 @@ func (c *Client) SendSticker(to, path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	env, err := c.sendTo(conn, protocol.StickerMsg, to, protocol.StickerPayload{Name: path})
+	c.mu.Lock()
+	_, isChannel := c.channels[to]
+	c.mu.Unlock()
+
+	var (
+		env   *protocol.Envelope
+		group string
+	)
+	if isChannel || to == protocol.GroupBroadcast {
+		group = to
+		env, err = c.sendGroup(conn, protocol.StickerMsg, group, protocol.StickerPayload{Name: path})
+	} else {
+		env, err = c.sendTo(conn, protocol.StickerMsg, to, protocol.StickerPayload{Name: path})
+	}
 	if err != nil {
 		return "", err
 	}
+	c.history.append(appapi.ChatMessage{
+		ID:    env.ID,
+		From:  c.selfIDValue(),
+		To:    to,
+		Group: group,
+		Type:  protocol.StickerMsg,
+		Text:  path,
+		TS:    env.TS,
+	})
 	return env.ID, nil
+}
+
+func (c *Client) selfIDValue() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.selfID
 }
 
 // connectedConn 返回当前信令连接，未连接报错。

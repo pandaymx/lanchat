@@ -23,9 +23,10 @@ type taskSignal struct {
 type transferTask struct {
 	cli *Client
 
-	mu   sync.Mutex
-	snap appapi.Transfer
-	mode int
+	mu     sync.Mutex
+	snap   appapi.Transfer
+	mode   int
+	paused chan struct{}
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -89,11 +90,56 @@ func (t *transferTask) setState(s appapi.TransferState) {
 	t.mu.Unlock()
 }
 
+func (t *transferTask) pause() (appapi.Transfer, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.snap.State != appapi.TransferActive {
+		return appapi.Transfer{}, errInvalidState
+	}
+	t.snap.State = appapi.TransferPaused
+	t.snap.SpeedBps = 0
+	if t.paused == nil {
+		t.paused = make(chan struct{})
+	}
+	return t.snap, nil
+}
+
+func (t *transferTask) resume() (appapi.Transfer, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.snap.State != appapi.TransferPaused {
+		return appapi.Transfer{}, errInvalidState
+	}
+	t.snap.State = appapi.TransferActive
+	if t.paused != nil {
+		close(t.paused)
+		t.paused = nil
+	}
+	return t.snap, nil
+}
+
+func (t *transferTask) waitIfPaused() {
+	t.mu.Lock()
+	ch := t.paused
+	t.mu.Unlock()
+	if ch != nil {
+		select {
+		case <-ch:
+		case <-t.ctx.Done():
+		}
+	}
+}
+
 func (t *transferTask) setProgress(bytesDone, speedBps int64) appapi.Transfer {
 	t.mu.Lock()
 	t.snap.BytesDone = bytesDone
-	t.snap.SpeedBps = speedBps
-	t.snap.State = appapi.TransferActive
+	if t.paused != nil {
+		t.snap.SpeedBps = 0
+		t.snap.State = appapi.TransferPaused
+	} else {
+		t.snap.SpeedBps = speedBps
+		t.snap.State = appapi.TransferActive
+	}
 	cp := t.snap
 	t.mu.Unlock()
 	return cp

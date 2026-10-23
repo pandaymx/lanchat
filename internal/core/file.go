@@ -133,9 +133,10 @@ func (c *Client) RespondFile(transferID string, accept bool, dest string) error 
 	return nil
 }
 
-// progressFn 返回适配 transfer 包的进度回调，更新任务并下发。
+// progressFn 返回适配 transfer 包的进度回调，更新任务并下发（暂停时阻塞数据流直至恢复或取消）。
 func (c *Client) progressFn(t *transferTask) func(int64, int64) {
 	return func(bytesDone, speedBps int64) {
+		t.waitIfPaused()
 		cp := t.setProgress(bytesDone, speedBps)
 		c.listener().OnTransferProgress(cp)
 	}

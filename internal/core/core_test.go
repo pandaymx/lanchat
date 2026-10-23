@@ -538,10 +538,42 @@ func TestNicknameAndDownloadDir(t *testing.T) {
 	if err := c.SetNickname(""); err == nil {
 		t.Fatal("empty nickname should fail")
 	}
-	if err := c.PickDownloadDir("/tmp/dl"); err != nil {
+	if err := c.PickDownloadDir(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.PickDownloadDir(""); err == nil {
 		t.Fatal("empty dir should fail")
+	}
+}
+
+// TestHistoryPersistenceAndMentions 验证 M10 本地聊天历史落盘恢复及 @提及 / 引用回复解析。
+func TestHistoryPersistenceAndMentions(t *testing.T) {
+	replyTo, mentions := extractMentionsAndReply("> [reply:m-42] 你好 @alice 和 @bob_1，@alice 请看")
+	if replyTo != "m-42" {
+		t.Fatalf("replyTo = %q, want m-42", replyTo)
+	}
+	if len(mentions) != 2 || mentions[0] != "alice" || mentions[1] != "bob_1" {
+		t.Fatalf("mentions = %v, want [alice bob_1]", mentions)
+	}
+
+	dir := t.TempDir()
+	c1 := New(Options{Nickname: "A", DownloadDir: dir})
+	c1.history.append(appapi.ChatMessage{
+		ID:       "msg-1",
+		From:     "p1",
+		To:       "p2",
+		Type:     "TEXT_MSG",
+		Text:     "[reply:msg-0] @bob hello",
+		ReplyTo:  "msg-0",
+		Mentions: []string{"bob"},
+		TS:       1700000000000,
+	})
+	c1.Close()
+
+	c2 := New(Options{Nickname: "A", DownloadDir: dir})
+	t.Cleanup(c2.Close)
+	st := c2.GetState()
+	if len(st.Messages) != 1 || st.Messages[0].ID != "msg-1" || st.Messages[0].ReplyTo != "msg-0" {
+		t.Fatalf("restored messages = %+v", st.Messages)
 	}
 }

@@ -53,6 +53,7 @@ type Client struct {
 	browser *discover.Browser
 
 	downloadDir string
+	history     *historyStore
 
 	cb appapi.Listener
 
@@ -96,6 +97,7 @@ func New(opts Options) *Client {
 		nickname:    nick,
 		os:          opts.OS,
 		downloadDir: opts.DownloadDir,
+		history:     newHistoryStore(opts.DownloadDir),
 		deviceID:    uuid.NewString(),
 		heartbeat:   protocol.HeartbeatIntervalSec,
 		peers:       map[string]appapi.Peer{},
@@ -146,7 +148,7 @@ func (c *Client) Close() {
 	})
 }
 
-// GetState 返回连接态 + 自身 + 在线表 + 传输 / 频道快照。
+// GetState 返回连接态 + 自身 + 在线表 + 传输 / 频道 / 历史消息快照。
 func (c *Client) GetState() appapi.State {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -175,6 +177,7 @@ func (c *Client) GetState() appapi.State {
 		Peers:     peers,
 		Transfers: transfers,
 		Channels:  channels,
+		Messages:  c.history.snapshot(),
 	}
 }
 
@@ -186,6 +189,7 @@ func (c *Client) PickDownloadDir(path string) error {
 	c.mu.Lock()
 	c.downloadDir = path
 	c.mu.Unlock()
+	c.history.setDir(path)
 	return nil
 }
 

@@ -7,8 +7,29 @@ import (
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
-// CancelFile 取消传输：取消任务数据路径并通知对端 FILE_CANCEL。
+// CancelFile 取消传输：支持 1:1 任务（通知对端 FILE_CANCEL）与群组任务（广播 GROUP_LEAVE）。
 func (c *Client) CancelFile(transferID string) error {
+	if g, ok := c.getGroupTask(transferID); ok {
+		cp := g.currentSnapshot()
+		if cp.State == appapi.TransferDone || cp.State == appapi.TransferCanceled || cp.State == appapi.TransferFailed {
+			return errInvalidState
+		}
+		if conn, err := c.connectedConn(); err == nil {
+			_, _ = c.sendGroup(conn, protocol.GroupLeave, g.groupID, protocol.GroupJoinPayload{
+				GroupID:    g.groupID,
+				TransferID: transferID,
+			})
+		}
+		c.removeGroupTask(transferID)
+		g.teardown()
+		cp.State = appapi.TransferCanceled
+		cp.SpeedBps = 0
+		cp.ErrorReason = "canceled by local user"
+		g.cache(cp)
+		c.listener().OnTransferFailed(transferID, "canceled by local user")
+		return nil
+	}
+
 	t, ok := c.getTransfer(transferID)
 	if !ok {
 		return errTransferGone
@@ -29,20 +50,59 @@ func (c *Client) CancelFile(transferID string) error {
 	return nil
 }
 
-// PauseFile M4 不支持暂停（M3 的续传是崩溃恢复而非用户暂停）。
+// PauseFile 暂停处于 active 状态的传输任务（支持 1:1 与群组任务）。
 func (c *Client) PauseFile(transferID string) error {
-	if _, ok := c.getTransfer(transferID); !ok {
+	if g, ok := c.getGroupTask(transferID); ok {
+		g.snapMu.Lock()
+		if g.cached.State != appapi.TransferActive {
+			g.snapMu.Unlock()
+			return errInvalidState
+		}
+		g.cached.State = appapi.TransferPaused
+		g.cached.SpeedBps = 0
+		cp := g.cached
+		g.snapMu.Unlock()
+		c.listener().OnTransferProgress(cp)
+		return nil
+	}
+
+	t, ok := c.getTransfer(transferID)
+	if !ok {
 		return errTransferGone
 	}
-	return errPauseUnsupported
+	cp, err := t.pause()
+	if err != nil {
+		return err
+	}
+	c.listener().OnTransferProgress(cp)
+	return nil
 }
 
-// ResumeFile 与 PauseFile 对称，M4 不支持。
+// ResumeFile 恢复处于 paused 状态的传输任务（支持 1:1 与群组任务）。
 func (c *Client) ResumeFile(transferID string) error {
-	if _, ok := c.getTransfer(transferID); !ok {
+	if g, ok := c.getGroupTask(transferID); ok {
+		g.snapMu.Lock()
+		if g.cached.State != appapi.TransferPaused {
+			g.snapMu.Unlock()
+			return errInvalidState
+		}
+		g.cached.State = appapi.TransferActive
+		cp := g.cached
+		g.snapMu.Unlock()
+		c.listener().OnTransferProgress(cp)
+		return nil
+	}
+
+	t, ok := c.getTransfer(transferID)
+	if !ok {
 		return errTransferGone
 	}
-	return errPauseUnsupported
+	cp, err := t.resume()
+	if err != nil {
+		return err
+	}
+	c.listener().OnTransferProgress(cp)
+	return nil
 }
 
 // ChannelCreate 创建 G2 自定义频道。服务器创建后会下发 CHANNEL_LIST，

@@ -29,6 +29,7 @@ public sealed partial class ChatView : UserControl
         _mainWindow = mainWindow;
         DataContext = shell;
         shell.Chat.FilePickRequested += OnFilePickRequested;
+        shell.Chat.StickerPickRequested += OnStickerPickRequested;
         shell.Chat.IncomingFileOffer += OnIncomingFileOffer;
     }
 
@@ -42,25 +43,63 @@ public sealed partial class ChatView : UserControl
 
     private async void MembersButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_shell is null)
+        if (_shell is null || _shell.Chat.CurrentChannel is not { } channel)
         {
             return;
         }
 
-        var panel = new StackPanel { Spacing = 4 };
+        var panel = new StackPanel { Spacing = 6 };
+        if (!string.IsNullOrEmpty(channel.Topic))
+        {
+            panel.Children.Add(new TextBlock { Text = $"主题：{channel.Topic}", Opacity = 0.75 });
+        }
+
         foreach (var member in _shell.Chat.CurrentMembers)
         {
             panel.Children.Add(new TextBlock { Text = member });
         }
 
+        var inviteBox = new TextBox
+        {
+            PlaceholderText = "输入要邀请的成员 ID（仅频道所有者可用）",
+        };
+        if (channel.OwnerId == _shell.SelfId)
+        {
+            panel.Children.Add(inviteBox);
+        }
+
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "频道成员",
+            Title = channel.Private ? $"频道成员（私有 · {channel.Name}）" : $"频道成员（{channel.Name}）",
             Content = new ScrollViewer { Content = panel, MaxHeight = 320 },
+            PrimaryButtonText = channel.OwnerId == _shell.SelfId ? "邀请" : "",
+            SecondaryButtonText = "退出频道",
             CloseButtonText = "关闭",
         };
-        await dialog.ShowAsync();
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(inviteBox.Text))
+        {
+            try
+            {
+                await _shell.Channels.InviteAsync(channel, inviteBox.Text.Trim());
+            }
+            catch
+            {
+                // 邀请失败忽略
+            }
+        }
+        else if (result == ContentDialogResult.Secondary)
+        {
+            try
+            {
+                await _shell.Channels.LeaveAsync(channel);
+            }
+            catch
+            {
+                // 退出失败忽略
+            }
+        }
     }
 
     private void DraftBox_KeyDown(object sender, KeyRoutedEventArgs e)
@@ -69,6 +108,32 @@ public sealed partial class ChatView : UserControl
         {
             _ = _shell?.Chat.SendCommand.ExecuteAsync(null);
             e.Handled = true;
+        }
+    }
+
+    private async void OnStickerPickRequested()
+    {
+        if (_shell is null || _mainWindow is null)
+        {
+            return;
+        }
+
+        var picker = new FileOpenPicker
+        {
+            ViewMode = PickerViewMode.Thumbnail,
+            SuggestedStartLocation = PickerLocationId.PicturesLibrary,
+        };
+        picker.FileTypeFilter.Add(".png");
+        picker.FileTypeFilter.Add(".jpg");
+        picker.FileTypeFilter.Add(".jpeg");
+        picker.FileTypeFilter.Add(".gif");
+        picker.FileTypeFilter.Add(".webp");
+        InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(_mainWindow));
+
+        var file = await picker.PickSingleFileAsync();
+        if (file is not null)
+        {
+            await _shell.Chat.SendStickerAsync(file.Path);
         }
     }
 

@@ -82,19 +82,24 @@
             <Grid ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Button Grid.Column="0"
+                        Content="贴纸"
+                        IsEnabled="{Binding Chat.CanSend}"
+                        Command="{Binding Chat.PickStickerCommand}" />
+                <Button Grid.Column="1"
                         Content="文件"
                         IsEnabled="{Binding Chat.CanSend}"
                         Command="{Binding Chat.PickFileCommand}" />
-                <TextBox Grid.Column="1"
+                <TextBox Grid.Column="2"
                          PlaceholderText="输入消息，Enter 发送"
                          IsEnabled="{Binding Chat.CanSend}"
                          Text="{Binding Chat.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                          KeyDown="DraftBox_KeyDown" />
-                <Button Grid.Column="2"
+                <Button Grid.Column="3"
                         Content="发送"
                         IsEnabled="{Binding Chat.CanSend}"
                         Command="{Binding Chat.SendCommand}" />

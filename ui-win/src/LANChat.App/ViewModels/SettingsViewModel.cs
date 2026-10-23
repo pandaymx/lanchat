@@ -51,6 +51,7 @@ public sealed partial class SettingsViewModel : ViewModelBase
     {
         _services.Settings.DownloadDir = DownloadDir;
         _services.Settings.Save();
+        _ = _services.Ipc.InvokeAsync("PickDownloadDir", new { path = DownloadDir });
         PostStatus("下载目录已保存");
     }
 

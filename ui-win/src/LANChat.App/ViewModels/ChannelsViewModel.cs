@@ -64,13 +64,41 @@ public sealed partial class ChannelsViewModel : ViewModelBase
     }
 
     /// <summary>创建频道；创建者自动成为成员，服务端随后下发 channel.updated。</summary>
-    public async Task<string> CreateAsync(string name)
+    public async Task<string> CreateAsync(string name, string topic = "", bool isPrivate = false)
     {
         var result = await _services.Ipc.InvokeAsync("ChannelCreate", new
         {
             name,
+            topic,
+            @private = isPrivate,
         });
         return result.TryGetProperty("channelID", out var id) ? id.GetString() ?? "" : "";
+    }
+
+    /// <summary>邀请在线成员加入频道（仅 owner）。</summary>
+    public async Task InviteAsync(Channel channel, string memberId)
+    {
+        await _services.Ipc.InvokeAsync("ChannelInvite", new
+        {
+            channelID = channel.Id,
+            memberID = memberId,
+        });
+    }
+
+    /// <summary>退出频道。</summary>
+    public async Task LeaveAsync(Channel channel)
+    {
+        await _services.Ipc.InvokeAsync("ChannelLeave", new
+        {
+            channelID = channel.Id,
+        });
+    }
+
+    /// <summary>主动拉取频道列表。</summary>
+    public async Task<IReadOnlyList<Channel>> ListAsync()
+    {
+        var list = await _services.Ipc.InvokeAsync<IReadOnlyList<Channel>>("ChannelList");
+        return list ?? [];
     }
 
     /// <summary>按 id 查询频道（消息显示名称解析）。</summary>

@@ -19,10 +19,20 @@ public sealed partial class TransfersViewModel : ViewModelBase
 
     public void ReplaceTransfers(IEnumerable<Transfer> transfers)
     {
+        var matrixById = Transfers
+            .Where(t => !string.IsNullOrEmpty(t.MatrixSummary))
+            .ToDictionary(t => t.Id, t => t.MatrixSummary);
         Transfers.Clear();
         foreach (var transfer in transfers)
         {
-            Transfers.Add(transfer);
+            if (matrixById.TryGetValue(transfer.Id, out var summary))
+            {
+                Transfers.Add(transfer with { MatrixSummary = summary });
+            }
+            else
+            {
+                Transfers.Add(transfer);
+            }
         }
     }
 
@@ -41,7 +51,10 @@ public sealed partial class TransfersViewModel : ViewModelBase
 
         if (index >= 0)
         {
-            Transfers[index] = transfer;
+            var prevMatrix = Transfers[index].MatrixSummary;
+            Transfers[index] = string.IsNullOrEmpty(transfer.MatrixSummary) && !string.IsNullOrEmpty(prevMatrix)
+                ? transfer with { MatrixSummary = prevMatrix }
+                : transfer;
         }
         else
         {
@@ -72,6 +85,64 @@ public sealed partial class TransfersViewModel : ViewModelBase
                 State = TransferState.Failed,
                 ErrorReason = reason,
             };
+        }
+    }
+
+    public void ApplyGroupMatrix(string transferId, string haveBitmapB64)
+    {
+        var existing = Find(transferId);
+        if (existing is null)
+        {
+            return;
+        }
+
+        var summary = Transfer.FormatMatrixSummary(haveBitmapB64, existing.Size);
+        if (!string.IsNullOrEmpty(summary))
+        {
+            Transfers[Transfers.IndexOf(existing)] = existing with
+            {
+                MatrixSummary = summary,
+            };
+        }
+    }
+
+    [RelayCommand]
+    private async Task PauseAsync(Transfer? transfer)
+    {
+        if (transfer is null)
+        {
+            return;
+        }
+        try
+        {
+            await _services.Ipc.InvokeAsync("PauseFile", new
+            {
+                transferID = transfer.Id,
+            });
+        }
+        catch
+        {
+            // 暂停失败时保留列表状态
+        }
+    }
+
+    [RelayCommand]
+    private async Task ResumeAsync(Transfer? transfer)
+    {
+        if (transfer is null)
+        {
+            return;
+        }
+        try
+        {
+            await _services.Ipc.InvokeAsync("ResumeFile", new
+            {
+                transferID = transfer.Id,
+            });
+        }
+        catch
+        {
+            // 恢复失败时保留列表状态
         }
     }
 

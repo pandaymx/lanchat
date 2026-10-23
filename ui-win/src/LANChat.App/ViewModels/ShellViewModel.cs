@@ -118,6 +118,11 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
                     Chat.HandleTransferFailed(failedId, failedReason);
                 });
                 break;
+            case "group.matrix":
+                var matrixTransferId = parameters.TryGetProperty("transferId", out var tid) ? tid.GetString() ?? "" : "";
+                var haveBitmap = parameters.TryGetProperty("haveBitmap", out var hb) ? hb.GetString() ?? "" : "";
+                _ui.Post(() => Transfers.ApplyGroupMatrix(matrixTransferId, haveBitmap));
+                break;
         }
     }
 
@@ -133,6 +138,7 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
             Roster.ReplacePeers(state.Peers);
             Transfers.ReplaceTransfers(state.Transfers);
             ApplyChannels(state.Channels);
+            Chat.ApplyHistory(state.Messages);
             Login.Initialize(state);
         });
     }

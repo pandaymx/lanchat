@@ -32,11 +32,25 @@ public sealed partial class RosterView : UserControl
             PlaceholderText = "频道名称",
             MaxLength = 64,
         };
+        var topicBox = new TextBox
+        {
+            PlaceholderText = "频道主题（可选）",
+            MaxLength = 128,
+        };
+        var privateCheck = new CheckBox
+        {
+            Content = "私有频道（仅邀请可加入）",
+        };
+        var form = new StackPanel { Spacing = 8 };
+        form.Children.Add(nameBox);
+        form.Children.Add(topicBox);
+        form.Children.Add(privateCheck);
+
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "新建频道",
-            Content = nameBox,
+            Content = form,
             PrimaryButtonText = "创建",
             CloseButtonText = "取消",
             DefaultButton = ContentDialogButton.Primary,
@@ -56,7 +70,7 @@ public sealed partial class RosterView : UserControl
 
         try
         {
-            await shell.Channels.CreateAsync(name);
+            await shell.Channels.CreateAsync(name, topicBox.Text.Trim(), privateCheck.IsChecked == true);
         }
         catch
         {

@@ -6,12 +6,18 @@
     "CancelFile",
     "ChannelCreate",
     "ChannelJoin",
+    "ChannelInvite",
+    "ChannelLeave",
     "ChannelList",
     "Connect",
     "GetState",
     "OfferFile",
     "OfferFileToGroup",
+    "PauseFile",
+    "PickDownloadDir",
     "RespondFile",
+    "ResumeFile",
+    "SendSticker",
     "SendText",
     "SetNickname"
   ]

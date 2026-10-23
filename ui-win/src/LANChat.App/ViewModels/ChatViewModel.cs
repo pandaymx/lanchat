@@ -33,6 +33,9 @@ public sealed partial class ChatViewModel : ViewModelBase
     /// <summary>请求 UI 弹出文件选择器（聊天内点「文件」）。</summary>
     public event Action? FilePickRequested;
 
+    /// <summary>请求 UI 弹出贴纸选择器（聊天内点「贴纸」）。</summary>
+    public event Action? StickerPickRequested;
+
     public ChatViewModel(AppServices services, UiThread? ui = null)
     {
         _services = services;
@@ -171,6 +174,54 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
     }
 
+    [RelayCommand]
+    private void PickSticker()
+    {
+        if (CanSend)
+        {
+            StickerPickRequested?.Invoke();
+        }
+    }
+
+    /// <summary>贴纸选择器选定后调用：发送贴纸消息（单播或频道）。</summary>
+    public async Task SendStickerAsync(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return;
+        }
+
+        var target = CurrentChannel?.Id ?? CurrentPeer?.Id ?? "";
+        if (string.IsNullOrEmpty(target))
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await _services.Ipc.InvokeAsync("SendSticker", new
+            {
+                to = target,
+                path,
+            });
+            var msgId = result.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
+            AppendMessage(new ChatMessage
+            {
+                MsgId = msgId,
+                FromId = SelfId,
+                FromName = "我",
+                GroupId = CurrentChannel?.Id,
+                Text = $"[贴纸: {Path.GetFileName(path)}]",
+                Type = "sticker",
+                IsSelf = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"贴纸发送失败：{ex.Message}");
+        }
+    }
+
     /// <summary>文件选择器选定后调用：单播走 OfferFile，频道走 OfferFileToGroup。</summary>
     public async Task OfferFileAsync(string path)
     {
@@ -207,6 +258,28 @@ public sealed partial class ChatViewModel : ViewModelBase
         catch (Exception ex)
         {
             AppendSystemMessage($"文件发送失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>从 GetState 恢复本地历史消息。</summary>
+    public void ApplyHistory(IReadOnlyList<HistoryMessage> messages)
+    {
+        foreach (var hm in messages)
+        {
+            var isSelf = !string.IsNullOrEmpty(SelfId) && hm.From == SelfId;
+            var peerOrFrom = isSelf ? (!string.IsNullOrEmpty(hm.To) ? hm.To! : hm.From) : hm.From;
+            var senderName = isSelf ? "我" : (ResolvePeer(hm.From)?.Nickname ?? hm.From);
+            AppendMessage(new ChatMessage
+            {
+                MsgId = hm.Id,
+                FromId = peerOrFrom,
+                FromName = senderName,
+                GroupId = string.IsNullOrEmpty(hm.Group) ? null : hm.Group,
+                Text = hm.Text,
+                Type = string.IsNullOrEmpty(hm.Type) ? "text" : hm.Type,
+                IsSelf = isSelf,
+                Timestamp = hm.Ts > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(hm.Ts) : DateTimeOffset.Now,
+            });
         }
     }
 

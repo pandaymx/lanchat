@@ -92,15 +92,29 @@ type Channel struct {
 	Members []string `json:"members"`
 }
 
+// ChatMessage 本地历史消息快照（M10：随 GetState 可选返回，支持重启后恢复会话记录、引用回复与 @提及）。
+type ChatMessage struct {
+	ID       string   `json:"id"`
+	From     string   `json:"from"`
+	To       string   `json:"to,omitempty"`
+	Group    string   `json:"group,omitempty"`
+	Type     string   `json:"type"`
+	Text     string   `json:"text"`
+	ReplyTo  string   `json:"replyTo,omitempty"`
+	Mentions []string `json:"mentions,omitempty"`
+	TS       int64    `json:"ts"`
+}
+
 // State GetState 返回的全量快照。
 type State struct {
-	Conn      ConnState  `json:"conn"`
-	Server    string     `json:"server,omitempty"`
-	SelfID    string     `json:"selfId,omitempty"`
-	Nickname  string     `json:"nickname"`
-	Peers     []Peer     `json:"peers"`
-	Transfers []Transfer `json:"transfers"`
-	Channels  []Channel  `json:"channels"`
+	Conn      ConnState     `json:"conn"`
+	Server    string        `json:"server,omitempty"`
+	SelfID    string        `json:"selfId,omitempty"`
+	Nickname  string        `json:"nickname"`
+	Peers     []Peer        `json:"peers"`
+	Transfers []Transfer    `json:"transfers"`
+	Channels  []Channel     `json:"channels"`
+	Messages  []ChatMessage `json:"messages,omitempty"`
 }
 
 // API 是 daemon 暴露给各端 UI 的全部方法（对齐方案 §12.1）。

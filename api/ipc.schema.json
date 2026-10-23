@@ -25,7 +25,8 @@
           "nickname": "string",
           "peers": "Peer[]",
           "transfers": "Transfer[]",
-          "channels": "Channel[]"
+          "channels": "Channel[]",
+          "messages": "ChatMessage[]?"
         }
       }
     },
@@ -178,6 +179,17 @@
       "private": "bool?",
       "topic": "string?",
       "members": "string[]"
+    },
+    "ChatMessage": {
+      "id": "string",
+      "from": "string",
+      "to": "string?",
+      "group": "string?",
+      "type": "string",
+      "text": "string",
+      "replyTo": "string?",
+      "mentions": "string[]?",
+      "ts": "int64"
     }
   }
 }

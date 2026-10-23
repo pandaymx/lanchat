@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.0](https://github.com/pandaymx/lanchat/compare/v1.1.0...v1.2.0) (2026-10-23)
+
+
+### Features
+
+* **appapi:** add optional revoked and readBy fields to ChatMessage ([d31f711](https://github.com/pandaymx/lanchat/commit/d31f7116ca30898109971d911ff3aa1b96e7024b))
+* **core:** implement message revoke, read receipts, and history search ([acdd629](https://github.com/pandaymx/lanchat/commit/acdd62905baa3219bc42641e092a8677b06ab5a5))
+* **protocol:** add MSG_READ and MSG_REVOKE control message types and payloads ([b190a81](https://github.com/pandaymx/lanchat/commit/b190a817162e8cb876e0e52f4341fc7c4f73424c))
+* **server:** route MSG_READ and MSG_REVOKE across unicast and group channels ([7efd046](https://github.com/pandaymx/lanchat/commit/7efd046d123816e44960a3ee35888e45a11e843d))
+
+
+### Bug Fixes
+
+* **ci:** use RELEASE_PLEASE_TOKEN in release-please workflow ([2fd3264](https://github.com/pandaymx/lanchat/commit/2fd32643aabf811908bb8091150ee391cce63b23))
+
 ## [1.1.0](https://github.com/pandaymx/lanchat/compare/v1.0.0...v1.1.0) (2026-10-23)
 
 

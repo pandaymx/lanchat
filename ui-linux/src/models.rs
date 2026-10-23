@@ -178,10 +178,6 @@ pub struct HistoryMessage {
     pub msg_type: String,
     #[serde(default)]
     pub text: String,
-    #[serde(default, rename = "replyTo")]
-    pub reply_to: String,
-    #[serde(default)]
-    pub mentions: Vec<String>,
     #[serde(default)]
     pub ts: i64,
 }
@@ -224,7 +220,7 @@ pub struct ChatMessage {
 /// 解析 base64 编码的块位图并生成紧凑块矩阵进度文本（如 `▓▓▓░░░ 3/6 块`）。
 pub fn format_matrix_summary(b64: &str, size: i64) -> Option<String> {
     let bytes = decode_base64(b64)?;
-    let total_blocks = ((size + (4 * 1024 * 1024) - 1) / (4 * 1024 * 1024)).max(1) as usize;
+    let total_blocks = (size.max(0) as u64).div_ceil(4 * 1024 * 1024).max(1) as usize;
     let have_blocks = bytes
         .iter()
         .map(|b| b.count_ones() as usize)
@@ -232,7 +228,7 @@ pub fn format_matrix_summary(b64: &str, size: i64) -> Option<String> {
         .min(total_blocks);
     let cells = total_blocks.min(8);
     let filled = if total_blocks > 0 {
-        (have_blocks * cells + total_blocks - 1) / total_blocks
+        (have_blocks * cells).div_ceil(total_blocks)
     } else {
         0
     }
@@ -264,7 +260,7 @@ fn decode_base64(input: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(clean.len() * 3 / 4);
     for chunk in clean.chunks(4) {
         let b0 = val(chunk[0])?;
-        let b1 = *chunk.get(1).and_then(|c| val(*c).as_ref())?;
+        let b1 = chunk.get(1).copied().and_then(val)?;
         out.push((b0 << 2) | (b1 >> 4));
         if let Some(&c2) = chunk.get(2) {
             let b2 = val(c2)?;
@@ -333,5 +329,12 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(t.fraction(), 0.0);
+    }
+
+    #[test]
+    fn matrix_summary_formatting() {
+        // 0b0000_0111 = 7 ("Bw==") -> 3 bits set out of 4 blocks (16 MiB)
+        let s = format_matrix_summary("Bw==", 16 * 1024 * 1024).unwrap();
+        assert_eq!(s, "▓▓▓░ 3/4 块");
     }
 }

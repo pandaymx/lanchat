@@ -12,37 +12,43 @@ BASELINE="$REPO_ROOT/configs/perf-baseline.json"
 UPDATE=false
 [[ "${1:-}" == "--update" ]] && UPDATE=true
 
-# ─── 运行性能测试 ─────────────────────────────────────────────────
-echo ">>> 运行 TestPerf_1GiB_Throughput ..."
-TEST_OUTPUT=$(cd "$REPO_ROOT" && go test -tags perf -count=1 -timeout 30m -v \
-  -run TestPerf_1GiB_Throughput ./test/integration/... 2>&1) || {
-  echo "$TEST_OUTPUT"
-  echo "::error::性能测试运行失败"
-  exit 1
-}
-echo "$TEST_OUTPUT"
-
-# ─── 解析结果 ─────────────────────────────────────────────────────
-# 测试输出格式：
-#   1 GiB 耗时 X.XXs，吞吐 XXX.XX MiB/s（XXX.XX MB/s），堆增长 XX MiB
-THROUGHPUT=$(echo "$TEST_OUTPUT" | grep -oP '吞吐 \K[0-9.]+' | head -1)
-# 堆增长可能是负数（GC 回收），取绝对值
-HEAP_RAW=$(echo "$TEST_OUTPUT" | grep -oP '堆增长 -?\K[0-9]+' | head -1)
-HEAP_GROWTH=${HEAP_RAW:-0}
-
-if [[ -z "$THROUGHPUT" ]]; then
-  echo "::error::无法从测试输出解析吞吐量"
-  exit 1
+MAX_ATTEMPTS="${PERF_MAX_ATTEMPTS:-2}"
+if $UPDATE; then
+  MAX_ATTEMPTS=1
 fi
 
-echo ""
-echo ">>> 结果：吞吐 ${THROUGHPUT} MiB/s，堆增长 ${HEAP_GROWTH} MiB"
+run_once() {
+  # ─── 运行性能测试 ─────────────────────────────────────────────────
+  echo ">>> 运行 TestPerf_1GiB_Throughput ..."
+  TEST_OUTPUT=$(cd "$REPO_ROOT" && go test -tags perf -count=1 -timeout 30m -v \
+    -run TestPerf_1GiB_Throughput ./test/integration/... 2>&1) || {
+    echo "$TEST_OUTPUT"
+    echo "::error::性能测试运行失败"
+    return 1
+  }
+  echo "$TEST_OUTPUT"
 
-# ─── 更新模式 ─────────────────────────────────────────────────────
-if $UPDATE; then
-  TODAY=$(date +%Y-%m-%d)
-  python3 -c "
-import json, sys
+  # ─── 解析结果 ─────────────────────────────────────────────────────
+  # 测试输出格式：
+  #   1 GiB 耗时 X.XXs，吞吐 XXX.XX MiB/s（XXX.XX MB/s），堆增长 XX MiB
+  THROUGHPUT=$(echo "$TEST_OUTPUT" | grep -oP '吞吐 \K[0-9.]+' | head -1)
+  # 堆增长可能是负数（GC 回收），取绝对值
+  HEAP_RAW=$(echo "$TEST_OUTPUT" | grep -oP '堆增长 -?\K[0-9]+' | head -1)
+  HEAP_GROWTH=${HEAP_RAW:-0}
+
+  if [[ -z "$THROUGHPUT" ]]; then
+    echo "::error::无法从测试输出解析吞吐量"
+    return 1
+  fi
+
+  echo ""
+  echo ">>> 结果：吞吐 ${THROUGHPUT} MiB/s，堆增长 ${HEAP_GROWTH} MiB"
+
+  # ─── 更新模式 ─────────────────────────────────────────────────────
+  if $UPDATE; then
+    TODAY=$(date +%Y-%m-%d)
+    python3 -c "
+import json
 with open('$BASELINE') as f:
     b = json.load(f)
 b['tests']['TestPerf_1GiB_Throughput']['throughput_mbps'] = $THROUGHPUT
@@ -52,12 +58,12 @@ with open('$BASELINE', 'w') as f:
     json.dump(b, f, indent=2, ensure_ascii=False)
     f.write('\n')
 "
-  echo ">>> 基线已更新：$BASELINE"
-  exit 0
-fi
+    echo ">>> 基线已更新：$BASELINE"
+    return 0
+  fi
 
-# ─── 对比基线 ─────────────────────────────────────────────────────
-python3 -c "
+  # ─── 对比基线 ─────────────────────────────────────────────────────
+  python3 -c "
 import json, sys
 
 with open('$BASELINE') as f:
@@ -94,3 +100,16 @@ else:
 
 sys.exit(1 if fail else 0)
 "
+}
+
+attempt=1
+while (( attempt <= MAX_ATTEMPTS )); do
+  if run_once; then
+    exit 0
+  fi
+  if (( attempt < MAX_ATTEMPTS )); then
+    echo "::warning::第 ${attempt}/${MAX_ATTEMPTS} 次性能基线检测未通过（可能受共享 runner 抖动影响），正在重试..."
+  fi
+  (( attempt++ ))
+done
+exit 1

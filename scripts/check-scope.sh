@@ -20,7 +20,7 @@ if [[ "$branch" == release-please* ]]; then
 fi
 
 # 公共改动（A8 平台/发版 scope）
-COMMON_PATHS='(^go\.(mod|sum)$)|((^|/)\.github/)|(^\.golangci\.(yml|yaml)$)|((^|/)Taskfile\.yml$)|(^configs/)|(^docs/)|(^scripts/)|(^CHANGELOG)|(^\.release-please-manifest)|(^release-please-config)|(^AGENTS\.md$)'
+COMMON_PATHS='(^go\.(mod|sum)$)|((^|/)\.github/)|(^\.golangci\.(yml|yaml)$)|((^|/)Taskfile\.yml$)|(^configs/)|(^docs/)|(^scripts/)|(^CHANGELOG)|(^\.release-please-manifest)|(^release-please-config)|(^AGENTS\.md$)|(^CLAUDE\.md$)'
 
 case "$branch" in
   # ci/chore 分支需优先匹配，避免分支名中同时含里程碑关键词（如 chore/m4-*）被误判。
@@ -34,7 +34,7 @@ case "$branch" in
     ;;
   *m1*|*server*)
     # A1 后端核心
-    OWNED_PATHS='^internal/(server|core|discover|relay)/|^cmd/lanchat/'
+    OWNED_PATHS='^internal/(server|core|discover|relay|ipc)/|^cmd/lanchat/'
     ;;
   *m2*|*m3*|*transfer*)
     # A2 传输引擎
@@ -42,27 +42,31 @@ case "$branch" in
     ;;
   *m4*|*win*)
     # A3 Windows 端
-    OWNED_PATHS='^ui-win/'
+    OWNED_PATHS='^ui-win/|^api/contract/win\.methods\.json$'
     ;;
   *m5*|*linux*)
     # A4 Linux 端
-    OWNED_PATHS='^ui-linux/'
+    OWNED_PATHS='^ui-linux/|^api/contract/linux\.methods\.json$'
     ;;
   *m6*|*android*)
     # A7 Android 端（含 gomobile 绑定）
-    OWNED_PATHS='^ui-android/|^bindings/'
+    OWNED_PATHS='^ui-android/|^bindings/|^api/contract/android\.methods\.json$'
     ;;
   *m7*|*macos*)
     # A5 macOS 端
-    OWNED_PATHS='^ui-macos/'
+    OWNED_PATHS='^ui-macos/|^api/contract/macos\.methods\.json$'
     ;;
   *m8*|*ios*)
     # A6 iOS 端
-    OWNED_PATHS='^ui-ios/|^bindings/'
+    OWNED_PATHS='^ui-ios/|^bindings/|^api/contract/ios\.methods\.json$'
     ;;
   *m9*|*group*)
     # A2 群组（M9 复用传输引擎）
     OWNED_PATHS='^internal/group/'
+    ;;
+  *m10*|*chat*|*history*)
+    # M10 聊天核心与历史增强
+    OWNED_PATHS='^internal/(protocol|core|server|ipc|appapi)/|^bindings/|^api/'
     ;;
   *)
     echo "::warning::无法识别分支 $branch 的责任田，跳过 scope 校验（详见 AGENTS.md §2）"

@@ -36,6 +36,10 @@ const (
 	StickerMsg = "STICKER_MSG"
 	// Typing 正在输入提示。
 	Typing = "TYPING"
+	// MsgRead 消息已读回执（M11a）。
+	MsgRead = "MSG_READ"
+	// MsgRevoke 消息撤回请求（M11a，发送者 2 分钟内可撤回）。
+	MsgRevoke = "MSG_REVOKE"
 
 	// FileOffer 文件发送要约。
 	FileOffer = "FILE_OFFER"

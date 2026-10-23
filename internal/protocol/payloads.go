@@ -87,6 +87,16 @@ type TypingPayload struct {
 	Typing bool `json:"typing"`
 }
 
+// MsgReadPayload 是 MSG_READ 的负载（M11a 已读回执）。
+type MsgReadPayload struct {
+	MsgID string `json:"msgID"`
+}
+
+// MsgRevokePayload 是 MSG_REVOKE 的负载（M11a 消息撤回）。
+type MsgRevokePayload struct {
+	MsgID string `json:"msgID"`
+}
+
 // FileOfferPayload 是 FILE_OFFER 的负载（方案 §5.2/§5.3）。
 // Candidates 为空表示发送方不可被拨入，请求接收方反向拨号（M3）。
 // ECDHPub 是发送方一次性 X25519 公钥（base64，32B），供端到端协商文件密钥。

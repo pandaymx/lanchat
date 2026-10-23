@@ -150,6 +150,26 @@ func TestGroupPayloadsBackwardCompatible(t *testing.T) {
 	}
 }
 
+func TestMsgReadAndRevokePayloadsRoundTrip(t *testing.T) {
+	readEnv, err := NewEnvelope("r-1", MsgRead, MsgReadPayload{MsgID: "m-100"})
+	if err != nil {
+		t.Fatalf("NewEnvelope MsgRead: %v", err)
+	}
+	var gotRead MsgReadPayload
+	if err := readEnv.DecodePayload(&gotRead); err != nil || gotRead.MsgID != "m-100" {
+		t.Fatalf("MsgReadPayload round trip failed: %+v, err=%v", gotRead, err)
+	}
+
+	revEnv, err := NewEnvelope("rv-1", MsgRevoke, MsgRevokePayload{MsgID: "m-100"})
+	if err != nil {
+		t.Fatalf("NewEnvelope MsgRevoke: %v", err)
+	}
+	var gotRev MsgRevokePayload
+	if err := revEnv.DecodePayload(&gotRev); err != nil || gotRev.MsgID != "m-100" {
+		t.Fatalf("MsgRevokePayload round trip failed: %+v, err=%v", gotRev, err)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

@@ -72,6 +72,24 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		// M4 表情以名称引用（UI 本地缓存贴纸资源）；b64 缺省时不展开。
 		c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.StickerMsg, p.Name)
 
+	case protocol.MsgRevoke:
+		var p protocol.MsgRevokePayload
+		if err := env.DecodePayload(&p); err != nil || p.MsgID == "" {
+			return
+		}
+		if _, ok := c.history.revoke(p.MsgID, env.From, revokeWindow); ok {
+			c.listener().OnMessageReceived(env.From, env.Group, p.MsgID, protocol.MsgRevoke, "[消息已撤回]")
+		}
+
+	case protocol.MsgRead:
+		var p protocol.MsgReadPayload
+		if err := env.DecodePayload(&p); err != nil || p.MsgID == "" {
+			return
+		}
+		if _, ok := c.history.markRead(p.MsgID, env.From); ok {
+			c.listener().OnMessageReceived(env.From, env.Group, p.MsgID, protocol.MsgRead, p.MsgID)
+		}
+
 	case protocol.ServerShutdown:
 		c.mu.Lock()
 		c.connState = "disconnected"

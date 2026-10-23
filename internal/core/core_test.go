@@ -577,3 +577,71 @@ func TestHistoryPersistenceAndMentions(t *testing.T) {
 		t.Fatalf("restored messages = %+v", st.Messages)
 	}
 }
+
+// TestM11aRevokeReadAndSearch 验证消息已读回执、2 分钟内撤回与本地历史检索（含 JSONL 持久化重放）。
+func TestM11aRevokeReadAndSearch(t *testing.T) {
+	url := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	la := &recordingListener{}
+	a := New(Options{Nickname: "Alice", DownloadDir: dirA, Listener: la})
+	t.Cleanup(a.Close)
+	lb := &recordingListener{}
+	b := New(Options{Nickname: "Bob", DownloadDir: dirB, Listener: lb})
+	t.Cleanup(b.Close)
+
+	if err := a.Connect(url, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(url, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	aID := a.GetState().SelfID
+	bID := b.GetState().SelfID
+
+	msgID, err := a.SendText(bID, "部署计划 v1.2 评审", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		return len(b.SearchHistory("部署计划", aID)) == 1
+	})
+
+	// Bob 发送已读回执（通过 /read 快捷指令或 MarkRead）。
+	if _, err := b.SendText(aID, "/read "+msgID, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := a.GetState().Messages
+		return len(msgs) == 1 && len(msgs[0].ReadBy) == 1 && msgs[0].ReadBy[0] == bID
+	})
+
+	// 非发送者尝试撤回他人消息应被拒绝。
+	if err := b.RevokeMessage(aID, "", msgID); err == nil {
+		t.Fatal("non-sender revoke should fail")
+	}
+
+	// Alice 撤回自己发送的消息。
+	if _, err := a.SendText(bID, "/revoke "+msgID, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := b.GetState().Messages
+		return len(msgs) == 1 && msgs[0].Revoked && msgs[0].Text == "[消息已撤回]"
+	})
+
+	// 撤回后的消息不应再被关键字检索命中。
+	if got := b.SearchHistory("部署计划", aID); len(got) != 0 {
+		t.Fatalf("revoked message should not match search, got %+v", got)
+	}
+
+	// 重启后从 JSONL 恢复，仍保持已读与已撤回状态。
+	a2 := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a2.Close)
+	restored := a2.GetState().Messages
+	if len(restored) != 1 || !restored[0].Revoked || len(restored[0].ReadBy) != 1 {
+		t.Fatalf("restored state after revoke/read mismatch: %+v", restored)
+	}
+}

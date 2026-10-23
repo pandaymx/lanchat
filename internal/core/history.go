@@ -54,6 +54,7 @@ func (h *historyStore) setDir(dir string) {
 	}
 
 	var loaded []appapi.ChatMessage
+	idxByID := map[string]int{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -62,8 +63,10 @@ func (h *historyStore) setDir(dir string) {
 		}
 		var m appapi.ChatMessage
 		if err := json.Unmarshal([]byte(line), &m); err == nil && m.ID != "" {
-			if !existing[m.ID] {
-				existing[m.ID] = true
+			if idx, ok := idxByID[m.ID]; ok {
+				loaded[idx] = m
+			} else if !existing[m.ID] {
+				idxByID[m.ID] = len(loaded)
 				loaded = append(loaded, m)
 			}
 		}
@@ -91,7 +94,10 @@ func (h *historyStore) append(m appapi.ChatMessage) {
 	if len(h.msgs) > maxHistoryMessages {
 		h.msgs = append([]appapi.ChatMessage(nil), h.msgs[len(h.msgs)-maxHistoryMessages:]...)
 	}
+	h.persistLocked(m)
+}
 
+func (h *historyStore) persistLocked(m appapi.ChatMessage) {
 	if h.dir == "" {
 		return
 	}
@@ -106,6 +112,81 @@ func (h *historyStore) append(m appapi.ChatMessage) {
 	if raw, err := json.Marshal(m); err == nil {
 		_, _ = f.Write(append(raw, '\n'))
 	}
+}
+
+// revoke 撤回指定消息（校验发送者与最大可撤回时限）。
+func (h *historyStore) revoke(msgID, actorID string, maxAge time.Duration) (appapi.ChatMessage, bool) {
+	if msgID == "" {
+		return appapi.ChatMessage{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.msgs {
+		if h.msgs[i].ID != msgID {
+			continue
+		}
+		if actorID != "" && h.msgs[i].From != "" && h.msgs[i].From != actorID {
+			return appapi.ChatMessage{}, false
+		}
+		if maxAge > 0 && h.msgs[i].TS > 0 {
+			if time.Since(time.UnixMilli(h.msgs[i].TS)) > maxAge {
+				return appapi.ChatMessage{}, false
+			}
+		}
+		h.msgs[i].Revoked = true
+		h.msgs[i].Text = "[消息已撤回]"
+		updated := h.msgs[i]
+		h.persistLocked(updated)
+		return updated, true
+	}
+	return appapi.ChatMessage{}, false
+}
+
+// markRead 记录指定消息的已读回执（幂等去重）。
+func (h *historyStore) markRead(msgID, readerID string) (appapi.ChatMessage, bool) {
+	if msgID == "" || readerID == "" {
+		return appapi.ChatMessage{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.msgs {
+		if h.msgs[i].ID != msgID {
+			continue
+		}
+		for _, r := range h.msgs[i].ReadBy {
+			if r == readerID {
+				return h.msgs[i], true
+			}
+		}
+		h.msgs[i].ReadBy = append(h.msgs[i].ReadBy, readerID)
+		updated := h.msgs[i]
+		h.persistLocked(updated)
+		return updated, true
+	}
+	return appapi.ChatMessage{}, false
+}
+
+// search 在本地历史中按关键字（大小写不敏感）与可选会话 ID 检索未撤回消息。
+func (h *historyStore) search(query, convID string) []appapi.ChatMessage {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []appapi.ChatMessage
+	for _, m := range h.msgs {
+		if m.Revoked {
+			continue
+		}
+		if convID != "" && m.Group != convID && m.From != convID && m.To != convID {
+			continue
+		}
+		if strings.Contains(strings.ToLower(m.Text), q) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func (h *historyStore) snapshot() []appapi.ChatMessage {

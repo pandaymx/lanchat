@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.1.0](https://github.com/pandaymx/lanchat/compare/v1.0.0...v1.1.0) (2026-10-23)
+
+
+### Features
+
+* **appapi:** expose persisted ChatMessage history in State snapshot ([3b493c8](https://github.com/pandaymx/lanchat/commit/3b493c8eeea449425df69f14e19eabfbefd37312))
+* **ci:** 三端原生构建+单测门禁（Win/macOS/Android） ([#115](https://github.com/pandaymx/lanchat/issues/115)) ([ff44e86](https://github.com/pandaymx/lanchat/commit/ff44e86cc141358b9898668087aa7552d42c1c44))
+* **ci:** 性能基线复测门禁 + 每日定时 ([#116](https://github.com/pandaymx/lanchat/issues/116)) ([365d3bf](https://github.com/pandaymx/lanchat/commit/365d3bfa425024bb4b31c559dad55e0207d11dd2))
+* **ci:** 自定义 release notes + 未签名安全提示 ([#117](https://github.com/pandaymx/lanchat/issues/117)) ([e9faac1](https://github.com/pandaymx/lanchat/commit/e9faac14321bc1cffde282badf642e98faf5c866))
+* **core:** implement pause/resume, group cancel, and JSONL chat history ([844dfe7](https://github.com/pandaymx/lanchat/commit/844dfe7af0deee9e27bf0cf43a4e0ec1884761a5))
+* **protocol:** add optional replyTo and mentions to TextPayload ([221fe32](https://github.com/pandaymx/lanchat/commit/221fe3203fa37ca88c530677fb76fa3c0dc49f7c))
+* **server:** support group channel routing for sticker messages ([f2a8a5a](https://github.com/pandaymx/lanchat/commit/f2a8a5a7294f12cf047ce5078e801817af95af0c))
+* **ui-android:** reach 18/18 contract parity and render group.matrix ([389ea3d](https://github.com/pandaymx/lanchat/commit/389ea3d5966d6e85f96abfd8fae7b36cfcc4c602))
+* **ui-ios:** reach 18/18 contract parity and render group.matrix ([ff6b152](https://github.com/pandaymx/lanchat/commit/ff6b15234b0920a2e6898c38ea6a160bc2304b29))
+* **ui-linux:** reach 18/18 contract parity and render group.matrix ([6215d03](https://github.com/pandaymx/lanchat/commit/6215d0323fb684f4c9de2bd9d2d0f900fb5b4651))
+* **ui-macos:** reach 18/18 contract parity and render group.matrix ([cf4a718](https://github.com/pandaymx/lanchat/commit/cf4a7185ff29584c4654390458734b63cb705965))
+* **ui-win:** reach 18/18 contract parity and render group.matrix ([70bb23b](https://github.com/pandaymx/lanchat/commit/70bb23be7d2e3ba28d192f8810e675997a7a7893))
+
+
+### Bug Fixes
+
+* **ci:** checkout repo in release publish job and pin gomobile version ([5c31c16](https://github.com/pandaymx/lanchat/commit/5c31c1647384cafaa80af9ad44b2d4e7c0151389))
+* **core:** remove unused errPauseUnsupported sentinel error ([cf4605b](https://github.com/pandaymx/lanchat/commit/cf4605bcd359ba761f56e994e7ff81955f858e90))
+* **ui-linux:** fix base64 temporary borrow and clippy lints in models ([03a88c3](https://github.com/pandaymx/lanchat/commit/03a88c3927dea0af78b781741db4f9e2dbbb29bc))
+
 ## [0.24.0](https://github.com/pandaymx/lanchat/compare/v0.23.4...v0.24.0) (2026-10-03)
 
 

@@ -77,6 +77,10 @@ func (h *hub) routeText(c *Client, env *protocol.Envelope) {
 		return
 	}
 
+	h.routeChatEnvelope(c, env)
+}
+
+func (h *hub) routeChatEnvelope(c *Client, env *protocol.Envelope) {
 	switch env.Group {
 	case protocol.GroupUnicast:
 		h.forward(c, env)
@@ -137,7 +141,7 @@ func (h *hub) routeSticker(c *Client, env *protocol.Envelope) {
 		})
 		return
 	}
-	h.forward(c, env)
+	h.routeChatEnvelope(c, env)
 }
 
 // onPresenceUpdate 处理客户端资料变更：更新昵称，bump revision 后广播给其他人。

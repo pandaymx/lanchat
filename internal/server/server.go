@@ -233,7 +233,7 @@ func (s *Server) readLoop(parent context.Context, c *Client) {
 		}
 		switch env.Type {
 		case protocol.Heartbeat, protocol.UserListReq, protocol.TextMsg,
-			protocol.StickerMsg, protocol.Typing:
+			protocol.StickerMsg, protocol.Typing, protocol.MsgRead, protocol.MsgRevoke:
 			s.hub.submit(hubEvent{kind: evRoute, client: c, env: env})
 		case protocol.Hello:
 			s.mustEnqueue(c, protocol.Error, protocol.ErrorPayload{

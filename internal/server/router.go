@@ -31,6 +31,10 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.routeText(c, env)
 	case protocol.StickerMsg:
 		h.routeSticker(c, env)
+	case protocol.MsgRead:
+		h.routeMsgRead(c, env)
+	case protocol.MsgRevoke:
+		h.routeMsgRevoke(c, env)
 	case protocol.Typing:
 		h.forward(c, env)
 	case protocol.FileOffer, protocol.FileAccept, protocol.FileReject, protocol.FileCancel, protocol.FileReverse:
@@ -138,6 +142,30 @@ func (h *hub) routeSticker(c *Client, env *protocol.Envelope) {
 		h.send(c, protocol.Error, protocol.ErrorPayload{
 			Code:    "invalid_sticker",
 			Message: "表情非法或内联数据超过 256 KiB 上限",
+		})
+		return
+	}
+	h.routeChatEnvelope(c, env)
+}
+
+func (h *hub) routeMsgRead(c *Client, env *protocol.Envelope) {
+	var p protocol.MsgReadPayload
+	if err := env.DecodePayload(&p); err != nil || strings.TrimSpace(p.MsgID) == "" {
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code:    "invalid_msg_id",
+			Message: "已读回执 msgID 不能为空",
+		})
+		return
+	}
+	h.routeChatEnvelope(c, env)
+}
+
+func (h *hub) routeMsgRevoke(c *Client, env *protocol.Envelope) {
+	var p protocol.MsgRevokePayload
+	if err := env.DecodePayload(&p); err != nil || strings.TrimSpace(p.MsgID) == "" {
+		h.send(c, protocol.Error, protocol.ErrorPayload{
+			Code:    "invalid_msg_id",
+			Message: "消息撤回 msgID 不能为空",
 		})
 		return
 	}

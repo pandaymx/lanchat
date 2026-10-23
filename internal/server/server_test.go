@@ -199,3 +199,58 @@ func TestLengthConstants(t *testing.T) {
 		t.Errorf("ProtocolVersion = %s", protocol.ProtocolVersion)
 	}
 }
+
+func TestRouteMsgReadAndRevoke(t *testing.T) {
+	h := newHub(Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          "none",
+		HeartbeatInterval: time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownGrace:     time.Second,
+	}, nil)
+	c1 := newClient(&websocket.Conn{}, "127.0.0.1")
+	c1.id = "u1"
+	c2 := newClient(&websocket.Conn{}, "127.0.0.1")
+	c2.id = "u2"
+	h.reg.add(c1)
+	h.reg.add(c2)
+
+	readEnv, err := protocol.NewEnvelope("r1", protocol.MsgRead, protocol.MsgReadPayload{MsgID: "m1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readEnv.To = "u2"
+	h.route(c1, readEnv)
+
+	got := <-c2.send
+	if got.Type != protocol.MsgRead || got.From != "u1" {
+		t.Fatalf("expected MSG_READ from u1, got %+v", got)
+	}
+	ack := <-c1.send
+	if ack.Type != protocol.MsgAck {
+		t.Fatalf("expected MSG_ACK, got %+v", ack)
+	}
+
+	revEnv, err := protocol.NewEnvelope("rv1", protocol.MsgRevoke, protocol.MsgRevokePayload{MsgID: "m1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revEnv.Group = protocol.GroupBroadcast
+	h.route(c1, revEnv)
+
+	gotRev := <-c2.send
+	if gotRev.Type != protocol.MsgRevoke || gotRev.From != "u1" || gotRev.Group != protocol.GroupBroadcast {
+		t.Fatalf("expected broadcast MSG_REVOKE from u1, got %+v", gotRev)
+	}
+	<-c1.send
+
+	// 空 msgID 应返回 invalid_msg_id 错误。
+	badEnv, _ := protocol.NewEnvelope("bad", protocol.MsgRevoke, protocol.MsgRevokePayload{MsgID: "   "})
+	badEnv.To = "u2"
+	h.route(c1, badEnv)
+	errEnv := <-c1.send
+	if errEnv.Type != protocol.Error {
+		t.Fatalf("expected ERROR for empty msgID, got %+v", errEnv)
+	}
+}

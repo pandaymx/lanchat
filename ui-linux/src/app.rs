@@ -594,12 +594,15 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 };
                 let tx = cx.ui_tx.clone();
                 crate::spawn_rt(async move {
-                    let res = ipc.invoke("SendSticker", Some(&params)).await.and_then(|v| {
-                        v.get("msgID")
-                            .and_then(|m| m.as_str())
-                            .map(|s| s.to_string())
-                            .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
-                    });
+                    let res = ipc
+                        .invoke("SendSticker", Some(&params))
+                        .await
+                        .and_then(|v| {
+                            v.get("msgID")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string())
+                                .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
+                        });
                     let _ = tx.try_send(UiEvent::TextSent(
                         key,
                         group,
@@ -947,7 +950,13 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
         }
         UiEvent::Paused(id, res) => match res {
             Ok(()) => {
-                if let Some(slot) = ctx.state.borrow_mut().transfers.iter_mut().find(|x| x.id == id) {
+                if let Some(slot) = ctx
+                    .state
+                    .borrow_mut()
+                    .transfers
+                    .iter_mut()
+                    .find(|x| x.id == id)
+                {
                     slot.state = crate::models::TransferState::Paused;
                     slot.speed_bps = 0;
                 }
@@ -957,7 +966,13 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
         },
         UiEvent::Resumed(id, res) => match res {
             Ok(()) => {
-                if let Some(slot) = ctx.state.borrow_mut().transfers.iter_mut().find(|x| x.id == id) {
+                if let Some(slot) = ctx
+                    .state
+                    .borrow_mut()
+                    .transfers
+                    .iter_mut()
+                    .find(|x| x.id == id)
+                {
                     slot.state = crate::models::TransferState::Active;
                 }
                 ctx.render_transfers();
@@ -1070,10 +1085,7 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let msg_type = p
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("text");
+            let msg_type = p.get("type").and_then(|v| v.as_str()).unwrap_or("text");
             let raw_text = p
                 .get("text")
                 .and_then(|v| v.as_str())

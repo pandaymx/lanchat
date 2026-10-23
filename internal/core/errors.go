@@ -31,6 +31,3 @@ var (
 
 // errAuthFailed 是 establish 阶段鉴权失败的哨兵错误，Connect/watch 据此切换 auth_failed。
 var errAuthFailed = errors.New("core: authentication failed")
-
-// errPauseUnsupported 是 M4 对暂停语义的诚实边界（见 control.go）。
-var errPauseUnsupported = errors.New("core: pause/resume not supported in M4")

@@ -69,7 +69,9 @@ type HeartbeatPayload struct {
 
 // TextPayload 是 TEXT_MSG 的负载。
 type TextPayload struct {
-	Text string `json:"text"`
+	Text     string   `json:"text"`
+	ReplyTo  string   `json:"replyTo,omitempty"`
+	Mentions []string `json:"mentions,omitempty"`
 }
 
 // StickerPayload 是 STICKER_MSG 的负载。

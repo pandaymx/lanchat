@@ -10,6 +10,8 @@ import dev.lanchat.model.Conversations
 import dev.lanchat.model.Peer
 import dev.lanchat.model.ServerInfo
 import dev.lanchat.model.Transfer
+import dev.lanchat.model.formatMatrixSummary
+import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,6 +27,7 @@ data class AppUi(
     val transfers: List<Transfer> = emptyList(),
     val channels: List<Channel> = emptyList(),
     val messagesByConversation: Map<String, List<ChatMessage>> = emptyMap(),
+    val matrixSummary: Map<String, String> = emptyMap(),
     val discoveredServers: List<ServerInfo> = emptyList(),
     val busy: Boolean = false,
     val error: String? = null,
@@ -52,6 +55,10 @@ class AppViewModel : ViewModel() {
         launchOp {
             val state = engine.getState()
             _ui.update {
+                var convs = it.messagesByConversation
+                for (m in state.messages) {
+                    convs = Conversations.append(convs, m)
+                }
                 it.copy(
                     conn = state.conn,
                     server = state.server,
@@ -60,6 +67,7 @@ class AppViewModel : ViewModel() {
                     peers = state.peers,
                     transfers = state.transfers,
                     channels = state.channels,
+                    messagesByConversation = convs,
                 )
             }
         }
@@ -112,6 +120,23 @@ class AppViewModel : ViewModel() {
                     inbound = false,
                     timestamp = System.currentTimeMillis(),
                     group = channelId,
+                ),
+            )
+        }
+    }
+
+    fun sendSticker(to: String, path: String, group: String = "") {
+        launchOp {
+            val msgId = engine.sendSticker(to, path)
+            val name = File(path).name
+            appendMessage(
+                ChatMessage(
+                    peerId = if (group.isEmpty()) to else "",
+                    msgId = msgId,
+                    text = "[贴纸: $name]",
+                    inbound = false,
+                    timestamp = System.currentTimeMillis(),
+                    group = group,
                 ),
             )
         }
@@ -196,6 +221,20 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun pauseTransfer(transferId: String) {
+        launchOp {
+            engine.pauseFile(transferId)
+            refresh()
+        }
+    }
+
+    fun resumeTransfer(transferId: String) {
+        launchOp {
+            engine.resumeFile(transferId)
+            refresh()
+        }
+    }
+
     private fun handleEvent(event: CoreEvent) {
         when (event) {
             is CoreEvent.ConnChanged -> {
@@ -258,6 +297,13 @@ class AppViewModel : ViewModel() {
                         }
                     },
                 )
+            }
+
+            is CoreEvent.GroupMatrix -> _ui.update { state ->
+                val size = state.transfers.firstOrNull { it.id == event.transferId }?.size ?: 0L
+                val summary = formatMatrixSummary(event.haveBitmap, size)
+                if (summary.isEmpty()) state
+                else state.copy(matrixSummary = state.matrixSummary + (event.transferId to summary))
             }
 
             is CoreEvent.ChannelsUpdated -> refresh()

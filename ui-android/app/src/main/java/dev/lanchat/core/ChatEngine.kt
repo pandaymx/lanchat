@@ -3,6 +3,7 @@ package dev.lanchat.core
 import dev.lanchat.bindings.mobile.Client as GoClient
 import dev.lanchat.bindings.mobile.Mobile
 import dev.lanchat.model.Channel
+import dev.lanchat.model.ChatMessage
 import dev.lanchat.model.FullState
 import dev.lanchat.model.Peer
 import dev.lanchat.model.ServerInfo
@@ -31,6 +32,11 @@ sealed interface CoreEvent {
     data class Progress(val transfer: Transfer) : CoreEvent
     data class Done(val transferId: String) : CoreEvent
     data class Failed(val transferId: String, val reason: String) : CoreEvent
+    data class GroupMatrix(
+        val groupId: String,
+        val transferId: String,
+        val haveBitmap: ByteArray,
+    ) : CoreEvent
     data class ChannelsUpdated(val channels: List<Channel>) : CoreEvent
 }
 
@@ -70,6 +76,9 @@ class ChatEngine {
     suspend fun sendText(to: String, text: String, group: String = ""): String =
         ioOp { client!!.sendText(to, text, group) }
 
+    suspend fun sendSticker(to: String, path: String): String =
+        ioOp { client!!.sendSticker(to, path) }
+
     suspend fun offerFile(to: String, path: String): String =
         ioOp { client!!.offerFile(to, path) }
 
@@ -85,6 +94,12 @@ class ChatEngine {
 
     suspend fun cancelFile(transferId: String): Unit =
         ioOp { client!!.cancelFile(transferId) }
+
+    suspend fun pauseFile(transferId: String): Unit =
+        ioOp { client!!.pauseFile(transferId) }
+
+    suspend fun resumeFile(transferId: String): Unit =
+        ioOp { client!!.resumeFile(transferId) }
 
     suspend fun setNickname(name: String): Unit = ioOp { client!!.setNickname(name) }
 
@@ -121,14 +136,16 @@ class ChatEngine {
 internal fun decodeState(payload: ByteArray?): FullState {
     if (payload == null) return FullState()
     val json = JSONObject(String(payload))
+    val selfId = json.optString("selfId")
     return FullState(
         conn = json.optString("conn", "disconnected"),
         server = json.optString("server"),
-        selfId = json.optString("selfId"),
+        selfId = selfId,
         nickname = json.optString("nickname"),
         peers = json.optJSONArray("peers").toPeerList(),
         transfers = json.optJSONArray("transfers").toTransferList(),
         channels = json.optJSONArray("channels").toChannelList(),
+        messages = json.optJSONArray("messages").toMessageList(selfId),
     )
 }
 
@@ -208,6 +225,31 @@ private fun JSONArray?.toTransferList(): List<Transfer> {
                     speedBps = item.optLong("speedBps"),
                     viaRelay = item.optBoolean("viaRelay", false),
                     errorReason = item.optString("errorReason"),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toMessageList(selfId: String): List<ChatMessage> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (i in 0 until length()) {
+            val item = optJSONObject(i) ?: continue
+            val from = item.optString("from")
+            val to = item.optString("to")
+            val group = item.optString("group")
+            val inbound = if (selfId.isNotEmpty()) from != selfId else false
+            val peerId = if (inbound) from else to.ifEmpty { from }
+            add(
+                ChatMessage(
+                    peerId = peerId,
+                    msgId = item.optString("id"),
+                    text = item.optString("text"),
+                    inbound = inbound,
+                    timestamp = item.optLong("ts", System.currentTimeMillis()),
+                    group = group,
+                    senderId = if (group.isNotEmpty() && inbound) from else "",
                 ),
             )
         }

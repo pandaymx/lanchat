@@ -43,13 +43,13 @@ fun TransfersScreen(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(state.transfers, key = { it.id }) { transfer ->
-            TransferCard(transfer, vm)
+            TransferCard(transfer, state.matrixSummary[transfer.id].orEmpty(), vm)
         }
     }
 }
 
 @Composable
-private fun TransferCard(transfer: Transfer, vm: AppViewModel) {
+private fun TransferCard(transfer: Transfer, matrixSummary: String, vm: AppViewModel) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -91,16 +91,29 @@ private fun TransferCard(transfer: Transfer, vm: AppViewModel) {
                     Text(
                         "${Formatters.size(transfer.bytesDone)} / ${Formatters.size(transfer.size)}" +
                             " · ${Formatters.speed(transfer.speedBps)}" +
-                            if (transfer.viaRelay) " · 中继" else "",
+                            (if (transfer.viaRelay) " · 中继" else "") +
+                            (if (matrixSummary.isNotEmpty()) " · $matrixSummary" else ""),
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    OutlinedButton(onClick = { vm.cancelTransfer(transfer.id) }) {
-                        Text(if (transfer.state == TransferState.ACTIVE) "取消" else "已暂停")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (transfer.state == TransferState.ACTIVE) {
+                            OutlinedButton(onClick = { vm.pauseTransfer(transfer.id) }) {
+                                Text("暂停")
+                            }
+                        } else {
+                            OutlinedButton(onClick = { vm.resumeTransfer(transfer.id) }) {
+                                Text("继续")
+                            }
+                        }
+                        OutlinedButton(onClick = { vm.cancelTransfer(transfer.id) }) {
+                            Text("取消")
+                        }
                     }
                 }
 
                 TransferState.DONE -> Text(
-                    "已完成 · ${Formatters.size(transfer.size)}",
+                    "已完成 · ${Formatters.size(transfer.size)}" +
+                        if (matrixSummary.isNotEmpty()) " · $matrixSummary" else "",
                     style = MaterialTheme.typography.bodySmall,
                 )
 

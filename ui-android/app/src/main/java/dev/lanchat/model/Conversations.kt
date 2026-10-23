@@ -44,13 +44,17 @@ object Conversations {
         groupId: String,
     ): Map<String, List<ChatMessage>> = messagesByConversation - groupKey(groupId)
 
-    /** 向会话表追加一条消息，返回新的不可变 Map。 */
+    /** 向会话表追加一条消息（按 msgId 去重），返回新的不可变 Map。 */
     fun append(
         messagesByConversation: Map<String, List<ChatMessage>>,
         message: ChatMessage,
     ): Map<String, List<ChatMessage>> {
         val key = keyOf(message)
-        val list = (messagesByConversation[key] ?: emptyList()) + message
+        val existing = messagesByConversation[key] ?: emptyList()
+        if (message.msgId.isNotEmpty() && existing.any { it.msgId == message.msgId }) {
+            return messagesByConversation
+        }
+        val list = existing + message
         return messagesByConversation + (key to list)
     }
 }

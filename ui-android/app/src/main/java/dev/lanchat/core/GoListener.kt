@@ -70,7 +70,13 @@ class GoListener(
     }
 
     override fun onGroupMatrix(groupID: String?, transferID: String?, haveBitmap: ByteArray?) {
-        // M9 群组能力，M6 暂不处理矩阵。
+        onEvent(
+            CoreEvent.GroupMatrix(
+                groupId = groupID.orEmpty(),
+                transferId = transferID.orEmpty(),
+                haveBitmap = haveBitmap ?: ByteArray(0),
+            ),
+        )
     }
 
     override fun onChannelUpdated(channels: ByteArray?) {

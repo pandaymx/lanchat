@@ -71,6 +71,7 @@ fun ChatScreen(
         onBack = onBack,
         onSend = { vm.sendText(peer.id, it) },
         onAttach = { path -> vm.offerFile(peer.id, path) },
+        onSendSticker = { path -> vm.sendSticker(peer.id, path) },
         showSender = false,
         peerNameOf = { "" },
     )
@@ -99,6 +100,7 @@ fun ChannelChatScreen(
         onBack = onBack,
         onSend = { vm.sendChannelText(channel.id, it) },
         onAttach = { path -> vm.offerFileToChannel(channel.id, path) },
+        onSendSticker = { path -> vm.sendSticker(channel.id, path, group = channel.id) },
         showSender = true,
         peerNameOf = { id -> peerDisplayName(state, id) },
         largeFileHint = true,
@@ -123,11 +125,11 @@ fun ChannelChatScreen(
             channel = channel,
             peers = state.peers,
             busy = state.busy,
-            onDismiss = { showInvite = false },
             onConfirm = { memberIds ->
                 memberIds.forEach { vm.inviteMember(channel.id, it) }
                 showInvite = false
             },
+            onDismiss = { showInvite = false },
         )
     }
 }
@@ -142,6 +144,7 @@ private fun ConversationScaffold(
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onAttach: (String) -> Unit,
+    onSendSticker: (String) -> Unit = {},
     showSender: Boolean,
     peerNameOf: @Composable (String) -> String,
     largeFileHint: Boolean = false,
@@ -169,6 +172,17 @@ private fun ConversationScaffold(
                         )
                     }
                 }
+            }
+        }
+    }
+
+    val stickerPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val staged = stageContentUri(context, uri)
+            if (staged != null) {
+                onSendSticker(staged.absolutePath)
             }
         }
     }
@@ -238,6 +252,9 @@ private fun ConversationScaffold(
                     .padding(8.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             ) {
+                TextButton(onClick = { stickerPicker.launch("image/*") }) {
+                    Text("😊")
+                }
                 IconButton(onClick = { filePicker.launch("*/*") }) {
                     Icon(
                         Icons.Filled.AttachFile,

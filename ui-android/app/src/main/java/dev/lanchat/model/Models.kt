@@ -74,6 +74,7 @@ data class FullState(
     val peers: List<Peer> = emptyList(),
     val transfers: List<Transfer> = emptyList(),
     val channels: List<Channel> = emptyList(),
+    val messages: List<ChatMessage> = emptyList(),
 )
 
 data class ChatMessage(
@@ -87,3 +88,33 @@ data class ChatMessage(
     /** 群消息发送者 ID；仅群消息且入站时有意义。 */
     val senderId: String = "",
 )
+
+/** 将 group.matrix 的 haveBitmap 转为紧凑块进度摘要（如 "▓▓▓░░░ 4/8 块"）。 */
+fun formatMatrixSummary(haveBitmap: ByteArray, size: Long): String {
+    if (haveBitmap.isEmpty()) return ""
+    val chunkSize = 1024L * 1024L
+    val totalChunks = if (size > 0) {
+        ((size + chunkSize - 1) / chunkSize).toInt()
+    } else {
+        haveBitmap.size * 8
+    }
+    if (totalChunks <= 0) return ""
+    var have = 0
+    for (i in 0 until totalChunks) {
+        val byteIdx = i / 8
+        val bitIdx = i % 8
+        val bit = byteIdx < haveBitmap.size && ((haveBitmap[byteIdx].toInt() ushr bitIdx) and 1) == 1
+        if (bit) have++
+    }
+    val slots = minOf(totalChunks, 8)
+    val bar = buildString(slots) {
+        for (s in 0 until slots) {
+            val idx = s * totalChunks / slots
+            val byteIdx = idx / 8
+            val bitIdx = idx % 8
+            val bit = byteIdx < haveBitmap.size && ((haveBitmap[byteIdx].toInt() ushr bitIdx) and 1) == 1
+            append(if (bit) '▓' else '░')
+        }
+    }
+    return "$bar $have/$totalChunks 块"
+}

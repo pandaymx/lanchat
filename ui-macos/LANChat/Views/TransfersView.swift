@@ -17,13 +17,26 @@ struct TransfersView: View {
             } else {
                 List {
                     ForEach(store.transfers) { t in
-                        TransferRow(transfer: t, scopeName: scopeName(for: t)) {
-                            Task { await store.respondFile(transferId: t.id, accept: true) }
-                        } onDecline: {
-                            Task { await store.respondFile(transferId: t.id, accept: false) }
-                        } onCancel: {
-                            Task { await store.cancelFile(t.id) }
-                        }
+                        TransferRow(
+                            transfer: t,
+                            scopeName: scopeName(for: t),
+                            matrixSummary: store.matrixSummary[t.id],
+                            onAccept: {
+                                Task { await store.respondFile(transferId: t.id, accept: true) }
+                            },
+                            onDecline: {
+                                Task { await store.respondFile(transferId: t.id, accept: false) }
+                            },
+                            onPause: {
+                                Task { await store.pauseFile(t.id) }
+                            },
+                            onResume: {
+                                Task { await store.resumeFile(t.id) }
+                            },
+                            onCancel: {
+                                Task { await store.cancelFile(t.id) }
+                            }
+                        )
                     }
                 }
             }
@@ -48,8 +61,11 @@ struct TransfersView: View {
 private struct TransferRow: View {
     let transfer: Transfer
     var scopeName: String?
+    var matrixSummary: String?
     let onAccept: () -> Void
     let onDecline: () -> Void
+    let onPause: () -> Void
+    let onResume: () -> Void
     let onCancel: () -> Void
 
     private var scopeBadge: String? {
@@ -99,10 +115,22 @@ private struct TransferRow: View {
                 HStack {
                     Text("\(Formatters.size(transfer.bytesDone)) / \(Formatters.size(transfer.size))")
                         .font(.caption).foregroundColor(.secondary)
+                    if let matrixSummary, !matrixSummary.isEmpty {
+                        Text(matrixSummary)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                     Spacer()
                     if transfer.state == "active" {
                         Text(Formatters.speed(transfer.speedBps))
                             .font(.caption).foregroundColor(.secondary)
+                        Button(action: onPause) {
+                            Image(systemName: "pause.circle")
+                        }.buttonStyle(.borderless)
+                    } else if transfer.state == "paused" {
+                        Button(action: onResume) {
+                            Image(systemName: "play.circle")
+                        }.buttonStyle(.borderless)
                     }
                     if transfer.state == "failed", let reason = transfer.errorReason {
                         Text(reason).font(.caption).foregroundColor(.red).lineLimit(1)

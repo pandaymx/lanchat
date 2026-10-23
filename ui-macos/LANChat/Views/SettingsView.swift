@@ -43,6 +43,6 @@ struct SettingsView: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        settings.downloadDir = url.path
+        Task { await store.pickDownloadDir(url.path) }
     }
 }

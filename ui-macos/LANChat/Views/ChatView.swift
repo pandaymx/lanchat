@@ -40,6 +40,13 @@ struct ChatView: View {
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
                 Button {
+                    Task { await store.sendSticker(to: peer.id, path: "🎉") }
+                } label: {
+                    Image(systemName: "face.smiling")
+                }
+                .help("发送表情")
+
+                Button {
                     pickAndOffer()
                 } label: {
                     Image(systemName: "paperclip")

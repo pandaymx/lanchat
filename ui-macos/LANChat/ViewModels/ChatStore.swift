@@ -12,6 +12,7 @@ final class ChatStore: ObservableObject {
     @Published var channels: [Channel] = []
     @Published var servers: [ServerInfo] = []
     @Published var messages: [String: [ChatMessage]] = [:]
+    @Published var matrixSummary: [String: String] = [:]
     @Published var daemonConnected = false
     @Published var error: String?
     @Published var ready = false
@@ -61,6 +62,9 @@ final class ChatStore: ObservableObject {
     }
     private struct ProgressParams: Decodable { let transfer: Transfer }
     private struct TransferIdParams: Decodable { let transferId: String; let reason: String? }
+    private struct GroupMatrixParams: Decodable {
+        let groupId: String; let transferId: String; let haveBitmap: Data
+    }
     private struct ChannelsParams: Decodable { let channels: [Channel] }
 
     private func handle(method: String, params: Data) {
@@ -84,8 +88,9 @@ final class ChatStore: ObservableObject {
             }
         case "msg.received":
             if let p = try? decoder.decode(MsgParams.self, from: params) {
+                let display = (p.type == "STICKER_MSG" || p.type == "sticker") ? "[表情] \(p.text)" : p.text
                 append(ChatMessage(
-                    id: p.msgId, peerId: p.from, text: p.text,
+                    id: p.msgId, peerId: p.from, text: display,
                     inbound: true, timestamp: Date()),
                        threadKey: p.group)
             }
@@ -101,6 +106,11 @@ final class ChatStore: ObservableObject {
             if let p = try? decoder.decode(TransferIdParams.self, from: params) {
                 markTransfer(id: p.transferId, state: "failed", reason: p.reason)
             }
+        case "group.matrix":
+            if let p = try? decoder.decode(GroupMatrixParams.self, from: params) {
+                let size = transfers.first(where: { $0.id == p.transferId })?.size ?? 0
+                matrixSummary[p.transferId] = formatMatrixSummary(haveBitmap: p.haveBitmap, size: size)
+            }
         case "channel.updated":
             if let p = try? decoder.decode(ChannelsParams.self, from: params) {
                 channels = p.channels
@@ -113,6 +123,9 @@ final class ChatStore: ObservableObject {
     private func append(_ msg: ChatMessage, threadKey: String? = nil) {
         let key = (threadKey?.isEmpty == false) ? threadKey! : msg.peerId
         var list = messages[key] ?? []
+        if !msg.id.isEmpty, list.contains(where: { $0.id == msg.id }) {
+            return
+        }
         list.append(msg)
         messages[key] = list
     }
@@ -143,6 +156,20 @@ final class ChatStore: ObservableObject {
         peers = state.peers
         transfers = state.transfers
         channels = state.channels
+        for m in state.messages ?? [] {
+            let inbound = !selfId.isEmpty && m.from != selfId
+            let threadKey: String? = (m.group?.isEmpty == false) ? m.group : nil
+            let peerKey = (threadKey != nil) ? m.from : (inbound ? m.from : (m.to ?? ""))
+            guard !peerKey.isEmpty || threadKey != nil else { continue }
+            let display = (m.type == "STICKER_MSG" || m.type == "sticker") ? "[表情] \(m.text)" : m.text
+            append(ChatMessage(
+                id: m.id,
+                peerId: peerKey,
+                text: display,
+                inbound: inbound,
+                timestamp: Date(timeIntervalSince1970: TimeInterval(m.ts) / 1000.0)
+            ), threadKey: threadKey)
+        }
     }
 
     func browseServers() async {
@@ -164,6 +191,17 @@ final class ChatStore: ObservableObject {
         do {
             let r = try await ipc.call("SendText", params: ["to": peerId, "text": text, "group": ""], as: MsgIDResult.self)
             append(ChatMessage(id: r.msgID, peerId: peerId, text: text, inbound: false, timestamp: Date()))
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func sendSticker(to targetId: String, path: String, threadKey: String? = nil) async {
+        guard !path.isEmpty else { return }
+        do {
+            let r = try await ipc.call("SendSticker", params: ["to": targetId, "path": path], as: MsgIDResult.self)
+            append(ChatMessage(id: r.msgID, peerId: targetId, text: "[表情] \(path)", inbound: false, timestamp: Date()),
+                   threadKey: threadKey)
         } catch {
             self.error = error.localizedDescription
         }
@@ -228,6 +266,12 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    func listChannels() async {
+        if let list = try? await ipc.call("ChannelList", params: nil, as: [Channel].self) {
+            channels = list
+        }
+    }
+
     /// 频道群文本：group 为频道 ID；to 留空（group 优先）。
     func sendChannelText(channelID: String, text: String) async {
         guard !text.isEmpty else { return }
@@ -274,6 +318,24 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    func pauseFile(_ transferId: String) async {
+        do {
+            _ = try await ipc.call("PauseFile", params: ["transferID": transferId])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func resumeFile(_ transferId: String) async {
+        do {
+            _ = try await ipc.call("ResumeFile", params: ["transferID": transferId])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     func cancelFile(_ transferId: String) async {
         do {
             _ = try await ipc.call("CancelFile", params: ["transferID": transferId])
@@ -287,6 +349,15 @@ final class ChatStore: ObservableObject {
         do {
             _ = try await ipc.call("SetNickname", params: ["name": name])
             settings.nickname = name
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func pickDownloadDir(_ path: String) async {
+        do {
+            _ = try await ipc.call("PickDownloadDir", params: ["path": path])
+            settings.downloadDir = path
         } catch {
             self.error = error.localizedDescription
         }

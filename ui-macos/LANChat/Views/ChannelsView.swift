@@ -102,6 +102,7 @@ struct ChannelChatView: View {
             }
         }
         .frame(minWidth: 480, minHeight: 420)
+        .task { await store.listChannels() }
         .popover(isPresented: $showMembers) {
             if let channel { MemberList(store: store, channel: channel) }
         }
@@ -189,6 +190,13 @@ struct ChannelChatView: View {
         VStack(spacing: 0) {
             Divider()
             HStack(alignment: .bottom, spacing: 8) {
+                Button {
+                    Task { await store.sendSticker(to: channel.id, path: "🎉", threadKey: channel.id) }
+                } label: {
+                    Image(systemName: "face.smiling")
+                }
+                .help("向频道发送表情")
+
                 Button {
                     pickAndOffer(channel)
                 } label: {

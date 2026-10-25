@@ -58,4 +58,13 @@ public sealed record ChatMessage
 
     /// <summary>是否允许引用回复。</summary>
     public bool CanReply => !Revoked && !IsSystem && !string.IsNullOrEmpty(MsgId);
+
+    /// <summary>M17: 是否携带 data:image/...;base64,... 内联缩略图。</summary>
+    public bool HasInlineImage =>
+        !Revoked &&
+        Text.TrimStart().StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) &&
+        Text.Contains(";base64,", StringComparison.Ordinal);
+
+    /// <summary>气泡展示文本（若为内联 base64 图片则显示紧凑摘要，避免渲染长串 base64）。</summary>
+    public string DisplayText => HasInlineImage ? "🖼️ [图片内联预览]" : Text;
 }

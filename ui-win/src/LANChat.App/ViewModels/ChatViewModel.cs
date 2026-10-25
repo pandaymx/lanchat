@@ -192,6 +192,12 @@ public sealed partial class ChatViewModel : ViewModelBase
                     Draft = "";
                     return;
                 }
+                if (msgId.StartsWith("fp:", StringComparison.Ordinal))
+                {
+                    AppendSystemMessage($"🛡️ 安全码指纹核验：{msgId[3..]}");
+                    Draft = "";
+                    return;
+                }
                 if (text.StartsWith("/revoke ", StringComparison.Ordinal))
                 {
                     RevokeMessage(text[8..].Trim());
@@ -240,6 +246,12 @@ public sealed partial class ChatViewModel : ViewModelBase
             if (msgId is "e2ee:on" or "e2ee:off")
             {
                 AppendSystemMessage(msgId == "e2ee:on" ? "已启用端到端消息加密" : "已关闭端到端消息加密");
+                Draft = "";
+                return;
+            }
+            if (msgId.StartsWith("fp:", StringComparison.Ordinal))
+            {
+                AppendSystemMessage($"🛡️ 安全码指纹核验：{msgId[3..]}");
                 Draft = "";
                 return;
             }
@@ -515,6 +527,32 @@ public sealed partial class ChatViewModel : ViewModelBase
         Draft = prevDraft;
     }
 
+    /// <summary>M15: 核验当前会话 X25519 安全码指纹 (/fingerprint)。</summary>
+    public async Task VerifyFingerprintAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        Draft = "/fingerprint";
+        await SendAsync();
+        Draft = prevDraft;
+    }
+
+    /// <summary>M17: 快捷发送语音消息 (/voice)。</summary>
+    public async Task SendVoiceAsync(int seconds = 3)
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        Draft = $"/voice {seconds}";
+        await SendAsync();
+        Draft = prevDraft;
+    }
+
     /// <summary>往输入框插入 Emoji 表情。</summary>
     public void InsertEmoji(string emoji)
     {
@@ -685,6 +723,13 @@ public sealed partial class ChatViewModel : ViewModelBase
     private string FormatReplyText(string raw)
     {
         var trimmed = raw.Trim();
+        if (trimmed.Equals("/voice", StringComparison.Ordinal) ||
+            trimmed.StartsWith("/voice ", StringComparison.Ordinal))
+        {
+            var arg = trimmed[6..].Trim();
+            var sec = string.IsNullOrEmpty(arg) ? "3" : arg;
+            return $"🎤 [语音消息 {sec}\"]";
+        }
         if (!trimmed.StartsWith("/reply ", StringComparison.Ordinal))
         {
             return raw;

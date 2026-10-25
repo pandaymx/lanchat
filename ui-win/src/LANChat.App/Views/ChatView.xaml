@@ -151,10 +151,28 @@
                                         Background="{Binding IsSelf, Converter={StaticResource BubbleColorConverter}}"
                                         BorderBrush="#E5E6EB"
                                         BorderThickness="1">
-                                    <TextBlock Text="{Binding Text}"
-                                               FontSize="14"
-                                               Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
-                                               TextWrapping="Wrap" />
+                                    <Border.ContextFlyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem Text="↩ 引用回复"
+                                                            Tag="{Binding}"
+                                                            Click="ReplyMenuFlyoutItem_Click" />
+                                        </MenuFlyout>
+                                    </Border.ContextFlyout>
+                                    <StackPanel Spacing="6">
+                                        <Border CornerRadius="8"
+                                                MaxWidth="220"
+                                                MaxHeight="160"
+                                                Visibility="{Binding HasInlineImage, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <Image Source="{Binding Text}"
+                                                   Stretch="Uniform"
+                                                   MaxWidth="220"
+                                                   MaxHeight="160" />
+                                        </Border>
+                                        <TextBlock Text="{Binding DisplayText}"
+                                                   FontSize="14"
+                                                   Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
                                 </Border>
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <Button Content="↩ 回复"
@@ -188,10 +206,31 @@
                                         Padding="12,9"
                                         HorizontalAlignment="Right"
                                         Background="{Binding IsSelf, Converter={StaticResource BubbleColorConverter}}">
-                                    <TextBlock Text="{Binding Text}"
-                                               FontSize="14"
-                                               Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
-                                               TextWrapping="Wrap" />
+                                    <Border.ContextFlyout>
+                                        <MenuFlyout>
+                                            <MenuFlyoutItem Text="↩ 引用回复"
+                                                            Tag="{Binding}"
+                                                            Click="ReplyMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="撤回消息"
+                                                            Tag="{Binding}"
+                                                            Click="RevokeMenuFlyoutItem_Click" />
+                                        </MenuFlyout>
+                                    </Border.ContextFlyout>
+                                    <StackPanel Spacing="6">
+                                        <Border CornerRadius="8"
+                                                MaxWidth="220"
+                                                MaxHeight="160"
+                                                Visibility="{Binding HasInlineImage, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <Image Source="{Binding Text}"
+                                                   Stretch="Uniform"
+                                                   MaxWidth="220"
+                                                   MaxHeight="160" />
+                                        </Border>
+                                        <TextBlock Text="{Binding DisplayText}"
+                                                   FontSize="14"
+                                                   Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
                                 </Border>
                                 <StackPanel Orientation="Horizontal"
                                             HorizontalAlignment="Right"
@@ -290,12 +329,26 @@
                             IsEnabled="{Binding Chat.CanSend}"
                             Command="{Binding Chat.PickFileCommand}" />
 
+                    <Button Content="🎤 语音"
+                            FontSize="12"
+                            Padding="10,4"
+                            CornerRadius="6"
+                            IsEnabled="{Binding Chat.CanSend}"
+                            Click="VoiceButton_Click" />
+
                     <Button Content="{Binding Chat.E2eeButtonText, FallbackValue=🔐 端到端加密 (/e2ee)}"
                             FontSize="12"
                             Padding="10,4"
                             CornerRadius="6"
                             IsEnabled="{Binding Chat.CanSend}"
                             Click="ToggleE2eeButton_Click" />
+
+                    <Button Content="🛡️ 安全码"
+                            FontSize="12"
+                            Padding="10,4"
+                            CornerRadius="6"
+                            IsEnabled="{Binding Chat.CanSend}"
+                            Click="FingerprintButton_Click" />
 
                     <Button Content="🔍 搜索记录"
                             FontSize="12"

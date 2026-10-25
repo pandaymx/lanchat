@@ -64,11 +64,43 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private void ReplyMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuFlyoutItem { Tag: ChatMessage msg })
+        {
+            _shell?.Chat.PrepareReply(msg);
+        }
+    }
+
     private async void RevokeMessageButton_Click(object sender, RoutedEventArgs e)
     {
         if (_shell is not null && sender is Button { Tag: ChatMessage msg })
         {
             await _shell.Chat.RevokeMessageByUiAsync(msg);
+        }
+    }
+
+    private async void RevokeMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null && sender is MenuFlyoutItem { Tag: ChatMessage msg })
+        {
+            await _shell.Chat.RevokeMessageByUiAsync(msg);
+        }
+    }
+
+    private async void VoiceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null)
+        {
+            await _shell.Chat.SendVoiceAsync();
+        }
+    }
+
+    private async void FingerprintButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null)
+        {
+            await _shell.Chat.VerifyFingerprintAsync();
         }
     }
 

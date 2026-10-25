@@ -13,7 +13,7 @@ public sealed partial class LoginViewModel : ViewModelBase
     private readonly UiThread _ui;
 
     [ObservableProperty]
-    private string _manualAddr = "";
+    private string _manualAddr = "auto";
 
     [ObservableProperty]
     private string _psk = "";
@@ -143,14 +143,15 @@ public sealed partial class LoginViewModel : ViewModelBase
         }
     }
 
-    /// <summary>构造 Connect 地址：mDNS 候选为 host:port（daemon 默认 / 路径），手动框原样传入。</summary>
+    /// <summary>构造 Connect 地址：mDNS 候选为 host:port（daemon 默认 / 路径），留空默认走 M14 auto 零配置选主。</summary>
     private string BuildAddr()
     {
         if (SelectedServer is not null && !string.IsNullOrEmpty(SelectedServer.Addr))
         {
             return SelectedServer.Addr;
         }
-        return ManualAddr.Trim();
+        var trimmed = ManualAddr.Trim();
+        return string.IsNullOrEmpty(trimmed) ? "auto" : trimmed;
     }
 
     partial void OnSelectedServerChanged(ServerInfo? value)

@@ -10,6 +10,8 @@ public sealed record HistoryMessage
     public string Type { get; init; } = "text";
     public string Text { get; init; } = "";
     public long Ts { get; init; }
+    public bool Revoked { get; init; }
+    public IReadOnlyList<string> ReadBy { get; init; } = [];
 }
 
 /// <summary>GetState 返回的全量快照（schema State）。</summary>

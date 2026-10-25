@@ -114,6 +114,18 @@ public sealed partial class ChatViewModel : ViewModelBase
                     text,
                     group = CurrentChannel.Id,
                 });
+                if (text.StartsWith("/revoke ", StringComparison.Ordinal))
+                {
+                    RevokeMessage(text[8..].Trim());
+                    Draft = "";
+                    return;
+                }
+                if (text.StartsWith("/read ", StringComparison.Ordinal))
+                {
+                    MarkRead(text[6..].Trim(), SelfId);
+                    Draft = "";
+                    return;
+                }
                 var msgId = result.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
                 AppendMessage(new ChatMessage
                 {
@@ -147,6 +159,18 @@ public sealed partial class ChatViewModel : ViewModelBase
                 to = CurrentPeer.Id,
                 text,
             });
+            if (text.StartsWith("/revoke ", StringComparison.Ordinal))
+            {
+                RevokeMessage(text[8..].Trim());
+                Draft = "";
+                return;
+            }
+            if (text.StartsWith("/read ", StringComparison.Ordinal))
+            {
+                MarkRead(text[6..].Trim(), SelfId);
+                Draft = "";
+                return;
+            }
             var msgId = result.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
             AppendMessage(new ChatMessage
             {
@@ -268,7 +292,10 @@ public sealed partial class ChatViewModel : ViewModelBase
         {
             var isSelf = !string.IsNullOrEmpty(SelfId) && hm.From == SelfId;
             var peerOrFrom = isSelf ? (!string.IsNullOrEmpty(hm.To) ? hm.To! : hm.From) : hm.From;
-            var senderName = isSelf ? "我" : (ResolvePeer(hm.From)?.Nickname ?? hm.From);
+            var baseName = isSelf ? "我" : (ResolvePeer(hm.From)?.Nickname ?? hm.From);
+            var senderName = isSelf && !hm.Revoked && hm.ReadBy.Count > 0
+                ? $"{baseName} · ✓ 已读"
+                : baseName;
             AppendMessage(new ChatMessage
             {
                 MsgId = hm.Id,
@@ -279,6 +306,8 @@ public sealed partial class ChatViewModel : ViewModelBase
                 Type = string.IsNullOrEmpty(hm.Type) ? "text" : hm.Type,
                 IsSelf = isSelf,
                 Timestamp = hm.Ts > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(hm.Ts) : DateTimeOffset.Now,
+                Revoked = hm.Revoked,
+                ReadBy = hm.ReadBy,
             });
         }
     }
@@ -293,6 +322,18 @@ public sealed partial class ChatViewModel : ViewModelBase
         var msgId = parameters.TryGetProperty("msgId", out var m) ? m.GetString() ?? "" : "";
         var type = parameters.TryGetProperty("type", out var t) ? t.GetString() ?? "text" : "text";
         var text = parameters.TryGetProperty("text", out var x) ? x.GetString() ?? "" : "";
+
+        if (type == "MSG_REVOKE")
+        {
+            RevokeMessage(msgId);
+            return;
+        }
+
+        if (type == "MSG_READ")
+        {
+            MarkRead(msgId, from);
+            return;
+        }
 
         var senderName = ResolvePeer(from)?.Nickname ?? from;
 
@@ -389,16 +430,87 @@ public sealed partial class ChatViewModel : ViewModelBase
             _conversations[key] = list;
         }
 
-        // 同一消息去重（重发通知）
-        if (!string.IsNullOrEmpty(message.MsgId) && list.Any(m => m.MsgId == message.MsgId))
+        // 同一消息去重或状态更新（如撤回 / 已读）
+        if (!string.IsNullOrEmpty(message.MsgId))
         {
-            return;
+            var existingIdx = list.FindIndex(m => m.MsgId == message.MsgId);
+            if (existingIdx >= 0)
+            {
+                list[existingIdx] = message;
+                if ((CurrentChannel?.Id ?? CurrentPeer?.Id) is string activeKey && activeKey == key &&
+                    existingIdx < Messages.Count)
+                {
+                    Messages[existingIdx] = message;
+                }
+                return;
+            }
         }
 
         list.Add(message);
         if ((CurrentChannel?.Id ?? CurrentPeer?.Id) is string currentKey && currentKey == key)
         {
             Messages.Add(message);
+        }
+    }
+
+    private void RevokeMessage(string msgId)
+    {
+        if (string.IsNullOrEmpty(msgId))
+        {
+            return;
+        }
+
+        foreach (var (key, list) in _conversations)
+        {
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i].MsgId == msgId)
+                {
+                    var updated = list[i] with
+                    {
+                        Revoked = true,
+                        Text = "消息已撤回",
+                        FromName = list[i].IsSelf ? "我" : list[i].FromName,
+                    };
+                    list[i] = updated;
+                    if ((CurrentChannel?.Id ?? CurrentPeer?.Id) == key && i < Messages.Count)
+                    {
+                        Messages[i] = updated;
+                    }
+                }
+            }
+        }
+    }
+
+    private void MarkRead(string msgId, string reader)
+    {
+        if (string.IsNullOrEmpty(msgId) || string.IsNullOrEmpty(reader))
+        {
+            return;
+        }
+
+        foreach (var (key, list) in _conversations)
+        {
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i].MsgId == msgId && !list[i].ReadBy.Contains(reader))
+                {
+                    var readBy = list[i].ReadBy.Concat([reader]).ToList();
+                    var fromName = list[i].IsSelf && !list[i].Revoked
+                        ? "我 · ✓ 已读"
+                        : list[i].FromName;
+                    var updated = list[i] with
+                    {
+                        ReadBy = readBy,
+                        FromName = fromName,
+                    };
+                    list[i] = updated;
+                    if ((CurrentChannel?.Id ?? CurrentPeer?.Id) == key && i < Messages.Count)
+                    {
+                        Messages[i] = updated;
+                    }
+                }
+            }
         }
     }
 

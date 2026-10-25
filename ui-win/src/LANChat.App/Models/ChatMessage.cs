@@ -19,6 +19,12 @@ public sealed record ChatMessage
 
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.Now;
 
+    /// <summary>M11a: 消息是否已撤回。</summary>
+    public bool Revoked { get; init; }
+
+    /// <summary>M11a: 已读该消息的对端 ID 列表。</summary>
+    public IReadOnlyList<string> ReadBy { get; init; } = [];
+
     /// <summary>贴纸类型时，Text 为贴纸文件路径。</summary>
     public bool IsSticker => Type == "sticker";
 }

@@ -255,6 +255,12 @@ public sealed partial class ChatViewModel : ViewModelBase
                 Draft = "";
                 return;
             }
+            if (msgId.StartsWith("bwlimit:", StringComparison.Ordinal))
+            {
+                AppendSystemMessage($"⚡ 传输带宽限速已设置为：{msgId[8..]} MB/s");
+                Draft = "";
+                return;
+            }
             if (text.StartsWith("/revoke ", StringComparison.Ordinal))
             {
                 RevokeMessage(text[8..].Trim());
@@ -264,6 +270,30 @@ public sealed partial class ChatViewModel : ViewModelBase
             if (text.StartsWith("/read ", StringComparison.Ordinal))
             {
                 MarkRead(text[6..].Trim(), SelfId);
+                Draft = "";
+                return;
+            }
+            if (text.StartsWith("/react ", StringComparison.Ordinal))
+            {
+                var parts = text[7..].Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                var emoji = parts.Length >= 2 ? parts[1] : "👍";
+                UpdateMessageDisplay(msgId, m => m.Text.Contains($"[{emoji}]", StringComparison.Ordinal) ? m.Text : $"{m.Text} [{emoji}]");
+                Draft = "";
+                return;
+            }
+            if (text.StartsWith("/edit ", StringComparison.Ordinal))
+            {
+                var parts = text[6..].Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length >= 2)
+                {
+                    UpdateMessageDisplay(msgId, _ => $"{parts[1]} (已编辑)");
+                }
+                Draft = "";
+                return;
+            }
+            if (text.StartsWith("/pin ", StringComparison.Ordinal))
+            {
+                UpdateMessageDisplay(msgId, m => m.Text.StartsWith("📌 ", StringComparison.Ordinal) ? m.Text : $"📌 {m.Text}");
                 Draft = "";
                 return;
             }
@@ -430,6 +460,12 @@ public sealed partial class ChatViewModel : ViewModelBase
             return;
         }
 
+        if (type is "MSG_REACT" or "MSG_EDIT" or "MSG_PIN")
+        {
+            UpdateMessageDisplay(msgId, _ => text);
+            return;
+        }
+
         var senderName = ResolvePeer(from)?.Nickname ?? from;
 
         AppendMessage(new ChatMessage
@@ -507,6 +543,32 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
         var prevDraft = Draft;
         Draft = $"/revoke {message.MsgId}";
+        await SendAsync();
+        Draft = prevDraft;
+    }
+
+    /// <summary>M20: 快捷对消息添加表情回应 (/react)。</summary>
+    public async Task ReactMessageByUiAsync(ChatMessage? message, string emoji = "👍")
+    {
+        if (message is null || string.IsNullOrEmpty(message.MsgId) || message.Revoked)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        Draft = $"/react {message.MsgId} {emoji}";
+        await SendAsync();
+        Draft = prevDraft;
+    }
+
+    /// <summary>M20: 快捷置顶消息 (/pin)。</summary>
+    public async Task PinMessageByUiAsync(ChatMessage? message)
+    {
+        if (message is null || string.IsNullOrEmpty(message.MsgId) || message.Revoked)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        Draft = $"/pin {message.MsgId}";
         await SendAsync();
         Draft = prevDraft;
     }
@@ -655,6 +717,30 @@ public sealed partial class ChatViewModel : ViewModelBase
                         Text = "消息已撤回",
                         FromName = list[i].IsSelf ? "我" : list[i].FromName,
                     };
+                    list[i] = updated;
+                    if ((CurrentChannel?.Id ?? CurrentPeer?.Id) == key && i < Messages.Count)
+                    {
+                        Messages[i] = updated;
+                    }
+                }
+            }
+        }
+    }
+
+    private void UpdateMessageDisplay(string msgId, Func<ChatMessage, string> transform)
+    {
+        if (string.IsNullOrEmpty(msgId))
+        {
+            return;
+        }
+
+        foreach (var (key, list) in _conversations)
+        {
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i].MsgId == msgId && !list[i].Revoked)
+                {
+                    var updated = list[i] with { Text = transform(list[i]) };
                     list[i] = updated;
                     if ((CurrentChannel?.Id ?? CurrentPeer?.Id) == key && i < Messages.Count)
                     {

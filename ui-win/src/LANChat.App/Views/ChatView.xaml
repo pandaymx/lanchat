@@ -156,6 +156,12 @@
                                             <MenuFlyoutItem Text="↩ 引用回复"
                                                             Tag="{Binding}"
                                                             Click="ReplyMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="👍 点赞回应"
+                                                            Tag="{Binding}"
+                                                            Click="ReactMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="📌 置顶消息"
+                                                            Tag="{Binding}"
+                                                            Click="PinMenuFlyoutItem_Click" />
                                         </MenuFlyout>
                                     </Border.ContextFlyout>
                                     <StackPanel Spacing="6">
@@ -211,6 +217,12 @@
                                             <MenuFlyoutItem Text="↩ 引用回复"
                                                             Tag="{Binding}"
                                                             Click="ReplyMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="👍 点赞回应"
+                                                            Tag="{Binding}"
+                                                            Click="ReactMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="📌 置顶消息"
+                                                            Tag="{Binding}"
+                                                            Click="PinMenuFlyoutItem_Click" />
                                             <MenuFlyoutItem Text="撤回消息"
                                                             Tag="{Binding}"
                                                             Click="RevokeMenuFlyoutItem_Click" />

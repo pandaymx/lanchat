@@ -88,6 +88,22 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private async void ReactMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null && sender is MenuFlyoutItem { Tag: ChatMessage msg })
+        {
+            await _shell.Chat.ReactMessageByUiAsync(msg, "👍");
+        }
+    }
+
+    private async void PinMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null && sender is MenuFlyoutItem { Tag: ChatMessage msg })
+        {
+            await _shell.Chat.PinMessageByUiAsync(msg);
+        }
+    }
+
     private async void VoiceButton_Click(object sender, RoutedEventArgs e)
     {
         if (_shell is not null)

@@ -72,11 +72,13 @@ struct FullState {
 struct ChatMessage: Identifiable, Equatable {
     let id: String
     let peerId: String
-    let text: String
+    var text: String
     let inbound: Bool
     let timestamp: Date
     /// 所属频道 ID；nil 表示 1:1 单播消息。
     var group: String?
+    var revoked: Bool = false
+    var readBy: [String] = []
 }
 
 /// 将 group.matrix 的 haveBitmap 转为紧凑块进度摘要（如 "▓▓▓░░░ 4/8 块"）。

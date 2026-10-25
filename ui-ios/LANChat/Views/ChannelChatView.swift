@@ -140,13 +140,14 @@ private struct ChannelBubble: View {
     var body: some View {
         HStack {
             if !message.inbound { Spacer(minLength: 40) }
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: message.inbound ? .leading : .trailing, spacing: 2) {
                 if message.inbound {
                     Text(store.displayName(message.peerId))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 Text(message.text)
+                    .italic(message.revoked)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(
                         message.inbound
@@ -154,8 +155,13 @@ private struct ChannelBubble: View {
                             : Color.accentColor.opacity(0.22),
                         in: RoundedRectangle(cornerRadius: 16)
                     )
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(message.revoked ? .secondary : .primary)
                     .textSelection(.enabled)
+                if !message.inbound && !message.revoked && !message.readBy.isEmpty {
+                    Text("✓ 已读")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
             if message.inbound { Spacer(minLength: 40) }
         }

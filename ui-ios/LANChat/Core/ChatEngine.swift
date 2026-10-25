@@ -315,6 +315,8 @@ struct HistoryMessageJSON: Decodable {
     let type: String
     let text: String
     let ts: Int64
+    let revoked: Bool?
+    let readBy: [String]?
 
     func toModel(selfId: String) -> ChatMessage {
         let inbound = !selfId.isEmpty ? (from != selfId) : false
@@ -322,7 +324,9 @@ struct HistoryMessageJSON: Decodable {
         let date = ts > 0 ? Date(timeIntervalSince1970: TimeInterval(ts) / 1000.0) : Date()
         return ChatMessage(id: id, peerId: peer, text: text,
                            inbound: inbound, timestamp: date,
-                           group: (group?.isEmpty == false) ? group : nil)
+                           group: (group?.isEmpty == false) ? group : nil,
+                           revoked: revoked ?? false,
+                           readBy: readBy ?? [])
     }
 }
 

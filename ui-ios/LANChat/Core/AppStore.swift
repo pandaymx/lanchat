@@ -68,6 +68,16 @@ final class AppStore: ObservableObject {
         guard !content.isEmpty else { return }
         run {
             let msgId = try await self.engine.sendText(to: to, text: content)
+            if content.hasPrefix("/revoke ") {
+                let targetId = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+                self.revokeMessage(id: targetId)
+                return
+            }
+            if content.hasPrefix("/read ") {
+                let targetId = String(content.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                self.markRead(id: targetId, reader: self.selfId)
+                return
+            }
             self.appendMessage(ChatMessage(id: msgId, peerId: to, text: content,
                                            inbound: false, timestamp: Date()))
         }
@@ -136,6 +146,16 @@ final class AppStore: ObservableObject {
         guard !content.isEmpty else { return }
         run {
             let msgId = try await self.engine.sendGroupText(group: channel.id, text: content)
+            if content.hasPrefix("/revoke ") {
+                let targetId = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+                self.revokeMessage(id: targetId)
+                return
+            }
+            if content.hasPrefix("/read ") {
+                let targetId = String(content.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                self.markRead(id: targetId, reader: self.selfId)
+                return
+            }
             self.appendMessage(ChatMessage(id: msgId, peerId: self.selfId, text: content,
                                            inbound: false, timestamp: Date(), group: channel.id))
         }
@@ -215,7 +235,15 @@ final class AppStore: ObservableObject {
         case let .peerLeft(id):
             peers.removeAll { $0.id == id }
 
-        case let .message(from, group, msgId, _, text):
+        case let .message(from, group, msgId, type, text):
+            if type == "MSG_REVOKE" {
+                revokeMessage(id: msgId)
+                return
+            }
+            if type == "MSG_READ" {
+                markRead(id: msgId, reader: from)
+                return
+            }
             // 频道消息按 group(频道ID) 归类；group 为空则按 1:1 对端归类。
             appendMessage(ChatMessage(id: msgId, peerId: from, text: text,
                                       inbound: true, timestamp: Date(),
@@ -269,9 +297,34 @@ final class AppStore: ObservableObject {
     private func appendMessage(_ m: ChatMessage) {
         let key = (m.group?.isEmpty == false) ? m.group! : m.peerId
         var list = messagesByPeer[key] ?? []
-        if !list.contains(where: { $0.id == m.id }) {
+        if let idx = list.firstIndex(where: { $0.id == m.id }) {
+            list[idx] = m
+        } else {
             list.append(m)
-            messagesByPeer[key] = list
+        }
+        messagesByPeer[key] = list
+    }
+
+    private func revokeMessage(id: String) {
+        guard !id.isEmpty else { return }
+        for (key, var list) in messagesByPeer {
+            if let idx = list.firstIndex(where: { $0.id == id }) {
+                list[idx].revoked = true
+                list[idx].text = "消息已撤回"
+                messagesByPeer[key] = list
+            }
+        }
+    }
+
+    private func markRead(id: String, reader: String) {
+        guard !id.isEmpty, !reader.isEmpty else { return }
+        for (key, var list) in messagesByPeer {
+            if let idx = list.firstIndex(where: { $0.id == id }) {
+                if !list[idx].readBy.contains(reader) {
+                    list[idx].readBy.append(reader)
+                    messagesByPeer[key] = list
+                }
+            }
         }
     }
 

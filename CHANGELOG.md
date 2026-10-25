@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.0](https://github.com/pandaymx/lanchat/compare/v1.4.0...v1.5.0) (2026-10-25)
+
+
+### Features
+
+* **ci:** build and publish standalone lanchat signaling server binaries ([d16e634](https://github.com/pandaymx/lanchat/commit/d16e6344db7b63e31b96d9dce5fff67bbdfe00cf))
+* **core:** add end-to-end AES-256-GCM text encryption (/e2ee) ([6eed598](https://github.com/pandaymx/lanchat/commit/6eed598dbc3ded76f45f4604480d11eb94681c70))
+* **core:** add static server probing, quote reply, and auto server bootstrap ([eb9c80f](https://github.com/pandaymx/lanchat/commit/eb9c80f0ada7055f533a36c90f050f187ecfa4c7))
+* **server:** add /healthz, /api/status, and /status monitoring dashboard ([8a1ff88](https://github.com/pandaymx/lanchat/commit/8a1ff881647c825cde0a4cc35ca40293ff1b0a8b))
+* **ui-android:** support /search, /reply quote formatting, and /e2ee status ([8795cb8](https://github.com/pandaymx/lanchat/commit/8795cb8f15f179b7b6252277e8ecda5cdf8153e3))
+* **ui-ios:** support /search, /reply quote formatting, and /e2ee status ([3f3a01d](https://github.com/pandaymx/lanchat/commit/3f3a01d92d2149cfcd4a328a5bcfc4446fee30bc))
+* **ui-linux:** support /search, /reply quote formatting, and /e2ee status ([cf91cf5](https://github.com/pandaymx/lanchat/commit/cf91cf541ac886469b8dd0c88ce36c9c604b44d6))
+* **ui-macos:** support /search, /reply quote formatting, and /e2ee status ([cb4da11](https://github.com/pandaymx/lanchat/commit/cb4da11b0582f62126d84713448ddaab07c7190c))
+* **ui-win:** support /search, /reply quote formatting, and /e2ee status ([6f61723](https://github.com/pandaymx/lanchat/commit/6f61723922d2fba115954147e11c3146c82bebe2))
+
 ## [1.4.0](https://github.com/pandaymx/lanchat/compare/v1.3.0...v1.4.0) (2026-10-25)
 
 

@@ -109,6 +109,10 @@ object Conversations {
         raw: String,
     ): String {
         val trimmed = raw.trim()
+        if (trimmed == "/voice" || trimmed.startsWith("/voice ")) {
+            val sec = trimmed.removePrefix("/voice").trim().ifEmpty { "3" }
+            return "🎤 [语音消息 $sec\"]"
+        }
         if (!trimmed.startsWith("/reply ")) return raw
         val rest = trimmed.removePrefix("/reply ").trim()
         val parts = rest.split(" ", limit = 2)

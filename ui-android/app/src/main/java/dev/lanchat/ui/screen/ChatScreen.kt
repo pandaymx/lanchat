@@ -1,8 +1,11 @@
 package dev.lanchat.ui.screen
 
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -56,7 +59,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -514,9 +521,19 @@ private fun ConversationScaffold(
                             onClick = { filePicker.launch("*/*") },
                         )
                         ComposerToolItem(
+                            label = "🎤 语音",
+                            active = false,
+                            onClick = { onSend("/voice 3") },
+                        )
+                        ComposerToolItem(
                             label = if (e2eeActive) "🔐 E2EE 已开" else "🔐 E2EE 加密",
                             active = e2eeActive,
                             onClick = { showE2eeDialog = true },
+                        )
+                        ComposerToolItem(
+                            label = "🛡️ 安全码",
+                            active = false,
+                            onClick = { onSend("/fingerprint") },
                         )
                         ComposerToolItem(
                             label = "🔍 搜索记录",
@@ -740,17 +757,36 @@ private fun MessageBubbleRow(
             val bubbleBg = if (message.inbound) qqInboundBubbleColor() else QqOutboundBubble
             val bubbleText = if (message.inbound) MaterialTheme.colorScheme.onSurface else QqOutboundText
 
+            val inlineBitmap = remember(message.text) { decodeInlineBitmap(message.text) }
+
             Surface(
                 shape = bubbleShape,
                 color = bubbleBg,
                 shadowElevation = 1.dp,
             ) {
                 Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
-                    Text(
-                        text = message.text,
-                        color = bubbleText,
-                        fontSize = 15.sp,
-                    )
+                    if (inlineBitmap != null) {
+                        Image(
+                            bitmap = inlineBitmap,
+                            contentDescription = "内联图片缩略图",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(width = 180.dp, height = 130.dp)
+                                .clip(RoundedCornerShape(10.dp)),
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "🖼️ [图片缩略图]",
+                            color = bubbleText,
+                            fontSize = 12.sp,
+                        )
+                    } else {
+                        Text(
+                            text = message.text,
+                            color = bubbleText,
+                            fontSize = 15.sp,
+                        )
+                    }
                 }
             }
 
@@ -874,6 +910,22 @@ private fun SearchMessagesDialog(
 private fun formatBubbleTime(ts: Long): String {
     if (ts <= 0L) return ""
     return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ts))
+}
+
+private fun decodeInlineBitmap(text: String): ImageBitmap? {
+    val trimmed = text.trim()
+    if (!trimmed.startsWith("data:image/", ignoreCase = true)) return null
+    val marker = ";base64,"
+    val idx = trimmed.indexOf(marker)
+    if (idx < 0) return null
+    val b64 = trimmed.substring(idx + marker.length).trim()
+    if (b64.isEmpty()) return null
+    return try {
+        val raw = Base64.decode(b64, Base64.DEFAULT)
+        BitmapFactory.decodeByteArray(raw, 0, raw.size)?.asImageBitmap()
+    } catch (_: Exception) {
+        null
+    }
 }
 
 /** 触发群文件温和提示的阈值：512 MiB。 */

@@ -83,12 +83,9 @@ class AppViewModel : ViewModel() {
     }
 
     fun connect(addr: String, psk: String) {
-        if (addr.isBlank()) {
-            _ui.update { it.copy(error = "请输入服务器地址") }
-            return
-        }
+        val target = addr.trim().ifEmpty { "auto" }
         launchOp {
-            engine.connect(addr.trim(), psk)
+            engine.connect(target, psk)
         }
     }
 
@@ -118,6 +115,19 @@ class AppViewModel : ViewModel() {
                         peerId = to,
                         msgId = "e2ee-${System.currentTimeMillis()}",
                         text = notice,
+                        inbound = false,
+                        timestamp = System.currentTimeMillis(),
+                    ),
+                )
+                return@launchOp
+            }
+            if (msgId.startsWith("fp:")) {
+                val fp = msgId.removePrefix("fp:")
+                appendMessage(
+                    ChatMessage(
+                        peerId = to,
+                        msgId = "fp-${System.currentTimeMillis()}",
+                        text = "🛡️ [安全码指纹核验] $fp",
                         inbound = false,
                         timestamp = System.currentTimeMillis(),
                     ),

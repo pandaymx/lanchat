@@ -179,6 +179,10 @@ pub struct HistoryMessage {
     #[serde(default)]
     pub text: String,
     #[serde(default)]
+    pub revoked: bool,
+    #[serde(default, rename = "readBy")]
+    pub read_by: Vec<String>,
+    #[serde(default)]
     pub ts: i64,
 }
 
@@ -214,6 +218,8 @@ pub struct ChatMessage {
     pub msg_id: String,
     pub text: String,
     pub inbound: bool,
+    pub revoked: bool,
+    pub read_by: Vec<String>,
     pub ts: i64,
 }
 

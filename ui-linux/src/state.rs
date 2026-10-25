@@ -76,7 +76,9 @@ impl AppState {
             if conv_key.is_empty() {
                 continue;
             }
-            let text = if m.msg_type == "STICKER_MSG" || m.msg_type == "sticker" {
+            let text = if m.revoked {
+                "[消息已撤回]".to_string()
+            } else if m.msg_type == "STICKER_MSG" || m.msg_type == "sticker" {
                 format!("[表情] {}", m.text)
             } else {
                 m.text
@@ -88,6 +90,8 @@ impl AppState {
                 msg_id: m.id,
                 text,
                 inbound,
+                revoked: m.revoked,
+                read_by: m.read_by,
                 ts: m.ts,
             });
         }
@@ -132,10 +136,50 @@ impl AppState {
 
     pub fn push_message(&mut self, msg: ChatMessage) {
         let list = self.messages.entry(msg.peer_id.clone()).or_default();
-        if !msg.msg_id.is_empty() && list.iter().any(|x| x.msg_id == msg.msg_id) {
-            return;
+        if !msg.msg_id.is_empty() {
+            if let Some(existing) = list.iter_mut().find(|x| x.msg_id == msg.msg_id) {
+                existing.text = msg.text;
+                existing.revoked = msg.revoked;
+                existing.read_by = msg.read_by;
+                return;
+            }
         }
         list.push(msg);
+    }
+
+    pub fn revoke_message(&mut self, msg_id: &str) -> bool {
+        if msg_id.is_empty() {
+            return false;
+        }
+        let mut updated = false;
+        for list in self.messages.values_mut() {
+            for m in list.iter_mut() {
+                if m.msg_id == msg_id {
+                    m.revoked = true;
+                    m.text = "[消息已撤回]".to_string();
+                    updated = true;
+                }
+            }
+        }
+        updated
+    }
+
+    pub fn mark_read(&mut self, msg_id: &str, reader_id: &str) -> bool {
+        if msg_id.is_empty() || reader_id.is_empty() {
+            return false;
+        }
+        let mut updated = false;
+        for list in self.messages.values_mut() {
+            for m in list.iter_mut() {
+                if m.msg_id == msg_id {
+                    if !m.read_by.iter().any(|r| r == reader_id) {
+                        m.read_by.push(reader_id.to_string());
+                    }
+                    updated = true;
+                }
+            }
+        }
+        updated
     }
 
     pub fn unread_count(&self, peer_id: &str) -> usize {
@@ -181,6 +225,8 @@ mod tests {
             msg_id: "m1".into(),
             text: "频道消息".into(),
             inbound: true,
+            revoked: false,
+            read_by: Vec::new(),
             ts: 1,
         });
         st.push_message(ChatMessage {
@@ -190,10 +236,14 @@ mod tests {
             msg_id: "m2".into(),
             text: "私聊消息".into(),
             inbound: true,
+            revoked: false,
+            read_by: Vec::new(),
             ts: 2,
         });
+        assert!(st.mark_read("m1", "p3"));
+        assert!(st.revoke_message("m2"));
         assert_eq!(st.messages.get("c1").unwrap().len(), 1);
-        assert_eq!(st.messages.get("p2").unwrap().len(), 1);
+        assert_eq!(st.messages.get("p2").unwrap()[0].text, "[消息已撤回]");
         st.current_chat = ChatTarget::Channel("c1".into());
         assert!(st.current_chat.is_channel());
         assert_eq!(st.current_chat.key(), Some("c1"));

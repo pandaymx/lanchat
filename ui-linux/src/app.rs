@@ -890,16 +890,26 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
         }
         UiEvent::TextSent(key, group, text, res) => match res {
             Ok(msg_id) => {
-                let now = now_secs();
-                ctx.state.borrow_mut().push_message(ChatMessage {
-                    peer_id: key.clone(),
-                    sender_id: String::new(),
-                    group,
-                    msg_id,
-                    text,
-                    inbound: false,
-                    ts: now,
-                });
+                let trimmed = text.trim();
+                if trimmed.starts_with("/revoke ") {
+                    ctx.state.borrow_mut().revoke_message(&msg_id);
+                } else if trimmed.starts_with("/read ") {
+                    let me = ctx.state.borrow().self_id.clone();
+                    ctx.state.borrow_mut().mark_read(&msg_id, &me);
+                } else {
+                    let now = now_secs();
+                    ctx.state.borrow_mut().push_message(ChatMessage {
+                        peer_id: key.clone(),
+                        sender_id: String::new(),
+                        group,
+                        msg_id,
+                        text,
+                        inbound: false,
+                        revoked: false,
+                        read_by: Vec::new(),
+                        ts: now,
+                    });
+                }
                 if ctx.state.borrow().current_chat.key() == Some(key.as_str()) {
                     ctx.render_messages();
                 }
@@ -1086,6 +1096,18 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .unwrap_or("")
                 .to_string();
             let msg_type = p.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+            if msg_type == "MSG_REVOKE" {
+                if ctx.state.borrow_mut().revoke_message(&msg_id) {
+                    ctx.render_messages();
+                }
+                return;
+            }
+            if msg_type == "MSG_READ" {
+                if ctx.state.borrow_mut().mark_read(&msg_id, &from) {
+                    ctx.render_messages();
+                }
+                return;
+            }
             let raw_text = p
                 .get("text")
                 .and_then(|v| v.as_str())
@@ -1110,6 +1132,8 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 msg_id,
                 text,
                 inbound: true,
+                revoked: false,
+                read_by: Vec::new(),
                 ts: now_secs(),
             });
             if ctx.state.borrow().current_chat.key() == Some(conv_key.as_str()) {
@@ -1610,6 +1634,15 @@ impl AppCtx {
             return;
         };
         for m in msgs {
+            let read_suffix = if !m.inbound && !m.revoked && !m.read_by.is_empty() {
+                if m.read_by.len() > 1 {
+                    format!(" · ✓ 已读({})", m.read_by.len())
+                } else {
+                    " · ✓ 已读".to_string()
+                }
+            } else {
+                String::new()
+            };
             let label_text = if target.is_channel() && m.inbound {
                 let who = st
                     .peer(&m.sender_id)
@@ -1620,9 +1653,9 @@ impl AppCtx {
                             .map(|s| s.to_string())
                             .unwrap_or_default()
                     });
-                glib::markup_escape_text(&format!("{who}：{}", m.text)).to_string()
+                glib::markup_escape_text(&format!("{who}：{}{read_suffix}", m.text)).to_string()
             } else {
-                glib::markup_escape_text(&m.text).to_string()
+                glib::markup_escape_text(&format!("{}{read_suffix}", m.text)).to_string()
             };
             let bubble = gtk::Label::new(None);
             bubble.set_use_markup(true);
@@ -1631,6 +1664,9 @@ impl AppCtx {
             bubble.set_max_width_chars(60);
             bubble.set_xalign(if m.inbound { 0.0 } else { 1.0 });
             bubble.add_css_class(if m.inbound { "bubble-in" } else { "bubble-out" });
+            if m.revoked {
+                bubble.add_css_class("dim-label");
+            }
 
             let row = gtk::Box::new(Orientation::Horizontal, 0);
             if !m.inbound {

@@ -180,6 +180,22 @@ impl AppState {
         updated
     }
 
+    pub fn update_message_text(&mut self, msg_id: &str, new_text: &str) -> bool {
+        if msg_id.is_empty() || new_text.is_empty() {
+            return false;
+        }
+        let mut updated = false;
+        for list in self.messages.values_mut() {
+            for m in list.iter_mut() {
+                if m.msg_id == msg_id && !m.revoked {
+                    m.text = new_text.to_string();
+                    updated = true;
+                }
+            }
+        }
+        updated
+    }
+
     pub fn mark_read(&mut self, msg_id: &str, reader_id: &str) -> bool {
         if msg_id.is_empty() || reader_id.is_empty() {
             return false;

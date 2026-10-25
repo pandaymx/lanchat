@@ -1475,6 +1475,17 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     ctx.sync_state();
                     return;
                 }
+                if let Some(bw) = msg_id.strip_prefix("bwlimit:") {
+                    ctx.toast(&format!("⚡ 传输限速已设为：{bw}"));
+                    return;
+                }
+                if trimmed.starts_with("/react ")
+                    || trimmed.starts_with("/edit ")
+                    || trimmed.starts_with("/pin ")
+                {
+                    ctx.sync_state();
+                    return;
+                }
                 if trimmed.starts_with("/revoke ") {
                     ctx.state.borrow_mut().revoke_message(&msg_id);
                 } else if trimmed.starts_with("/read ") {
@@ -1703,6 +1714,18 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             }
             if msg_type == "MSG_READ" {
                 if ctx.state.borrow_mut().mark_read(&msg_id, &from) {
+                    ctx.render_messages();
+                }
+                return;
+            }
+            if msg_type == "MSG_REACT" || msg_type == "MSG_EDIT" || msg_type == "MSG_PIN" {
+                let updated_text = p.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if ctx
+                    .state
+                    .borrow_mut()
+                    .update_message_text(&msg_id, updated_text)
+                {
+                    ctx.render_roster();
                     ctx.render_messages();
                 }
                 return;
@@ -2622,6 +2645,36 @@ impl AppCtx {
                     }
                 ));
                 actions_box.append(&reply_btn);
+
+                let react_btn = gtk::Button::with_label("👍");
+                react_btn.add_css_class("flat");
+                react_btn.add_css_class("qq-msg-action");
+                react_btn.set_tooltip_text(Some("点赞回应 (/react)"));
+                let mid_react = m.msg_id.clone();
+                let tgt_react = target.clone();
+                react_btn.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |_| {
+                        send_text_to_target(&cx, &tgt_react, &format!("/react {mid_react} 👍"));
+                    }
+                ));
+                actions_box.append(&react_btn);
+
+                let pin_btn = gtk::Button::with_label("📌");
+                pin_btn.add_css_class("flat");
+                pin_btn.add_css_class("qq-msg-action");
+                pin_btn.set_tooltip_text(Some("置顶此消息 (/pin)"));
+                let mid_pin = m.msg_id.clone();
+                let tgt_pin = target.clone();
+                pin_btn.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |_| {
+                        send_text_to_target(&cx, &tgt_pin, &format!("/pin {mid_pin}"));
+                    }
+                ));
+                actions_box.append(&pin_btn);
 
                 if !m.inbound {
                     let revoke_btn = gtk::Button::with_label("撤回");

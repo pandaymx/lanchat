@@ -1,7 +1,9 @@
 package core
 
 import (
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -65,6 +67,23 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		c.mu.Unlock()
 		return "e2ee:on", nil
 	}
+	if trimmed == "/bwlimit off" || trimmed == "/bwlimit 0" {
+		transfer.SetBandwidthLimitBps(0)
+		return "bwlimit:off", nil
+	}
+	if strings.HasPrefix(trimmed, "/bwlimit ") {
+		arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/bwlimit "))
+		mb, err := strconv.ParseFloat(arg, 64)
+		if err != nil || mb < 0 {
+			return "", errEmptyText
+		}
+		if mb == 0 {
+			transfer.SetBandwidthLimitBps(0)
+			return "bwlimit:off", nil
+		}
+		transfer.SetBandwidthLimitBps(int64(mb * 1024 * 1024))
+		return fmt.Sprintf("bwlimit:%.1fMB/s", mb), nil
+	}
 	if group == "" && to == "" {
 		return "", errPeerNotFound
 	}
@@ -78,6 +97,54 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	if strings.HasPrefix(trimmed, "/read ") {
 		targetID := strings.TrimSpace(strings.TrimPrefix(trimmed, "/read "))
 		if err := c.MarkRead(to, group, targetID); err != nil {
+			return "", err
+		}
+		return targetID, nil
+	}
+	if strings.HasPrefix(trimmed, "/react ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/react "))
+		parts := strings.SplitN(rest, " ", 2)
+		targetID := strings.TrimSpace(parts[0])
+		emoji := "👍"
+		if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+			emoji = strings.TrimSpace(parts[1])
+		}
+		if targetID == "" {
+			return "", errEmptyText
+		}
+		if _, ok := c.history.react(targetID, emoji); !ok {
+			return "", errInvalidState
+		}
+		if err := c.sendControlText(to, group, "sys:react:"+targetID+":"+emoji); err != nil {
+			return "", err
+		}
+		return targetID, nil
+	}
+	if strings.HasPrefix(trimmed, "/edit ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/edit "))
+		parts := strings.SplitN(rest, " ", 2)
+		if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+			return "", errEmptyText
+		}
+		targetID := strings.TrimSpace(parts[0])
+		newBody := strings.TrimSpace(parts[1])
+		if _, ok := c.history.edit(targetID, c.selfIDValue(), newBody); !ok {
+			return "", errInvalidState
+		}
+		if err := c.sendControlText(to, group, "sys:edit:"+targetID+":"+newBody); err != nil {
+			return "", err
+		}
+		return targetID, nil
+	}
+	if strings.HasPrefix(trimmed, "/pin ") {
+		targetID := strings.TrimSpace(strings.TrimPrefix(trimmed, "/pin "))
+		if targetID == "" {
+			return "", errEmptyText
+		}
+		if _, ok := c.history.pin(targetID); !ok {
+			return "", errInvalidState
+		}
+		if err := c.sendControlText(to, group, "sys:pin:"+targetID); err != nil {
 			return "", err
 		}
 		return targetID, nil
@@ -109,31 +176,9 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	if explicitReplyTo != "" {
 		replyTo = explicitReplyTo
 	}
-	wireText := text
-	c.mu.Lock()
-	e2eeSecret := c.e2eeKey
-	idPriv := c.identityPriv
-	idPub := c.identityPub
-	var peerPub string
-	if group == "" && to != "" {
-		peerPub = c.peerPubs[to]
-	}
-	c.mu.Unlock()
-
-	var senderPub string
-	if e2eeSecret != "" {
-		sealed, err := transfer.SealText(e2eeSecret, text)
-		if err != nil {
-			return "", err
-		}
-		wireText = sealed
-	} else if group == "" && peerPub != "" && idPriv != nil {
-		sealed, err := transfer.SealECDHText(idPriv, peerPub, text)
-		if err != nil {
-			return "", err
-		}
-		wireText = sealed
-		senderPub = idPub
+	wireText, senderPub, err := c.sealOutboundText(to, group, text)
+	if err != nil {
+		return "", err
 	}
 	payload := protocol.TextPayload{
 		Text:      wireText,
@@ -266,6 +311,66 @@ func (c *Client) SendSticker(to, path string) (string, error) {
 		TS:    env.TS,
 	})
 	return env.ID, nil
+}
+
+// sealOutboundText 根据会话类型封装文本密文（手动 /e2ee、1:1 自动 X25519 ECDH 或 G2 频道对称密钥，M13/M15/M19）。
+func (c *Client) sealOutboundText(to, group, plain string) (wireText, senderPub string, err error) {
+	c.mu.Lock()
+	e2eeSecret := c.e2eeKey
+	idPriv := c.identityPriv
+	idPub := c.identityPub
+	var peerPub string
+	if group == "" && to != "" {
+		peerPub = c.peerPubs[to]
+	}
+	c.mu.Unlock()
+
+	if e2eeSecret != "" {
+		sealed, err := transfer.SealText(e2eeSecret, plain)
+		if err != nil {
+			return "", "", err
+		}
+		return sealed, "", nil
+	}
+	if group == "" && peerPub != "" && idPriv != nil {
+		sealed, err := transfer.SealECDHText(idPriv, peerPub, plain)
+		if err != nil {
+			return "", "", err
+		}
+		return sealed, idPub, nil
+	}
+	if group != "" && group != protocol.GroupBroadcast {
+		if chKey := c.ensureChannelKey(group); chKey != "" {
+			sealed, err := transfer.SealChannelText(chKey, plain)
+			if err != nil {
+				return "", "", err
+			}
+			return sealed, "", nil
+		}
+	}
+	return plain, "", nil
+}
+
+// sendControlText 发送消息互动控制信封（sys:react: / sys:edit: / sys:pin:，M20）。
+func (c *Client) sendControlText(to, group, ctrlPlain string) error {
+	conn, err := c.connectedConn()
+	if err != nil {
+		return err
+	}
+	wireText, senderPub, err := c.sealOutboundText(to, group, ctrlPlain)
+	if err != nil {
+		return err
+	}
+	payload := protocol.TextPayload{
+		Text:      wireText,
+		SenderPub: senderPub,
+	}
+	if group != "" {
+		_, err = c.sendGroup(conn, protocol.TextMsg, group, payload)
+	} else {
+		_, err = c.sendTo(conn, protocol.TextMsg, to, payload)
+	}
+	return err
 }
 
 func (c *Client) selfIDValue() string {

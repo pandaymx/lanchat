@@ -53,15 +53,10 @@ func (c *Client) CancelFile(transferID string) error {
 // PauseFile 暂停处于 active 状态的传输任务（支持 1:1 与群组任务）。
 func (c *Client) PauseFile(transferID string) error {
 	if g, ok := c.getGroupTask(transferID); ok {
-		g.snapMu.Lock()
-		if g.cached.State != appapi.TransferActive {
-			g.snapMu.Unlock()
-			return errInvalidState
+		cp, err := g.pause()
+		if err != nil {
+			return err
 		}
-		g.cached.State = appapi.TransferPaused
-		g.cached.SpeedBps = 0
-		cp := g.cached
-		g.snapMu.Unlock()
 		c.listener().OnTransferProgress(cp)
 		return nil
 	}
@@ -81,14 +76,10 @@ func (c *Client) PauseFile(transferID string) error {
 // ResumeFile 恢复处于 paused 状态的传输任务（支持 1:1 与群组任务）。
 func (c *Client) ResumeFile(transferID string) error {
 	if g, ok := c.getGroupTask(transferID); ok {
-		g.snapMu.Lock()
-		if g.cached.State != appapi.TransferPaused {
-			g.snapMu.Unlock()
-			return errInvalidState
+		cp, err := g.resume()
+		if err != nil {
+			return err
 		}
-		g.cached.State = appapi.TransferActive
-		cp := g.cached
-		g.snapMu.Unlock()
 		c.listener().OnTransferProgress(cp)
 		return nil
 	}
@@ -108,13 +99,22 @@ func (c *Client) ResumeFile(transferID string) error {
 // ChannelCreate 创建 G2 自定义频道。服务器创建后会下发 CHANNEL_LIST，
 // 频道 ID 通过 OnChannelUpdated 事件获得，故此处返回空字符串。
 func (c *Client) ChannelCreate(name, topic string, private bool) (string, error) {
-	if strings.TrimSpace(name) == "" {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
 		return "", errEmptyText
 	}
 	conn, err := c.connectedConn()
 	if err != nil {
 		return "", err
 	}
+	c.mu.Lock()
+	c.desiredChannels["pending:"+trimmedName] = desiredChannel{
+		Name:        trimmedName,
+		Topic:       strings.TrimSpace(topic),
+		Private:     private,
+		CreatedByMe: true,
+	}
+	c.mu.Unlock()
 	if _, err := c.sendTo(conn, protocol.ChannelCreate, "", protocol.ChannelCreatePayload{
 		Name: name, Topic: topic, Private: private,
 	}); err != nil {
@@ -132,6 +132,16 @@ func (c *Client) ChannelJoin(channelID string) error {
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	if ch, ok := c.channels[channelID]; ok && !ch.Private {
+		c.desiredChannels[channelID] = desiredChannel{
+			ID:      ch.ID,
+			Name:    ch.Name,
+			Topic:   ch.Topic,
+			Private: ch.Private,
+		}
+	}
+	c.mu.Unlock()
 	_, err = c.sendTo(conn, protocol.ChannelJoin, "", protocol.ChannelJoinPayload{
 		ChannelID: channelID,
 	})
@@ -162,6 +172,14 @@ func (c *Client) ChannelLeave(channelID string) error {
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	delete(c.desiredChannels, channelID)
+	for k, dc := range c.desiredChannels {
+		if dc.ID == channelID {
+			delete(c.desiredChannels, k)
+		}
+	}
+	c.mu.Unlock()
 	_, err = c.sendTo(conn, protocol.ChannelLeave, "", protocol.ChannelLeavePayload{
 		ChannelID: channelID,
 	})

@@ -1,13 +1,25 @@
 package core
 
 import (
+	"strings"
+
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
+	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
 // toPeer 协议 User → appapi.Peer。
 func toPeer(u protocol.User) appapi.Peer {
 	return appapi.Peer{ID: u.ID, Nickname: u.Nickname, OS: u.OS, Status: u.Status}
+}
+
+func containsMember(members []string, id string) bool {
+	for _, m := range members {
+		if m == id {
+			return true
+		}
+	}
+	return false
 }
 
 // applyUserList 用全量在线表替换 peers；重连后 UI 依赖 join 事件重建视图，
@@ -52,9 +64,11 @@ func (c *Client) applyUserList(env *protocol.Envelope) {
 	for _, id := range left {
 		l.OnPeerLeft(id)
 	}
+	c.distributePendingChannelKeys()
 }
 
-// applyChannelList 用服务器下发的全量频道表替换本地缓存并通知 UI。
+// applyChannelList 用服务器下发的全量频道表替换本地缓存并通知 UI；
+// 同时执行 M18 断线/切主频道自愈与 M19 频道群密钥派生及 ECDH 自动分发。
 func (c *Client) applyChannelList(in []protocol.Channel) {
 	next := make(map[string]appapi.Channel, len(in))
 	for _, ch := range in {
@@ -63,14 +77,168 @@ func (c *Client) applyChannelList(in []protocol.Channel) {
 			Private: ch.Private, Topic: ch.Topic, Members: ch.Members,
 		}
 	}
+
 	c.mu.Lock()
+	selfID := c.selfID
 	c.channels = next
+
+	for _, ch := range next {
+		pendingKey := "pending:" + strings.TrimSpace(ch.Name)
+		if pendingDC, ok := c.desiredChannels[pendingKey]; ok {
+			delete(c.desiredChannels, pendingKey)
+			c.desiredChannels[ch.ID] = desiredChannel{
+				ID:          ch.ID,
+				Name:        ch.Name,
+				Topic:       ch.Topic,
+				Private:     ch.Private,
+				CreatedByMe: pendingDC.CreatedByMe || ch.OwnerID == selfID,
+			}
+		}
+		if ch.OwnerID == selfID || containsMember(ch.Members, selfID) {
+			prev := c.desiredChannels[ch.ID]
+			c.desiredChannels[ch.ID] = desiredChannel{
+				ID:          ch.ID,
+				Name:        ch.Name,
+				Topic:       ch.Topic,
+				Private:     ch.Private,
+				CreatedByMe: prev.CreatedByMe || ch.OwnerID == selfID,
+			}
+		}
+		if ch.OwnerID == selfID && c.identityPriv != nil && c.channelKeys[ch.ID] == "" {
+			if k, err := transfer.DeriveChannelKey(c.identityPriv, ch.ID); err == nil && k != "" {
+				c.channelKeys[ch.ID] = k
+			}
+		}
+	}
+
+	var rejoinIDs []string
+	var recreateList []desiredChannel
+	for key, dc := range c.desiredChannels {
+		if strings.HasPrefix(key, "pending:") {
+			continue
+		}
+		if ch, exists := next[dc.ID]; exists {
+			if !containsMember(ch.Members, selfID) && !ch.Private {
+				rejoinIDs = append(rejoinIDs, dc.ID)
+			}
+			continue
+		}
+		// 原频道 ID 在当前服务器上不存在（如服务端重启或 M14 房主切换），尝试按同名匹配或由创建者自动重建。
+		var matched *appapi.Channel
+		for _, cand := range next {
+			if cand.Name == dc.Name {
+				cp := cand
+				matched = &cp
+				break
+			}
+		}
+		if matched != nil {
+			delete(c.desiredChannels, key)
+			dc.ID = matched.ID
+			c.desiredChannels[matched.ID] = dc
+			if !containsMember(matched.Members, selfID) && !matched.Private {
+				rejoinIDs = append(rejoinIDs, matched.ID)
+			}
+		} else if dc.CreatedByMe && dc.Name != "" {
+			delete(c.desiredChannels, key)
+			c.desiredChannels["pending:"+dc.Name] = dc
+			recreateList = append(recreateList, dc)
+		}
+	}
+
 	snapshot := make([]appapi.Channel, 0, len(next))
 	for _, ch := range next {
 		snapshot = append(snapshot, ch)
 	}
 	c.mu.Unlock()
+
 	c.listener().OnChannelUpdated(snapshot)
+
+	if conn, err := c.connectedConn(); err == nil {
+		for _, chID := range rejoinIDs {
+			_, _ = c.sendTo(conn, protocol.ChannelJoin, "", protocol.ChannelJoinPayload{ChannelID: chID})
+		}
+		for _, dc := range recreateList {
+			_, _ = c.sendTo(conn, protocol.ChannelCreate, "", protocol.ChannelCreatePayload{
+				Name: dc.Name, Topic: dc.Topic, Private: dc.Private,
+			})
+		}
+	}
+	c.distributePendingChannelKeys()
+}
+
+type pendingKeyGrant struct {
+	memberID string
+	peerPub  string
+	chID     string
+	chKey    string
+}
+
+// distributePendingChannelKeys 由频道 Owner 将频道对称密钥通过 M15 X25519 ECDH 单播分发给尚未拿到密钥的成员（M19）。
+func (c *Client) distributePendingChannelKeys() {
+	c.mu.Lock()
+	selfID := c.selfID
+	idPriv := c.identityPriv
+	idPub := c.identityPub
+	if selfID == "" || idPriv == nil {
+		c.mu.Unlock()
+		return
+	}
+	var grants []pendingKeyGrant
+	for _, ch := range c.channels {
+		if ch.OwnerID != selfID {
+			continue
+		}
+		chKey := c.channelKeys[ch.ID]
+		if chKey == "" {
+			if derived, err := transfer.DeriveChannelKey(idPriv, ch.ID); err == nil && derived != "" {
+				chKey = derived
+				c.channelKeys[ch.ID] = chKey
+			}
+		}
+		if chKey == "" {
+			continue
+		}
+		if c.channelKeySent[ch.ID] == nil {
+			c.channelKeySent[ch.ID] = map[string]bool{}
+		}
+		for _, memberID := range ch.Members {
+			if memberID == "" || memberID == selfID || c.channelKeySent[ch.ID][memberID] {
+				continue
+			}
+			peerPub := c.peerPubs[memberID]
+			if peerPub == "" {
+				continue
+			}
+			c.channelKeySent[ch.ID][memberID] = true
+			grants = append(grants, pendingKeyGrant{
+				memberID: memberID,
+				peerPub:  peerPub,
+				chID:     ch.ID,
+				chKey:    chKey,
+			})
+		}
+	}
+	c.mu.Unlock()
+
+	if len(grants) == 0 {
+		return
+	}
+	conn, err := c.connectedConn()
+	if err != nil {
+		return
+	}
+	for _, g := range grants {
+		ctrlPlain := "sys:chkey:" + g.chID + ":" + g.chKey
+		sealed, err := transfer.SealECDHText(idPriv, g.peerPub, ctrlPlain)
+		if err != nil {
+			continue
+		}
+		_, _ = c.sendTo(conn, protocol.TextMsg, g.memberID, protocol.TextPayload{
+			Text:      sealed,
+			SenderPub: idPub,
+		})
+	}
 }
 
 // applyJoin 增量上线。
@@ -91,6 +259,7 @@ func (c *Client) applyJoin(env *protocol.Envelope) {
 	peer := c.peers[p.User.ID]
 	c.mu.Unlock()
 	c.listener().OnPeerJoined(peer)
+	c.distributePendingChannelKeys()
 }
 
 // applyLeave 增量下线。
@@ -105,6 +274,9 @@ func (c *Client) applyLeave(env *protocol.Envelope) {
 		return
 	}
 	delete(c.peers, p.User.ID)
+	for _, sentMap := range c.channelKeySent {
+		delete(sentMap, p.User.ID)
+	}
 	c.mu.Unlock()
 	c.listener().OnPeerLeft(p.User.ID)
 }
@@ -127,4 +299,5 @@ func (c *Client) applyPresence(env *protocol.Envelope) {
 	peer := c.peers[p.User.ID]
 	c.mu.Unlock()
 	c.listener().OnPeerJoined(peer)
+	c.distributePendingChannelKeys()
 }

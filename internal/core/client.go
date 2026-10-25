@@ -53,10 +53,13 @@ type Client struct {
 	autoMode     bool
 	embeddedStop context.CancelFunc
 
-	peers      map[string]appapi.Peer
-	transfers  map[string]*transferTask
-	groupTasks map[string]*groupTask
-	channels   map[string]appapi.Channel
+	peers           map[string]appapi.Peer
+	transfers       map[string]*transferTask
+	groupTasks      map[string]*groupTask
+	channels        map[string]appapi.Channel
+	desiredChannels map[string]desiredChannel
+	channelKeys     map[string]string
+	channelKeySent  map[string]map[string]bool
 
 	browser *discover.Browser
 
@@ -103,24 +106,27 @@ func New(opts Options) *Client {
 	}
 	deviceID, idPriv, idPub := loadOrCreateIdentity(opts.DownloadDir)
 	c := &Client{
-		connState:    appapi.ConnDisconnected,
-		nickname:     nick,
-		os:           opts.OS,
-		downloadDir:  opts.DownloadDir,
-		history:      newHistoryStore(opts.DownloadDir),
-		e2eeKey:      strings.TrimSpace(os.Getenv("LANCHAT_E2EE_KEY")),
-		deviceID:     deviceID,
-		identityPriv: idPriv,
-		identityPub:  idPub,
-		peerPubs:     map[string]string{},
-		heartbeat:    protocol.HeartbeatIntervalSec,
-		peers:        map[string]appapi.Peer{},
-		transfers:    map[string]*transferTask{},
-		groupTasks:   map[string]*groupTask{},
-		channels:     map[string]appapi.Channel{},
-		cb:           opts.Listener,
-		runCtx:       runCtx,
-		stopRun:      cancel,
+		connState:       appapi.ConnDisconnected,
+		nickname:        nick,
+		os:              opts.OS,
+		downloadDir:     opts.DownloadDir,
+		history:         newHistoryStore(opts.DownloadDir),
+		e2eeKey:         strings.TrimSpace(os.Getenv("LANCHAT_E2EE_KEY")),
+		deviceID:        deviceID,
+		identityPriv:    idPriv,
+		identityPub:     idPub,
+		peerPubs:        map[string]string{},
+		heartbeat:       protocol.HeartbeatIntervalSec,
+		peers:           map[string]appapi.Peer{},
+		transfers:       map[string]*transferTask{},
+		groupTasks:      map[string]*groupTask{},
+		channels:        map[string]appapi.Channel{},
+		desiredChannels: map[string]desiredChannel{},
+		channelKeys:     map[string]string{},
+		channelKeySent:  map[string]map[string]bool{},
+		cb:              opts.Listener,
+		runCtx:          runCtx,
+		stopRun:         cancel,
 	}
 	return c
 }

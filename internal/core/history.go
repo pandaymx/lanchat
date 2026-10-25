@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
+	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
 const (
@@ -20,13 +21,16 @@ const (
 
 // historyStore 维护内存环形缓冲与可选的本地 JSONL 聊天历史文件（零 CGO）。
 type historyStore struct {
-	mu   sync.Mutex
-	dir  string
-	msgs []appapi.ChatMessage
+	mu        sync.Mutex
+	dir       string
+	msgs      []appapi.ChatMessage
+	rawCipher map[string]string
 }
 
 func newHistoryStore(dir string) *historyStore {
-	h := &historyStore{}
+	h := &historyStore{
+		rawCipher: make(map[string]string),
+	}
 	if dir != "" {
 		h.setDir(dir)
 	}
@@ -160,6 +164,120 @@ func (h *historyStore) markRead(msgID, readerID string) (appapi.ChatMessage, boo
 			}
 		}
 		h.msgs[i].ReadBy = append(h.msgs[i].ReadBy, readerID)
+		updated := h.msgs[i]
+		h.persistLocked(updated)
+		return updated, true
+	}
+	return appapi.ChatMessage{}, false
+}
+
+// storePendingCipher 记录尚未收到频道密钥时的原始密文，供密钥到达后回溯解密（M19）。
+func (h *historyStore) storePendingCipher(msgID, wire string) {
+	if msgID == "" || wire == "" {
+		return
+	}
+	h.mu.Lock()
+	if h.rawCipher == nil {
+		h.rawCipher = make(map[string]string)
+	}
+	h.rawCipher[msgID] = wire
+	h.mu.Unlock()
+}
+
+// decryptChannelPending 在收到频道对称密钥后，回溯解密该频道已入库的历史加密消息（M19）。
+func (h *historyStore) decryptChannelPending(channelID, chKey string) []appapi.ChatMessage {
+	if channelID == "" || chKey == "" {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var updated []appapi.ChatMessage
+	for i := range h.msgs {
+		if h.msgs[i].Group != channelID {
+			continue
+		}
+		wire := h.rawCipher[h.msgs[i].ID]
+		if wire == "" && strings.HasPrefix(h.msgs[i].Text, transfer.TextChannelPrefix) {
+			wire = h.msgs[i].Text
+		}
+		if wire == "" {
+			continue
+		}
+		if plain, err := transfer.OpenChannelText(chKey, wire); err == nil {
+			h.msgs[i].Text = plain
+			delete(h.rawCipher, h.msgs[i].ID)
+			cp := h.msgs[i]
+			h.persistLocked(cp)
+			updated = append(updated, cp)
+		}
+	}
+	return updated
+}
+
+// react 为指定消息添加表情回应并持久化（M20）。
+func (h *historyStore) react(msgID, emoji string) (appapi.ChatMessage, bool) {
+	emoji = strings.TrimSpace(emoji)
+	if msgID == "" || emoji == "" {
+		return appapi.ChatMessage{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	badge := "[" + emoji + "]"
+	for i := range h.msgs {
+		if h.msgs[i].ID != msgID || h.msgs[i].Revoked {
+			continue
+		}
+		if !strings.Contains(h.msgs[i].Text, badge) {
+			h.msgs[i].Text = h.msgs[i].Text + " " + badge
+		}
+		updated := h.msgs[i]
+		h.persistLocked(updated)
+		return updated, true
+	}
+	return appapi.ChatMessage{}, false
+}
+
+// edit 原地修改指定消息文本（校验发送者，保留置顶前缀，M20）。
+func (h *historyStore) edit(msgID, actorID, newText string) (appapi.ChatMessage, bool) {
+	newText = strings.TrimSpace(newText)
+	if msgID == "" || newText == "" {
+		return appapi.ChatMessage{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.msgs {
+		if h.msgs[i].ID != msgID || h.msgs[i].Revoked {
+			continue
+		}
+		if actorID != "" && h.msgs[i].From != "" && h.msgs[i].From != actorID {
+			return appapi.ChatMessage{}, false
+		}
+		prefix := ""
+		if strings.HasPrefix(h.msgs[i].Text, "📌 [置顶] ") {
+			prefix = "📌 [置顶] "
+		}
+		h.msgs[i].Text = prefix + newText + " (已编辑)"
+		updated := h.msgs[i]
+		h.persistLocked(updated)
+		return updated, true
+	}
+	return appapi.ChatMessage{}, false
+}
+
+// pin 将指定消息标记为置顶公告并持久化（M20）。
+func (h *historyStore) pin(msgID string) (appapi.ChatMessage, bool) {
+	if msgID == "" {
+		return appapi.ChatMessage{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.msgs {
+		if h.msgs[i].ID != msgID || h.msgs[i].Revoked {
+			continue
+		}
+		if !strings.HasPrefix(h.msgs[i].Text, "📌 [置顶] ") {
+			h.msgs[i].Text = "📌 [置顶] " + h.msgs[i].Text
+		}
 		updated := h.msgs[i]
 		h.persistLocked(updated)
 		return updated, true

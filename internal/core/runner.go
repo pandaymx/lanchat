@@ -394,7 +394,7 @@ func (c *Client) runInbound(t *transferTask, conn *websocket.Conn, destPath stri
 
 // inboundRelayRequest 接收方发起中继请求，收到 grant 后生成并回传文件密钥。
 func (c *Client) inboundRelayRequest(t *transferTask, conn *websocket.Conn) error {
-	req, err := c.sendTo(conn, protocol.RelayRequest, "", protocol.RelayRequestPayload{
+	env, err := buildEnvelope(protocol.RelayRequest, protocol.RelayRequestPayload{
 		TransferID: t.snap.ID,
 		PeerID:     t.snap.PeerID,
 	})
@@ -402,8 +402,11 @@ func (c *Client) inboundRelayRequest(t *transferTask, conn *websocket.Conn) erro
 		return err
 	}
 	t.mu.Lock()
-	t.relayRequest = req.ID
+	t.relayRequest = env.ID
 	t.mu.Unlock()
+	if err := c.writeJSON(conn, env); err != nil {
+		return err
+	}
 
 	sig, st := c.await(t, protocol.RelayGrant, protocol.Error, protocol.MsgAck)
 	if st == statusCanceled {

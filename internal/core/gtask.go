@@ -45,9 +45,10 @@ type groupTask struct {
 	tok  map[string]string
 	bm   map[string][]byte
 
-	// doneIDs 已收齐的成员；completed 为本机是否完成（接收方）。
+	// doneIDs 已收齐的成员；completed 为本机是否完成（接收方）；paused 为真实流控暂停标志（M21）。
 	doneIDs   map[string]bool
 	completed bool
+	paused    bool
 
 	// relay[peer] 记录到该成员的块连接是否经中继（供 ViaRelay 徽章）。
 	relay map[string]bool
@@ -73,6 +74,8 @@ const (
 	evBlock
 	evProgress
 	evDown
+	evPause
+	evResume
 )
 
 func newSourceGroupTask(cli *Client, groupID, id, name string, size int64, sha string, src *fileBlockSource, fileKey []byte) *groupTask {
@@ -115,8 +118,44 @@ func (g *groupTask) run() {
 			g.handleProgress(ev)
 		case evDown:
 			g.handleDown(ev)
+		case evPause:
+			g.paused = true
+		case evResume:
+			if g.paused {
+				g.paused = false
+				g.rebuild()
+			}
 		}
 	}
+}
+
+// pause 暂停群组文件任务并向 actor 发送流控暂停信号（M21）。
+func (g *groupTask) pause() (appapi.Transfer, error) {
+	g.snapMu.Lock()
+	if g.cached.State != appapi.TransferActive {
+		g.snapMu.Unlock()
+		return appapi.Transfer{}, errInvalidState
+	}
+	g.cached.State = appapi.TransferPaused
+	g.cached.SpeedBps = 0
+	cp := g.cached
+	g.snapMu.Unlock()
+	g.post(groupEvent{kind: evPause})
+	return cp, nil
+}
+
+// resume 恢复群组文件任务并向 actor 发送流控恢复信号（M21）。
+func (g *groupTask) resume() (appapi.Transfer, error) {
+	g.snapMu.Lock()
+	if g.cached.State != appapi.TransferPaused {
+		g.snapMu.Unlock()
+		return appapi.Transfer{}, errInvalidState
+	}
+	g.cached.State = appapi.TransferActive
+	cp := g.cached
+	g.snapMu.Unlock()
+	g.post(groupEvent{kind: evResume})
+	return cp, nil
 }
 
 func (g *groupTask) stop() {
@@ -233,6 +272,9 @@ func (g *groupTask) handleBlock(ev groupEvent) {
 	}
 	if ev.frame == protocol.FrameBitfield && len(ev.payload) >= 4 {
 		g.bm[ev.from] = ev.payload[4:]
+	}
+	if g.paused {
+		return
 	}
 	g.swarm.HandleMsg(group.Msg{From: ev.from, Frame: ev.frame, Payload: ev.payload})
 	g.afterSwarmMsg()

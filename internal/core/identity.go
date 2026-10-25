@@ -22,6 +22,15 @@ type persistedIdentity struct {
 	PublicKey  string `json:"publicKey"`
 }
 
+// desiredChannel 记录本机创建或加入的 G2 频道意图，供断线重连或 M14 房主切换后自愈（M18）。
+type desiredChannel struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Topic       string `json:"topic"`
+	Private     bool   `json:"private"`
+	CreatedByMe bool   `json:"createdByMe"`
+}
+
 // loadOrCreateIdentity 从 dir 加载或新建持久化 X25519 身份密钥（M15）。
 // 当 dir 为空时，在内存中生成独立密钥对，保证无目录单测实例互不冲突。
 func loadOrCreateIdentity(dir string) (deviceID string, priv *ecdh.PrivateKey, pubB64 string) {
@@ -107,4 +116,33 @@ func (c *Client) PeerFingerprint(peerID string) string {
 		return ""
 	}
 	return IdentityFingerprint(pub)
+}
+
+// setChannelKey 记录指定 G2 频道的对称加密密钥（M19）。
+func (c *Client) setChannelKey(channelID, keyB64 string) {
+	if channelID == "" || keyB64 == "" {
+		return
+	}
+	c.mu.Lock()
+	c.channelKeys[channelID] = keyB64
+	c.mu.Unlock()
+}
+
+// ensureChannelKey 获取或派生指定 G2 频道的对称加密密钥（M19）。
+func (c *Client) ensureChannelKey(channelID string) string {
+	if channelID == "" {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if k := c.channelKeys[channelID]; k != "" {
+		return k
+	}
+	if ch, ok := c.channels[channelID]; ok && ch.OwnerID == c.selfID && c.identityPriv != nil {
+		if k, err := transfer.DeriveChannelKey(c.identityPriv, channelID); err == nil && k != "" {
+			c.channelKeys[channelID] = k
+			return k
+		}
+	}
+	return ""
 }

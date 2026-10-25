@@ -45,6 +45,7 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			return
 		}
 		text := p.Text
+		var pendingChannelCipher string
 		if strings.HasPrefix(text, transfer.TextE2EEPrefix) {
 			c.mu.Lock()
 			e2eeSecret := c.e2eeKey
@@ -68,6 +69,23 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			} else {
 				text = "[加密消息] 无法验证对端 X25519 密钥"
 			}
+		} else if strings.HasPrefix(text, transfer.TextChannelPrefix) {
+			chKey := c.ensureChannelKey(env.Group)
+			if plain, err := transfer.OpenChannelText(chKey, text); err == nil {
+				text = plain
+			} else {
+				pendingChannelCipher = text
+				text = "[频道加密消息] 正在同步频道密钥..."
+			}
+		}
+
+		// 处理控制类指令（M19 频道密钥分发 / M20 表情回应、编辑、置顶）。
+		if c.handleInboundControlText(env, text) {
+			return
+		}
+
+		if pendingChannelCipher != "" {
+			c.history.storePendingCipher(env.ID, pendingChannelCipher)
 		}
 		if c.history.append(appapi.ChatMessage{
 			ID:       env.ID,
@@ -172,6 +190,62 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			c.routeToTransfer(env)
 		}
 	}
+}
+
+// handleInboundControlText 解析并执行加密通道内的控制指令（M19 频道密钥 / M20 消息互动）。
+func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) bool {
+	switch {
+	case strings.HasPrefix(text, "sys:chkey:"):
+		rest := strings.TrimPrefix(text, "sys:chkey:")
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			chID, chKey := parts[0], parts[1]
+			c.setChannelKey(chID, chKey)
+			for _, m := range c.history.decryptChannelPending(chID, chKey) {
+				if c.handleInboundControlText(&protocol.Envelope{
+					ID:    m.ID,
+					From:  m.From,
+					To:    m.To,
+					Group: m.Group,
+					TS:    m.TS,
+				}, m.Text) {
+					continue
+				}
+				c.listener().OnMessageReceived(m.From, m.Group, m.ID, "MSG_EDIT", m.Text)
+			}
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:react:"):
+		rest := strings.TrimPrefix(text, "sys:react:")
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			if updated, ok := c.history.react(parts[0], parts[1]); ok {
+				c.listener().OnMessageReceived(env.From, env.Group, parts[0], "MSG_REACT", updated.Text)
+			}
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:edit:"):
+		rest := strings.TrimPrefix(text, "sys:edit:")
+		parts := strings.SplitN(rest, ":", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			if updated, ok := c.history.edit(parts[0], env.From, parts[1]); ok {
+				c.listener().OnMessageReceived(env.From, env.Group, parts[0], "MSG_EDIT", updated.Text)
+			}
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:pin:"):
+		targetID := strings.TrimSpace(strings.TrimPrefix(text, "sys:pin:"))
+		if targetID != "" {
+			if updated, ok := c.history.pin(targetID); ok {
+				c.listener().OnMessageReceived(env.From, env.Group, targetID, "MSG_PIN", updated.Text)
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // isTransferSignal 判定是否为应路由到任务的文件 / 中继信令。

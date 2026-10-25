@@ -87,10 +87,15 @@ func (c *Client) Connect(addr, psk string) error {
 	c.gen++
 	gen := c.gen
 	c.heartbeat = int(s.heartbeat / time.Second)
+	c.channelKeySent = map[string]map[string]bool{}
+	hasDesiredChannels := len(c.desiredChannels) > 0
 	c.mu.Unlock()
 
 	c.listener().OnConnChanged(appapi.ConnConnected, "")
 	go c.watch(gen, s, time.Second)
+	if hasDesiredChannels {
+		_, _ = c.sendTo(s.conn, protocol.ChannelList, "", nil)
+	}
 	return nil
 }
 
@@ -213,13 +218,15 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 	pumpErr := make(chan error, 1)
 	go func() { pumpErr <- c.readPump(gen, s.conn) }()
 
+	hbCtx, cancelHB := context.WithCancel(c.runCtx)
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
-		c.heartbeatLoop(gen, s.conn, s.heartbeat)
+		c.heartbeatLoop(hbCtx, gen, s.conn, s.heartbeat)
 	}()
 
 	err := <-pumpErr
+	cancelHB()
 	_ = s.conn.Close(websocket.StatusNormalClosure, "")
 	<-heartbeatDone
 
@@ -296,8 +303,13 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 	c.gen++
 	newGen := c.gen
 	c.heartbeat = int(ns.heartbeat / time.Second)
+	c.channelKeySent = map[string]map[string]bool{}
+	hasDesiredChannels := len(c.desiredChannels) > 0
 	c.mu.Unlock()
 	c.listener().OnConnChanged(appapi.ConnConnected, "")
+	if hasDesiredChannels {
+		_, _ = c.sendTo(ns.conn, protocol.ChannelList, "", nil)
+	}
 
 	next := backoff * 2
 	if next > maxBackoff {
@@ -306,14 +318,14 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 	c.watch(newGen, ns, next)
 }
 
-// heartbeatLoop 周期发送 HEARTBEAT；发送失败静默退出（收泵会感知断连）。
-func (c *Client) heartbeatLoop(gen uint64, conn *websocket.Conn, interval time.Duration) {
+// heartbeatLoop 周期发送 HEARTBEAT；发送失败或连接断开时立即退出。
+func (c *Client) heartbeatLoop(ctx context.Context, gen uint64, conn *websocket.Conn, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	_ = c.sendHeartbeat(conn)
 	for {
 		select {
-		case <-c.runCtx.Done():
+		case <-ctx.Done():
 			return
 		case <-t.C:
 			c.mu.Lock()

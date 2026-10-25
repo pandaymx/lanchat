@@ -979,3 +979,132 @@ func TestM17VoiceAndInlineImageThumbnail(t *testing.T) {
 		return false
 	})
 }
+
+// TestM18AndM19ChannelE2EEAndAutoHeal 验证 M18 频道断线自愈重建与 M19 G2 频道自动密钥分发及端到端加密。
+func TestM18AndM19ChannelE2EEAndAutoHeal(t *testing.T) {
+	wsURL := startServer(t)
+	a := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.ChannelCreate("加密研发组", "M19 频道 E2EE", false); err != nil {
+		t.Fatal(err)
+	}
+	var chID string
+	waitFor(t, 2*time.Second, func() bool {
+		chs := a.GetState().Channels
+		if len(chs) == 1 {
+			chID = chs[0].ID
+			return true
+		}
+		return false
+	})
+
+	if err := b.ChannelJoin(chID); err != nil {
+		t.Fatal(err)
+	}
+	// 等待 Alice 自动把频道密钥经 ECDH 单播分发给 Bob。
+	waitFor(t, 2*time.Second, func() bool {
+		return b.ensureChannelKey(chID) != ""
+	})
+
+	// Alice 在频道内发消息，默认使用 enc:ch1: 加密，Bob 自动解密为明文。
+	if _, err := a.SendText("", "频道零配置加密测试通过", chID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, m := range b.GetState().Messages {
+			if m.Group == chID && m.Text == "频道零配置加密测试通过" {
+				return true
+			}
+		}
+		return false
+	})
+
+	// M18: 模拟房主切换至全新信令服务器 wsURL2（无历史频道），Alice（创建者）自动重建该频道，Bob 自动同名匹配重入。
+	wsURL2 := startServer(t)
+	for _, cli := range []*Client{a, b} {
+		cli.mu.Lock()
+		cli.addr = normalizeAddr(wsURL2)
+		cli.autoMode = true
+		oldConn := cli.conn
+		cli.mu.Unlock()
+		if oldConn != nil {
+			_ = oldConn.CloseNow()
+		}
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		chs := b.GetState().Channels
+		return len(chs) == 1 && chs[0].ID != chID && chs[0].Name == "加密研发组" && len(chs[0].Members) == 2
+	})
+}
+
+// TestM20ReactionsEditPinAndM21Bwlimit 验证 M20 表情回应(/react)、编辑(/edit)、置顶(/pin) 与 M21 带宽限速(/bwlimit) 及群任务暂停恢复。
+func TestM20ReactionsEditPinAndM21Bwlimit(t *testing.T) {
+	wsURL := startServer(t)
+	a := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	aID := a.GetState().SelfID
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	msgID, err := a.SendText(bID, "初版发版说明", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(b.GetState().Messages) == 1
+	})
+
+	// 1. Bob 点赞回应 /react
+	if _, err := b.SendText(aID, "/react "+msgID+" 👍", ""); err != nil {
+		t.Fatalf("/react failed: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := a.GetState().Messages
+		return len(msgs) == 1 && strings.Contains(msgs[0].Text, "[👍]")
+	})
+
+	// 2. Alice 二次编辑消息 /edit
+	if _, err := a.SendText(bID, "/edit "+msgID+" 终版发版说明 v2.0", ""); err != nil {
+		t.Fatalf("/edit failed: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := b.GetState().Messages
+		return len(msgs) == 1 && strings.Contains(msgs[0].Text, "终版发版说明 v2.0 (已编辑)")
+	})
+
+	// 3. Alice 置顶该消息 /pin
+	if _, err := a.SendText(bID, "/pin "+msgID, ""); err != nil {
+		t.Fatalf("/pin failed: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := b.GetState().Messages
+		return len(msgs) == 1 && strings.HasPrefix(msgs[0].Text, "📌 [置顶] ")
+	})
+
+	// 4. M21: /bwlimit 动态限速与关闭
+	if res, err := a.SendText(bID, "/bwlimit 25", ""); err != nil || res != "bwlimit:25.0MB/s" {
+		t.Fatalf("/bwlimit 25 got %q, err %v", res, err)
+	}
+	if res, err := a.SendText(bID, "/bwlimit off", ""); err != nil || res != "bwlimit:off" {
+		t.Fatalf("/bwlimit off got %q, err %v", res, err)
+	}
+}

@@ -37,11 +37,29 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		return targetID, nil
 	}
+	var explicitReplyTo string
+	if strings.HasPrefix(trimmed, "/reply ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/reply "))
+		parts := strings.SplitN(rest, " ", 2)
+		if len(parts) < 2 || strings.TrimSpace(parts[1]) == "" {
+			return "", errEmptyText
+		}
+		explicitReplyTo = strings.TrimSpace(parts[0])
+		body := strings.TrimSpace(parts[1])
+		if orig, ok := c.history.findByID(explicitReplyTo); ok && !orig.Revoked {
+			text = "「" + orig.Text + "」\n" + body
+		} else {
+			text = "[re:" + explicitReplyTo + "] " + body
+		}
+	}
 	conn, err := c.connectedConn()
 	if err != nil {
 		return "", err
 	}
 	replyTo, mentions := extractMentionsAndReply(text)
+	if explicitReplyTo != "" {
+		replyTo = explicitReplyTo
+	}
 	payload := protocol.TextPayload{
 		Text:     text,
 		ReplyTo:  replyTo,

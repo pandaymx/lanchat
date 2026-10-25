@@ -189,6 +189,20 @@ func (h *historyStore) search(query, convID string) []appapi.ChatMessage {
 	return out
 }
 
+func (h *historyStore) findByID(msgID string) (appapi.ChatMessage, bool) {
+	if msgID == "" {
+		return appapi.ChatMessage{}, false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, m := range h.msgs {
+		if m.ID == msgID {
+			return m, true
+		}
+	}
+	return appapi.ChatMessage{}, false
+}
+
 func (h *historyStore) snapshot() []appapi.ChatMessage {
 	h.mu.Lock()
 	defer h.mu.Unlock()

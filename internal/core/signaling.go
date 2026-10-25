@@ -10,7 +10,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
+	"github.com/pandaymx/lanchat/internal/config"
 	"github.com/pandaymx/lanchat/internal/protocol"
+	"github.com/pandaymx/lanchat/internal/server"
 )
 
 // session 是一次信令连接（含其自动重连生命周期）。
@@ -20,9 +22,18 @@ type session struct {
 }
 
 // Connect 拨号并完成 HELLO/WELCOME 握手；成功后常驻收泵，断线自动重连。
+// 当 addr 为 "auto" 或 "local" 时（M13 无中心自举模式），自动在本地拉起内嵌信令服务器并接入。
 func (c *Client) Connect(addr, psk string) error {
-	if strings.TrimSpace(addr) == "" {
+	trimmedAddr := strings.TrimSpace(addr)
+	if trimmedAddr == "" {
 		return errEmptyAddress
+	}
+	if strings.EqualFold(trimmedAddr, "auto") || strings.EqualFold(trimmedAddr, "local") {
+		bootAddr, err := c.startEmbeddedServer(psk)
+		if err != nil {
+			return err
+		}
+		addr = bootAddr
 	}
 
 	c.mu.Lock()
@@ -271,6 +282,41 @@ func normalizeAddr(addr string) string {
 		return addr
 	}
 	return "ws://" + addr
+}
+
+// startEmbeddedServer 在本机随机端口启动内嵌信令与中继服务器，随 c.runCtx 生命周期自动关停。
+func (c *Client) startEmbeddedServer(psk string) (string, error) {
+	authMode := "none"
+	var pskHash string
+	if psk != "" {
+		h, err := config.HashPSK(psk)
+		if err != nil {
+			return "", err
+		}
+		authMode = "psk"
+		pskHash = h
+	}
+	srv, err := server.New(server.Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          authMode,
+		PSKHash:           pskHash,
+		HeartbeatInterval: time.Duration(protocol.HeartbeatIntervalSec) * time.Second,
+		IdleTimeout:       60 * time.Second,
+		ShutdownGrace:     time.Second,
+		RelayListen:       "127.0.0.1:0",
+		RelayHost:         "127.0.0.1",
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+	go func() { _ = srv.Serve(c.runCtx) }()
+	select {
+	case <-srv.Ready():
+		return "ws://" + srv.ListenAddr() + "/lanchat", nil
+	case <-c.runCtx.Done():
+		return "", c.runCtx.Err()
+	}
 }
 
 // 防止 uuid 未使用告警（部分文件不直接引用时保持 import 一致）。

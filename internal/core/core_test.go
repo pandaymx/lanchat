@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -681,4 +682,66 @@ func TestM11bDirectoryZipAndClipboardTransfer(t *testing.T) {
 	if _, err := openFileInfo("data:image/png;base64,"); err == nil {
 		t.Fatal("empty clipboard base64 should fail")
 	}
+}
+
+// TestM11cStaticServerDiscovery 验证 M11c 跨网段静态中心节点探测与 BrowseServers 合并。
+func TestM11cStaticServerDiscovery(t *testing.T) {
+	wsURL := startServer(t)
+	t.Setenv("LANCHAT_STATIC_SERVERS", wsURL+",127.0.0.1:1")
+
+	c := New(Options{Nickname: "Alice"})
+	t.Cleanup(c.Close)
+
+	servers := c.BrowseServers()
+	var found bool
+	for _, s := range servers {
+		if strings.HasPrefix(s.ID, "static-") && s.AuthMode == "psk" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected static server in BrowseServers(), got %+v", servers)
+	}
+}
+
+// TestM12AndM13QuoteReplyAndAutoBootstrap 验证 M12 引用回复指令 (/reply) 与 M13 无中心内嵌信令自举 ("auto")。
+func TestM12AndM13QuoteReplyAndAutoBootstrap(t *testing.T) {
+	a := New(Options{Nickname: "Alice"})
+	t.Cleanup(a.Close)
+	if err := a.Connect("auto", testPSK); err != nil {
+		t.Fatalf("Connect(auto) failed: %v", err)
+	}
+
+	b := New(Options{Nickname: "Bob"})
+	t.Cleanup(b.Close)
+	a.mu.Lock()
+	autoAddr := a.addr
+	a.mu.Unlock()
+	if err := b.Connect(autoAddr, testPSK); err != nil {
+		t.Fatalf("Bob connect to auto server failed: %v", err)
+	}
+
+	aID := a.GetState().SelfID
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) >= 1 && len(b.GetState().Peers) >= 1
+	})
+
+	origID, err := a.SendText(bID, "今晚发布 v1.5.0", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(b.GetState().Messages) == 1
+	})
+
+	replyID, err := b.SendText(aID, "/reply "+origID+" 收到，准时上线", "")
+	if err != nil || replyID == "" {
+		t.Fatalf("SendText /reply failed: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := a.GetState().Messages
+		return len(msgs) == 2 && msgs[1].ReplyTo == origID && strings.Contains(msgs[1].Text, "今晚发布 v1.5.0")
+	})
 }

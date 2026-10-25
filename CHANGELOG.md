@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.8.0](https://github.com/pandaymx/lanchat/compare/v1.7.0...v1.8.0) (2026-10-25)
+
+
+### Features
+
+* **core:** add channel E2EE, auto-heal rejoin, reactions, edit, pin, and bwlimit ([02c240f](https://github.com/pandaymx/lanchat/commit/02c240f9849c480f25456d7b00e81933b82bf9a8))
+* **group:** support restoring persisted channel registry state ([317244d](https://github.com/pandaymx/lanchat/commit/317244dcf17d9e942f5454528d1da53272c249ab))
+* **server:** add atomic JSON persistence for offline spool and channel history ([72a27d6](https://github.com/pandaymx/lanchat/commit/72a27d6173aa8cced3c32bb6f7a3bdab335aca0c))
+* **transfer:** add channel E2EE cipher and token-bucket bandwidth limiter ([25540ca](https://github.com/pandaymx/lanchat/commit/25540cad59661caf40feb9ff3b0eb803b4d3ab92))
+* **ui-android:** support message reactions, edit, pin, and bandwidth limit ([bfe2eaf](https://github.com/pandaymx/lanchat/commit/bfe2eafb07d7ec8422df93315a03bb76fad48db1))
+* **ui-ios:** support message reactions, edit, pin, and bandwidth limit ([61c99cb](https://github.com/pandaymx/lanchat/commit/61c99cb3beeb43693b1b0fae0641e3bd8e9f38e6))
+* **ui-linux:** support message reactions, edit, pin, and bandwidth limit ([38f7e7e](https://github.com/pandaymx/lanchat/commit/38f7e7e33c1bbfd7e1cfffccbecec6ede4f8b980))
+* **ui-macos:** support message reactions, edit, pin, and bandwidth limit ([5edae06](https://github.com/pandaymx/lanchat/commit/5edae06eb5dc27f24d53b49735e02d7890dac9c4))
+* **ui-win:** support message reactions, edit, pin, and bandwidth limit ([e2bac40](https://github.com/pandaymx/lanchat/commit/e2bac4042be2cb13aecb08f4846ad132bd6bba65))
+
 ## [1.7.0](https://github.com/pandaymx/lanchat/compare/v1.6.1...v1.7.0) (2026-10-25)
 
 

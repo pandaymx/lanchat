@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.7.0](https://github.com/pandaymx/lanchat/compare/v1.6.1...v1.7.0) (2026-10-25)
+
+
+### Features
+
+* **core:** implement auto-failover, persistent X25519 E2EE, and inline media ([6951d58](https://github.com/pandaymx/lanchat/commit/6951d5872687334a68f6ee270649184e28d3e3b4))
+* **protocol:** add X25519 identity pubKey fields for M15 E2EE ([698041f](https://github.com/pandaymx/lanchat/commit/698041feca90130a7024cc0f0e1d7a2a4cd89bea))
+* **server:** add offline message spool and channel history replay ([d2f01a9](https://github.com/pandaymx/lanchat/commit/d2f01a96fb51a9cdd3a4e613147c65f6d99b9c69))
+* **transfer:** implement X25519 ECDH text encryption primitives ([6ade785](https://github.com/pandaymx/lanchat/commit/6ade785b00e5545546824c8a35ce1ed353be1d6d))
+* **ui-android:** render inline bitmap thumbnails and voice/fingerprint controls ([28eb240](https://github.com/pandaymx/lanchat/commit/28eb240bc427b4c756ffe781a67b9208692ce3af))
+* **ui-ios:** render inline UIImage thumbnails and voice/fingerprint controls ([73262c7](https://github.com/pandaymx/lanchat/commit/73262c777be2d513f3675455efb14de2bc24fc19))
+* **ui-linux:** render inline image thumbnails and voice/fingerprint actions ([c40ffb0](https://github.com/pandaymx/lanchat/commit/c40ffb0643115bf13078bba92713f41e9fd3667c))
+* **ui-macos:** render inline NSImage thumbnails and voice/fingerprint controls ([d677c57](https://github.com/pandaymx/lanchat/commit/d677c570cca9f84dd8d34376818a8f01dc2ea233))
+* **ui-win:** add inline image preview, bubble context menu, and voice/fingerprint tools ([d0da60b](https://github.com/pandaymx/lanchat/commit/d0da60b07e0a50665bb7ca528c874fb4219a5a6e))
+
+
+### Bug Fixes
+
+* **core:** remove unused errEmptyAddress sentinel after M14 auto mode ([0175407](https://github.com/pandaymx/lanchat/commit/0175407c7c5e69c2bf8f4ca5369a9184e40b89d7))
+
 ## [1.6.1](https://github.com/pandaymx/lanchat/compare/v1.5.0...v1.6.1) (2026-10-25)
 
 

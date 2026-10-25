@@ -7,6 +7,7 @@ type HelloPayload struct {
 	Nickname string     `json:"nickname"`
 	DeviceID string     `json:"deviceID"`
 	PSK      string     `json:"psk,omitempty"`
+	PubKey   string     `json:"pubKey,omitempty"`
 	Caps     ClientCaps `json:"caps"`
 	OS       string     `json:"os"`
 }
@@ -47,6 +48,7 @@ type User struct {
 	Nickname string `json:"nickname"`
 	OS       string `json:"os"`
 	Status   string `json:"status,omitempty"`
+	PubKey   string `json:"pubKey,omitempty"`
 }
 
 // UserListPayload 是 USER_LIST 的负载（全量）。
@@ -69,9 +71,10 @@ type HeartbeatPayload struct {
 
 // TextPayload 是 TEXT_MSG 的负载。
 type TextPayload struct {
-	Text     string   `json:"text"`
-	ReplyTo  string   `json:"replyTo,omitempty"`
-	Mentions []string `json:"mentions,omitempty"`
+	Text      string   `json:"text"`
+	ReplyTo   string   `json:"replyTo,omitempty"`
+	Mentions  []string `json:"mentions,omitempty"`
+	SenderPub string   `json:"senderPub,omitempty"`
 }
 
 // StickerPayload 是 STICKER_MSG 的负载。

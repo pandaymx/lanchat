@@ -132,4 +132,10 @@ func TestRemoveOfflineMember(t *testing.T) {
 	if reg.IsMember(id, "bob") {
 		t.Fatal("清理后 bob 仍是成员")
 	}
+
+	reg2 := NewRegistry(&chanSink{})
+	reg2.Restore(reg.List())
+	if len(reg2.List()) != 1 || reg2.List()[0].ID != id {
+		t.Fatalf("Restore failed: %+v", reg2.List())
+	}
 }

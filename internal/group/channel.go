@@ -225,6 +225,34 @@ func (r *Registry) ListMember(memberID string) []ChannelInfo {
 	return out
 }
 
+// Restore 从持久化快照恢复频道注册表状态（M18）。
+func (r *Registry) Restore(in []ChannelInfo) {
+	r.mu.Lock()
+	for _, info := range in {
+		if info.ID == "" || strings.TrimSpace(info.Name) == "" {
+			continue
+		}
+		members := make(map[string]bool, len(info.Members)+1)
+		for _, m := range info.Members {
+			if m != "" {
+				members[m] = true
+			}
+		}
+		if info.OwnerID != "" {
+			members[info.OwnerID] = true
+		}
+		r.channels[info.ID] = &channel{
+			id:      info.ID,
+			name:    strings.TrimSpace(info.Name),
+			ownerID: info.OwnerID,
+			private: info.Private,
+			topic:   strings.TrimSpace(info.Topic),
+			members: members,
+		}
+	}
+	r.mu.Unlock()
+}
+
 // emitChanged 上抛频道列表变化。
 func (r *Registry) emitChanged() {
 	if r.sink != nil {

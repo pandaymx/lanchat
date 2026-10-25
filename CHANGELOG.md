@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/pandaymx/lanchat/compare/v1.6.0...v1.6.1) (2026-10-25)
+
+
+### Bug Fixes
+
+* **ui-ios:** use Section header/footer ViewBuilder overload in CreateChannelView ([598a1c8](https://github.com/pandaymx/lanchat/commit/598a1c894911419738fdccc9178456cc8279f915))
+
 ## [1.6.0](https://github.com/pandaymx/lanchat/compare/v1.5.0...v1.6.0) (2026-10-25)
 
 

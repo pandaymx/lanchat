@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0](https://github.com/pandaymx/lanchat/compare/v1.2.0...v1.3.0) (2026-10-25)
+
+
+### Features
+
+* **core:** support directory auto-zip and clipboard image URI transfers ([158da8f](https://github.com/pandaymx/lanchat/commit/158da8fe220c0eab59e2406285e99239cce494d8))
+* **ui-android:** render message revoke and read receipt states ([ac54512](https://github.com/pandaymx/lanchat/commit/ac54512d423bead5b4fecd839ffecd612a622993))
+* **ui-ios:** render message revoke and read receipt states ([181427f](https://github.com/pandaymx/lanchat/commit/181427f60921c78881fb9989df2f0dd6c9aca572))
+* **ui-linux:** render message revoke and read receipt states ([4d9ffb8](https://github.com/pandaymx/lanchat/commit/4d9ffb8e63b4cb8c0083b3756884a2a8b073494a))
+* **ui-macos:** support folder transfer and render revoke/read states ([a42b874](https://github.com/pandaymx/lanchat/commit/a42b8742fa138f86d9291dcc4c9cc8555978e5ed))
+* **ui-win:** render message revoke and read receipt states ([a94b935](https://github.com/pandaymx/lanchat/commit/a94b9350f4faf7d7b757ad12166522f58683de87))
+
+
+### Bug Fixes
+
+* **core:** ensure group fileKey arrives before inbound block handshake ([cefe1db](https://github.com/pandaymx/lanchat/commit/cefe1db576edbf0c59392cdabe76583b2a7bd8e2))
+
 ## [1.2.0](https://github.com/pandaymx/lanchat/compare/v1.1.0...v1.2.0) (2026-10-23)
 
 

@@ -68,7 +68,10 @@ cat <<'INSTALL'
 1. 从本页面下载对应平台的安装包
 2. **Windows**：推荐 MSI 安装器；免安装可选 portable ZIP
 3. **macOS**：解压 ZIP 后拖入 `/Applications`，首次打开需右键放行
-4. **Linux**：解压 tar.gz，`./lanchat-ui` 启动（需系统有 GTK4 + libadwaita）
+4. **Linux**：
+   - **Ubuntu / Debian**：`sudo apt install ./LANChat-${VERSION}-linux-amd64.deb`
+   - **Red Hat / RHEL / Fedora / Rocky / AlmaLinux**：`sudo dnf install ./LANChat-${VERSION}-linux-x86_64.rpm`
+   - **通用便携版**：解压 `tar.gz`，运行 `./lanchat-ui` 启动（需系统有 GTK4 + libadwaita）
 5. **Android**：APK 直接安装；首次启动需授予局域网权限
 6. **iOS**：Simulator 包仅供开发调试，真机需自行签名
 7. 所有平台首次使用需在同一局域网内，输入相同的服务端地址和口令即可互联
@@ -112,7 +115,9 @@ echo "| Windows | \`-portable.zip\` | 免安装便携版 |"
 echo "| Windows | \`-Store.msix\` | Microsoft Store 上传包 |"
 echo "| Windows | \`-Sideload.msix\` | 侧载包 + 证书 |"
 echo "| macOS | \`-macos-universal-unsigned.zip\` | Universal 二进制 |"
-echo "| Linux | \`-linux-x64.tar.gz\` | GTK4 + libadwaita |"
+echo "| Linux (Ubuntu/Debian) | \`-linux-amd64.deb\` | Ubuntu / Debian 安装包 |"
+echo "| Linux (Red Hat/Fedora) | \`-linux-x86_64.rpm\` | RHEL / Fedora / Rocky 安装包 |"
+echo "| Linux (通用便携版) | \`-linux-x64.tar.gz\` | GTK4 + libadwaita 免安装包 |"
 echo "| Android | \`-android-*.apk\` | release 或 debug |"
 echo "| iOS | \`-ios-simulator-unsigned.zip\` | Simulator only |"
 echo "| Daemon | \`lanchat-daemon-*-*.exe/.gz\` | 独立守护进程 |"

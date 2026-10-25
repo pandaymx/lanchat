@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=LANChat
+GenericName=LAN Chat & File Transfer
+GenericName[zh_CN]=局域网聊天与文件传输
+Comment=P2P LAN chat and high-speed file transfer client (GTK4 + libadwaita)
+Comment[zh_CN]=局域网 P2P 聊天与高速文件传输客户端（GTK4 + libadwaita）
+Exec=lanchat-ui
+Icon=lanchat
+Terminal=false
+Categories=Network;InstantMessaging;Chat;FileTransfer;
+Keywords=LAN;Chat;P2P;FileTransfer;局域网;聊天;传文件;
+StartupNotify=true
+StartupWMClass=dev.lanchat.LANChat

@@ -23,10 +23,12 @@ data class AppUi(
     val server: String = "",
     val selfId: String = "",
     val nickname: String = "",
+    val downloadDir: String = "",
     val peers: List<Peer> = emptyList(),
     val transfers: List<Transfer> = emptyList(),
     val channels: List<Channel> = emptyList(),
     val messagesByConversation: Map<String, List<ChatMessage>> = emptyMap(),
+    val unreadCounts: Map<String, Int> = emptyMap(),
     val matrixSummary: Map<String, String> = emptyMap(),
     val discoveredServers: List<ServerInfo> = emptyList(),
     val busy: Boolean = false,
@@ -321,6 +323,36 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun setNickname(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) {
+            _ui.update { it.copy(error = "请输入有效昵称") }
+            return
+        }
+        launchOp {
+            engine.setNickname(trimmed)
+            _ui.update { it.copy(nickname = trimmed) }
+            refresh()
+        }
+    }
+
+    fun pickDownloadDir(path: String) {
+        val trimmed = path.trim()
+        if (trimmed.isEmpty()) return
+        launchOp {
+            engine.pickDownloadDir(trimmed)
+            _ui.update { it.copy(downloadDir = trimmed) }
+        }
+    }
+
+    fun clearUnread(conversationKey: String) {
+        if (conversationKey.isEmpty()) return
+        _ui.update { state ->
+            if (conversationKey !in state.unreadCounts) state
+            else state.copy(unreadCounts = state.unreadCounts - conversationKey)
+        }
+    }
+
     private fun handleEvent(event: CoreEvent) {
         when (event) {
             is CoreEvent.ConnChanged -> {
@@ -428,11 +460,18 @@ class AppViewModel : ViewModel() {
 
     private fun appendMessage(message: ChatMessage) {
         _ui.update { state ->
+            val key = Conversations.keyOf(message)
+            val updatedUnread = if (message.inbound) {
+                state.unreadCounts + (key to ((state.unreadCounts[key] ?: 0) + 1))
+            } else {
+                state.unreadCounts
+            }
             state.copy(
                 messagesByConversation = Conversations.append(
                     state.messagesByConversation,
                     message,
                 ),
+                unreadCounts = updatedUnread,
             )
         }
     }

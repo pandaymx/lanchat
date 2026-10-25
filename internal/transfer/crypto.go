@@ -31,11 +31,17 @@ const textE2EEInfo = "lanchat/text-e2ee/v1"
 // textECDHInfo 是 1:1 零配置 X25519 ECDH 文本消息加密密钥派生的上下文绑定信息（M15）。
 const textECDHInfo = "lanchat/ecdh-text/v1"
 
+// channelKeySeedInfo 是频道 Owner 派生频道对称密钥的上下文绑定信息（M19）。
+const channelKeySeedInfo = "lanchat/channel-e2ee-seed/v1"
+
 // TextE2EEPrefix 是端到端加密文本负载的线格式前缀。
 const TextE2EEPrefix = "enc:v1:"
 
 // TextECDHPrefix 是零配置 X25519 ECDH 加密文本负载的线格式前缀（M15）。
 const TextECDHPrefix = "enc:ecdh:"
+
+// TextChannelPrefix 是 G2 频道端到端加密文本负载的线格式前缀（M19）。
+const TextChannelPrefix = "enc:ch1:"
 
 // generateX25519 生成一对一次性 X25519 密钥。
 func generateX25519() (*ecdh.PrivateKey, error) {
@@ -243,6 +249,50 @@ func OpenECDHText(selfPriv *ecdh.PrivateKey, senderPubB64, wire string) (string,
 		return "", fmt.Errorf("transfer: text ecdh hkdf: %w", err)
 	}
 	plain, err := unwrapKey(key, strings.TrimPrefix(wire, TextECDHPrefix))
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
+// DeriveChannelKey 由频道 Owner 静态私钥与 channelID 派生 256-bit 频道对称密钥（Base64 编码，M19）。
+func DeriveChannelKey(ownerPriv *ecdh.PrivateKey, channelID string) (string, error) {
+	if ownerPriv == nil || strings.TrimSpace(channelID) == "" {
+		return "", errors.New("transfer: missing owner key or channel id")
+	}
+	key, err := hkdf.Key(sha256.New, ownerPriv.Bytes(), []byte(channelID), channelKeySeedInfo, 32)
+	if err != nil {
+		return "", fmt.Errorf("transfer: channel key hkdf: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(key), nil
+}
+
+// SealChannelText 使用 Base64 编码的 32 字节频道对称密钥加密 G2 频道消息（M19）。
+func SealChannelText(channelKeyB64, plaintext string) (string, error) {
+	if channelKeyB64 == "" {
+		return plaintext, nil
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(channelKeyB64))
+	if err != nil || len(key) != 32 {
+		return "", errors.New("transfer: invalid 32-byte channel key")
+	}
+	sealed, err := wrapKey(key, []byte(plaintext))
+	if err != nil {
+		return "", err
+	}
+	return TextChannelPrefix + sealed, nil
+}
+
+// OpenChannelText 解密带 TextChannelPrefix 前缀的 G2 频道加密消息（M19）。
+func OpenChannelText(channelKeyB64, wire string) (string, error) {
+	if !strings.HasPrefix(wire, TextChannelPrefix) {
+		return wire, nil
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(channelKeyB64))
+	if err != nil || len(key) != 32 {
+		return "", errors.New("transfer: missing or invalid channel key")
+	}
+	plain, err := unwrapKey(key, strings.TrimPrefix(wire, TextChannelPrefix))
 	if err != nil {
 		return "", err
 	}

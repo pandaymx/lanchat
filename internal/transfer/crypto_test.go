@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"bytes"
+	"context"
 	"testing"
 )
 
@@ -139,5 +140,44 @@ func TestECDHTextRoundTrip(t *testing.T) {
 	malloryPriv, _ := GenerateX25519()
 	if _, err := OpenECDHText(malloryPriv, alicePub, wire); err == nil {
 		t.Fatal("expected mallory decrypt failure")
+	}
+}
+
+// TestChannelKeyAndBandwidthLimiter 验证 M19 频道群组密钥派生/加解密与 M21 带宽限速器。
+func TestChannelKeyAndBandwidthLimiter(t *testing.T) {
+	ownerPriv, err := GenerateX25519()
+	if err != nil {
+		t.Fatal(err)
+	}
+	chKey, err := DeriveChannelKey(ownerPriv, "chan-01")
+	if err != nil || chKey == "" {
+		t.Fatalf("DeriveChannelKey: %v", err)
+	}
+	if _, err := DeriveChannelKey(nil, "chan-01"); err == nil {
+		t.Fatal("expected error for nil ownerPriv")
+	}
+
+	wire, err := SealChannelText(chKey, "频道端到端加密消息")
+	if err != nil {
+		t.Fatalf("SealChannelText: %v", err)
+	}
+	plain, err := OpenChannelText(chKey, wire)
+	if err != nil || plain != "频道端到端加密消息" {
+		t.Fatalf("OpenChannelText got %q, err %v", plain, err)
+	}
+	if _, err := OpenChannelText("invalid-key", wire); err == nil {
+		t.Fatal("expected error on invalid channel key")
+	}
+
+	SetBandwidthLimitBps(50 * 1024 * 1024)
+	if BandwidthLimitBps() != 50*1024*1024 {
+		t.Fatalf("unexpected limit %d", BandwidthLimitBps())
+	}
+	if err := throttleBytes(context.Background(), 4096); err != nil {
+		t.Fatalf("throttleBytes: %v", err)
+	}
+	SetBandwidthLimitBps(0)
+	if BandwidthLimitBps() != 0 {
+		t.Fatalf("expected 0 limit, got %d", BandwidthLimitBps())
 	}
 }

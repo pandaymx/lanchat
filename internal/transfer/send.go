@@ -215,6 +215,10 @@ func serveSendConnFile(ctx context.Context, cfg SendConfig, conn net.Conn, file 
 				}
 				continue
 			}
+			if err := throttleBytes(ctx, take); err != nil {
+				_ = writeCancel(fr)
+				return ErrCanceled
+			}
 			if err := writeData(fr, bytesSent+int64(sent), buf[sent:sent+take]); err != nil {
 				return err
 			}

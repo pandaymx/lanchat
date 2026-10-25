@@ -105,3 +105,39 @@ func TestNewGCMRejectsBadKey(t *testing.T) {
 		t.Fatal("非法长度密钥应当被拒")
 	}
 }
+
+// TestECDHTextRoundTrip 验证 M15 零配置 X25519 ECDH 文本加解密往返与篡改拒绝。
+func TestECDHTextRoundTrip(t *testing.T) {
+	alicePriv, err := GenerateX25519()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobPriv, err := GenerateX25519()
+	if err != nil {
+		t.Fatal(err)
+	}
+	alicePub := EncodePub(alicePriv.PublicKey())
+	bobPub := EncodePub(bobPriv.PublicKey())
+
+	wire, err := SealECDHText(alicePriv, bobPub, "零配置端到端加密消息")
+	if err != nil {
+		t.Fatalf("SealECDHText: %v", err)
+	}
+	if len(wire) <= len(TextECDHPrefix) || wire[:len(TextECDHPrefix)] != TextECDHPrefix {
+		t.Fatalf("expected prefix %s, got %q", TextECDHPrefix, wire)
+	}
+
+	got, err := OpenECDHText(bobPriv, alicePub, wire)
+	if err != nil {
+		t.Fatalf("OpenECDHText: %v", err)
+	}
+	if got != "零配置端到端加密消息" {
+		t.Fatalf("got %q", got)
+	}
+
+	// 错误接收者私钥应当解密失败。
+	malloryPriv, _ := GenerateX25519()
+	if _, err := OpenECDHText(malloryPriv, alicePub, wire); err == nil {
+		t.Fatal("expected mallory decrypt failure")
+	}
+}

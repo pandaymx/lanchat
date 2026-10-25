@@ -28,8 +28,14 @@ const groupConnInfo = "lanchat/group-conn/v1"
 // textE2EEInfo 是文本消息端到端加密密钥派生的上下文绑定信息（M13）。
 const textE2EEInfo = "lanchat/text-e2ee/v1"
 
+// textECDHInfo 是 1:1 零配置 X25519 ECDH 文本消息加密密钥派生的上下文绑定信息（M15）。
+const textECDHInfo = "lanchat/ecdh-text/v1"
+
 // TextE2EEPrefix 是端到端加密文本负载的线格式前缀。
 const TextE2EEPrefix = "enc:v1:"
+
+// TextECDHPrefix 是零配置 X25519 ECDH 加密文本负载的线格式前缀（M15）。
+const TextECDHPrefix = "enc:ecdh:"
 
 // generateX25519 生成一对一次性 X25519 密钥。
 func generateX25519() (*ecdh.PrivateKey, error) {
@@ -185,6 +191,58 @@ func OpenText(secret, wire string) (string, error) {
 		return "", fmt.Errorf("transfer: text hkdf: %w", err)
 	}
 	plain, err := unwrapKey(key, strings.TrimPrefix(wire, TextE2EEPrefix))
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
+
+// SealECDHText 用本机静态 X25519 私钥与对端公钥做 ECDH + HKDF(lanchat/ecdh-text/v1)，
+// 封装为 enc:ecdh:<base64> 零配置端到端加密文本负载（M15）。
+func SealECDHText(selfPriv *ecdh.PrivateKey, peerPubB64, plaintext string) (string, error) {
+	if selfPriv == nil || peerPubB64 == "" {
+		return plaintext, nil
+	}
+	peerPub, err := decodePub(peerPubB64)
+	if err != nil {
+		return "", err
+	}
+	secret, err := selfPriv.ECDH(peerPub)
+	if err != nil {
+		return "", fmt.Errorf("transfer: text ecdh: %w", err)
+	}
+	key, err := hkdf.Key(sha256.New, secret, nil, textECDHInfo, 32)
+	if err != nil {
+		return "", fmt.Errorf("transfer: text ecdh hkdf: %w", err)
+	}
+	sealed, err := wrapKey(key, []byte(plaintext))
+	if err != nil {
+		return "", err
+	}
+	return TextECDHPrefix + sealed, nil
+}
+
+// OpenECDHText 解密带 TextECDHPrefix 前缀的零配置 ECDH 加密文本负载（M15）。
+func OpenECDHText(selfPriv *ecdh.PrivateKey, senderPubB64, wire string) (string, error) {
+	if !strings.HasPrefix(wire, TextECDHPrefix) {
+		return wire, nil
+	}
+	if selfPriv == nil || senderPubB64 == "" {
+		return "", errors.New("transfer: missing ecdh key material")
+	}
+	senderPub, err := decodePub(senderPubB64)
+	if err != nil {
+		return "", err
+	}
+	secret, err := selfPriv.ECDH(senderPub)
+	if err != nil {
+		return "", fmt.Errorf("transfer: text ecdh: %w", err)
+	}
+	key, err := hkdf.Key(sha256.New, secret, nil, textECDHInfo, 32)
+	if err != nil {
+		return "", fmt.Errorf("transfer: text ecdh hkdf: %w", err)
+	}
+	plain, err := unwrapKey(key, strings.TrimPrefix(wire, TextECDHPrefix))
 	if err != nil {
 		return "", err
 	}

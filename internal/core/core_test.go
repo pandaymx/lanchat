@@ -645,3 +645,40 @@ func TestM11aRevokeReadAndSearch(t *testing.T) {
 		t.Fatalf("restored state after revoke/read mismatch: %+v", restored)
 	}
 }
+
+// TestM11bDirectoryZipAndClipboardTransfer 验证 M11b 文件夹自动 ZIP 打包传输与剪贴板 base64 图片直传。
+func TestM11bDirectoryZipAndClipboardTransfer(t *testing.T) {
+	srcRoot := filepath.Join(t.TempDir(), "project-docs")
+	if err := os.MkdirAll(filepath.Join(srcRoot, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcRoot, "readme.txt"), []byte("hello folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcRoot, "sub", "spec.md"), []byte("# spec"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	zipInfo, err := openFileInfo(srcRoot)
+	if err != nil {
+		t.Fatalf("openFileInfo dir: %v", err)
+	}
+	_ = zipInfo.file.Close()
+	if zipInfo.name != "project-docs.zip" || zipInfo.size <= 0 {
+		t.Fatalf("unexpected zip fileInfo: %+v", zipInfo)
+	}
+
+	clipURI := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	clipInfo, err := openFileInfo(clipURI)
+	if err != nil {
+		t.Fatalf("openFileInfo clipboard: %v", err)
+	}
+	_ = clipInfo.file.Close()
+	if clipInfo.name != "clipboard.png" || clipInfo.size <= 0 {
+		t.Fatalf("unexpected clipboard fileInfo: %+v", clipInfo)
+	}
+
+	if _, err := openFileInfo("data:image/png;base64,"); err == nil {
+		t.Fatal("empty clipboard base64 should fail")
+	}
+}

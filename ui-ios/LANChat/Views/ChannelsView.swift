@@ -363,18 +363,22 @@ struct CreateChannelView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("频道信息") {
+                Section {
                     TextField("频道名称（如 研发讨论组）", text: $name)
                         .autocorrectionDisabled()
                     TextField("频道主题（可选）", text: $topic)
                         .autocorrectionDisabled()
+                } header: {
+                    Text("频道信息")
                 } footer: {
                     Text("创建后你将成为频道所有者，支持群聊文本与 G1/G2 Swarm 文件分发。")
                 }
 
-                Section("权限设置") {
+                Section {
                     Toggle("🔒 私有频道", isOn: $isPrivate)
                         .tint(QQTheme.qqBlue)
+                } header: {
+                    Text("权限设置")
                 } footer: {
                     Text("私有频道无法从列表直接加入，仅可由所有者邀请在线成员加入。")
                 }

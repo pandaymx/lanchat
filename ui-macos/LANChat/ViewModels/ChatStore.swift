@@ -13,6 +13,9 @@ final class ChatStore: ObservableObject {
     @Published var servers: [ServerInfo] = []
     @Published var messages: [String: [ChatMessage]] = [:]
     @Published var matrixSummary: [String: String] = [:]
+    @Published var unreadCounts: [String: Int] = [:]
+    @Published var activeThreadKey: String? = "*"
+    @Published var e2eeEnabledThreads: Set<String> = []
     @Published var daemonConnected = false
     @Published var error: String?
     @Published var ready = false
@@ -94,10 +97,14 @@ final class ChatStore: ObservableObject {
                     markMessageRead(id: p.msgId, readerId: p.from)
                 } else {
                     let display = (p.type == "STICKER_MSG" || p.type == "sticker") ? "[表情] \(p.text)" : p.text
+                    let key = (p.group?.isEmpty == false) ? p.group! : p.from
                     append(ChatMessage(
                         id: p.msgId, peerId: p.from, text: display,
                         inbound: true, timestamp: Date()),
                            threadKey: p.group)
+                    if activeThreadKey != key {
+                        unreadCounts[key, default: 0] += 1
+                    }
                 }
             }
         case "transfer.progress":
@@ -175,6 +182,23 @@ final class ChatStore: ObservableObject {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return [] }
         return (messages[key] ?? []).filter { !$0.revoked && $0.text.lowercased().contains(q) }
+    }
+
+    func markThreadActive(_ key: String) {
+        activeThreadKey = key
+        unreadCounts[key] = 0
+    }
+
+    var totalUnreadCount: Int {
+        unreadCounts.values.reduce(0, +)
+    }
+
+    func peerNickname(for peerId: String) -> String {
+        if peerId == selfId {
+            return settings.nickname
+        }
+        return peers.first(where: { $0.id == peerId })?.nickname
+            ?? String(peerId.prefix(8))
     }
 
     private func formatReplyText(_ raw: String) -> String {
@@ -271,6 +295,11 @@ final class ChatStore: ObservableObject {
         do {
             let r = try await ipc.call("SendText", params: ["to": peerId, "text": text, "group": ""], as: MsgIDResult.self)
             if r.msgID == "e2ee:on" || r.msgID == "e2ee:off" {
+                if r.msgID == "e2ee:on" {
+                    e2eeEnabledThreads.insert(peerId)
+                } else {
+                    e2eeEnabledThreads.remove(peerId)
+                }
                 let notice = (r.msgID == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
                 append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: notice, inbound: false, timestamp: Date()))
             } else if trimmed.hasPrefix("/revoke ") {
@@ -379,6 +408,11 @@ final class ChatStore: ObservableObject {
                 params: ["to": "", "text": text, "group": channelID],
                 as: MsgIDResult.self)
             if r.msgID == "e2ee:on" || r.msgID == "e2ee:off" {
+                if r.msgID == "e2ee:on" {
+                    e2eeEnabledThreads.insert(channelID)
+                } else {
+                    e2eeEnabledThreads.remove(channelID)
+                }
                 let notice = (r.msgID == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
                 append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: notice,
                                    inbound: false, timestamp: Date()),

@@ -44,7 +44,7 @@ object Conversations {
         groupId: String,
     ): Map<String, List<ChatMessage>> = messagesByConversation - groupKey(groupId)
 
-    /** 向会话表追加一条消息（按 msgId 去重），返回新的不可变 Map。 */
+    /** 向会话表追加一条消息（按 msgId 去重或更新状态），返回新的不可变 Map。 */
     fun append(
         messagesByConversation: Map<String, List<ChatMessage>>,
         message: ChatMessage,
@@ -52,9 +52,41 @@ object Conversations {
         val key = keyOf(message)
         val existing = messagesByConversation[key] ?: emptyList()
         if (message.msgId.isNotEmpty() && existing.any { it.msgId == message.msgId }) {
-            return messagesByConversation
+            val updated = existing.map { if (it.msgId == message.msgId) message else it }
+            return messagesByConversation + (key to updated)
         }
         val list = existing + message
         return messagesByConversation + (key to list)
+    }
+
+    /** 将指定 msgId 的消息标记为已撤回。 */
+    fun revokeMessage(
+        messagesByConversation: Map<String, List<ChatMessage>>,
+        msgId: String,
+    ): Map<String, List<ChatMessage>> {
+        if (msgId.isEmpty()) return messagesByConversation
+        return messagesByConversation.mapValues { (_, list) ->
+            list.map { m ->
+                if (m.msgId == msgId) m.copy(revoked = true, text = "消息已撤回") else m
+            }
+        }
+    }
+
+    /** 记录对端已读指定 msgId 的消息。 */
+    fun markRead(
+        messagesByConversation: Map<String, List<ChatMessage>>,
+        msgId: String,
+        reader: String,
+    ): Map<String, List<ChatMessage>> {
+        if (msgId.isEmpty() || reader.isEmpty()) return messagesByConversation
+        return messagesByConversation.mapValues { (_, list) ->
+            list.map { m ->
+                if (m.msgId == msgId && !m.readBy.contains(reader)) {
+                    m.copy(readBy = m.readBy + reader)
+                } else {
+                    m
+                }
+            }
+        }
     }
 }

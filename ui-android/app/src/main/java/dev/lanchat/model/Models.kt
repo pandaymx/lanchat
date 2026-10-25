@@ -87,6 +87,10 @@ data class ChatMessage(
     val group: String = "",
     /** 群消息发送者 ID；仅群消息且入站时有意义。 */
     val senderId: String = "",
+    /** M11a: 消息是否已撤回。 */
+    val revoked: Boolean = false,
+    /** M11a: 已读该消息的对端 ID 列表。 */
+    val readBy: List<String> = emptyList(),
 )
 
 /** 将 group.matrix 的 haveBitmap 转为紧凑块进度摘要（如 "▓▓▓░░░ 4/8 块"）。 */

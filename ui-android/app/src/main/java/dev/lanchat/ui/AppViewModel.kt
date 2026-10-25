@@ -95,6 +95,20 @@ class AppViewModel : ViewModel() {
         if (content.isEmpty()) return
         launchOp {
             val msgId = engine.sendText(to, content)
+            if (content.startsWith("/revoke ")) {
+                val targetId = content.removePrefix("/revoke ").trim()
+                _ui.update {
+                    it.copy(messagesByConversation = Conversations.revokeMessage(it.messagesByConversation, targetId))
+                }
+                return@launchOp
+            }
+            if (content.startsWith("/read ")) {
+                val targetId = content.removePrefix("/read ").trim()
+                _ui.update {
+                    it.copy(messagesByConversation = Conversations.markRead(it.messagesByConversation, targetId, it.selfId))
+                }
+                return@launchOp
+            }
             appendMessage(
                 ChatMessage(
                     peerId = to,
@@ -112,6 +126,20 @@ class AppViewModel : ViewModel() {
         if (content.isEmpty()) return
         launchOp {
             val msgId = engine.sendText(to = "", text = content, group = channelId)
+            if (content.startsWith("/revoke ")) {
+                val targetId = content.removePrefix("/revoke ").trim()
+                _ui.update {
+                    it.copy(messagesByConversation = Conversations.revokeMessage(it.messagesByConversation, targetId))
+                }
+                return@launchOp
+            }
+            if (content.startsWith("/read ")) {
+                val targetId = content.removePrefix("/read ").trim()
+                _ui.update {
+                    it.copy(messagesByConversation = Conversations.markRead(it.messagesByConversation, targetId, it.selfId))
+                }
+                return@launchOp
+            }
             appendMessage(
                 ChatMessage(
                     peerId = "",
@@ -254,6 +282,29 @@ class AppViewModel : ViewModel() {
             }
 
             is CoreEvent.Message -> {
+                if (event.type == "MSG_REVOKE") {
+                    _ui.update { state ->
+                        state.copy(
+                            messagesByConversation = Conversations.revokeMessage(
+                                state.messagesByConversation,
+                                event.msgId,
+                            ),
+                        )
+                    }
+                    return
+                }
+                if (event.type == "MSG_READ") {
+                    _ui.update { state ->
+                        state.copy(
+                            messagesByConversation = Conversations.markRead(
+                                state.messagesByConversation,
+                                event.msgId,
+                                event.from,
+                            ),
+                        )
+                    }
+                    return
+                }
                 val group = event.group
                 appendMessage(
                     if (group.isNotEmpty()) {

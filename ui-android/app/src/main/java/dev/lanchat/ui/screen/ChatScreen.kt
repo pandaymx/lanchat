@@ -313,6 +313,12 @@ private fun MessageBubble(
                     )
                 }
                 Text(message.text)
+                if (!message.inbound && !message.revoked && message.readBy.isNotEmpty()) {
+                    Text(
+                        "✓ 已读",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
         }
     }

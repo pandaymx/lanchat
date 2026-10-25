@@ -250,6 +250,8 @@ private fun JSONArray?.toMessageList(selfId: String): List<ChatMessage> {
                     timestamp = item.optLong("ts", System.currentTimeMillis()),
                     group = group,
                     senderId = if (group.isNotEmpty() && inbound) from else "",
+                    revoked = item.optBoolean("revoked", false),
+                    readBy = item.optJSONArray("readBy").toStringList(),
                 ),
             )
         }

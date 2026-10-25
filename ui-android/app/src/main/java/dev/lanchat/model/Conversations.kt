@@ -89,4 +89,38 @@ object Conversations {
             }
         }
     }
+
+    /** 在指定会话 key 中按关键字检索未撤回消息（M12）。 */
+    fun search(
+        messagesByConversation: Map<String, List<ChatMessage>>,
+        conversationKey: String,
+        query: String,
+    ): List<ChatMessage> {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return emptyList()
+        return (messagesByConversation[conversationKey] ?: emptyList()).filter {
+            !it.revoked && it.text.lowercase().contains(q)
+        }
+    }
+
+    /** 将 `/reply <msgID> <body>` 展开为带引用前缀的展示文本（M12）。 */
+    fun formatReplyText(
+        messagesByConversation: Map<String, List<ChatMessage>>,
+        raw: String,
+    ): String {
+        val trimmed = raw.trim()
+        if (!trimmed.startsWith("/reply ")) return raw
+        val rest = trimmed.removePrefix("/reply ").trim()
+        val parts = rest.split(" ", limit = 2)
+        if (parts.size < 2 || parts[1].isBlank()) return raw
+        val targetId = parts[0].trim()
+        val body = parts[1].trim()
+        for (list in messagesByConversation.values) {
+            val orig = list.firstOrNull { it.msgId == targetId && !it.revoked }
+            if (orig != null) {
+                return "「${orig.text}」\n$body"
+            }
+        }
+        return "[re:$targetId] $body"
+    }
 }

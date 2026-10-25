@@ -93,8 +93,35 @@ class AppViewModel : ViewModel() {
     fun sendText(to: String, text: String) {
         val content = text.trim()
         if (content.isEmpty()) return
+        if (content.startsWith("/search ")) {
+            val q = content.removePrefix("/search ").trim()
+            val hits = Conversations.search(_ui.value.messagesByConversation, Conversations.peerKey(to), q)
+            appendMessage(
+                ChatMessage(
+                    peerId = to,
+                    msgId = "search-${System.currentTimeMillis()}",
+                    text = "[搜索“$q”：共 ${hits.size} 条匹配]",
+                    inbound = false,
+                    timestamp = System.currentTimeMillis(),
+                ),
+            )
+            return
+        }
         launchOp {
             val msgId = engine.sendText(to, content)
+            if (msgId == "e2ee:on" || msgId == "e2ee:off") {
+                val notice = if (msgId == "e2ee:on") "[已开启端到端加密]" else "[已关闭端到端加密]"
+                appendMessage(
+                    ChatMessage(
+                        peerId = to,
+                        msgId = "e2ee-${System.currentTimeMillis()}",
+                        text = notice,
+                        inbound = false,
+                        timestamp = System.currentTimeMillis(),
+                    ),
+                )
+                return@launchOp
+            }
             if (content.startsWith("/revoke ")) {
                 val targetId = content.removePrefix("/revoke ").trim()
                 _ui.update {
@@ -109,11 +136,12 @@ class AppViewModel : ViewModel() {
                 }
                 return@launchOp
             }
+            val display = Conversations.formatReplyText(_ui.value.messagesByConversation, content)
             appendMessage(
                 ChatMessage(
                     peerId = to,
                     msgId = msgId,
-                    text = content,
+                    text = display,
                     inbound = false,
                     timestamp = System.currentTimeMillis(),
                 ),
@@ -124,8 +152,37 @@ class AppViewModel : ViewModel() {
     fun sendChannelText(channelId: String, text: String) {
         val content = text.trim()
         if (content.isEmpty()) return
+        if (content.startsWith("/search ")) {
+            val q = content.removePrefix("/search ").trim()
+            val hits = Conversations.search(_ui.value.messagesByConversation, Conversations.groupKey(channelId), q)
+            appendMessage(
+                ChatMessage(
+                    peerId = "",
+                    msgId = "search-${System.currentTimeMillis()}",
+                    text = "[搜索“$q”：共 ${hits.size} 条匹配]",
+                    inbound = false,
+                    timestamp = System.currentTimeMillis(),
+                    group = channelId,
+                ),
+            )
+            return
+        }
         launchOp {
             val msgId = engine.sendText(to = "", text = content, group = channelId)
+            if (msgId == "e2ee:on" || msgId == "e2ee:off") {
+                val notice = if (msgId == "e2ee:on") "[已开启端到端加密]" else "[已关闭端到端加密]"
+                appendMessage(
+                    ChatMessage(
+                        peerId = "",
+                        msgId = "e2ee-${System.currentTimeMillis()}",
+                        text = notice,
+                        inbound = false,
+                        timestamp = System.currentTimeMillis(),
+                        group = channelId,
+                    ),
+                )
+                return@launchOp
+            }
             if (content.startsWith("/revoke ")) {
                 val targetId = content.removePrefix("/revoke ").trim()
                 _ui.update {
@@ -140,11 +197,12 @@ class AppViewModel : ViewModel() {
                 }
                 return@launchOp
             }
+            val display = Conversations.formatReplyText(_ui.value.messagesByConversation, content)
             appendMessage(
                 ChatMessage(
                     peerId = "",
                     msgId = msgId,
-                    text = content,
+                    text = display,
                     inbound = false,
                     timestamp = System.currentTimeMillis(),
                     group = channelId,

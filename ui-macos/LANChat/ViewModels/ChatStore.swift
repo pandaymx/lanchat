@@ -95,6 +95,8 @@ final class ChatStore: ObservableObject {
                     revokeMessage(id: p.msgId)
                 } else if p.type == "MSG_READ" {
                     markMessageRead(id: p.msgId, readerId: p.from)
+                } else if p.type == "MSG_REACT" || p.type == "MSG_EDIT" || p.type == "MSG_PIN" {
+                    updateMessageText(id: p.msgId, newText: p.text)
                 } else {
                     let display: String
                     if p.text.hasPrefix("data:image/") {
@@ -161,6 +163,20 @@ final class ChatStore: ObservableObject {
             for idx in list.indices where list[idx].id == id {
                 list[idx].revoked = true
                 list[idx].text = "[消息已撤回]"
+                changed = true
+            }
+            if changed {
+                messages[key] = list
+            }
+        }
+    }
+
+    private func updateMessageText(id: String, newText: String) {
+        guard !id.isEmpty else { return }
+        for (key, var list) in messages {
+            var changed = false
+            for idx in list.indices where list[idx].id == id && !list[idx].revoked {
+                list[idx].text = newText
                 changed = true
             }
             if changed {
@@ -320,10 +336,16 @@ final class ChatStore: ObservableObject {
             } else if r.msgID.hasPrefix("fp:") {
                 let fp = String(r.msgID.dropFirst(3))
                 append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "🛡️ [安全码指纹核验] \(fp)", inbound: false, timestamp: Date()))
+            } else if r.msgID.hasPrefix("bwlimit:") {
+                let lim = String(r.msgID.dropFirst(8))
+                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "⚡ [带宽限速已设置为 \(lim) MB/s]", inbound: false, timestamp: Date()))
             } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {
                 markMessageRead(id: r.msgID, readerId: selfId)
+            } else if trimmed.hasPrefix("/react ") || trimmed.hasPrefix("/edit ") || trimmed.hasPrefix("/pin ") {
+                // Updated locally in core history; refresh state to sync updated bubble text
+                await refreshState()
             } else {
                 append(ChatMessage(id: r.msgID, peerId: peerId, text: formatReplyText(text), inbound: false, timestamp: Date()))
             }
@@ -435,10 +457,17 @@ final class ChatStore: ObservableObject {
                 append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: notice,
                                    inbound: false, timestamp: Date()),
                        threadKey: channelID)
+            } else if r.msgID.hasPrefix("bwlimit:") {
+                let lim = String(r.msgID.dropFirst(8))
+                append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "⚡ [带宽限速已设置为 \(lim) MB/s]",
+                                   inbound: false, timestamp: Date()),
+                       threadKey: channelID)
             } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {
                 markMessageRead(id: r.msgID, readerId: selfId)
+            } else if trimmed.hasPrefix("/react ") || trimmed.hasPrefix("/edit ") || trimmed.hasPrefix("/pin ") {
+                await refreshState()
             } else {
                 append(ChatMessage(id: r.msgID, peerId: selfId, text: formatReplyText(text),
                                    inbound: false, timestamp: Date()),

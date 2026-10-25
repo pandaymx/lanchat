@@ -324,6 +324,12 @@ struct ChatView: View {
                                 },
                                 onMarkRead: { target in
                                     Task { await store.sendText(to: peer.id, text: "/read \(target.id)") }
+                                },
+                                onReact: { target in
+                                    Task { await store.sendText(to: peer.id, text: "/react \(target.id) 👍") }
+                                },
+                                onPin: { target in
+                                    Task { await store.sendText(to: peer.id, text: "/pin \(target.id)") }
                                 }
                             )
                             .id(msg.id)
@@ -560,6 +566,8 @@ struct BubbleRow: View {
     var onReply: ((ChatMessage) -> Void)? = nil
     var onRevoke: ((ChatMessage) -> Void)? = nil
     var onMarkRead: ((ChatMessage) -> Void)? = nil
+    var onReact: ((ChatMessage) -> Void)? = nil
+    var onPin: ((ChatMessage) -> Void)? = nil
 
     @State private var isHovered = false
 
@@ -649,6 +657,16 @@ struct BubbleRow: View {
                 if let onReply {
                     Button("💬 回复此消息 (/reply)") {
                         onReply(message)
+                    }
+                }
+                if let onReact {
+                    Button("👍 点赞回应 (/react)") {
+                        onReact(message)
+                    }
+                }
+                if let onPin {
+                    Button("📌 置顶消息 (/pin)") {
+                        onPin(message)
                     }
                 }
                 if !isSelf, let onMarkRead {

@@ -70,6 +70,8 @@ struct HistoryMessage: Codable, Identifiable, Hashable {
     var text: String
     var replyTo: String?
     var mentions: [String]?
+    var revoked: Bool?
+    var readBy: [String]?
     var ts: Int64
 }
 
@@ -87,9 +89,11 @@ struct FullState: Codable {
 struct ChatMessage: Identifiable, Hashable {
     let id: String
     let peerId: String
-    let text: String
+    var text: String
     let inbound: Bool
     let timestamp: Date
+    var revoked: Bool = false
+    var readBy: [String] = []
     /// 频道消息的发送者昵称（单聊不显示，故可缺省）。
     var senderName: String? = nil
 }

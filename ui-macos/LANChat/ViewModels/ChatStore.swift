@@ -88,11 +88,17 @@ final class ChatStore: ObservableObject {
             }
         case "msg.received":
             if let p = try? decoder.decode(MsgParams.self, from: params) {
-                let display = (p.type == "STICKER_MSG" || p.type == "sticker") ? "[表情] \(p.text)" : p.text
-                append(ChatMessage(
-                    id: p.msgId, peerId: p.from, text: display,
-                    inbound: true, timestamp: Date()),
-                       threadKey: p.group)
+                if p.type == "MSG_REVOKE" {
+                    revokeMessage(id: p.msgId)
+                } else if p.type == "MSG_READ" {
+                    markMessageRead(id: p.msgId, readerId: p.from)
+                } else {
+                    let display = (p.type == "STICKER_MSG" || p.type == "sticker") ? "[表情] \(p.text)" : p.text
+                    append(ChatMessage(
+                        id: p.msgId, peerId: p.from, text: display,
+                        inbound: true, timestamp: Date()),
+                           threadKey: p.group)
+                }
             }
         case "transfer.progress":
             if let p = try? decoder.decode(ProgressParams.self, from: params) {
@@ -123,11 +129,46 @@ final class ChatStore: ObservableObject {
     private func append(_ msg: ChatMessage, threadKey: String? = nil) {
         let key = (threadKey?.isEmpty == false) ? threadKey! : msg.peerId
         var list = messages[key] ?? []
-        if !msg.id.isEmpty, list.contains(where: { $0.id == msg.id }) {
+        if !msg.id.isEmpty, let idx = list.firstIndex(where: { $0.id == msg.id }) {
+            list[idx].text = msg.text
+            list[idx].revoked = msg.revoked
+            list[idx].readBy = msg.readBy
+            messages[key] = list
             return
         }
         list.append(msg)
         messages[key] = list
+    }
+
+    private func revokeMessage(id: String) {
+        guard !id.isEmpty else { return }
+        for (key, var list) in messages {
+            var changed = false
+            for idx in list.indices where list[idx].id == id {
+                list[idx].revoked = true
+                list[idx].text = "[消息已撤回]"
+                changed = true
+            }
+            if changed {
+                messages[key] = list
+            }
+        }
+    }
+
+    private func markMessageRead(id: String, readerId: String) {
+        guard !id.isEmpty, !readerId.isEmpty else { return }
+        for (key, var list) in messages {
+            var changed = false
+            for idx in list.indices where list[idx].id == id {
+                if !list[idx].readBy.contains(readerId) {
+                    list[idx].readBy.append(readerId)
+                    changed = true
+                }
+            }
+            if changed {
+                messages[key] = list
+            }
+        }
     }
 
     private func upsertTransfer(_ t: Transfer) {
@@ -161,13 +202,23 @@ final class ChatStore: ObservableObject {
             let threadKey: String? = (m.group?.isEmpty == false) ? m.group : nil
             let peerKey = (threadKey != nil) ? m.from : (inbound ? m.from : (m.to ?? ""))
             guard !peerKey.isEmpty || threadKey != nil else { continue }
-            let display = (m.type == "STICKER_MSG" || m.type == "sticker") ? "[表情] \(m.text)" : m.text
+            let isRevoked = m.revoked ?? false
+            let display: String
+            if isRevoked {
+                display = "[消息已撤回]"
+            } else if m.type == "STICKER_MSG" || m.type == "sticker" {
+                display = "[表情] \(m.text)"
+            } else {
+                display = m.text
+            }
             append(ChatMessage(
                 id: m.id,
                 peerId: peerKey,
                 text: display,
                 inbound: inbound,
-                timestamp: Date(timeIntervalSince1970: TimeInterval(m.ts) / 1000.0)
+                timestamp: Date(timeIntervalSince1970: TimeInterval(m.ts) / 1000.0),
+                revoked: isRevoked,
+                readBy: m.readBy ?? []
             ), threadKey: threadKey)
         }
     }
@@ -190,7 +241,14 @@ final class ChatStore: ObservableObject {
         guard !text.isEmpty else { return }
         do {
             let r = try await ipc.call("SendText", params: ["to": peerId, "text": text, "group": ""], as: MsgIDResult.self)
-            append(ChatMessage(id: r.msgID, peerId: peerId, text: text, inbound: false, timestamp: Date()))
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("/revoke ") {
+                revokeMessage(id: r.msgID)
+            } else if trimmed.hasPrefix("/read ") {
+                markMessageRead(id: r.msgID, readerId: selfId)
+            } else {
+                append(ChatMessage(id: r.msgID, peerId: peerId, text: text, inbound: false, timestamp: Date()))
+            }
         } catch {
             self.error = error.localizedDescription
         }
@@ -280,9 +338,16 @@ final class ChatStore: ObservableObject {
                 "SendText",
                 params: ["to": "", "text": text, "group": channelID],
                 as: MsgIDResult.self)
-            append(ChatMessage(id: r.msgID, peerId: selfId, text: text,
-                               inbound: false, timestamp: Date()),
-                   threadKey: channelID)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("/revoke ") {
+                revokeMessage(id: r.msgID)
+            } else if trimmed.hasPrefix("/read ") {
+                markMessageRead(id: r.msgID, readerId: selfId)
+            } else {
+                append(ChatMessage(id: r.msgID, peerId: selfId, text: text,
+                                   inbound: false, timestamp: Date()),
+                       threadKey: channelID)
+            }
         } catch {
             self.error = error.localizedDescription
         }

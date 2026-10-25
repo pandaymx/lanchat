@@ -228,7 +228,7 @@ struct ChannelChatView: View {
     private func pickAndOffer(_ channel: Channel) {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.canChooseFiles = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await store.offerFileToChannel(channelID: channel.id, path: url.path) }

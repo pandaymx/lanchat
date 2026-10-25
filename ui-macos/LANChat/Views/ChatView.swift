@@ -78,7 +78,7 @@ struct ChatView: View {
     private func pickAndOffer() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.canChooseFiles = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await store.offerFile(to: peer.id, path: url.path) }
@@ -99,6 +99,7 @@ struct BubbleRow: View {
             HStack {
                 if isSelf { Spacer(minLength: 60) }
                 Text(message.text)
+                    .foregroundColor(message.revoked ? .secondary : .primary)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(isSelf ? Color.accentColor.opacity(0.18) : Color(nsColor: .windowBackgroundColor))
@@ -108,6 +109,11 @@ struct BubbleRow: View {
                             .stroke(Color.gray.opacity(0.2), lineWidth: 0.5))
                     .textSelection(.enabled)
                 if !isSelf { Spacer(minLength: 60) }
+            }
+            if isSelf && !message.revoked && !message.readBy.isEmpty {
+                Text(message.readBy.count > 1 ? "✓ 已读(\(message.readBy.count))" : "✓ 已读")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
         }
     }

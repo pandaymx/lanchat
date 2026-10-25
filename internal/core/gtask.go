@@ -192,11 +192,11 @@ func (g *groupTask) handleJoin(ev groupEvent) {
 		g.tr.setCandidates(ev.from, p.Candidates)
 		g.tr.setPeerToken(ev.from, p.Token)
 	}
-	g.rebuild()
-	// 源在成员纳入名册后把群文件密钥单播给它，接收方据此升级加密块连接。
+	// 源在重建 Swarm 发起块连接拨号前先把群文件密钥单播给成员，避免直连早于密钥到达。
 	if g.source {
 		g.sendGroupKey(ev.from)
 	}
+	g.rebuild()
 }
 
 // sendGroupKey 源向单个成员单播 GROUP_KEY（base64 编码群文件密钥）。

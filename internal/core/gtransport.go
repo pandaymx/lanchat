@@ -186,6 +186,24 @@ func (t *blockTransport) serveInbound(c net.Conn) {
 		return
 	}
 
+	// 群文件密钥可能经 WebSocket 与直连并发到达：短暂等待，且必须在回写
+	// groupHello 之前确认密钥到位，避免对端误以为握手成功而冲刷并丢失待发队列。
+	var fileKey []byte
+	for i := 0; i < 100; i++ {
+		t.mu.Lock()
+		fileKey = t.fileKey
+		closed := t.closed
+		t.mu.Unlock()
+		if len(fileKey) > 0 || closed {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(fileKey) == 0 {
+		_ = c.Close()
+		return
+	}
+
 	priv, err := transfer.GenerateX25519()
 	if err != nil {
 		_ = c.Close()
@@ -197,14 +215,6 @@ func (t *blockTransport) serveInbound(c net.Conn) {
 	}
 	peerPub, err := transfer.DecodePub(hello.EcdhPub)
 	if err != nil {
-		_ = c.Close()
-		return
-	}
-	t.mu.Lock()
-	fileKey := t.fileKey
-	t.mu.Unlock()
-	if len(fileKey) == 0 {
-		// 群文件密钥尚未到位，无法派生连接密钥：关闭由对端稍后重连。
 		_ = c.Close()
 		return
 	}

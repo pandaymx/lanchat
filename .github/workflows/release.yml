@@ -122,6 +122,9 @@ jobs:
           base="lanchat-daemon-${TAG}-${GOOS}-${GOARCH}"
           go build -trimpath -ldflags "-s -w -X main.commit=${GITHUB_SHA::7}" \
             -o "dist/${base}${ext}" ./cmd/lanchat-daemon
+          srv_base="lanchat-server-${TAG}-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags "-s -w -X main.version=${TAG} -X main.commit=${GITHUB_SHA::7}" \
+            -o "dist/${srv_base}${ext}" ./cmd/lanchat
           ls -lh dist
 
       - uses: actions/upload-artifact@v4

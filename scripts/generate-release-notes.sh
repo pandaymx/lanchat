@@ -120,4 +120,5 @@ echo "| Linux (Red Hat/Fedora) | \`-linux-x86_64.rpm\` | RHEL / Fedora / Rocky �
 echo "| Linux (通用便携版) | \`-linux-x64.tar.gz\` | GTK4 + libadwaita 免安装包 |"
 echo "| Android | \`-android-*.apk\` | release 或 debug |"
 echo "| iOS | \`-ios-simulator-unsigned.zip\` | Simulator only |"
-echo "| Daemon | \`lanchat-daemon-*-*.exe/.gz\` | 独立守护进程 |"
+echo "| Daemon | \`lanchat-daemon-*-*\` | 独立客户端守护进程 |"
+echo "| Server | \`lanchat-server-*-*\` | 中心信令与加密中继服务器（含 \`/status\` 监控面板） |"

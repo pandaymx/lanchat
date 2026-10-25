@@ -2,16 +2,27 @@ package core
 
 import (
 	"archive/zip"
+	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/coder/websocket"
+
+	"github.com/pandaymx/lanchat/internal/appapi"
+	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
 // defaultNickname 在未提供昵称时生成「平台-短随机串」，避免多端重名。
@@ -169,4 +180,102 @@ func openClipboardDataURI(uri string) (*fileInfo, error) {
 		name: "clipboard." + ext,
 		size: int64(len(raw)),
 	}, nil
+}
+
+const maxInlineImageRawBytes = 256 << 10
+
+func imageMimeByExt(name string) string {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+	switch ext {
+	case "png":
+		return "image/png"
+	case "jpg", "jpeg":
+		return "image/jpeg"
+	case "gif":
+		return "image/gif"
+	case "webp":
+		return "image/webp"
+	case "bmp":
+		return "image/bmp"
+	default:
+		return ""
+	}
+}
+
+// buildInlineStickerPayload 为 < 256 KiB 的图片构造 STICKER_MSG 内联缩略图负载（M17）。
+func buildInlineStickerPayload(info *fileInfo, sha256Hex string) (protocol.StickerPayload, string, bool) {
+	if info == nil || info.file == nil || info.size <= 0 || info.size >= maxInlineImageRawBytes {
+		return protocol.StickerPayload{}, "", false
+	}
+	mime := imageMimeByExt(info.name)
+	if mime == "" {
+		return protocol.StickerPayload{}, "", false
+	}
+	if _, err := info.file.Seek(0, io.SeekStart); err != nil {
+		return protocol.StickerPayload{}, "", false
+	}
+	raw, readErr := io.ReadAll(info.file)
+	_, _ = info.file.Seek(0, io.SeekStart)
+	if readErr != nil || len(raw) == 0 {
+		return protocol.StickerPayload{}, "", false
+	}
+
+	b64 := base64.StdEncoding.EncodeToString(raw)
+	if len(b64) > maxInlineImageRawBytes {
+		if img, _, err := image.Decode(bytes.NewReader(raw)); err == nil {
+			var buf bytes.Buffer
+			if jpeg.Encode(&buf, img, &jpeg.Options{Quality: 65}) == nil {
+				compB64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+				if len(compB64) <= maxInlineImageRawBytes {
+					b64 = compB64
+					mime = "image/jpeg"
+				}
+			}
+		}
+	}
+	if len(b64) > maxInlineImageRawBytes {
+		return protocol.StickerPayload{}, "", false
+	}
+	if sha256Hex == "" {
+		sum := sha256.Sum256(raw)
+		sha256Hex = hex.EncodeToString(sum[:])
+	}
+	payload := protocol.StickerPayload{
+		Name: info.name,
+		Mime: mime,
+		B64:  b64,
+		Hash: sha256Hex,
+	}
+	dataURI := "data:" + mime + ";base64," + b64
+	return payload, dataURI, true
+}
+
+// maybeSendInlineThumbnail 在 OfferFile / OfferFileToGroup 发送小图片或剪贴板图片时，
+// 同步发送带内联缩略图的 STICKER_MSG 供五端聊天气泡直接渲染（M17）。
+func (c *Client) maybeSendInlineThumbnail(conn *websocket.Conn, to, group string, info *fileInfo, sha256Hex string) {
+	payload, dataURI, ok := buildInlineStickerPayload(info, sha256Hex)
+	if !ok {
+		return
+	}
+	var (
+		env *protocol.Envelope
+		err error
+	)
+	if group != "" {
+		env, err = c.sendGroup(conn, protocol.StickerMsg, group, payload)
+	} else {
+		env, err = c.sendTo(conn, protocol.StickerMsg, to, payload)
+	}
+	if err != nil || env == nil {
+		return
+	}
+	c.history.append(appapi.ChatMessage{
+		ID:    env.ID,
+		From:  c.selfIDValue(),
+		To:    to,
+		Group: group,
+		Type:  protocol.StickerMsg,
+		Text:  dataURI,
+		TS:    env.TS,
+	})
 }

@@ -770,3 +770,212 @@ func TestM12AndM13QuoteReplyAndAutoBootstrap(t *testing.T) {
 		return len(msgs) == 4 && strings.HasPrefix(msgs[3].Text, "[加密消息]")
 	})
 }
+
+// TestM14AutoLeaderElectionAndFailover 验证 M14 零配置先嗅探后自举与房主下线自动重选接管。
+func TestM14AutoLeaderElectionAndFailover(t *testing.T) {
+	a := New(Options{Nickname: "HostA"})
+	t.Cleanup(a.Close)
+	if err := a.Connect("auto", testPSK); err != nil {
+		t.Fatalf("HostA Connect(auto): %v", err)
+	}
+
+	// B 输入空地址（等价于 auto），应嗅探到 HostA 的内嵌节点并直接连入，不重复启新服。
+	b := New(Options{Nickname: "PeerB"})
+	t.Cleanup(b.Close)
+	if err := b.Connect("", testPSK); err != nil {
+		t.Fatalf("PeerB Connect(empty/auto): %v", err)
+	}
+
+	waitFor(t, 3*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	// 关闭原房主 HostA，PeerB 应触发自动故障转移（自举为新房主并恢复 Connected）。
+	a.Close()
+	waitFor(t, 6*time.Second, func() bool {
+		st := b.GetState()
+		return st.Conn == appapi.ConnConnected && st.SelfID != ""
+	})
+}
+
+// TestM15PersistentIdentityAndAutoECDH 验证 M15 持久化密码学身份、零配置 1:1 自动 X25519 E2EE 与 /fingerprint。
+func TestM15PersistentIdentityAndAutoECDH(t *testing.T) {
+	wsURL := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	a1 := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	fp1 := a1.Fingerprint()
+	if fp1 == "" {
+		t.Fatal("expected non-empty identity fingerprint")
+	}
+	if err := a1.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	id1 := a1.GetState().SelfID
+	a1.Close()
+
+	// 重启客户端（使用相同 DownloadDir），SelfID 与安全指纹应保持完全一致。
+	a2 := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a2.Close)
+	if a2.Fingerprint() != fp1 {
+		t.Fatalf("fingerprint changed across restart: %q vs %q", a2.Fingerprint(), fp1)
+	}
+	if err := a2.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if got := a2.GetState().SelfID; got != id1 {
+		t.Fatalf("SelfID changed across restart: %q vs %q", got, id1)
+	}
+
+	b := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	t.Cleanup(b.Close)
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	bID := b.GetState().SelfID
+
+	waitFor(t, 2*time.Second, func() bool {
+		return a2.PeerFingerprint(bID) != "" && b.PeerFingerprint(id1) != ""
+	})
+	if a2.PeerFingerprint(bID) != b.Fingerprint() {
+		t.Fatalf("peer fingerprint mismatch: %q vs %q", a2.PeerFingerprint(bID), b.Fingerprint())
+	}
+
+	// 无需手动 /e2ee，单播消息自动使用 X25519 ECDH 端到端加密并在对端透明解密。
+	if _, err := a2.SendText(bID, "M15 零配置自动 ECDH 密文", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := b.GetState().Messages
+		return len(msgs) == 1 && msgs[0].Text == "M15 零配置自动 ECDH 密文"
+	})
+
+	// /fingerprint 指令应生成包含本机与对端指纹的核验记录。
+	fpRet, err := a2.SendText(bID, "/fingerprint", "")
+	if err != nil || !strings.HasPrefix(fpRet, "fp:") || !strings.Contains(fpRet, b.Fingerprint()) {
+		t.Fatalf("/fingerprint unexpected result: ret=%q err=%v", fpRet, err)
+	}
+}
+
+// TestM16OfflineSpoolAndChannelHistoryReplay 验证 M16 离线单播暂存补发与晚入群频道历史回放。
+func TestM16OfflineSpoolAndChannelHistoryReplay(t *testing.T) {
+	wsURL := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	a := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a.Close)
+	b1 := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b1.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	bID := b1.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1
+	})
+
+	// Bob 下线断开。
+	b1.Close()
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 0
+	})
+
+	// Alice 在 Bob 离线期间发送单播消息（此时还同时验证离线 ECDH 密文投递）。
+	if _, err := a.SendText(bID, "Bob 离线期间的重要通知", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice 创建频道并发送两条频道消息。
+	if _, err := a.ChannelCreate("研发架构组", "", false); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Channels) == 1
+	})
+	chID := a.GetState().Channels[0].ID
+	if _, err := a.SendText("", "频道历史第 1 条", chID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SendText("", "频道历史第 2 条", chID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bob 重新上线（相同持久化身份 dirB），应自动收到离线期间的单播消息。
+	b2 := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	t.Cleanup(b2.Close)
+	if err := b2.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, m := range b2.GetState().Messages {
+			if m.Text == "Bob 离线期间的重要通知" {
+				return true
+			}
+		}
+		return false
+	})
+
+	// Bob 晚加入频道 chID，应自动回放最近频道历史消息且幂等去重。
+	if err := b2.ChannelJoin(chID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		var count int
+		for _, m := range b2.GetState().Messages {
+			if m.Group == chID && strings.HasPrefix(m.Text, "频道历史第 ") {
+				count++
+			}
+		}
+		return count == 2
+	})
+}
+
+// TestM17VoiceAndInlineImageThumbnail 验证 M17 /voice 语音消息指令与小图/剪贴板图片内联缩略图自动推送。
+func TestM17VoiceAndInlineImageThumbnail(t *testing.T) {
+	wsURL := startServer(t)
+	a := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	// 1. /voice 语音消息指令
+	if _, err := a.SendText(bID, "/voice 8 收到请回复", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, m := range b.GetState().Messages {
+			if strings.HasPrefix(m.Text, `🎤 [语音消息 8"]`) && strings.Contains(m.Text, "收到请回复") {
+				return true
+			}
+		}
+		return false
+	})
+
+	// 2. OfferFile 发送剪贴板/小尺寸 PNG 时，自动同步下发 data:image/png;base64,... 内联缩略图气泡
+	clipURI := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	if _, err := a.OfferFile(bID, clipURI); err != nil {
+		t.Fatalf("OfferFile clipboard image: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, m := range b.GetState().Messages {
+			if m.Type == "STICKER_MSG" && strings.HasPrefix(m.Text, "data:image/png;base64,") {
+				return true
+			}
+		}
+		return false
+	})
+}

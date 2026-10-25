@@ -78,7 +78,7 @@ func (h *historyStore) setDir(dir string) {
 	h.msgs = combined
 }
 
-func (h *historyStore) append(m appapi.ChatMessage) {
+func (h *historyStore) append(m appapi.ChatMessage) bool {
 	if m.TS == 0 {
 		m.TS = time.Now().UnixMilli()
 	}
@@ -87,7 +87,7 @@ func (h *historyStore) append(m appapi.ChatMessage) {
 
 	for _, existing := range h.msgs {
 		if m.ID != "" && existing.ID == m.ID {
-			return
+			return false
 		}
 	}
 	h.msgs = append(h.msgs, m)
@@ -95,6 +95,7 @@ func (h *historyStore) append(m appapi.ChatMessage) {
 		h.msgs = append([]appapi.ChatMessage(nil), h.msgs[len(h.msgs)-maxHistoryMessages:]...)
 	}
 	h.persistLocked(m)
+	return true
 }
 
 func (h *historyStore) persistLocked(m appapi.ChatMessage) {

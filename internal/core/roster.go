@@ -28,6 +28,9 @@ func (c *Client) applyUserList(env *protocol.Envelope) {
 		if u.ID == selfID {
 			continue
 		}
+		if u.PubKey != "" {
+			c.peerPubs[u.ID] = u.PubKey
+		}
 		peer := toPeer(u)
 		next[u.ID] = peer
 		if _, existed := old[u.ID]; !existed {
@@ -81,6 +84,9 @@ func (c *Client) applyJoin(env *protocol.Envelope) {
 		c.mu.Unlock()
 		return
 	}
+	if p.User.PubKey != "" {
+		c.peerPubs[p.User.ID] = p.User.PubKey
+	}
 	c.peers[p.User.ID] = toPeer(p.User)
 	peer := c.peers[p.User.ID]
 	c.mu.Unlock()
@@ -113,6 +119,9 @@ func (c *Client) applyPresence(env *protocol.Envelope) {
 	if p.User.ID == c.selfID {
 		c.mu.Unlock()
 		return
+	}
+	if p.User.PubKey != "" {
+		c.peerPubs[p.User.ID] = p.User.PubKey
 	}
 	c.peers[p.User.ID] = toPeer(p.User)
 	peer := c.peers[p.User.ID]

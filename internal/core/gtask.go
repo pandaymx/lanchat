@@ -249,6 +249,7 @@ func (g *groupTask) handleProgress(ev groupEvent) {
 	}
 	g.bm[ev.from] = p.HaveBitmap
 	g.rebuild()
+	g.afterSwarmMsg()
 }
 
 // handleDown 记录成员块连接的直连/中继状态并重发任务进度，使 UI 展示
@@ -256,6 +257,10 @@ func (g *groupTask) handleProgress(ev groupEvent) {
 // 中继建立连接时 viaRelay 为 true。矩阵由引擎在块帧时另行上抛。
 func (g *groupTask) handleDown(ev groupEvent) {
 	g.relay[ev.from] = ev.viaRelay
+	if !ev.viaRelay && !g.source && !g.completed && ev.from != g.peerName && len(g.bm[ev.from]) > 0 {
+		delete(g.bm, ev.from)
+		g.rebuild()
+	}
 	cp := g.currentSnapshot()
 	if cp.State != appapi.TransferActive {
 		return
@@ -362,6 +367,13 @@ func (g *groupTask) emitReceiverProgress() {
 			return
 		}
 		g.completed = true
+		if conn, err := g.cli.connectedConn(); err == nil && g.peerName != "" {
+			_, _ = g.cli.sendTo(conn, protocol.GroupProgress, g.peerName, protocol.GroupProgressPayload{
+				GroupID:    g.groupID,
+				TransferID: g.id,
+				HaveBitmap: g.sourceBitmap(),
+			})
+		}
 		g.finish()
 	}
 }

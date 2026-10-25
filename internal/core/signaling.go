@@ -3,14 +3,16 @@ package core
 import (
 	"context"
 	"errors"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/google/uuid"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/config"
+	"github.com/pandaymx/lanchat/internal/discover"
 	"github.com/pandaymx/lanchat/internal/protocol"
 	"github.com/pandaymx/lanchat/internal/server"
 )
@@ -22,32 +24,46 @@ type session struct {
 }
 
 // Connect 拨号并完成 HELLO/WELCOME 握手；成功后常驻收泵，断线自动重连。
-// 当 addr 为 "auto" 或 "local" 时（M13 无中心自举模式），自动在本地拉起内嵌信令服务器并接入。
+// 当 addr 为空、"auto" 或 "local" 时（M13/M14 零配置 LAN 自动选主与故障转移模式）：
+//   - "auto" 或 ""：先执行 BrowseServers() 嗅探局域网存活节点（按 ID 字典序最小选主），
+//     若无存活节点则全网卡自举内嵌服务器并广播 mDNS；
+//   - "local"：直接在本地启动内嵌服务器并广播 mDNS。
 func (c *Client) Connect(addr, psk string) error {
-	trimmedAddr := strings.TrimSpace(addr)
-	if trimmedAddr == "" {
-		return errEmptyAddress
-	}
-	if strings.EqualFold(trimmedAddr, "auto") || strings.EqualFold(trimmedAddr, "local") {
-		bootAddr, err := c.startEmbeddedServer(psk)
-		if err != nil {
-			return err
-		}
-		addr = bootAddr
-	}
-
 	c.mu.Lock()
 	if c.connState == appapi.ConnConnecting || c.connState == appapi.ConnConnected {
 		c.mu.Unlock()
 		return errInvalidState
 	}
-	c.addr = normalizeAddr(addr)
+	trimmedAddr := strings.TrimSpace(addr)
+	isAuto := trimmedAddr == "" || strings.EqualFold(trimmedAddr, "auto")
+	isLocal := strings.EqualFold(trimmedAddr, "local")
+	c.autoMode = isAuto || isLocal
 	c.psk = psk
+	if !isAuto && !isLocal {
+		c.addr = normalizeAddr(trimmedAddr)
+	}
 	c.connState = appapi.ConnConnecting
 	c.mu.Unlock()
 	c.listener().OnConnChanged(appapi.ConnConnecting, "")
 
-	s, err := c.establish(c.runCtx)
+	var (
+		s   *session
+		err error
+	)
+	if isAuto {
+		s, err = c.establishAuto(c.runCtx, psk)
+	} else if isLocal {
+		var bootAddr string
+		bootAddr, err = c.startEmbeddedServer(psk)
+		if err == nil {
+			c.mu.Lock()
+			c.addr = normalizeAddr(bootAddr)
+			c.mu.Unlock()
+			s, err = c.establish(c.runCtx)
+		}
+	} else {
+		s, err = c.establish(c.runCtx)
+	}
 	if err != nil {
 		var reason string
 		state := appapi.ConnDisconnected
@@ -78,6 +94,35 @@ func (c *Client) Connect(addr, psk string) error {
 	return nil
 }
 
+// establishAuto 执行 M14 “先嗅探、后自举”：优先连入 BrowseServers() 中字典序最小的存活节点，
+// 若无可用节点则拉起本机全网卡内嵌服务器并广播 mDNS。
+func (c *Client) establishAuto(ctx context.Context, psk string) (*session, error) {
+	servers := c.BrowseServers()
+	for _, srv := range servers {
+		if strings.TrimSpace(srv.Addr) == "" {
+			continue
+		}
+		candAddr := normalizeAddr(srv.Addr)
+		c.mu.Lock()
+		c.addr = candAddr
+		c.psk = psk
+		c.mu.Unlock()
+		if s, err := c.establish(ctx); err == nil {
+			return s, nil
+		}
+	}
+
+	bootAddr, err := c.startEmbeddedServer(psk)
+	if err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	c.addr = normalizeAddr(bootAddr)
+	c.psk = psk
+	c.mu.Unlock()
+	return c.establish(ctx)
+}
+
 // establish 拨号 + HELLO/WELCOME + 同步消化首帧 USER_LIST，返回会话。
 func (c *Client) establish(ctx context.Context) (*session, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
@@ -89,7 +134,7 @@ func (c *Client) establish(ctx context.Context) (*session, error) {
 	conn.SetReadLimit(int64(protocol.MaxControlPayload))
 
 	c.mu.Lock()
-	nick, deviceID, osName := c.nickname, c.deviceID, c.os
+	nick, deviceID, osName, pubKey := c.nickname, c.deviceID, c.os, c.identityPub
 	psk := c.psk
 	c.mu.Unlock()
 
@@ -97,6 +142,7 @@ func (c *Client) establish(ctx context.Context) (*session, error) {
 		Nickname: nick,
 		DeviceID: deviceID,
 		PSK:      psk,
+		PubKey:   pubKey,
 		OS:       osName,
 		Caps: protocol.ClientCaps{
 			Resume: true,
@@ -193,26 +239,55 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 	}
 	c.mu.Lock()
 	c.connState = appapi.ConnConnecting
+	autoMode := c.autoMode
+	psk := c.psk
 	c.mu.Unlock()
 	c.listener().OnConnChanged(appapi.ConnConnecting, reason)
 
-	select {
-	case <-c.runCtx.Done():
-		return
-	case <-time.After(backoff):
+	waitDur := backoff
+	if autoMode && waitDur > 120*time.Millisecond {
+		waitDur = 120 * time.Millisecond
 	}
 
-	ns, estErr := c.establish(c.runCtx)
-	if estErr != nil {
-		st := appapi.ConnDisconnected
-		if errors.Is(estErr, errAuthFailed) {
-			st = appapi.ConnAuthFailed
+	var (
+		ns        *session
+		estErr    error
+		failCount int
+	)
+	for {
+		select {
+		case <-c.runCtx.Done():
+			return
+		case <-time.After(waitDur):
 		}
-		c.mu.Lock()
-		c.connState = st
-		c.mu.Unlock()
-		c.listener().OnConnChanged(st, estErr.Error())
-		return
+
+		if autoMode && failCount >= 2 {
+			ns, estErr = c.establishAuto(c.runCtx, psk)
+		} else {
+			ns, estErr = c.establish(c.runCtx)
+		}
+		if estErr == nil {
+			break
+		}
+		failCount++
+		if !autoMode {
+			st := appapi.ConnDisconnected
+			if errors.Is(estErr, errAuthFailed) {
+				st = appapi.ConnAuthFailed
+			}
+			c.mu.Lock()
+			c.connState = st
+			c.mu.Unlock()
+			c.listener().OnConnChanged(st, estErr.Error())
+			return
+		}
+		if failCount > 6 {
+			c.mu.Lock()
+			c.connState = appapi.ConnDisconnected
+			c.mu.Unlock()
+			c.listener().OnConnChanged(appapi.ConnDisconnected, estErr.Error())
+			return
+		}
 	}
 
 	c.mu.Lock()
@@ -275,17 +350,35 @@ func readEnvelope(ctx context.Context, conn *websocket.Conn) (*protocol.Envelope
 	return protocol.UnmarshalEnvelope(data)
 }
 
-// normalizeAddr 补全 ws:// 前缀。
+// normalizeAddr 补全 ws:// 前缀与默认路径。
 func normalizeAddr(addr string) string {
 	addr = strings.TrimSpace(addr)
-	if strings.HasPrefix(addr, "ws://") || strings.HasPrefix(addr, "wss://") {
-		return addr
+	if !strings.HasPrefix(addr, "ws://") && !strings.HasPrefix(addr, "wss://") {
+		addr = "ws://" + addr
 	}
-	return "ws://" + addr
+	// 若只有 host:port 而无路径，默认补上 /lanchat。
+	schemeEnd := strings.Index(addr, "://")
+	if schemeEnd > 0 {
+		rest := addr[schemeEnd+3:]
+		if !strings.Contains(rest, "/") {
+			addr += "/lanchat"
+		}
+	}
+	return addr
 }
 
-// startEmbeddedServer 在本机随机端口启动内嵌信令与中继服务器，随 c.runCtx 生命周期自动关停。
+// startEmbeddedServer 在本机全网卡随机端口启动内嵌信令与中继服务器，
+// 自动启动 mDNS 广播并随 c.runCtx 生命周期自动关停（M13/M14）。
 func (c *Client) startEmbeddedServer(psk string) (string, error) {
+	c.mu.Lock()
+	if c.embeddedStop != nil {
+		c.embeddedStop()
+		c.embeddedStop = nil
+	}
+	nick := c.nickname
+	devID := c.deviceID
+	c.mu.Unlock()
+
 	authMode := "none"
 	var pskHash string
 	if psk != "" {
@@ -296,28 +389,77 @@ func (c *Client) startEmbeddedServer(psk string) (string, error) {
 		authMode = "psk"
 		pskHash = h
 	}
+
+	relayHost := "127.0.0.1"
+	if cands := discover.CandidateAddrs(0); len(cands) > 0 {
+		if h, _, err := net.SplitHostPort(cands[0]); err == nil && h != "" {
+			relayHost = h
+		}
+	}
+
 	srv, err := server.New(server.Options{
-		Listen:            "127.0.0.1:0",
+		Listen:            ":0",
 		Path:              "/lanchat",
 		AuthMode:          authMode,
 		PSKHash:           pskHash,
 		HeartbeatInterval: time.Duration(protocol.HeartbeatIntervalSec) * time.Second,
 		IdleTimeout:       60 * time.Second,
 		ShutdownGrace:     time.Second,
-		RelayListen:       "127.0.0.1:0",
-		RelayHost:         "127.0.0.1",
+		RelayListen:       ":0",
+		RelayHost:         relayHost,
 	}, nil)
 	if err != nil {
 		return "", err
 	}
-	go func() { _ = srv.Serve(c.runCtx) }()
+
+	srvCtx, srvCancel := context.WithCancel(c.runCtx)
+	c.mu.Lock()
+	c.embeddedStop = srvCancel
+	c.mu.Unlock()
+
+	go func() { _ = srv.Serve(srvCtx) }()
 	select {
 	case <-srv.Ready():
-		return "ws://" + srv.ListenAddr() + "/lanchat", nil
+		_, portStr, err := net.SplitHostPort(srv.ListenAddr())
+		if err != nil {
+			srvCancel()
+			return "", err
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			srvCancel()
+			return "", err
+		}
+
+		srvID := "auto-" + devID
+		advAddr := net.JoinHostPort(relayHost, portStr)
+		registerEmbeddedServer(appapi.Server{
+			Name:     nick,
+			ID:       srvID,
+			Addr:     advAddr,
+			Version:  protocol.ProtocolVersion,
+			AuthMode: authMode,
+		})
+
+		adv, _ := discover.NewAdvertiser(port, discover.ServerMeta{
+			Version: protocol.ProtocolVersion,
+			Path:    "/lanchat",
+			Name:    nick,
+			Auth:    authMode,
+			ID:      srvID,
+			TLS:     false,
+		})
+		go func() {
+			<-srvCtx.Done()
+			unregisterEmbeddedServer(srvID)
+			if adv != nil {
+				adv.Close()
+			}
+		}()
+
+		return "ws://" + net.JoinHostPort("127.0.0.1", portStr) + "/lanchat", nil
 	case <-c.runCtx.Done():
+		srvCancel()
 		return "", c.runCtx.Err()
 	}
 }
-
-// 防止 uuid 未使用告警（部分文件不直接引用时保持 import 一致）。
-var _ = uuid.NewString

@@ -54,8 +54,22 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			} else {
 				text = "[加密消息] 需配置相同 /e2ee 密钥解密"
 			}
+		} else if strings.HasPrefix(text, transfer.TextECDHPrefix) {
+			c.mu.Lock()
+			idPriv := c.identityPriv
+			senderPub := c.peerPubs[env.From]
+			if senderPub == "" && p.SenderPub != "" {
+				senderPub = p.SenderPub
+				c.peerPubs[env.From] = senderPub
+			}
+			c.mu.Unlock()
+			if plain, err := transfer.OpenECDHText(idPriv, senderPub, text); err == nil {
+				text = plain
+			} else {
+				text = "[加密消息] 无法验证对端 X25519 密钥"
+			}
 		}
-		c.history.append(appapi.ChatMessage{
+		if c.history.append(appapi.ChatMessage{
 			ID:       env.ID,
 			From:     env.From,
 			To:       env.To,
@@ -65,25 +79,34 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			ReplyTo:  p.ReplyTo,
 			Mentions: p.Mentions,
 			TS:       env.TS,
-		})
-		c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.TextMsg, text)
+		}) {
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.TextMsg, text)
+		}
 
 	case protocol.StickerMsg:
 		var p protocol.StickerPayload
 		if err := env.DecodePayload(&p); err != nil {
 			return
 		}
-		c.history.append(appapi.ChatMessage{
+		text := p.Name
+		if p.B64 != "" {
+			mime := p.Mime
+			if mime == "" {
+				mime = "image/png"
+			}
+			text = "data:" + mime + ";base64," + p.B64
+		}
+		if c.history.append(appapi.ChatMessage{
 			ID:    env.ID,
 			From:  env.From,
 			To:    env.To,
 			Group: env.Group,
 			Type:  protocol.StickerMsg,
-			Text:  p.Name,
+			Text:  text,
 			TS:    env.TS,
-		})
-		// M4 表情以名称引用（UI 本地缓存贴纸资源）；b64 缺省时不展开。
-		c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.StickerMsg, p.Name)
+		}) {
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.StickerMsg, text)
+		}
 
 	case protocol.MsgRevoke:
 		var p protocol.MsgRevokePayload

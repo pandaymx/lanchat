@@ -56,6 +56,9 @@ func (c *Client) OfferFile(to, path string) (string, error) {
 	t.senderPriv = priv
 	t.sha256 = sum
 
+	// M17: 当发送 < 256 KiB 的图片或 data:image/... 剪贴板图片时，同步发送带缩略图的 STICKER_MSG 内联预览。
+	c.maybeSendInlineThumbnail(conn, to, "", info, sum)
+
 	// 立即发进度（pending）让 UI 建立任务行。
 	c.listener().OnTransferProgress(t.snapshot())
 

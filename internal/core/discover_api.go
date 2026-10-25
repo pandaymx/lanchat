@@ -18,7 +18,47 @@ import (
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
-// BrowseServers 返回当前 mDNS 浏览到的中心节点，并合并 LANCHAT_STATIC_SERVERS
+var (
+	embeddedRegistryMu sync.Mutex
+	embeddedRegistry   = map[string]appapi.Server{}
+)
+
+func registerEmbeddedServer(srv appapi.Server) {
+	embeddedRegistryMu.Lock()
+	embeddedRegistry[srv.ID] = srv
+	embeddedRegistryMu.Unlock()
+}
+
+func unregisterEmbeddedServer(id string) {
+	embeddedRegistryMu.Lock()
+	delete(embeddedRegistry, id)
+	embeddedRegistryMu.Unlock()
+}
+
+func snapshotEmbeddedServers() []appapi.Server {
+	embeddedRegistryMu.Lock()
+	list := make([]appapi.Server, 0, len(embeddedRegistry))
+	for _, s := range embeddedRegistry {
+		list = append(list, s)
+	}
+	embeddedRegistryMu.Unlock()
+
+	var live []appapi.Server
+	for _, s := range list {
+		if s.Addr == "" {
+			continue
+		}
+		if conn, err := net.DialTimeout("tcp", s.Addr, 150*time.Millisecond); err == nil {
+			_ = conn.Close()
+			live = append(live, s)
+		} else {
+			unregisterEmbeddedServer(s.ID)
+		}
+	}
+	return live
+}
+
+// BrowseServers 返回当前 mDNS 浏览到的中心节点，并合并内嵌自举节点与 LANCHAT_STATIC_SERVERS
 // 配置的跨网段静态候选中心节点；首次调用时懒启动常驻浏览。
 func (c *Client) BrowseServers() []appapi.Server {
 	c.mu.Lock()
@@ -35,13 +75,27 @@ func (c *Client) BrowseServers() []appapi.Server {
 
 	entries := b.Snapshot()
 	seenAddr := make(map[string]bool, len(entries))
+	seenID := make(map[string]bool, len(entries))
 	out := make([]appapi.Server, 0, len(entries))
 	for _, s := range entries {
 		srv := toAPIServer(s)
 		if srv.Addr != "" {
 			seenAddr[srv.Addr] = true
 		}
+		if srv.ID != "" {
+			seenID[srv.ID] = true
+		}
 		out = append(out, srv)
+	}
+
+	for _, s := range snapshotEmbeddedServers() {
+		if !seenAddr[s.Addr] && (s.ID == "" || !seenID[s.ID]) {
+			seenAddr[s.Addr] = true
+			if s.ID != "" {
+				seenID[s.ID] = true
+			}
+			out = append(out, s)
+		}
 	}
 
 	for _, s := range probeStaticServers(os.Getenv("LANCHAT_STATIC_SERVERS")) {

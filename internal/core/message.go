@@ -1,10 +1,13 @@
 package core
 
 import (
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
@@ -15,11 +18,36 @@ import (
 const revokeWindow = 2 * time.Minute
 
 // SendText 发送文本。group 为空表示单播，"*" 为 G1 全体，其余为 G2 频道。
-// 支持 `/revoke <msgID>`、`/read <msgID>`、`/reply <msgID> <text>` 与 `/e2ee <secret|off>` 快捷指令。
+// 支持 `/revoke <msgID>`、`/read <msgID>`、`/reply <msgID> <text>`、`/e2ee <secret|off>`、
+// `/fingerprint`（M15 TOFU 安全码核验）与 `/voice <duration|note>`（M17 语音消息）快捷指令。
 func (c *Client) SendText(to, text, group string) (string, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return "", errEmptyText
+	}
+	if trimmed == "/fingerprint" || strings.HasPrefix(trimmed, "/fingerprint ") {
+		peerID := to
+		if arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/fingerprint")); arg != "" {
+			peerID = arg
+		}
+		selfFP := c.Fingerprint()
+		peerFP := c.PeerFingerprint(peerID)
+		summary := "本机: " + selfFP
+		ret := "fp:" + selfFP
+		if peerFP != "" {
+			summary += " | 对端: " + peerFP
+			ret += "/" + peerFP
+		}
+		c.history.append(appapi.ChatMessage{
+			ID:    "fp-" + uuid.NewString(),
+			From:  c.selfIDValue(),
+			To:    to,
+			Group: group,
+			Type:  protocol.TextMsg,
+			Text:  "[安全码指纹] " + summary,
+			TS:    time.Now().UnixMilli(),
+		})
+		return ret, nil
 	}
 	if trimmed == "/e2ee off" || trimmed == "/e2ee clear" {
 		c.mu.Lock()
@@ -54,6 +82,10 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		return targetID, nil
 	}
+	if trimmed == "/voice" || strings.HasPrefix(trimmed, "/voice ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/voice"))
+		text = formatVoiceMessage(rest)
+	}
 	var explicitReplyTo string
 	if strings.HasPrefix(trimmed, "/reply ") {
 		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/reply "))
@@ -80,18 +112,34 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	wireText := text
 	c.mu.Lock()
 	e2eeSecret := c.e2eeKey
+	idPriv := c.identityPriv
+	idPub := c.identityPub
+	var peerPub string
+	if group == "" && to != "" {
+		peerPub = c.peerPubs[to]
+	}
 	c.mu.Unlock()
+
+	var senderPub string
 	if e2eeSecret != "" {
 		sealed, err := transfer.SealText(e2eeSecret, text)
 		if err != nil {
 			return "", err
 		}
 		wireText = sealed
+	} else if group == "" && peerPub != "" && idPriv != nil {
+		sealed, err := transfer.SealECDHText(idPriv, peerPub, text)
+		if err != nil {
+			return "", err
+		}
+		wireText = sealed
+		senderPub = idPub
 	}
 	payload := protocol.TextPayload{
-		Text:     wireText,
-		ReplyTo:  replyTo,
-		Mentions: mentions,
+		Text:      wireText,
+		ReplyTo:   replyTo,
+		Mentions:  mentions,
+		SenderPub: senderPub,
 	}
 	var env *protocol.Envelope
 	if group != "" {
@@ -185,15 +233,25 @@ func (c *Client) SendSticker(to, path string) (string, error) {
 	_, isChannel := c.channels[to]
 	c.mu.Unlock()
 
+	payload := protocol.StickerPayload{Name: path}
+	histText := path
+	if info, errOpen := openFileInfo(path); errOpen == nil {
+		if sp, dataURI, ok := buildInlineStickerPayload(info, ""); ok {
+			payload = sp
+			histText = dataURI
+		}
+		_ = info.file.Close()
+	}
+
 	var (
 		env   *protocol.Envelope
 		group string
 	)
 	if isChannel || to == protocol.GroupBroadcast {
 		group = to
-		env, err = c.sendGroup(conn, protocol.StickerMsg, group, protocol.StickerPayload{Name: path})
+		env, err = c.sendGroup(conn, protocol.StickerMsg, group, payload)
 	} else {
-		env, err = c.sendTo(conn, protocol.StickerMsg, to, protocol.StickerPayload{Name: path})
+		env, err = c.sendTo(conn, protocol.StickerMsg, to, payload)
 	}
 	if err != nil {
 		return "", err
@@ -204,7 +262,7 @@ func (c *Client) SendSticker(to, path string) (string, error) {
 		To:    to,
 		Group: group,
 		Type:  protocol.StickerMsg,
-		Text:  path,
+		Text:  histText,
 		TS:    env.TS,
 	})
 	return env.ID, nil
@@ -224,4 +282,33 @@ func (c *Client) connectedConn() (*websocket.Conn, error) {
 		return nil, errNotConnected
 	}
 	return c.conn, nil
+}
+
+// formatVoiceMessage 将 /voice 指令参数格式化为标准语音气泡文本（M17）。
+func formatVoiceMessage(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return `🎤 [语音消息 3"]`
+	}
+	parts := strings.SplitN(raw, " ", 2)
+	first := parts[0]
+	allDigits := len(first) > 0
+	for _, r := range strings.TrimSuffix(strings.TrimSuffix(first, "s"), `"`) {
+		if !unicode.IsDigit(r) {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits && strings.TrimSuffix(strings.TrimSuffix(first, "s"), `"`) != "" {
+		sec := strings.TrimSuffix(strings.TrimSuffix(first, "s"), `"`)
+		if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
+			return `🎤 [语音消息 ` + sec + `"] ` + strings.TrimSpace(parts[1])
+		}
+		return `🎤 [语音消息 ` + sec + `"]`
+	}
+	ext := strings.ToLower(filepath.Ext(first))
+	if ext == ".wav" || ext == ".mp3" || ext == ".ogg" || ext == ".m4a" || ext == ".opus" || ext == ".aac" {
+		return `🎤 [语音消息 · ` + filepath.Base(first) + `]`
+	}
+	return `🎤 [语音消息 3"] ` + raw
 }

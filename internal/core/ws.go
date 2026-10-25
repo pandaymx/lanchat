@@ -57,10 +57,10 @@ func (c *Client) sendGroup(conn *websocket.Conn, typ, group string, payload any)
 // sendPresenceUpdate 把当前昵称 / 状态经 PRESENCE_UPDATE 同步给服务器。
 func (c *Client) sendPresenceUpdate(conn *websocket.Conn) error {
 	c.mu.Lock()
-	nick, selfID, osName := c.nickname, c.selfID, c.os
+	nick, selfID, osName, pubKey := c.nickname, c.selfID, c.os, c.identityPub
 	c.mu.Unlock()
 	env, err := buildEnvelope(protocol.PresenceUpdate, protocol.UserUpdatePayload{
-		User: protocol.User{ID: selfID, Nickname: nick, OS: osName},
+		User: protocol.User{ID: selfID, Nickname: nick, OS: osName, PubKey: pubKey},
 	})
 	if err != nil {
 		return err

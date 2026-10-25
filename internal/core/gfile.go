@@ -78,6 +78,9 @@ func (c *Client) OfferFileToGroup(group, path string) (string, error) {
 		return "", err
 	}
 
+	// M17: 群组发送 < 256 KiB 图片或剪贴板图片时，同步广播 STICKER_MSG 内联预览。
+	c.maybeSendInlineThumbnail(conn, "", group, info, sum)
+
 	// pending 进度让 UI 建立任务行。
 	g.emitPending()
 	return id, nil

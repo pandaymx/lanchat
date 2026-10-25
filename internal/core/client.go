@@ -12,13 +12,14 @@ package core
 
 import (
 	"context"
+	"crypto/ecdh"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/coder/websocket"
-	"github.com/google/uuid"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/discover"
@@ -44,8 +45,13 @@ type Client struct {
 	server    string
 	heartbeat int // 服务器下发的心跳间隔（秒）
 
-	deviceID string
-	os       string
+	deviceID     string
+	os           string
+	identityPriv *ecdh.PrivateKey
+	identityPub  string
+	peerPubs     map[string]string
+	autoMode     bool
+	embeddedStop context.CancelFunc
 
 	peers      map[string]appapi.Peer
 	transfers  map[string]*transferTask
@@ -95,22 +101,26 @@ func New(opts Options) *Client {
 	if nick == "" {
 		nick = defaultNickname()
 	}
+	deviceID, idPriv, idPub := loadOrCreateIdentity(opts.DownloadDir)
 	c := &Client{
-		connState:   appapi.ConnDisconnected,
-		nickname:    nick,
-		os:          opts.OS,
-		downloadDir: opts.DownloadDir,
-		history:     newHistoryStore(opts.DownloadDir),
-		e2eeKey:     strings.TrimSpace(os.Getenv("LANCHAT_E2EE_KEY")),
-		deviceID:    uuid.NewString(),
-		heartbeat:   protocol.HeartbeatIntervalSec,
-		peers:       map[string]appapi.Peer{},
-		transfers:   map[string]*transferTask{},
-		groupTasks:  map[string]*groupTask{},
-		channels:    map[string]appapi.Channel{},
-		cb:          opts.Listener,
-		runCtx:      runCtx,
-		stopRun:     cancel,
+		connState:    appapi.ConnDisconnected,
+		nickname:     nick,
+		os:           opts.OS,
+		downloadDir:  opts.DownloadDir,
+		history:      newHistoryStore(opts.DownloadDir),
+		e2eeKey:      strings.TrimSpace(os.Getenv("LANCHAT_E2EE_KEY")),
+		deviceID:     deviceID,
+		identityPriv: idPriv,
+		identityPub:  idPub,
+		peerPubs:     map[string]string{},
+		heartbeat:    protocol.HeartbeatIntervalSec,
+		peers:        map[string]appapi.Peer{},
+		transfers:    map[string]*transferTask{},
+		groupTasks:   map[string]*groupTask{},
+		channels:     map[string]appapi.Channel{},
+		cb:           opts.Listener,
+		runCtx:       runCtx,
+		stopRun:      cancel,
 	}
 	return c
 }
@@ -130,6 +140,8 @@ func (c *Client) Close() {
 		c.mu.Lock()
 		conn := c.conn
 		c.conn = nil
+		stopEmbedded := c.embeddedStop
+		c.embeddedStop = nil
 		tasks := make([]*transferTask, 0, len(c.transfers))
 		for _, t := range c.transfers {
 			tasks = append(tasks, t)
@@ -148,6 +160,9 @@ func (c *Client) Close() {
 		}
 		if conn != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
+		}
+		if stopEmbedded != nil {
+			stopEmbedded()
 		}
 	})
 }
@@ -192,7 +207,20 @@ func (c *Client) PickDownloadDir(path string) error {
 	}
 	c.mu.Lock()
 	c.downloadDir = path
+	disconnected := c.connState == appapi.ConnDisconnected
+	curID, curPriv, curPub := c.deviceID, c.identityPriv, c.identityPub
 	c.mu.Unlock()
+
+	if disconnected {
+		id, priv, pub := loadOrCreateIdentity(path)
+		c.mu.Lock()
+		c.deviceID = id
+		c.identityPriv = priv
+		c.identityPub = pub
+		c.mu.Unlock()
+	} else if _, err := os.Stat(filepath.Join(path, identityFileName)); os.IsNotExist(err) {
+		saveIdentity(path, curID, curPriv, curPub)
+	}
 	c.history.setDir(path)
 	return nil
 }

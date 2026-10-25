@@ -97,10 +97,10 @@
 
 ---
 
-## 6. 人类门禁（HIRO，硬性约定）
+## 6. 人类门禁（HIRO 约定）
 
-- **AI 只产出 git 命令清单与变更说明，绝不代执行 `commit` / `push`，绝不自动合并。**
-- 每个里程碑 / Phase 结束，Agent 输出「待执行 git 命令清单」（add 路径、commit message、tag），由人类核对后亲自执行。
+- 默认情况下，AI 产出 git 命令清单与变更说明交由人类核对执行；**当用户在对话中明确授权 AI 执行时，允许 AI 按本规约分批执行 `git add / commit / push`、创建/合并 PR 及检查 GitHub Actions 状态**。
+- 每个里程碑 / Phase 结束，需确保提交信息符合 §5 Conventional Commits 规范且 CI 门禁通过。
 
 ---
 

@@ -7,7 +7,7 @@
 LANChat：Go 核心 + 平台原生 UI 的局域网 IM。WebSocket 只做信令与文本转发（控制面 ≤1 MiB），文件走 P2P TCP 直连，直连失败回退 AES-256-GCM / ChaCha20-Poly1305 加密中继（服务器不可解密）。
 
 - 语言：Go（核心/服务端/daemon）、C#（WinUI 3）、Rust（GTK4）、Swift（SwiftUI）、Kotlin（Compose）
-- 当前进度：**M0–M9 已完成并合入 `main`**，当前处于 **M10+ 契约对齐、全功能闭环与群发块矩阵可视化演进阶段**。
+- 当前进度：**M0–M17 已完成**（涵盖零配置 LAN 自动选主与故障转移、持久化 X25519 身份与零配置 1:1 ECDH E2EE、服务端离线暂存与频道历史重放、语音消息与五端气泡内联图片缩略图预览）。
 
 ## 仓库布局（实际结构）
 
@@ -15,8 +15,8 @@ LANChat：Go 核心 + 平台原生 UI 的局域网 IM。WebSocket 只做信令�
 cmd/lanchat/                 # serve | daemon | cli | browse | version
 internal/
   protocol/                  # Envelope + 消息类型 + P2P 帧 + version.go
-  server/                    # Hub / Registry / Router / Relay / mDNS 广告
-  core/                      # 跨平台核心（无 UI 依赖，含单播/群组传输与本地聊天历史）
+  server/                    # Hub / Registry / Router / Spool(离线与历史缓冲) / Relay / mDNS 广告
+  core/                      # 跨平台核心（无 UI 依赖，含持久化 X25519 身份、自动选主容灾、单播/群组传输与本地历史）
   transfer/                  # P2P 加密传输与断点续传
   group/                     # G1 全员广播 + G2 频道（私有频道/邀请）+ Swarm 块引擎
   relay/                     # 流式零落盘 TCP 中继配对
@@ -74,5 +74,5 @@ cargo test --manifest-path ui-linux/Cargo.toml
 - 文件名默认不进日志；PSK 永不打明文；路径 sanitize 并强制落在 `downloadDir`。
 - chunk 1 MiB / block 4 MiB：CRC32 + 全文件 SHA-256，续传 offset 对齐 chunk/block 边界。
 - 移动端诚实边界：iOS 仅前台 + 中小文件，>1 GiB 必须给出明确提示。
-- **HIRO 人工终审（AGENTS.md §6）**：禁止自动执行 `git commit / push / tag / merge`；完成修改与验证后输出符合 `<type>(<scope>): <subject>` 规范的命令清单交由人类执行。
+- **HIRO 人工终审（AGENTS.md §6）**：默认输出符合 `<type>(<scope>): <subject>` 规范的命令清单交由人类执行；当用户明确授权时，允许 AI 代执行 `git commit / push / pr / merge` 并检查 CI 状态。
 

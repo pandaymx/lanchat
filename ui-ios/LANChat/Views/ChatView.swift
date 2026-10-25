@@ -47,6 +47,12 @@ struct ChatView: View {
                                 },
                                 onMarkRead: {
                                     store.sendText(to: peer.id, text: "/read \(msg.id)")
+                                },
+                                onReact: {
+                                    store.sendText(to: peer.id, text: "/react \(msg.id) 👍")
+                                },
+                                onPin: {
+                                    store.sendText(to: peer.id, text: "/pin \(msg.id)")
                                 }
                             )
                             .id(msg.id)
@@ -389,6 +395,8 @@ struct BubbleRow: View {
     var onReply: (() -> Void)? = nil
     var onRevoke: (() -> Void)? = nil
     var onMarkRead: (() -> Void)? = nil
+    var onReact: (() -> Void)? = nil
+    var onPin: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -449,6 +457,18 @@ struct BubbleRow: View {
                                 onReply?()
                             } label: {
                                 Label("回复", systemImage: "arrowshape.turn.up.left")
+                            }
+
+                            if let onReact {
+                                Button(action: onReact) {
+                                    Label("👍 点赞回应", systemImage: "hand.thumbsup")
+                                }
+                            }
+
+                            if let onPin {
+                                Button(action: onPin) {
+                                    Label("📌 置顶消息", systemImage: "pin")
+                                }
                             }
 
                             if message.inbound {

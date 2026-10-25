@@ -84,6 +84,12 @@ final class AppStore: ObservableObject {
                                                inbound: false, timestamp: Date()))
                 return
             }
+            if msgId.hasPrefix("bwlimit:") {
+                let lim = String(msgId.dropFirst(8))
+                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "⚡ [带宽限速已设置为 \(lim) MB/s]",
+                                               inbound: false, timestamp: Date()))
+                return
+            }
             if content.hasPrefix("/revoke ") {
                 let targetId = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
                 self.revokeMessage(id: targetId)
@@ -92,6 +98,10 @@ final class AppStore: ObservableObject {
             if content.hasPrefix("/read ") {
                 let targetId = String(content.dropFirst(6)).trimmingCharacters(in: .whitespaces)
                 self.markRead(id: targetId, reader: self.selfId)
+                return
+            }
+            if content.hasPrefix("/react ") || content.hasPrefix("/edit ") || content.hasPrefix("/pin ") {
+                await self.refresh()
                 return
             }
             self.appendMessage(ChatMessage(id: msgId, peerId: to, text: self.formatReplyText(content),
@@ -185,6 +195,10 @@ final class AppStore: ObservableObject {
                 self.markRead(id: targetId, reader: self.selfId)
                 return
             }
+            if content.hasPrefix("/react ") || content.hasPrefix("/edit ") || content.hasPrefix("/pin ") {
+                await self.refresh()
+                return
+            }
             self.appendMessage(ChatMessage(id: msgId, peerId: self.selfId, text: self.formatReplyText(content),
                                            inbound: false, timestamp: Date(), group: channel.id))
         }
@@ -273,6 +287,10 @@ final class AppStore: ObservableObject {
                 markRead(id: msgId, reader: from)
                 return
             }
+            if type == "MSG_REACT" || type == "MSG_EDIT" || type == "MSG_PIN" {
+                updateMessageText(id: msgId, newText: text)
+                return
+            }
             // 频道消息按 group(频道ID) 归类；group 为空则按 1:1 对端归类。
             appendMessage(ChatMessage(id: msgId, peerId: from, text: text,
                                       inbound: true, timestamp: Date(),
@@ -340,6 +358,16 @@ final class AppStore: ObservableObject {
             if let idx = list.firstIndex(where: { $0.id == id }) {
                 list[idx].revoked = true
                 list[idx].text = "消息已撤回"
+                messagesByPeer[key] = list
+            }
+        }
+    }
+
+    private func updateMessageText(id: String, newText: String) {
+        guard !id.isEmpty else { return }
+        for (key, var list) in messagesByPeer {
+            if let idx = list.firstIndex(where: { $0.id == id && !$0.revoked }) {
+                list[idx].text = newText
                 messagesByPeer[key] = list
             }
         }

@@ -23,6 +23,9 @@ public sealed partial class ChatViewModel : ViewModelBase
     [ObservableProperty]
     private string _draft = "";
 
+    [ObservableProperty]
+    private bool _isE2eeEnabled;
+
     public ObservableCollection<ChatMessage> Messages { get; } = [];
 
     public ObservableCollection<string> CurrentMembers { get; } = [];
@@ -44,7 +47,52 @@ public sealed partial class ChatViewModel : ViewModelBase
 
     /// <summary>当前会话标题：频道名 / 联系人昵称。</summary>
     public string ConversationTitle =>
-        CurrentChannel?.Name ?? CurrentPeer?.Nickname ?? "";
+        CurrentChannel is not null
+            ? (CurrentChannel.Id == "*" ? "📢 局域网全员广播群" : $"# {CurrentChannel.Name}")
+            : (CurrentPeer?.Nickname ?? "选择联系人或频道开始聊天");
+
+    /// <summary>聊天区顶部副标题（在线状态 / P2P 状态 / 频道人数与主题）。</summary>
+    public string ConversationSubtitle
+    {
+        get
+        {
+            if (CurrentChannel is not null)
+            {
+                if (CurrentChannel.Id == "*")
+                {
+                    return "● G1 全员广播群 · Swarm P2P 多源并发直连就绪";
+                }
+                var topicPart = string.IsNullOrWhiteSpace(CurrentChannel.Topic)
+                    ? "G2 自定义频道"
+                    : CurrentChannel.Topic;
+                return $"👥 {CurrentChannel.Members.Count} 名成员 · {topicPart}";
+            }
+
+            if (CurrentPeer is not null)
+            {
+                var osPart = string.IsNullOrWhiteSpace(CurrentPeer.Os) ? "LAN" : CurrentPeer.Os;
+                return $"● 在线 ({osPart}) · P2P 高速直连就绪";
+            }
+
+            return "从左侧选择在线好友、全员广播群或 G2 频道开始交流";
+        }
+    }
+
+    /// <summary>聊天区顶部圆形头像徽章文字。</summary>
+    public string ConversationAvatarText =>
+        CurrentChannel is not null
+            ? (CurrentChannel.Id == "*" ? "📢" : "#")
+            : (CurrentPeer?.AvatarInitial ?? "💬");
+
+    public bool HasActiveConversation => CurrentPeer is not null || CurrentChannel is not null;
+
+    /// <summary>是否为 G2 自定义频道会话（非全员广播）。</summary>
+    public bool IsChannelConversation => CurrentChannel is not null && CurrentChannel.Id != "*";
+
+    /// <summary>是否为 G1 局域网全员广播群会话。</summary>
+    public bool IsBroadcastConversation => CurrentChannel?.Id == "*";
+
+    public string E2eeButtonText => IsE2eeEnabled ? "🔐 E2EE 已启用" : "🔐 端到端加密 (/e2ee)";
 
     /// <summary>是否处于频道会话且当前用户已加入（可发消息/文件）。</summary>
     public bool CanSend =>
@@ -54,6 +102,19 @@ public sealed partial class ChatViewModel : ViewModelBase
     /// <summary>处于未加入的频道会话（头部显示「加入频道」）。</summary>
     public bool CanJoinChannel =>
         CurrentChannel is not null && !IsMember(CurrentChannel);
+
+    /// <summary>切换到 G1 局域网全员广播群会话（group = "*"）。</summary>
+    public void SelectBroadcastConversation()
+    {
+        var broadcast = new Channel
+        {
+            Id = "*",
+            Name = "局域网全员广播群",
+            Topic = "G1 全员广播 · Swarm P2P 极速分发",
+            Members = string.IsNullOrEmpty(SelfId) ? [] : [SelfId],
+        };
+        SelectChannelConversation(broadcast);
+    }
 
     /// <summary>切换到单播会话。</summary>
     public void SelectConversation(Peer? peer)
@@ -412,7 +473,70 @@ public sealed partial class ChatViewModel : ViewModelBase
 
     private Peer? ResolvePeer(string peerId) => PeerResolver?.Invoke(peerId);
 
-    private bool IsMember(Channel channel) => channel.Members.Contains(SelfId);
+    private bool IsMember(Channel channel) =>
+        channel.Id == "*" || channel.Members.Contains(SelfId);
+
+    /// <summary>快捷引用回复某条消息。</summary>
+    public void PrepareReply(ChatMessage? message)
+    {
+        if (message is null || string.IsNullOrEmpty(message.MsgId))
+        {
+            return;
+        }
+        Draft = $"/reply {message.MsgId} ";
+    }
+
+    /// <summary>快捷撤回自己发送的消息。</summary>
+    public async Task RevokeMessageByUiAsync(ChatMessage? message)
+    {
+        if (message is null || !message.CanRevoke)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        Draft = $"/revoke {message.MsgId}";
+        await SendAsync();
+        Draft = prevDraft;
+    }
+
+    /// <summary>快捷切换端到端加密（/e2ee on | off）。</summary>
+    public async Task ToggleE2eeAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        var nextState = !IsE2eeEnabled;
+        var prevDraft = Draft;
+        Draft = nextState ? "/e2ee on" : "/e2ee off";
+        await SendAsync();
+        IsE2eeEnabled = nextState;
+        OnPropertyChanged(nameof(E2eeButtonText));
+        Draft = prevDraft;
+    }
+
+    /// <summary>往输入框插入 Emoji 表情。</summary>
+    public void InsertEmoji(string emoji)
+    {
+        if (string.IsNullOrEmpty(emoji))
+        {
+            return;
+        }
+        Draft += emoji;
+    }
+
+    /// <summary>按关键字搜索当前会话聊天记录。</summary>
+    public void ExecuteSearchQuery(string query)
+    {
+        var q = query.Trim();
+        if (string.IsNullOrEmpty(q))
+        {
+            return;
+        }
+        var activeKey = CurrentChannel?.Id ?? CurrentPeer?.Id ?? "";
+        var matches = SearchConversation(activeKey, q);
+        AppendSystemMessage($"🔍 搜索“{q}”：共找到 {matches.Count} 条匹配记录");
+    }
 
     private void RefreshMembers(Channel? channel)
     {
@@ -434,8 +558,7 @@ public sealed partial class ChatViewModel : ViewModelBase
         if (channel is not null)
         {
             CurrentChannel = channel;
-            OnPropertyChanged(nameof(CanSend));
-            OnPropertyChanged(nameof(CanJoinChannel));
+            NotifyConversationHeaderChanged();
             RefreshMembers(channel);
         }
     }
@@ -585,16 +708,18 @@ public sealed partial class ChatViewModel : ViewModelBase
         return $"[re:{targetId}] {body}";
     }
 
-    partial void OnCurrentPeerChanged(Peer? value)
-    {
-        OnPropertyChanged(nameof(ConversationTitle));
-        OnPropertyChanged(nameof(CanSend));
-        OnPropertyChanged(nameof(CanJoinChannel));
-    }
+    partial void OnCurrentPeerChanged(Peer? value) => NotifyConversationHeaderChanged();
 
-    partial void OnCurrentChannelChanged(Channel? value)
+    partial void OnCurrentChannelChanged(Channel? value) => NotifyConversationHeaderChanged();
+
+    private void NotifyConversationHeaderChanged()
     {
         OnPropertyChanged(nameof(ConversationTitle));
+        OnPropertyChanged(nameof(ConversationSubtitle));
+        OnPropertyChanged(nameof(ConversationAvatarText));
+        OnPropertyChanged(nameof(HasActiveConversation));
+        OnPropertyChanged(nameof(IsChannelConversation));
+        OnPropertyChanged(nameof(IsBroadcastConversation));
         OnPropertyChanged(nameof(CanSend));
         OnPropertyChanged(nameof(CanJoinChannel));
     }

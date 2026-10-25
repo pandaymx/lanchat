@@ -28,11 +28,32 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _showSettings;
 
+    /// <summary>左侧深色导航栏当前激活标签（messages / contacts / channels / transfers）。</summary>
+    [ObservableProperty]
+    private string _activeNavTab = "messages";
+
+    /// <summary>右侧传输抽屉是否展开。</summary>
+    [ObservableProperty]
+    private bool _showTransfersDrawer = true;
+
     /// <summary>已连接到中心节点。</summary>
     public bool IsConnected => Conn == ConnState.Connected;
 
     /// <summary>未连接，展示登录页。</summary>
     public bool ShowLogin => !IsConnected;
+
+    /// <summary>当前用户昵称展示（用于导航栏头像 Tooltip 与设置页）。</summary>
+    public string SelfNickname =>
+        string.IsNullOrWhiteSpace(Settings.Nickname) ? "局域网用户" : Settings.Nickname;
+
+    /// <summary>当前用户圆形头像首字。</summary>
+    public string SelfInitial =>
+        string.IsNullOrWhiteSpace(SelfNickname) ? "Q" : SelfNickname.Trim()[..1].ToUpperInvariant();
+
+    public bool IsNavMessages => !ShowSettings && ActiveNavTab == "messages";
+    public bool IsNavContacts => !ShowSettings && ActiveNavTab == "contacts";
+    public bool IsNavChannels => !ShowSettings && ActiveNavTab == "channels";
+    public bool IsNavTransfers => ShowTransfersDrawer;
 
     public ShellViewModel(AppServices services, UiThread ui)
     {
@@ -45,7 +66,49 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
         Transfers = new TransfersViewModel(services, ui);
         Settings = new SettingsViewModel(services, ui);
 
+        Settings.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(SettingsViewModel.Nickname))
+            {
+                OnPropertyChanged(nameof(SelfNickname));
+                OnPropertyChanged(nameof(SelfInitial));
+            }
+        };
+
         _services.Ipc.Notification += OnNotification;
+    }
+
+    public void SelectNavTab(string tab)
+    {
+        if (tab == "settings")
+        {
+            ShowSettings = !ShowSettings;
+            NotifyNavState();
+            return;
+        }
+
+        if (tab == "transfers")
+        {
+            ShowTransfersDrawer = !ShowTransfersDrawer;
+            NotifyNavState();
+            return;
+        }
+
+        ShowSettings = false;
+        ActiveNavTab = tab;
+        NotifyNavState();
+    }
+
+    partial void OnShowSettingsChanged(bool value) => NotifyNavState();
+    partial void OnActiveNavTabChanged(string value) => NotifyNavState();
+    partial void OnShowTransfersDrawerChanged(bool value) => NotifyNavState();
+
+    private void NotifyNavState()
+    {
+        OnPropertyChanged(nameof(IsNavMessages));
+        OnPropertyChanged(nameof(IsNavContacts));
+        OnPropertyChanged(nameof(IsNavChannels));
+        OnPropertyChanged(nameof(IsNavTransfers));
     }
 
     /// <summary>启动后先全量同步一次状态。</summary>
@@ -135,6 +198,12 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(ShowLogin));
             SelfId = state.SelfId;
             Chat.SelfId = state.SelfId ?? "";
+            if (!string.IsNullOrWhiteSpace(state.Nickname) && string.IsNullOrWhiteSpace(Settings.Nickname))
+            {
+                Settings.Nickname = state.Nickname;
+            }
+            OnPropertyChanged(nameof(SelfNickname));
+            OnPropertyChanged(nameof(SelfInitial));
             Roster.ReplacePeers(state.Peers);
             Transfers.ReplaceTransfers(state.Transfers);
             ApplyChannels(state.Channels);

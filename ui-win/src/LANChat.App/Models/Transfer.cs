@@ -26,6 +26,50 @@ public sealed record Transfer
     /// <summary>是否有块可用性矩阵摘要。</summary>
     public bool HasMatrix => !string.IsNullOrEmpty(MatrixSummary);
 
+    /// <summary>是否为 P2P 直连路径（非中继）。</summary>
+    public bool IsDirect => !ViaRelay;
+
+    /// <summary>传输方向徽章。</summary>
+    public string DirectionBadgeText => Direction == TransferDirection.Inbound ? "⬇ 接收" : "⬆ 发送";
+
+    /// <summary>传输类型徽章。</summary>
+    public string KindBadgeText => Kind switch
+    {
+        PathKind.Swarm => "G1 广播",
+        PathKind.Channel => "G2 频道",
+        _ => "P2P",
+    };
+
+    /// <summary>已传字节与总大小文案。</summary>
+    public string FormattedSizeProgress =>
+        $"{FormatBytes(BytesDone)} / {FormatBytes(Size)} ({Progress * 100:0.#}%)";
+
+    /// <summary>实时速率或状态文案。</summary>
+    public string FormattedSpeed => SpeedBps > 0
+        ? $"{FormatBytes(SpeedBps)}/s"
+        : State switch
+        {
+            TransferState.Done => "✓ 传输完成",
+            TransferState.Paused => "⏸ 已暂停",
+            TransferState.Failed => string.IsNullOrEmpty(ErrorReason) ? "✕ 传输失败" : $"✕ {ErrorReason}",
+            TransferState.Canceled => "✕ 已取消",
+            TransferState.Pending => "⏳ 等待确认",
+            _ => "传输中…",
+        };
+
+    public static string FormatBytes(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = Math.Max(0, bytes);
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value:0.##} {units[unit]}";
+    }
+
     /// <summary>将 group.matrix 的 base64 haveBitmap 转为紧凑块进度摘要（如 "▓▓▓░░░ 4/8 块"）。</summary>
     public static string FormatMatrixSummary(string haveBitmapB64, long size)
     {

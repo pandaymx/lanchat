@@ -11,6 +11,7 @@
             <converters:SelfToHorizontalAlignmentConverter x:Key="IsSelf" />
             <converters:SelfToTextAlignmentConverter x:Key="SelfAlignConverter" />
             <converters:BubbleColorConverter x:Key="BubbleColorConverter" />
+            <converters:BubbleForegroundConverter x:Key="BubbleForegroundConverter" />
             <converters:BoolToVisibilityConverter x:Key="BoolToVisibilityConverter" />
             <converters:InverseBoolToVisibilityConverter x:Key="InverseBoolToVisibilityConverter" />
             <converters:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />

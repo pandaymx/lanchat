@@ -3,42 +3,117 @@
     x:Class="LANChat.Views.SettingsView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <ScrollViewer Padding="20">
-        <StackPanel Spacing="16" MaxWidth="480">
-            <Button Content="&#xE72B; 返回"
-                    HorizontalAlignment="Left"
-                    Click="Back_Click" />
-            <TextBlock Text="设置" FontSize="24" FontWeight="SemiBold" />
+    <Grid Background="#F2F3F5">
+        <ScrollViewer Padding="28,24">
+            <StackPanel Spacing="18" MaxWidth="540" HorizontalAlignment="Left">
+                <!-- 顶部返回与标题栏 -->
+                <StackPanel Orientation="Horizontal" Spacing="12">
+                    <Button Content="← 返回聊天"
+                            CornerRadius="6"
+                            Click="Back_Click" />
+                    <TextBlock Text="⚙️ 个人资料与系统设置"
+                               FontSize="20"
+                               FontWeight="Bold"
+                               VerticalAlignment="Center" />
+                </StackPanel>
 
-            <StackPanel Spacing="6">
-                <TextBlock Text="昵称" FontWeight="SemiBold" />
-                <TextBox Text="{Binding Settings.Nickname, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                         PlaceholderText="局域网中显示的名字" />
-                <Button Content="保存昵称"
-                        HorizontalAlignment="Left"
-                        Command="{Binding Settings.SaveNicknameCommand}" />
+                <!-- 个人资料与昵称卡片 -->
+                <Border Padding="20"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel Spacing="14">
+                        <StackPanel Orientation="Horizontal" Spacing="14">
+                            <Grid Width="56" Height="56">
+                                <Border Width="56"
+                                        Height="56"
+                                        CornerRadius="28"
+                                        Background="#0099FF">
+                                    <TextBlock Text="{Binding SelfInitial, FallbackValue=Q}"
+                                               FontSize="22"
+                                               FontWeight="Bold"
+                                               Foreground="White"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" />
+                                </Border>
+                                <Border Width="14"
+                                        Height="14"
+                                        CornerRadius="7"
+                                        Background="#22C55E"
+                                        BorderBrush="White"
+                                        BorderThickness="2"
+                                        HorizontalAlignment="Right"
+                                        VerticalAlignment="Bottom" />
+                            </Grid>
+                            <StackPanel Spacing="4" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding SelfNickname}"
+                                           FontSize="16"
+                                           FontWeight="SemiBold" />
+                                <TextBlock Text="● 局域网在线 · P2P 节点已就绪"
+                                           FontSize="12"
+                                           Foreground="#16A34A" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Spacing="8">
+                            <TextBlock Text="局域网显示昵称" FontWeight="SemiBold" FontSize="13" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0"
+                                         CornerRadius="6"
+                                         Text="{Binding Settings.Nickname, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         PlaceholderText="局域网中显示的名字" />
+                                <Button Grid.Column="1"
+                                        Content="保存昵称"
+                                        CornerRadius="6"
+                                        Background="#0099FF"
+                                        Foreground="White"
+                                        Command="{Binding Settings.SaveNicknameCommand}" />
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 文件接收与下载目录卡片 -->
+                <Border Padding="20"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="📁 文件传输与默认下载目录" FontWeight="SemiBold" FontSize="14" />
+                        <TextBlock Text="接收对端 P2P 或群组文件时的默认保存目录（支持 1 MiB 块断点续传与 SHA-256 校验）"
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox Grid.Column="0"
+                                     CornerRadius="6"
+                                     Text="{Binding Settings.DownloadDir, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     PlaceholderText="未设置时每次接收手动选择"
+                                     IsReadOnly="True" />
+                            <Button Grid.Column="1"
+                                    Content="浏览目录…"
+                                    CornerRadius="6"
+                                    Click="BrowseDir_Click" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 状态提示 -->
+                <TextBlock Text="{Binding Settings.StatusMessage}"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           Foreground="#0088EE" />
             </StackPanel>
-
-            <StackPanel Spacing="6">
-                <TextBlock Text="默认下载目录" FontWeight="SemiBold" />
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0"
-                             Text="{Binding Settings.DownloadDir, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                             PlaceholderText="未设置时每次接收手动选择"
-                             IsReadOnly="True" />
-                    <Button Grid.Column="1"
-                            Content="浏览…"
-                            Click="BrowseDir_Click" />
-                </Grid>
-            </StackPanel>
-
-            <TextBlock Text="{Binding Settings.StatusMessage}"
-                       FontSize="12"
-                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-        </StackPanel>
-    </ScrollViewer>
+        </ScrollViewer>
+    </Grid>
 </UserControl>

@@ -41,6 +41,62 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private async void LeaveChannelButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell?.Chat.CurrentChannel is { } channel && channel.Id != "*")
+        {
+            try
+            {
+                await _shell.Channels.LeaveAsync(channel);
+            }
+            catch
+            {
+                // 退出失败忽略
+            }
+        }
+    }
+
+    private void ReplyMessageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: ChatMessage msg })
+        {
+            _shell?.Chat.PrepareReply(msg);
+        }
+    }
+
+    private async void RevokeMessageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null && sender is Button { Tag: ChatMessage msg })
+        {
+            await _shell.Chat.RevokeMessageByUiAsync(msg);
+        }
+    }
+
+    private void EmojiItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string emoji })
+        {
+            _shell?.Chat.InsertEmoji(emoji);
+        }
+    }
+
+    private async void ToggleE2eeButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null)
+        {
+            await _shell.Chat.ToggleE2eeAsync();
+        }
+    }
+
+    private void SearchMessagesButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null && !string.IsNullOrWhiteSpace(SearchHistoryBox.Text))
+        {
+            _shell.Chat.ExecuteSearchQuery(SearchHistoryBox.Text);
+            SearchHistoryBox.Text = "";
+        }
+    }
+
     private async void MembersButton_Click(object sender, RoutedEventArgs e)
     {
         if (_shell is null || _shell.Chat.CurrentChannel is not { } channel)

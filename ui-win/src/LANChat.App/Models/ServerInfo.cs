@@ -8,4 +8,11 @@ public sealed record ServerInfo
     public string Addr { get; init; } = "";
     public string Version { get; init; } = "";
     public string AuthMode { get; init; } = "";
+
+    public string VersionDisplay => string.IsNullOrWhiteSpace(Version) ? "v1.0" : Version;
+
+    public string AuthBadgeText =>
+        string.Equals(AuthMode, "psk", StringComparison.OrdinalIgnoreCase)
+            ? "🔒 PSK 鉴权"
+            : "🔓 开放节点";
 }

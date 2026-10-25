@@ -1,6 +1,6 @@
 namespace LANChat.Models;
 
-/// <summary>聊天消息（UI 模型；由 GetState 无历史消息，仅本次运行内累积）。</summary>
+/// <summary>聊天消息（UI 模型；由 GetState 恢复历史消息并在本次运行内累积）。</summary>
 public sealed record ChatMessage
 {
     public string MsgId { get; init; } = "";
@@ -11,7 +11,7 @@ public sealed record ChatMessage
     /// <summary>群聊消息所属频道 id（msg.received 的 group；单播为空）。</summary>
     public string? GroupId { get; init; }
 
-    /// <summary>text / sticker。</summary>
+    /// <summary>text / sticker / system。</summary>
     public string Type { get; init; } = "text";
 
     /// <summary>自己发送的消息（靠右气泡）。</summary>
@@ -27,4 +27,35 @@ public sealed record ChatMessage
 
     /// <summary>贴纸类型时，Text 为贴纸文件路径。</summary>
     public bool IsSticker => Type == "sticker";
+
+    /// <summary>系统提示消息。</summary>
+    public bool IsSystem => Type == "system";
+
+    /// <summary>对端发来的消息（左侧气泡）。</summary>
+    public bool IsInbound => !IsSelf && !IsSystem;
+
+    /// <summary>自己发出的消息（右侧 QQ 蓝气泡）。</summary>
+    public bool IsOutbound => IsSelf && !IsSystem;
+
+    /// <summary>圆形头像首字。</summary>
+    public string SenderInitial =>
+        IsSelf ? "我" : (string.IsNullOrWhiteSpace(FromName) ? "U" : FromName.Trim()[..1].ToUpperInvariant());
+
+    /// <summary>格式化时间戳（HH:mm）。</summary>
+    public string FormattedTime => Timestamp.ToLocalTime().ToString("HH:mm");
+
+    /// <summary>消息气泡顶部发送者与时间栏。</summary>
+    public string HeaderText => $"{FromName}  {FormattedTime}";
+
+    /// <summary>是否已被对端读取。</summary>
+    public bool IsRead => IsSelf && !Revoked && ReadBy.Count > 0;
+
+    /// <summary>已读回执文案。</summary>
+    public string ReadReceiptText => Revoked ? "已撤回" : (IsRead ? "✓ 已读" : "✓ 已送达");
+
+    /// <summary>是否允许撤回（自己发送的非系统未撤回消息）。</summary>
+    public bool CanRevoke => IsSelf && !Revoked && !IsSystem && !string.IsNullOrEmpty(MsgId);
+
+    /// <summary>是否允许引用回复。</summary>
+    public bool CanReply => !Revoked && !IsSystem && !string.IsNullOrEmpty(MsgId);
 }

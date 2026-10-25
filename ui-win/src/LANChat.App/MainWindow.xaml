@@ -12,23 +12,191 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 未连接：登录页 -->
+        <!-- 未连接：QQ 风格登录页 -->
         <Frame x:Name="LoginFrame" Grid.Row="0" />
 
-        <!-- 已连接：联系人 | 聊天 | 传输 -->
+        <!-- 已连接：NTQQ 四栏主界面（Column 0: 64px 导航轨 | Column 1: 260px 会话/好友/频道栏 | Column 2: * 主聊天区 | Column 3: 280px 传输抽屉） -->
         <Grid x:Name="MainGrid" Grid.Row="0" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="64" />
+                <ColumnDefinition Width="260" />
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="280" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <views:RosterView Grid.Column="0" />
-            <Grid Grid.Column="1">
+
+            <!-- Column 0: 64px 深灰蓝侧边图标导航栏 (#1E222D) -->
+            <Border Grid.Column="0"
+                    Background="#1E222D"
+                    Padding="0,18,0,16">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 顶部：我的圆形头像（40x40 #0099FF + 在线绿点） -->
+                    <Button Grid.Row="0"
+                            Width="46"
+                            Height="46"
+                            Padding="0"
+                            Margin="0,0,0,18"
+                            HorizontalAlignment="Center"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            ToolTipService.ToolTip="{Binding SelfNickname}"
+                            Click="NavSettings_Click">
+                        <Grid Width="40" Height="40">
+                            <Border Width="40"
+                                    Height="40"
+                                    CornerRadius="20"
+                                    Background="#0099FF">
+                                <TextBlock Text="{Binding SelfInitial}"
+                                           FontSize="16"
+                                           FontWeight="Bold"
+                                           Foreground="White"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Border>
+                            <Border Width="12"
+                                    Height="12"
+                                    CornerRadius="6"
+                                    Background="#22C55E"
+                                    BorderBrush="#1E222D"
+                                    BorderThickness="2"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Bottom" />
+                        </Grid>
+                    </Button>
+
+                    <!-- 中部：垂直图标导航按钮（消息 / 好友 / 频道 / 传输） -->
+                    <StackPanel Grid.Row="1"
+                                Spacing="10"
+                                HorizontalAlignment="Center">
+                        <!-- 💬 消息/会话 -->
+                        <Grid Width="48" Height="44">
+                            <Border Width="4"
+                                    Height="22"
+                                    CornerRadius="2"
+                                    Background="#0099FF"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Visibility="{Binding IsNavMessages, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <Button Width="44"
+                                    Height="44"
+                                    HorizontalAlignment="Right"
+                                    CornerRadius="10"
+                                    Background="#2A3040"
+                                    BorderThickness="0"
+                                    ToolTipService.ToolTip="💬 消息与会话"
+                                    Click="NavMessages_Click">
+                                <TextBlock Text="💬" FontSize="18" />
+                            </Button>
+                        </Grid>
+
+                        <!-- 👥 好友 -->
+                        <Grid Width="48" Height="44">
+                            <Border Width="4"
+                                    Height="22"
+                                    CornerRadius="2"
+                                    Background="#0099FF"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Visibility="{Binding IsNavContacts, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <Button Width="44"
+                                    Height="44"
+                                    HorizontalAlignment="Right"
+                                    CornerRadius="10"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    ToolTipService.ToolTip="👥 在线好友"
+                                    Click="NavContacts_Click">
+                                <TextBlock Text="👥" FontSize="18" />
+                            </Button>
+                        </Grid>
+
+                        <!-- #️⃣ 频道 -->
+                        <Grid Width="48" Height="44">
+                            <Border Width="4"
+                                    Height="22"
+                                    CornerRadius="2"
+                                    Background="#0099FF"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Visibility="{Binding IsNavChannels, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <Button Width="44"
+                                    Height="44"
+                                    HorizontalAlignment="Right"
+                                    CornerRadius="10"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    ToolTipService.ToolTip="#️⃣ 局域网频道"
+                                    Click="NavChannels_Click">
+                                <TextBlock Text="#️⃣" FontSize="18" />
+                            </Button>
+                        </Grid>
+
+                        <!-- 📁 传输 -->
+                        <Grid Width="48" Height="44">
+                            <Border Width="4"
+                                    Height="22"
+                                    CornerRadius="2"
+                                    Background="#0099FF"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Visibility="{Binding IsNavTransfers, Converter={StaticResource BoolToVisibilityConverter}}" />
+                            <Button Width="44"
+                                    Height="44"
+                                    HorizontalAlignment="Right"
+                                    CornerRadius="10"
+                                    Background="Transparent"
+                                    BorderThickness="0"
+                                    ToolTipService.ToolTip="📁 文件传输抽屉"
+                                    Click="NavTransfers_Click">
+                                <TextBlock Text="📁" FontSize="18" />
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- 底部：⚙️ 设置按钮 -->
+                    <Grid Grid.Row="2" Width="48" Height="44" HorizontalAlignment="Center">
+                        <Border Width="4"
+                                Height="22"
+                                CornerRadius="2"
+                                Background="#0099FF"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Center"
+                                Visibility="{Binding ShowSettings, Converter={StaticResource BoolToVisibilityConverter}}" />
+                        <Button Width="44"
+                                Height="44"
+                                HorizontalAlignment="Right"
+                                CornerRadius="10"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="⚙️ 设置"
+                                Click="NavSettings_Click">
+                            <TextBlock Text="⚙️" FontSize="18" />
+                        </Button>
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <!-- Column 1: 260px 会话/联系人/频道列表栏 -->
+            <views:RosterView Grid.Column="1" />
+
+            <!-- Column 2: * 主聊天区与设置覆盖层 -->
+            <Grid Grid.Column="2">
                 <views:ChatView x:Name="ChatViewHost" />
                 <views:SettingsView x:Name="SettingsViewHost"
                                     Visibility="{Binding ShowSettings, Converter={StaticResource BoolToVisibilityConverter}}" />
             </Grid>
-            <views:TransfersView Grid.Column="2" />
+
+            <!-- Column 3: 280px 文件传输与详情抽屉 -->
+            <Border Grid.Column="3"
+                    Width="280"
+                    Visibility="{Binding ShowTransfersDrawer, Converter={StaticResource BoolToVisibilityConverter}}">
+                <views:TransfersView />
+            </Border>
         </Grid>
 
         <ContentPresenter x:Name="FatalErrorHost"

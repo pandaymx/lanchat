@@ -78,6 +78,34 @@ public sealed partial class RosterView : UserControl
         }
     }
 
+    private void BroadcastSessionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is ShellViewModel shell)
+        {
+            shell.Roster.SelectedPeer = null;
+            shell.Channels.SelectedChannel = null;
+            shell.ShowSettings = false;
+            shell.Chat.SelectBroadcastConversation();
+        }
+    }
+
+    private async void RefreshChannelsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ShellViewModel shell)
+        {
+            return;
+        }
+        try
+        {
+            var list = await shell.Channels.ListAsync();
+            shell.Channels.ReplaceChannels(list, shell.SelfId);
+        }
+        catch
+        {
+            // 刷新失败保留原列表
+        }
+    }
+
     private async void JoinChannelButton_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is ShellViewModel shell &&

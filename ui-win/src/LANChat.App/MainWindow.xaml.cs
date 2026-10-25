@@ -18,8 +18,8 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Title = "LANChat";
-        AppWindow.Resize(new Windows.Graphics.SizeInt32(960, 640));
+        Title = "LANChat 局域网即时通信";
+        AppWindow.Resize(new Windows.Graphics.SizeInt32(1180, 760));
     }
 
     /// <summary>绑定 Shell 并导航到登录页。</summary>
@@ -38,6 +38,21 @@ public sealed partial class MainWindow : Window
         var settingsView = FindDescendant<SettingsView>(MainGrid);
         settingsView?.AttachViewModel(shell, this);
     }
+
+    private void NavMessages_Click(object sender, RoutedEventArgs e) =>
+        _shell?.SelectNavTab("messages");
+
+    private void NavContacts_Click(object sender, RoutedEventArgs e) =>
+        _shell?.SelectNavTab("contacts");
+
+    private void NavChannels_Click(object sender, RoutedEventArgs e) =>
+        _shell?.SelectNavTab("channels");
+
+    private void NavTransfers_Click(object sender, RoutedEventArgs e) =>
+        _shell?.SelectNavTab("transfers");
+
+    private void NavSettings_Click(object sender, RoutedEventArgs e) =>
+        _shell?.SelectNavTab("settings");
 
     private void OnShellPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {

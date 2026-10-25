@@ -120,6 +120,18 @@ public sealed record ChannelItem
     /// <summary>成员数展示文案；XAML 里 StringFormat 的 {0} 会被编译器误解析，故在视图模型侧拼好。</summary>
     public string MemberCountText => $"{Channel.Members.Count} 名成员";
 
+    /// <summary>频道标题（私有频道带锁标识）。</summary>
+    public string DisplayName => Channel.Private ? $"🔒 {Channel.Name}" : $"# {Channel.Name}";
+
+    /// <summary>成员数与主题摘要。</summary>
+    public string TopicSummary =>
+        string.IsNullOrWhiteSpace(Channel.Topic)
+            ? MemberCountText
+            : $"{MemberCountText} · {Channel.Topic}";
+
+    /// <summary>头像徽章字符。</summary>
+    public string BadgeText => Channel.Private ? "🔒" : "#";
+
     public ChannelItem(Channel channel, string? selfId)
     {
         Channel = channel;

@@ -744,4 +744,29 @@ func TestM12AndM13QuoteReplyAndAutoBootstrap(t *testing.T) {
 		msgs := a.GetState().Messages
 		return len(msgs) == 2 && msgs[1].ReplyTo == origID && strings.Contains(msgs[1].Text, "今晚发布 v1.5.0")
 	})
+
+	// M13: 端到端文本加密 (/e2ee) —— 双方配置相同密钥时透明解密，密钥不匹配时显示加密占位。
+	if status, err := a.SendText(bID, "/e2ee top-secret-key", ""); err != nil || status != "e2ee:on" {
+		t.Fatalf("a /e2ee enable failed: status=%q err=%v", status, err)
+	}
+	if status, err := b.SendText(aID, "/e2ee top-secret-key", ""); err != nil || status != "e2ee:on" {
+		t.Fatalf("b /e2ee enable failed: status=%q err=%v", status, err)
+	}
+	if _, err := a.SendText(bID, "绝密核验码 9527", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := b.GetState().Messages
+		return len(msgs) == 3 && msgs[2].Text == "绝密核验码 9527"
+	})
+	if status, err := b.SendText(aID, "/e2ee off", ""); err != nil || status != "e2ee:off" {
+		t.Fatalf("b /e2ee off failed: status=%q err=%v", status, err)
+	}
+	if _, err := a.SendText(bID, "未配置密钥不可读", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := b.GetState().Messages
+		return len(msgs) == 4 && strings.HasPrefix(msgs[3].Text, "[加密消息]")
+	})
 }

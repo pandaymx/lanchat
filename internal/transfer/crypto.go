@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 )
 
 // hkdfInfo 是 KEK 派生的上下文绑定信息，防止跨协议复用。
@@ -23,6 +24,12 @@ const hkdfInfo = "lanchat/relay-kek/v1"
 
 // groupConnInfo 是群文件块连接密钥派生的上下文绑定信息。
 const groupConnInfo = "lanchat/group-conn/v1"
+
+// textE2EEInfo 是文本消息端到端加密密钥派生的上下文绑定信息（M13）。
+const textE2EEInfo = "lanchat/text-e2ee/v1"
+
+// TextE2EEPrefix 是端到端加密文本负载的线格式前缀。
+const TextE2EEPrefix = "enc:v1:"
 
 // generateX25519 生成一对一次性 X25519 密钥。
 func generateX25519() (*ecdh.PrivateKey, error) {
@@ -148,6 +155,41 @@ func DeriveGroupConnKey(priv *ecdh.PrivateKey, peerPub *ecdh.PublicKey, fileKey 
 
 // NewEncConn 用给定密钥在 raw 之上构造透明 AES-GCM 加密连接（net.Conn）。
 func NewEncConn(raw net.Conn, key []byte) (net.Conn, error) { return newEncConn(raw, key) }
+
+// SealText 用共享口令经 HKDF-SHA256 派生 AES-256-GCM 密钥并加密文本负载（M13）。
+func SealText(secret, plaintext string) (string, error) {
+	if secret == "" {
+		return plaintext, nil
+	}
+	key, err := hkdf.Key(sha256.New, []byte(secret), nil, textE2EEInfo, 32)
+	if err != nil {
+		return "", fmt.Errorf("transfer: text hkdf: %w", err)
+	}
+	sealed, err := wrapKey(key, []byte(plaintext))
+	if err != nil {
+		return "", err
+	}
+	return TextE2EEPrefix + sealed, nil
+}
+
+// OpenText 解密带 TextE2EEPrefix 前缀的端到端加密文本负载（M13）。
+func OpenText(secret, wire string) (string, error) {
+	if !strings.HasPrefix(wire, TextE2EEPrefix) {
+		return wire, nil
+	}
+	if secret == "" {
+		return "", errors.New("transfer: missing e2ee secret")
+	}
+	key, err := hkdf.Key(sha256.New, []byte(secret), nil, textE2EEInfo, 32)
+	if err != nil {
+		return "", fmt.Errorf("transfer: text hkdf: %w", err)
+	}
+	plain, err := unwrapKey(key, strings.TrimPrefix(wire, TextE2EEPrefix))
+	if err != nil {
+		return "", err
+	}
+	return string(plain), nil
+}
 
 // newGCM 以 32 字节密钥构造 AES-256-GCM。
 func newGCM(key []byte) (cipher.AEAD, error) {

@@ -8,17 +8,34 @@ import (
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
+	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
 // revokeWindow 是发送者可撤回消息的最大时间窗口（2 分钟）。
 const revokeWindow = 2 * time.Minute
 
 // SendText 发送文本。group 为空表示单播，"*" 为 G1 全体，其余为 G2 频道。
-// 支持 `/revoke <msgID>` 与 `/read <msgID>` 快捷指令触发消息撤回与已读回执。
+// 支持 `/revoke <msgID>`、`/read <msgID>`、`/reply <msgID> <text>` 与 `/e2ee <secret|off>` 快捷指令。
 func (c *Client) SendText(to, text, group string) (string, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return "", errEmptyText
+	}
+	if trimmed == "/e2ee off" || trimmed == "/e2ee clear" {
+		c.mu.Lock()
+		c.e2eeKey = ""
+		c.mu.Unlock()
+		return "e2ee:off", nil
+	}
+	if strings.HasPrefix(trimmed, "/e2ee ") {
+		secret := strings.TrimSpace(strings.TrimPrefix(trimmed, "/e2ee "))
+		if secret == "" {
+			return "", errEmptyText
+		}
+		c.mu.Lock()
+		c.e2eeKey = secret
+		c.mu.Unlock()
+		return "e2ee:on", nil
 	}
 	if group == "" && to == "" {
 		return "", errPeerNotFound
@@ -60,8 +77,19 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	if explicitReplyTo != "" {
 		replyTo = explicitReplyTo
 	}
+	wireText := text
+	c.mu.Lock()
+	e2eeSecret := c.e2eeKey
+	c.mu.Unlock()
+	if e2eeSecret != "" {
+		sealed, err := transfer.SealText(e2eeSecret, text)
+		if err != nil {
+			return "", err
+		}
+		wireText = sealed
+	}
 	payload := protocol.TextPayload{
-		Text:     text,
+		Text:     wireText,
 		ReplyTo:  replyTo,
 		Mentions: mentions,
 	}

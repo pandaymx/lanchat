@@ -12,6 +12,8 @@ package core
 
 import (
 	"context"
+	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -54,6 +56,7 @@ type Client struct {
 
 	downloadDir string
 	history     *historyStore
+	e2eeKey     string
 
 	cb appapi.Listener
 
@@ -98,6 +101,7 @@ func New(opts Options) *Client {
 		os:          opts.OS,
 		downloadDir: opts.DownloadDir,
 		history:     newHistoryStore(opts.DownloadDir),
+		e2eeKey:     strings.TrimSpace(os.Getenv("LANCHAT_E2EE_KEY")),
 		deviceID:    uuid.NewString(),
 		heartbeat:   protocol.HeartbeatIntervalSec,
 		peers:       map[string]appapi.Peer{},

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/coder/websocket"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
+	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
 // readPump 常驻读取并分发信封，连接关闭 / 出错即返回。
@@ -42,18 +44,29 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		if err := env.DecodePayload(&p); err != nil {
 			return
 		}
+		text := p.Text
+		if strings.HasPrefix(text, transfer.TextE2EEPrefix) {
+			c.mu.Lock()
+			e2eeSecret := c.e2eeKey
+			c.mu.Unlock()
+			if plain, err := transfer.OpenText(e2eeSecret, text); err == nil {
+				text = plain
+			} else {
+				text = "[加密消息] 需配置相同 /e2ee 密钥解密"
+			}
+		}
 		c.history.append(appapi.ChatMessage{
 			ID:       env.ID,
 			From:     env.From,
 			To:       env.To,
 			Group:    env.Group,
 			Type:     protocol.TextMsg,
-			Text:     p.Text,
+			Text:     text,
 			ReplyTo:  p.ReplyTo,
 			Mentions: p.Mentions,
 			TS:       env.TS,
 		})
-		c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.TextMsg, p.Text)
+		c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.TextMsg, text)
 
 	case protocol.StickerMsg:
 		var p protocol.StickerPayload

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.6.0](https://github.com/pandaymx/lanchat/compare/v1.5.0...v1.6.0) (2026-10-25)
+
+
+### Features
+
+* **ui-android:** redesign Compose interface with mobile QQ layout ([75eb39c](https://github.com/pandaymx/lanchat/commit/75eb39c11be686f4b35af7224eb5cb9302aad593))
+* **ui-ios:** redesign SwiftUI interface with mobile QQ layout ([d16c88d](https://github.com/pandaymx/lanchat/commit/d16c88df69cbe81992113325bc43a1e63536e1c8))
+* **ui-linux:** redesign GTK4 interface with desktop QQ 4-column layout ([333b11c](https://github.com/pandaymx/lanchat/commit/333b11c8697f3692379a1182efc540df5cab506d))
+* **ui-macos:** redesign SwiftUI interface with desktop QQ 4-column layout ([94aaaa2](https://github.com/pandaymx/lanchat/commit/94aaaa2cf24b12252583d47455cc5c0c31bd94fd))
+* **ui-win:** redesign WinUI 3 interface with desktop QQ 4-column layout ([247d985](https://github.com/pandaymx/lanchat/commit/247d985c3c1c3082e8a1f16727109182e2fc8f88))
+
 ## [1.5.0](https://github.com/pandaymx/lanchat/compare/v1.4.0...v1.5.0) (2026-10-25)
 
 

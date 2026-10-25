@@ -66,8 +66,21 @@ final class AppStore: ObservableObject {
     func sendText(to: String, text: String) {
         let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else { return }
+        if content.hasPrefix("/search ") {
+            let q = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+            let hits = searchMessages(in: to, query: q)
+            appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "[搜索“\(q)”：共 \(hits.count) 条匹配]",
+                                      inbound: false, timestamp: Date()))
+            return
+        }
         run {
             let msgId = try await self.engine.sendText(to: to, text: content)
+            if msgId == "e2ee:on" || msgId == "e2ee:off" {
+                let notice = (msgId == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
+                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: notice,
+                                               inbound: false, timestamp: Date()))
+                return
+            }
             if content.hasPrefix("/revoke ") {
                 let targetId = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
                 self.revokeMessage(id: targetId)
@@ -78,7 +91,7 @@ final class AppStore: ObservableObject {
                 self.markRead(id: targetId, reader: self.selfId)
                 return
             }
-            self.appendMessage(ChatMessage(id: msgId, peerId: to, text: content,
+            self.appendMessage(ChatMessage(id: msgId, peerId: to, text: self.formatReplyText(content),
                                            inbound: false, timestamp: Date()))
         }
     }
@@ -144,8 +157,21 @@ final class AppStore: ObservableObject {
     func sendGroupText(channel: Channel, text: String) {
         let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else { return }
+        if content.hasPrefix("/search ") {
+            let q = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+            let hits = searchMessages(in: channel.id, query: q)
+            appendMessage(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "[搜索“\(q)”：共 \(hits.count) 条匹配]",
+                                      inbound: false, timestamp: Date(), group: channel.id))
+            return
+        }
         run {
             let msgId = try await self.engine.sendGroupText(group: channel.id, text: content)
+            if msgId == "e2ee:on" || msgId == "e2ee:off" {
+                let notice = (msgId == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
+                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: self.selfId, text: notice,
+                                               inbound: false, timestamp: Date(), group: channel.id))
+                return
+            }
             if content.hasPrefix("/revoke ") {
                 let targetId = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
                 self.revokeMessage(id: targetId)
@@ -156,7 +182,7 @@ final class AppStore: ObservableObject {
                 self.markRead(id: targetId, reader: self.selfId)
                 return
             }
-            self.appendMessage(ChatMessage(id: msgId, peerId: self.selfId, text: content,
+            self.appendMessage(ChatMessage(id: msgId, peerId: self.selfId, text: self.formatReplyText(content),
                                            inbound: false, timestamp: Date(), group: channel.id))
         }
     }
@@ -326,6 +352,28 @@ final class AppStore: ObservableObject {
                 }
             }
         }
+    }
+
+    func searchMessages(in key: String, query: String) -> [ChatMessage] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return [] }
+        return (messagesByPeer[key] ?? []).filter { !$0.revoked && $0.text.lowercased().contains(q) }
+    }
+
+    private func formatReplyText(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/reply ") else { return raw }
+        let rest = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+        let parts = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.count == 2 else { return raw }
+        let targetId = String(parts[0])
+        let body = String(parts[1])
+        for list in messagesByPeer.values {
+            if let orig = list.first(where: { $0.id == targetId && !$0.revoked }) {
+                return "「\(orig.text)」\n\(body)"
+            }
+        }
+        return "[re:\(targetId)] \(body)"
     }
 
     private func run(_ block: @escaping () async throws -> Void) {

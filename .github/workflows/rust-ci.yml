@@ -22,11 +22,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install GTK4 / libadwaita
+      - name: Install GTK4 / libadwaita / packaging tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libgtk-4-dev libadwaita-1-dev
+            libgtk-4-dev libadwaita-1-dev dpkg-dev rpm
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -46,3 +46,19 @@ jobs:
 
       - name: test
         run: cargo test --locked
+
+      - name: Verify deb & rpm packaging
+        working-directory: ${{ github.workspace }}
+        run: |
+          chmod +x scripts/package-linux.sh
+          WORK="$(mktemp -d)"
+          printf '#!/bin/sh\n' > "$WORK/lanchat-ui"
+          printf '#!/bin/sh\n' > "$WORK/lanchat-daemon"
+          chmod +x "$WORK/lanchat-ui" "$WORK/lanchat-daemon"
+          VERSION="0.0.0-ci" UI_BIN="$WORK/lanchat-ui" DAEMON_BIN="$WORK/lanchat-daemon" OUT_DIR="$WORK/out" \
+            ./scripts/package-linux.sh
+          test -f "$WORK/out/LANChat-0.0.0-ci-linux-x64.tar.gz"
+          test -f "$WORK/out/LANChat-0.0.0-ci-linux-amd64.deb"
+          test -f "$WORK/out/LANChat-0.0.0-ci-linux-x86_64.rpm"
+          dpkg-deb --info "$WORK/out/LANChat-0.0.0-ci-linux-amd64.deb"
+          rpm -qip "$WORK/out/LANChat-0.0.0-ci-linux-x86_64.rpm"

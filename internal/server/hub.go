@@ -15,17 +15,20 @@ const (
 	evUnregister
 	evRoute
 	evListReq
+	evStatusSnapshot
 )
 
 // hubEvent 是投递给 hub 的事件。
 //   - unregister：client 为来源；
 //   - route/listReq：client 为来源，env 为消息；
-//   - registerSnapshot：同步完成注册，reply 回传注册后的 revision 与全量在线表。
+//   - registerSnapshot：同步完成注册，reply 回传注册后的 revision 与全量在线表；
+//   - statusSnapshot：查询当前在线成员、频道与中继/Swarm 状态快照。
 type hubEvent struct {
-	kind   hubEventKind
-	client *Client
-	env    *protocol.Envelope
-	reply  chan queryResult
+	kind        hubEventKind
+	client      *Client
+	env         *protocol.Envelope
+	reply       chan queryResult
+	statusReply chan StatusSnapshot
 }
 
 // hub 是单 goroutine 的信令中枢：唯一持有在线表，串行处理所有事件。
@@ -129,6 +132,40 @@ func (h *hub) handle(ev hubEvent) {
 		h.onListReq(ev.client)
 	case evRoute:
 		h.route(ev.client, ev.env)
+	case evStatusSnapshot:
+		rev, users := h.reg.snapshot()
+		channels := channelSink{h: h}.toProtocol(h.channels.List())
+		ev.statusReply <- StatusSnapshot{
+			ProtocolVersion: protocol.ProtocolVersion,
+			AuthMode:        h.opts.AuthMode,
+			RelayEnabled:    h.opts.RelayListen != "",
+			Revision:        rev,
+			OnlineCount:     len(users),
+			Users:           users,
+			ChannelCount:    len(channels),
+			Channels:        channels,
+			ActiveSwarms:    len(h.swarms.sessions),
+		}
+	}
+}
+
+// statusSnapshot 同步向 hub 查询当前运行状态快照。
+func (h *hub) statusSnapshot(ctx context.Context, startedAt time.Time) StatusSnapshot {
+	ch := make(chan StatusSnapshot, 1)
+	ev := hubEvent{kind: evStatusSnapshot, statusReply: ch}
+	select {
+	case h.events <- ev:
+	case <-ctx.Done():
+		return StatusSnapshot{ProtocolVersion: protocol.ProtocolVersion, AuthMode: h.opts.AuthMode}
+	}
+	select {
+	case snap := <-ch:
+		if !startedAt.IsZero() {
+			snap.UptimeSec = int64(time.Since(startedAt).Seconds())
+		}
+		return snap
+	case <-ctx.Done():
+		return StatusSnapshot{ProtocolVersion: protocol.ProtocolVersion, AuthMode: h.opts.AuthMode}
 	}
 }
 

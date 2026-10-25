@@ -1,6 +1,9 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -252,5 +255,59 @@ func TestRouteMsgReadAndRevoke(t *testing.T) {
 	errEnv := <-c1.send
 	if errEnv.Type != protocol.Error {
 		t.Fatalf("expected ERROR for empty msgID, got %+v", errEnv)
+	}
+}
+
+func TestStatusAndHealthEndpoints(t *testing.T) {
+	srv, err := New(Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          "none",
+		HeartbeatInterval: time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownGrace:     time.Second,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+	<-srv.Ready()
+
+	baseURL := "http://" + srv.ListenAddr()
+
+	resp, err := http.Get(baseURL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/healthz status = %d", resp.StatusCode)
+	}
+
+	resp, err = http.Get(baseURL + "/api/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/api/status status = %d", resp.StatusCode)
+	}
+	var snap StatusSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.AuthMode != "none" || snap.ProtocolVersion != protocol.ProtocolVersion {
+		t.Fatalf("unexpected snapshot: %+v", snap)
+	}
+
+	pageResp, err := http.Get(baseURL + "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = pageResp.Body.Close()
+	if pageResp.StatusCode != http.StatusOK {
+		t.Fatalf("/status status = %d", pageResp.StatusCode)
 	}
 }

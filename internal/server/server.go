@@ -36,13 +36,14 @@ type Options struct {
 
 // Server 是信令服务器。
 type Server struct {
-	opts  Options
-	hub   *hub
-	mux   *http.ServeMux
-	http  *http.Server
-	ln    net.Listener
-	ready chan struct{} // 监听成功后关闭
-	logf  func(string, ...any)
+	opts      Options
+	hub       *hub
+	mux       *http.ServeMux
+	http      *http.Server
+	ln        net.Listener
+	ready     chan struct{} // 监听成功后关闭
+	startedAt time.Time
+	logf      func(string, ...any)
 }
 
 // New 校验参数并构造服务器（尚未开始监听）。
@@ -54,13 +55,17 @@ func New(opts Options, logf func(string, ...any)) (*Server, error) {
 		logf = func(string, ...any) {}
 	}
 	s := &Server{
-		opts:  opts,
-		hub:   newHub(opts, logf),
-		mux:   http.NewServeMux(),
-		ready: make(chan struct{}),
-		logf:  logf,
+		opts:      opts,
+		hub:       newHub(opts, logf),
+		mux:       http.NewServeMux(),
+		ready:     make(chan struct{}),
+		startedAt: time.Now(),
+		logf:      logf,
 	}
 	s.mux.HandleFunc(opts.Path, s.handleWS)
+	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	s.mux.HandleFunc("/api/status", s.handleStatusAPI)
+	s.mux.HandleFunc("/status", s.handleStatusPage)
 	s.http = &http.Server{
 		Handler:           s.mux,
 		ReadHeaderTimeout: 5 * time.Second,

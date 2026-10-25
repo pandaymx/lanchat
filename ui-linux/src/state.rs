@@ -29,6 +29,15 @@ impl ChatTarget {
     }
 }
 
+/// 左侧 QQ 导航栏页签。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NavTab {
+    #[default]
+    Sessions,
+    Contacts,
+    Channels,
+}
+
 #[derive(Default)]
 pub struct AppState {
     pub conn: ConnState,
@@ -43,10 +52,15 @@ pub struct AppState {
     pub channels: Vec<Channel>,
     /// 会话键（peer_id 或 channelID）→ 消息列表。
     pub messages: HashMap<String, Vec<ChatMessage>>,
+    /// 会话键 → 已查阅的入站消息数量（用于计算未读红点）。
+    pub seen_inbound: HashMap<String, usize>,
     /// transfer_id → 群发块矩阵摘要（group.matrix）。
     pub matrix_summary: HashMap<String, String>,
     pub current_chat: ChatTarget,
     pub discovered: Vec<ServerInfo>,
+    pub nav_tab: NavTab,
+    pub search_filter: String,
+    pub e2ee_enabled: bool,
 }
 
 impl AppState {
@@ -187,6 +201,24 @@ impl AppState {
             .get(peer_id)
             .map(|v| v.iter().filter(|m| m.inbound).count())
             .unwrap_or(0)
+    }
+
+    /// 标记指定会话的入站消息全部已浏览（清除 QQ 红点角标）。
+    pub fn mark_conv_seen(&mut self, conv_key: &str) {
+        let total = self.unread_count(conv_key);
+        self.seen_inbound.insert(conv_key.to_string(), total);
+    }
+
+    /// 获取指定会话尚未浏览的入站未读数。
+    pub fn unseen_count(&self, conv_key: &str) -> usize {
+        let total = self.unread_count(conv_key);
+        let seen = self.seen_inbound.get(conv_key).copied().unwrap_or(0);
+        total.saturating_sub(seen)
+    }
+
+    /// 获取指定会话的最新一条消息。
+    pub fn last_message(&self, conv_key: &str) -> Option<&ChatMessage> {
+        self.messages.get(conv_key).and_then(|v| v.last())
     }
 
     /// 在指定会话（或空键表示全部会话）中按关键字检索未撤回消息（M12）。

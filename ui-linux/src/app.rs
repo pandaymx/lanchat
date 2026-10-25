@@ -1,7 +1,7 @@
-//! GTK4 + libadwaita 主界面与事件处理。
+//! GTK4 + libadwaita 主界面与事件处理（桌面版 QQ / NTQQ 布局与视觉风格）。
 //!
 //! 线程模型：GTK 主循环独占主线程并持有 AppState；tokio 后台线程
-//! 经 `glib::MainContext::channel` 把 UI 事件 marshal 回主线程。
+//! 经 `async_channel` 把 UI 事件 marshal 回主线程。
 
 use crate::daemon::ensure_daemon;
 use crate::ipc::{default_socket_path, IpcClient, Notification};
@@ -9,7 +9,7 @@ use crate::models::{
     format_matrix_summary, format_size, format_speed, Channel, ChatMessage, ConnState, ServerInfo,
     State, Transfer,
 };
-use crate::state::{AppState, ChatTarget};
+use crate::state::{AppState, ChatTarget, NavTab};
 use adw::prelude::*;
 use anyhow::Result;
 use gdk::Display;
@@ -103,7 +103,7 @@ struct Widgets {
     stack: gtk::Stack,
     toast: adw::ToastOverlay,
 
-    // 登录页
+    // 登录页（QQ 登录窗口风格）
     server_list: gtk::ListBox,
     addr_row: adw::EntryRow,
     psk_row: adw::PasswordEntryRow,
@@ -112,27 +112,49 @@ struct Widgets {
     login_status: gtk::Label,
     login_spinner: gtk::Spinner,
 
-    // 主界面
-    roster: gtk::ListBox,
-    me_label: gtk::Label,
-    conn_badge: gtk::Label,
-    chat_header: gtk::Label,
-    msg_list: gtk::ListBox,
-    msg_scroll: gtk::ScrolledWindow,
-    input: gtk::TextView,
-    send_btn: gtk::Button,
-    sticker_btn: gtk::Button,
-    file_btn: gtk::Button,
+    // 左侧 QQ 窄导航栏（Column 0）
+    self_avatar: adw::Avatar,
+    self_profile_btn: gtk::Button,
+    nav_sessions_btn: gtk::Button,
+    nav_contacts_btn: gtk::Button,
+    nav_channels_btn: gtk::Button,
     transfers_btn: gtk::Button,
     channels_btn: gtk::Button,
     nick_btn: gtk::Button,
     dirdir_btn: gtk::Button,
 
-    // 传输窗口
+    // 中左会话/联系人/频道列表栏（Column 1）
+    search_entry: gtk::SearchEntry,
+    quick_new_channel_btn: gtk::Button,
+    me_label: gtk::Label,
+    conn_badge: gtk::Label,
+    roster: gtk::ListBox,
+
+    // 右侧主聊天面板（Column 2）
+    chat_avatar: adw::Avatar,
+    chat_header: gtk::Label,
+    chat_subtitle: gtk::Label,
+    header_invite_btn: gtk::Button,
+    header_leave_btn: gtk::Button,
+    header_drawer_btn: gtk::Button,
+    msg_list: gtk::ListBox,
+    msg_scroll: gtk::ScrolledWindow,
+    input: gtk::TextView,
+    send_btn: gtk::Button,
+    sticker_btn: gtk::Button,
+    sticker_menu_btn: gtk::MenuButton,
+    sticker_popover: gtk::Popover,
+    file_btn: gtk::Button,
+    e2ee_btn: gtk::Button,
+    search_chat_btn: gtk::Button,
+
+    // 右侧可折叠文件传输侧栏（Column 3）+ 独立窗口兼容
+    right_drawer: gtk::Box,
+    drawer_transfers_list: gtk::ListBox,
     transfers_win: gtk::Window,
     transfers_list: gtk::ListBox,
 
-    // 频道窗口
+    // 频道管理窗口
     channels_win: gtk::Window,
     channels_list: gtk::ListBox,
     new_channel_btn: gtk::Button,
@@ -145,6 +167,7 @@ pub struct AppCtx {
     ui_tx: async_channel::Sender<UiEvent>,
     socket: PathBuf,
     stop: Arc<Notify>,
+    session_targets: Rc<RefCell<Vec<ChatTarget>>>,
 }
 
 /// 应用启动入口（Application::activate）。
@@ -161,12 +184,12 @@ pub fn on_activate(app: &adw::Application) {
         ui_tx: ui_tx.clone(),
         socket: default_socket_path(),
         stop: Arc::new(Notify::new()),
+        session_targets: Rc::new(RefCell::new(Vec::new())),
     });
 
     wire_actions(&ctx);
     wire_window_lifecycle(&ctx);
 
-    // 在 GTK 主上下文上消费后台事件（async_channel Receiver 是 Stream）。
     let ctx_weak = Rc::downgrade(&ctx);
     MainContext::default().spawn_local(async move {
         while let Ok(event) = ui_rx.recv().await {
@@ -178,7 +201,6 @@ pub fn on_activate(app: &adw::Application) {
 
     ctx.widgets.window.present();
 
-    // 后台：确保 daemon → 建立 IPC → Ready。
     let socket = ctx.socket.clone();
     let stop = ctx.stop.clone();
     let ready_tx = ui_tx.clone();
@@ -204,115 +226,255 @@ pub fn on_activate(app: &adw::Application) {
     });
 }
 
-// ---------- UI 构建 ----------
+// ---------- UI 构建（Linux QQ / NTQQ 布局） ----------
 
 fn build_ui(app: &adw::Application) -> Widgets {
-    // --- 登录页 ---
-    let login_status = gtk::Label::new(Some("正在启动本地服务…"));
-    login_status.set_xalign(0.0);
-    login_status.add_css_class("dim-label");
+    // ═══ 1. QQ 风格登录页 ═══
+    let login_avatar = adw::Avatar::new(76, Some("LANChat"), true);
+    login_avatar.set_icon_name(Some("chat-message-new-symbolic"));
+    login_avatar.add_css_class("qq-hero-avatar");
 
-    let login_spinner = gtk::Spinner::new();
-    login_spinner.start();
-    let status_row = gtk::Box::new(Orientation::Horizontal, 6);
-    status_row.append(&login_spinner);
-    status_row.append(&login_status);
+    let login_title = gtk::Label::new(Some("LANChat 局域网即时通信"));
+    login_title.add_css_class("title-2");
+    let login_subtitle = gtk::Label::new(Some("P2P 高速直连 · 端到端加密 · 零配置发现"));
+    login_subtitle.add_css_class("dim-label");
+    login_subtitle.add_css_class("caption");
+
+    let discover_title = gtk::Label::new(Some("📡 局域网中心节点"));
+    discover_title.set_xalign(0.0);
+    discover_title.set_hexpand(true);
+    discover_title.add_css_class("heading");
+
+    let discover_btn = gtk::Button::with_label("🔄 自动发现");
+    discover_btn.add_css_class("flat");
+    discover_btn.add_css_class("qq-link-btn");
+
+    let discover_header = gtk::Box::new(Orientation::Horizontal, 8);
+    discover_header.append(&discover_title);
+    discover_header.append(&discover_btn);
 
     let server_list = gtk::ListBox::new();
     server_list.set_selection_mode(gtk::SelectionMode::Single);
     server_list.add_css_class("boxed-list");
     let server_scroll = gtk::ScrolledWindow::new();
-    server_scroll.set_min_content_height(140);
+    server_scroll.set_min_content_height(110);
+    server_scroll.set_max_content_height(150);
     server_scroll.set_child(Some(&server_list));
 
-    let discover_btn = gtk::Button::with_label("自动发现");
-    discover_btn.add_css_class("pill");
-    let discover_wrap = gtk::Box::new(Orientation::Horizontal, 0);
-    discover_wrap.set_halign(Align::Center);
-    discover_wrap.append(&discover_btn);
-
     let addr_row = adw::EntryRow::new();
-    addr_row.set_title("服务器地址 host:port/path");
+    addr_row.set_title("服务器地址 (ws://host:port/lctp)");
+    addr_row.set_text("ws://127.0.0.1:19090/lctp");
 
     let psk_row = adw::PasswordEntryRow::new();
-    psk_row.set_title("口令 PSK");
+    psk_row.set_title("共享口令 PSK（免密节点可留空）");
 
-    let connect_btn = gtk::Button::with_label("连接");
+    let form_list = gtk::ListBox::new();
+    form_list.set_selection_mode(gtk::SelectionMode::None);
+    form_list.add_css_class("boxed-list");
+    form_list.append(&addr_row);
+    form_list.append(&psk_row);
+
+    let login_status = gtk::Label::new(Some("正在启动本地守护服务…"));
+    login_status.set_xalign(0.5);
+    login_status.set_wrap(true);
+    login_status.add_css_class("dim-label");
+    login_status.add_css_class("caption");
+
+    let login_spinner = gtk::Spinner::new();
+    login_spinner.start();
+    let status_row = gtk::Box::new(Orientation::Horizontal, 6);
+    status_row.set_halign(Align::Center);
+    status_row.append(&login_spinner);
+    status_row.append(&login_status);
+
+    let connect_btn = gtk::Button::with_label("立即登录");
     connect_btn.add_css_class("pill");
     connect_btn.add_css_class("suggested-action");
-    let connect_wrap = gtk::Box::new(Orientation::Horizontal, 0);
-    connect_wrap.set_halign(Align::Center);
-    connect_wrap.append(&connect_btn);
+    connect_btn.add_css_class("qq-login-btn");
+    connect_btn.set_hexpand(true);
 
-    let login_content = gtk::Box::new(Orientation::Vertical, 12);
-    login_content.set_margin_top(24);
-    login_content.set_margin_bottom(24);
-    login_content.set_margin_start(36);
-    login_content.set_margin_end(36);
-
-    let login_title = gtk::Label::new(Some("连接 LANChat 中心节点"));
-    login_title.add_css_class("title-3");
-    login_content.append(&login_title);
-    login_content.append(&discover_wrap);
-    login_content.append(&server_scroll);
-    login_content.append(&status_row);
-    login_content.append(&addr_row);
-    login_content.append(&psk_row);
-    login_content.append(&connect_wrap);
+    let login_card = gtk::Box::new(Orientation::Vertical, 14);
+    login_card.add_css_class("qq-login-card");
+    login_card.set_margin_top(28);
+    login_card.set_margin_bottom(28);
+    login_card.set_margin_start(28);
+    login_card.set_margin_end(28);
+    login_card.append(&login_avatar);
+    login_card.append(&login_title);
+    login_card.append(&login_subtitle);
+    login_card.append(&discover_header);
+    login_card.append(&server_scroll);
+    login_card.append(&form_list);
+    login_card.append(&status_row);
+    login_card.append(&connect_btn);
 
     let login_clamp = adw::Clamp::new();
-    login_clamp.set_maximum_size(520);
-    login_clamp.set_child(Some(&login_content));
+    login_clamp.set_maximum_size(440);
+    login_clamp.set_valign(Align::Center);
+    login_clamp.set_child(Some(&login_card));
 
-    // --- 主界面 ---
+    let login_bg = gtk::Box::new(Orientation::Vertical, 0);
+    login_bg.set_vexpand(true);
+    login_bg.set_hexpand(true);
+    login_bg.set_valign(Align::Center);
+    login_bg.add_css_class("qq-login-bg");
+    login_bg.append(&login_clamp);
+
+    // ═══ 2. 主界面：NTQQ 四栏式布局 ═══
+    // --- Column 0：最左侧深色导航轨（64px） ---
+    let self_avatar = adw::Avatar::new(40, Some("我"), true);
+    let self_profile_btn = gtk::Button::new();
+    self_profile_btn.set_child(Some(&self_avatar));
+    self_profile_btn.add_css_class("flat");
+    self_profile_btn.add_css_class("qq-avatar-btn");
+    self_profile_btn.set_tooltip_text(Some("点击修改个人昵称"));
+
+    let nav_sessions_btn = gtk::Button::with_label("💬\n消息");
+    nav_sessions_btn.add_css_class("flat");
+    nav_sessions_btn.add_css_class("qq-rail-btn");
+    nav_sessions_btn.add_css_class("qq-rail-active");
+    nav_sessions_btn.set_tooltip_text(Some("消息会话列表"));
+
+    let nav_contacts_btn = gtk::Button::with_label("👥\n好友");
+    nav_contacts_btn.add_css_class("flat");
+    nav_contacts_btn.add_css_class("qq-rail-btn");
+    nav_contacts_btn.set_tooltip_text(Some("在线局域网好友"));
+
+    let nav_channels_btn = gtk::Button::with_label("#️⃣\n频道");
+    nav_channels_btn.add_css_class("flat");
+    nav_channels_btn.add_css_class("qq-rail-btn");
+    nav_channels_btn.set_tooltip_text(Some("群聊与自定义频道"));
+
+    let transfers_btn = gtk::Button::with_label("⚡\n传输");
+    transfers_btn.add_css_class("flat");
+    transfers_btn.add_css_class("qq-rail-btn");
+    transfers_btn.set_tooltip_text(Some("P2P 文件传输管理"));
+
+    let rail_spacer = gtk::Box::new(Orientation::Vertical, 0);
+    rail_spacer.set_vexpand(true);
+
+    let channels_btn = gtk::Button::with_label("🌐");
+    channels_btn.add_css_class("flat");
+    channels_btn.add_css_class("qq-rail-sub-btn");
+    channels_btn.set_tooltip_text(Some("打开频道广场窗口"));
+
+    let dirdir_btn = gtk::Button::with_label("📂");
+    dirdir_btn.add_css_class("flat");
+    dirdir_btn.add_css_class("qq-rail-sub-btn");
+    dirdir_btn.set_tooltip_text(Some("设置默认下载目录"));
+
+    let nick_btn = gtk::Button::with_label("✏️");
+    nick_btn.add_css_class("flat");
+    nick_btn.add_css_class("qq-rail-sub-btn");
+    nick_btn.set_tooltip_text(Some("修改个人昵称"));
+
+    let left_rail = gtk::Box::new(Orientation::Vertical, 10);
+    left_rail.set_size_request(68, -1);
+    left_rail.add_css_class("qq-left-rail");
+    left_rail.append(&self_profile_btn);
+    left_rail.append(&nav_sessions_btn);
+    left_rail.append(&nav_contacts_btn);
+    left_rail.append(&nav_channels_btn);
+    left_rail.append(&transfers_btn);
+    left_rail.append(&rail_spacer);
+    left_rail.append(&channels_btn);
+    left_rail.append(&dirdir_btn);
+    left_rail.append(&nick_btn);
+
+    // --- Column 1：中左会话/联系人/频道列表栏（275px） ---
+    let search_entry = gtk::SearchEntry::new();
+    search_entry.set_placeholder_text(Some("搜索好友、频道或记录…"));
+    search_entry.set_hexpand(true);
+    search_entry.add_css_class("qq-search-entry");
+
+    let quick_new_channel_btn = gtk::Button::with_label("＋");
+    quick_new_channel_btn.add_css_class("flat");
+    quick_new_channel_btn.add_css_class("qq-plus-btn");
+    quick_new_channel_btn.set_tooltip_text(Some("新建频道 (G2)"));
+
+    let search_bar_row = gtk::Box::new(Orientation::Horizontal, 6);
+    search_bar_row.set_margin_top(12);
+    search_bar_row.set_margin_bottom(6);
+    search_bar_row.set_margin_start(12);
+    search_bar_row.set_margin_end(12);
+    search_bar_row.append(&search_entry);
+    search_bar_row.append(&quick_new_channel_btn);
+
     let me_label = gtk::Label::new(Some("我"));
     me_label.set_xalign(0.0);
-    let conn_badge = gtk::Label::new(Some("未连接"));
-    conn_badge.set_xalign(0.0);
-    conn_badge.add_css_class("dim-label");
+    me_label.set_hexpand(true);
+    me_label.add_css_class("caption-heading");
+
+    let conn_badge = gtk::Label::new(Some("● 在线"));
+    conn_badge.set_xalign(1.0);
+    conn_badge.add_css_class("qq-online-pill");
+
+    let profile_strip = gtk::Box::new(Orientation::Horizontal, 6);
+    profile_strip.set_margin_start(14);
+    profile_strip.set_margin_end(14);
+    profile_strip.set_margin_bottom(6);
+    profile_strip.append(&me_label);
+    profile_strip.append(&conn_badge);
 
     let roster = gtk::ListBox::new();
     roster.set_selection_mode(gtk::SelectionMode::Single);
     roster.add_css_class("navigation-sidebar");
+    roster.add_css_class("qq-session-list");
     let roster_scroll = gtk::ScrolledWindow::new();
     roster_scroll.set_child(Some(&roster));
-    roster_scroll.set_min_content_width(200);
+    roster_scroll.set_min_content_width(265);
     roster_scroll.set_vexpand(true);
 
-    let transfers_btn = gtk::Button::with_label("传输列表");
-    transfers_btn.set_halign(Align::Start);
-    let channels_btn = gtk::Button::with_label("频道");
-    channels_btn.set_halign(Align::Start);
-    let nick_btn = gtk::Button::with_label("修改昵称");
-    nick_btn.set_halign(Align::Start);
-    let dirdir_btn = gtk::Button::with_label("默认下载目录");
-    dirdir_btn.set_halign(Align::Start);
-
-    let sidebar = gtk::Box::new(Orientation::Vertical, 8);
-    sidebar.set_margin_top(10);
-    sidebar.set_margin_bottom(10);
-    sidebar.set_margin_start(10);
-    sidebar.set_margin_end(6);
-    sidebar.append(&me_label);
-    sidebar.append(&conn_badge);
-    sidebar.append(&transfers_btn);
-    sidebar.append(&channels_btn);
-    sidebar.append(&nick_btn);
-    sidebar.append(&dirdir_btn);
+    let sidebar = gtk::Box::new(Orientation::Vertical, 0);
+    sidebar.set_size_request(275, -1);
+    sidebar.add_css_class("qq-session-pane");
+    sidebar.append(&search_bar_row);
+    sidebar.append(&profile_strip);
+    sidebar.append(&gtk::Separator::new(Orientation::Horizontal));
     sidebar.append(&roster_scroll);
 
-    let sep = gtk::Separator::new(Orientation::Vertical);
-
-    // 聊天区
-    let chat_header = gtk::Label::new(Some("选择一个联系人开始聊天"));
+    // --- Column 2：右侧主聊天面板（自适应 hexpand） ---
+    let chat_avatar = adw::Avatar::new(38, Some("局域网全员广播群"), true);
+    let chat_header = gtk::Label::new(Some("📢 局域网全员广播群"));
     chat_header.set_xalign(0.0);
     chat_header.add_css_class("title-4");
-    let header_bar = gtk::Box::new(Orientation::Horizontal, 8);
-    header_bar.set_margin_top(8);
-    header_bar.set_margin_bottom(8);
-    header_bar.set_margin_start(12);
-    header_bar.set_margin_end(12);
-    header_bar.append(&chat_header);
+
+    let chat_subtitle = gtk::Label::new(Some("● 全员在线广播 (G1 Swarm) · P2P 高速直连就绪"));
+    chat_subtitle.set_xalign(0.0);
+    chat_subtitle.add_css_class("caption");
+    chat_subtitle.add_css_class("dim-label");
+
+    let header_titles = gtk::Box::new(Orientation::Vertical, 2);
+    header_titles.set_hexpand(true);
+    header_titles.set_valign(Align::Center);
+    header_titles.append(&chat_header);
+    header_titles.append(&chat_subtitle);
+
+    let header_invite_btn = gtk::Button::with_label("➕ 邀请");
+    header_invite_btn.add_css_class("flat");
+    header_invite_btn.set_visible(false);
+    header_invite_btn.set_tooltip_text(Some("邀请在线好友加入本频道"));
+
+    let header_leave_btn = gtk::Button::with_label("🚪 退出");
+    header_leave_btn.add_css_class("flat");
+    header_leave_btn.set_visible(false);
+    header_leave_btn.set_tooltip_text(Some("退出当前自定义频道"));
+
+    let header_drawer_btn = gtk::Button::with_label("📊 传输面板");
+    header_drawer_btn.add_css_class("flat");
+    header_drawer_btn.set_tooltip_text(Some("展开/收起右侧文件传输面板"));
+
+    let header_bar = gtk::Box::new(Orientation::Horizontal, 10);
+    header_bar.add_css_class("qq-chat-header");
+    header_bar.set_margin_top(10);
+    header_bar.set_margin_bottom(10);
+    header_bar.set_margin_start(16);
+    header_bar.set_margin_end(16);
+    header_bar.append(&chat_avatar);
+    header_bar.append(&header_titles);
+    header_bar.append(&header_invite_btn);
+    header_bar.append(&header_leave_btn);
+    header_bar.append(&header_drawer_btn);
 
     let msg_list = gtk::ListBox::new();
     msg_list.set_selection_mode(gtk::SelectionMode::None);
@@ -320,60 +482,155 @@ fn build_ui(app: &adw::Application) -> Widgets {
     let msg_scroll = gtk::ScrolledWindow::new();
     msg_scroll.set_child(Some(&msg_list));
     msg_scroll.set_vexpand(true);
+    msg_scroll.set_hexpand(true);
+    msg_scroll.add_css_class("qq-msg-scroll");
+
+    // 底部 QQ 风格工具栏 + 输入框
+    let sticker_btn = gtk::Button::with_label("🎉 贴纸");
+    sticker_btn.add_css_class("flat");
+    sticker_btn.add_css_class("qq-tool-btn");
+    sticker_btn.set_tooltip_text(Some("快捷发送庆祝贴纸"));
+
+    let sticker_popover = gtk::Popover::new();
+    let sticker_menu_btn = gtk::MenuButton::builder()
+        .label("😊 表情")
+        .popover(&sticker_popover)
+        .build();
+    sticker_menu_btn.add_css_class("flat");
+    sticker_menu_btn.add_css_class("qq-tool-btn");
+    sticker_menu_btn.set_tooltip_text(Some("选择 QQ 表情贴纸发送"));
+
+    let file_btn = gtk::Button::with_label("📁 发送文件");
+    file_btn.add_css_class("flat");
+    file_btn.add_css_class("qq-tool-btn");
+    file_btn.set_tooltip_text(Some("发起 P2P 直连 / 群发文件传输"));
+
+    let e2ee_btn = gtk::Button::with_label("🔐 加密会话");
+    e2ee_btn.add_css_class("flat");
+    e2ee_btn.add_css_class("qq-tool-btn");
+    e2ee_btn.set_tooltip_text(Some("切换端到端加密 (/e2ee)"));
+
+    let search_chat_btn = gtk::Button::with_label("🔍 查找记录");
+    search_chat_btn.add_css_class("flat");
+    search_chat_btn.add_css_class("qq-tool-btn");
+    search_chat_btn.set_tooltip_text(Some("检索当前会话消息记录"));
+
+    let toolbar_spacer = gtk::Box::new(Orientation::Horizontal, 0);
+    toolbar_spacer.set_hexpand(true);
+
+    let shortcut_hint = gtk::Label::new(Some("Enter 发送 · Shift+Enter 换行"));
+    shortcut_hint.add_css_class("caption");
+    shortcut_hint.add_css_class("dim-label");
+
+    let composer_toolbar = gtk::Box::new(Orientation::Horizontal, 4);
+    composer_toolbar.append(&sticker_menu_btn);
+    composer_toolbar.append(&sticker_btn);
+    composer_toolbar.append(&file_btn);
+    composer_toolbar.append(&e2ee_btn);
+    composer_toolbar.append(&search_chat_btn);
+    composer_toolbar.append(&toolbar_spacer);
+    composer_toolbar.append(&shortcut_hint);
 
     let input = gtk::TextView::new();
     input.set_wrap_mode(gtk::WrapMode::WordChar);
-    input.set_size_request(-1, 72);
+    input.set_size_request(-1, 78);
+    input.set_top_margin(8);
+    input.set_bottom_margin(8);
+    input.set_left_margin(10);
+    input.set_right_margin(10);
+    input.add_css_class("qq-input-view");
     let input_scroll = gtk::ScrolledWindow::new();
     input_scroll.set_child(Some(&input));
-    input_scroll.add_css_class("card");
+    input_scroll.set_min_content_height(78);
+    input_scroll.add_css_class("qq-input-card");
 
-    let send_btn = gtk::Button::with_label("发送");
+    let send_btn = gtk::Button::with_label("发送 (S)");
     send_btn.add_css_class("suggested-action");
-    let sticker_btn = gtk::Button::with_label("表情");
-    let file_btn = gtk::Button::with_label("文件");
-    let btn_row = gtk::Box::new(Orientation::Horizontal, 6);
+    send_btn.add_css_class("qq-send-btn");
+    let btn_row = gtk::Box::new(Orientation::Horizontal, 8);
     btn_row.set_halign(Align::End);
-    btn_row.append(&sticker_btn);
-    btn_row.append(&file_btn);
     btn_row.append(&send_btn);
 
     let composer = gtk::Box::new(Orientation::Vertical, 6);
+    composer.add_css_class("qq-composer");
     composer.set_margin_top(6);
     composer.set_margin_bottom(10);
-    composer.set_margin_start(12);
-    composer.set_margin_end(12);
+    composer.set_margin_start(14);
+    composer.set_margin_end(14);
+    composer.append(&composer_toolbar);
     composer.append(&input_scroll);
     composer.append(&btn_row);
 
     let chat_col = gtk::Box::new(Orientation::Vertical, 0);
+    chat_col.set_hexpand(true);
+    chat_col.set_vexpand(true);
+    chat_col.add_css_class("qq-chat-col");
     chat_col.append(&header_bar);
+    chat_col.append(&gtk::Separator::new(Orientation::Horizontal));
     chat_col.append(&msg_scroll);
+    chat_col.append(&gtk::Separator::new(Orientation::Horizontal));
     chat_col.append(&composer);
 
-    let main_split = gtk::Box::new(Orientation::Horizontal, 0);
-    main_split.append(&sidebar);
-    main_split.append(&sep);
-    main_split.append(&chat_col);
+    // --- Column 3：右侧可折叠文件传输抽屉（285px） ---
+    let drawer_title = gtk::Label::new(Some("⚡ P2P 文件传输"));
+    drawer_title.set_xalign(0.0);
+    drawer_title.set_hexpand(true);
+    drawer_title.add_css_class("heading");
+    let drawer_header = gtk::Box::new(Orientation::Horizontal, 8);
+    drawer_header.set_margin_top(12);
+    drawer_header.set_margin_bottom(10);
+    drawer_header.set_margin_start(12);
+    drawer_header.set_margin_end(12);
+    drawer_header.append(&drawer_title);
 
-    // --- 传输窗口 ---
+    let drawer_transfers_list = gtk::ListBox::new();
+    drawer_transfers_list.set_selection_mode(gtk::SelectionMode::None);
+    drawer_transfers_list.add_css_class("boxed-list");
+    let drawer_scroll = gtk::ScrolledWindow::new();
+    drawer_scroll.set_vexpand(true);
+    drawer_scroll.set_margin_start(10);
+    drawer_scroll.set_margin_end(10);
+    drawer_scroll.set_margin_bottom(10);
+    drawer_scroll.set_child(Some(&drawer_transfers_list));
+
+    let right_drawer = gtk::Box::new(Orientation::Vertical, 0);
+    right_drawer.set_size_request(285, -1);
+    right_drawer.add_css_class("qq-right-drawer");
+    right_drawer.append(&drawer_header);
+    right_drawer.append(&gtk::Separator::new(Orientation::Horizontal));
+    right_drawer.append(&drawer_scroll);
+
+    let main_split = gtk::Box::new(Orientation::Horizontal, 0);
+    main_split.set_hexpand(true);
+    main_split.set_vexpand(true);
+    main_split.append(&left_rail);
+    main_split.append(&sidebar);
+    main_split.append(&gtk::Separator::new(Orientation::Vertical));
+    main_split.append(&chat_col);
+    main_split.append(&gtk::Separator::new(Orientation::Vertical));
+    main_split.append(&right_drawer);
+
+    // --- 独立传输窗口与频道窗口 ---
     let transfers_list = gtk::ListBox::new();
     transfers_list.set_selection_mode(gtk::SelectionMode::None);
     transfers_list.add_css_class("boxed-list");
     let t_scroll = gtk::ScrolledWindow::new();
-    t_scroll.set_min_content_width(460);
+    t_scroll.set_min_content_width(480);
     t_scroll.set_min_content_height(360);
+    t_scroll.set_margin_top(12);
+    t_scroll.set_margin_bottom(12);
+    t_scroll.set_margin_start(12);
+    t_scroll.set_margin_end(12);
     t_scroll.set_child(Some(&transfers_list));
     let transfers_win = gtk::Window::builder()
-        .title("文件传输")
-        .default_width(500)
+        .title("P2P 文件传输管理")
+        .default_width(520)
         .default_height(420)
         .child(&t_scroll)
         .build();
     transfers_win.set_hide_on_close(true);
 
-    // --- 频道窗口 ---
-    let new_channel_btn = gtk::Button::with_label("新建频道");
+    let new_channel_btn = gtk::Button::with_label("＋ 新建频道");
     new_channel_btn.add_css_class("pill");
     new_channel_btn.add_css_class("suggested-action");
     let btn_wrap = gtk::Box::new(Orientation::Horizontal, 0);
@@ -384,38 +641,49 @@ fn build_ui(app: &adw::Application) -> Widgets {
     channels_list.set_selection_mode(gtk::SelectionMode::None);
     channels_list.add_css_class("boxed-list");
     let c_scroll = gtk::ScrolledWindow::new();
-    c_scroll.set_min_content_width(460);
-    c_scroll.set_min_content_height(300);
+    c_scroll.set_min_content_width(480);
+    c_scroll.set_min_content_height(320);
     c_scroll.set_child(Some(&channels_list));
 
     let channels_content = gtk::Box::new(Orientation::Vertical, 12);
-    channels_content.set_margin_top(12);
-    channels_content.set_margin_bottom(12);
-    channels_content.set_margin_start(12);
-    channels_content.set_margin_end(12);
+    channels_content.set_margin_top(14);
+    channels_content.set_margin_bottom(14);
+    channels_content.set_margin_start(14);
+    channels_content.set_margin_end(14);
     channels_content.append(&btn_wrap);
     channels_content.append(&c_scroll);
 
     let channels_win = gtk::Window::builder()
-        .title("频道")
-        .default_width(500)
-        .default_height(420)
+        .title("频道广场 (G2)")
+        .default_width(520)
+        .default_height(440)
         .child(&channels_content)
         .build();
     channels_win.set_hide_on_close(true);
 
     let stack = gtk::Stack::new();
-    stack.add_named(&login_clamp, Some("login"));
+    stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+    stack.add_named(&login_bg, Some("login"));
     stack.add_named(&main_split, Some("main"));
 
     let toast = adw::ToastOverlay::new();
     toast.set_child(Some(&stack));
 
+    // 使用 ToolbarView + HeaderBar 提供完整系统窗口标题栏与最小化/最大化/关闭按钮
+    let win_header = adw::HeaderBar::new();
+    let win_title = adw::WindowTitle::new("LANChat", "局域网 P2P 即时通信");
+    win_header.set_title_widget(Some(&win_title));
+
+    let toolbar_view = adw::ToolbarView::new();
+    toolbar_view.add_top_bar(&win_header);
+    toolbar_view.set_content(Some(&toast));
+
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .default_width(960)
-        .default_height(640)
-        .content(&toast)
+        .title("LANChat")
+        .default_width(1140)
+        .default_height(720)
+        .content(&toolbar_view)
         .build();
 
     Widgets {
@@ -429,20 +697,38 @@ fn build_ui(app: &adw::Application) -> Widgets {
         connect_btn,
         login_status,
         login_spinner,
-        roster,
+        self_avatar,
+        self_profile_btn,
+        nav_sessions_btn,
+        nav_contacts_btn,
+        nav_channels_btn,
+        transfers_btn,
+        channels_btn,
+        nick_btn,
+        dirdir_btn,
+        search_entry,
+        quick_new_channel_btn,
         me_label,
         conn_badge,
+        roster,
+        chat_avatar,
         chat_header,
+        chat_subtitle,
+        header_invite_btn,
+        header_leave_btn,
+        header_drawer_btn,
         msg_list,
         msg_scroll,
         input,
         send_btn,
         sticker_btn,
+        sticker_menu_btn,
+        sticker_popover,
         file_btn,
-        transfers_btn,
-        channels_btn,
-        nick_btn,
-        dirdir_btn,
+        e2ee_btn,
+        search_chat_btn,
+        right_drawer,
+        drawer_transfers_list,
         transfers_win,
         transfers_list,
         channels_win,
@@ -454,20 +740,40 @@ fn build_ui(app: &adw::Application) -> Widgets {
 // ---------- 动作绑定 ----------
 
 fn wire_actions(ctx: &Rc<AppCtx>) {
+    // 表情选择器网格（Popover）
+    let grid = gtk::Grid::new();
+    grid.set_row_spacing(6);
+    grid.set_column_spacing(6);
+    grid.set_margin_top(8);
+    grid.set_margin_bottom(8);
+    grid.set_margin_start(8);
+    grid.set_margin_end(8);
+    const EMOJIS: &[&str] = &[
+        "🎉", "👍", "😂", "❤️", "🔥", "🚀", "👀", "🙏", "💯", "🥰", "🤔", "😭", "😎", "🤝", "✨",
+        "🍀", "🎯", "⚡",
+    ];
+    for (idx, emoji) in EMOJIS.iter().enumerate() {
+        let btn = gtk::Button::with_label(emoji);
+        btn.add_css_class("flat");
+        let e_str = (*emoji).to_string();
+        btn.connect_clicked(clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            move |_| {
+                cx.widgets.sticker_popover.popdown();
+                send_sticker_code(&cx, &e_str);
+            }
+        ));
+        grid.attach(&btn, (idx % 6) as i32, (idx / 6) as i32, 1, 1);
+    }
+    ctx.widgets.sticker_popover.set_child(Some(&grid));
+
     // 自动发现
     ctx.widgets.discover_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
-            if let Some(ipc) = cx.ipc.borrow().clone() {
-                let tx = cx.ui_tx.clone();
-                crate::spawn_rt(async move {
-                    let res = ipc.invoke::<()>("BrowseServers", None).await.and_then(|v| {
-                        serde_json::from_value::<Vec<ServerInfo>>(v).map_err(Into::into)
-                    });
-                    let _ = tx.try_send(UiEvent::Discovered(res));
-                });
-            }
+            trigger_browse(&cx);
         }
     ));
 
@@ -498,7 +804,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 cx.toast("请填写或选择服务器地址");
                 return;
             }
-            cx.set_login_busy(true, "正在连接…");
+            cx.set_login_busy(true, "正在连接中心节点…");
             if let Some(ipc) = cx.ipc.borrow().clone() {
                 let params = ConnectParams { addr, psk };
                 let tx = cx.ui_tx.clone();
@@ -510,7 +816,40 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 选择联系人 → 切换会话
+    // 左侧导航栏切换：消息 / 好友 / 频道
+    ctx.widgets.nav_sessions_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            cx.switch_nav_tab(NavTab::Sessions);
+        }
+    ));
+    ctx.widgets.nav_contacts_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            cx.switch_nav_tab(NavTab::Contacts);
+        }
+    ));
+    ctx.widgets.nav_channels_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            cx.switch_nav_tab(NavTab::Channels);
+        }
+    ));
+
+    // 搜索框实时过滤
+    ctx.widgets.search_entry.connect_search_changed(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |entry| {
+            cx.state.borrow_mut().search_filter = entry.text().to_string();
+            cx.render_roster();
+        }
+    ));
+
+    // 选择左侧列表项 → 切换当前会话
     ctx.widgets.roster.connect_row_selected(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -518,15 +857,30 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             if let Some(row) = row {
                 let idx = row.index();
                 if idx >= 0 {
-                    if let Some(peer) = cx.state.borrow().peers.get(idx as usize).cloned() {
-                        cx.state.borrow_mut().current_chat = ChatTarget::Peer(peer.id.clone());
-                        cx.widgets.chat_header.set_text(&peer.nickname);
-                        cx.render_messages();
+                    let target_opt = cx.session_targets.borrow().get(idx as usize).cloned();
+                    if let Some(target) = target_opt {
+                        cx.select_chat_target(target);
                     }
                 }
             }
         }
     ));
+
+    // Enter 键发送消息（Shift+Enter 换行）
+    let key_ctrl = gtk::EventControllerKey::new();
+    key_ctrl.connect_key_pressed(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_, key, _, state| {
+            let is_enter = key == gdk::Key::Return || key == gdk::Key::KP_Enter;
+            if is_enter && !state.contains(gdk::ModifierType::SHIFT_MASK) {
+                cx.widgets.send_btn.emit_clicked();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        }
+    ));
+    ctx.widgets.input.add_controller(key_ctrl);
 
     // 发送文本
     ctx.widgets.send_btn.connect_clicked(clone!(
@@ -535,7 +889,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         move |_| {
             let target = cx.state.borrow().current_chat.clone();
             let Some(key) = target.key().map(|s| s.to_string()) else {
-                cx.toast("请先选择联系人或频道");
+                cx.toast("请先选择会话、联系人或频道");
                 return;
             };
             let buffer = cx.widgets.input.buffer();
@@ -556,29 +910,8 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 ));
                 return;
             }
-            if let Some(ipc) = cx.ipc.borrow().clone() {
-                let group = if target.is_channel() {
-                    key.clone()
-                } else {
-                    String::new()
-                };
-                let params = SendTextParams {
-                    to: key.clone(),
-                    text: text.clone(),
-                    group: Some(group.clone()),
-                };
-                let tx = cx.ui_tx.clone();
-                buffer.set_text("");
-                crate::spawn_rt(async move {
-                    let res = ipc.invoke("SendText", Some(&params)).await.and_then(|v| {
-                        v.get("msgID")
-                            .and_then(|m| m.as_str())
-                            .map(|s| s.to_string())
-                            .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
-                    });
-                    let _ = tx.try_send(UiEvent::TextSent(key, group, text, res));
-                });
-            }
+            send_text_to_target(&cx, &target, &text);
+            buffer.set_text("");
         }
     ));
 
@@ -587,41 +920,35 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
+            send_sticker_code(&cx, "🎉");
+        }
+    ));
+
+    // 切换端到端加密（/e2ee）
+    ctx.widgets.e2ee_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
             let target = cx.state.borrow().current_chat.clone();
-            let Some(key) = target.key().map(|s| s.to_string()) else {
-                cx.toast("请先选择联系人或频道");
+            if target.key().is_none() {
+                cx.toast("请先选择聊天会话");
                 return;
-            };
-            let group = if target.is_channel() {
-                key.clone()
-            } else {
-                String::new()
-            };
-            if let Some(ipc) = cx.ipc.borrow().clone() {
-                let sticker = "🎉".to_string();
-                let params = OfferParams {
-                    to: key.clone(),
-                    path: sticker.clone(),
-                };
-                let tx = cx.ui_tx.clone();
-                crate::spawn_rt(async move {
-                    let res = ipc
-                        .invoke("SendSticker", Some(&params))
-                        .await
-                        .and_then(|v| {
-                            v.get("msgID")
-                                .and_then(|m| m.as_str())
-                                .map(|s| s.to_string())
-                                .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
-                        });
-                    let _ = tx.try_send(UiEvent::TextSent(
-                        key,
-                        group,
-                        format!("[表情] {sticker}"),
-                        res,
-                    ));
-                });
             }
+            let enabled = cx.state.borrow().e2ee_enabled;
+            if enabled {
+                send_text_to_target(&cx, &target, "/e2ee off");
+            } else {
+                send_text_to_target(&cx, &target, "/e2ee lanchat-qq-key");
+            }
+        }
+    ));
+
+    // 查找当前会话聊天记录
+    ctx.widgets.search_chat_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            prompt_search_messages(&cx);
         }
     ));
 
@@ -694,17 +1021,56 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 打开传输窗口
+    // 右侧抽屉展开/收起 + 传输窗口
+    ctx.widgets.header_drawer_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let vis = cx.widgets.right_drawer.is_visible();
+            cx.widgets.right_drawer.set_visible(!vis);
+        }
+    ));
     ctx.widgets.transfers_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
             cx.render_transfers();
-            cx.widgets.transfers_win.present();
+            let vis = cx.widgets.right_drawer.is_visible();
+            cx.widgets.right_drawer.set_visible(!vis);
         }
     ));
 
-    // 打开频道窗口
+    // 顶部频道邀请 & 退出快捷按钮
+    ctx.widgets.header_invite_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            if let ChatTarget::Channel(cid) = cx.state.borrow().current_chat.clone() {
+                if cid != "*" {
+                    invite_member_dialog(&cx, &cid);
+                }
+            }
+        }
+    ));
+    ctx.widgets.header_leave_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            if let ChatTarget::Channel(cid) = cx.state.borrow().current_chat.clone() {
+                if cid != "*" {
+                    if let Some(ipc) = cx.ipc.borrow().clone() {
+                        let tx = cx.ui_tx.clone();
+                        crate::spawn_rt(async move {
+                            let r = ipc.channel_leave(&cid).await;
+                            let _ = tx.try_send(UiEvent::ChannelLeft(cid, r));
+                        });
+                    }
+                }
+            }
+        }
+    ));
+
+    // 打开频道广场窗口
     ctx.widgets.channels_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -714,100 +1080,35 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 新建频道：名称 + 主题 + 私有开关（对齐 ChannelCreate{name, topic?, private?}）。
+    // 新建频道（搜索栏旁 ＋ 按钮 & 频道窗口新建按钮共用）
+    ctx.widgets.quick_new_channel_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            prompt_new_channel(&cx);
+        }
+    ));
     ctx.widgets.new_channel_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
-            let name_row = adw::EntryRow::new();
-            name_row.set_title("名称");
-
-            let topic_row = adw::EntryRow::new();
-            topic_row.set_title("主题（可选）");
-
-            let private_row = adw::SwitchRow::new();
-            private_row.set_title("私有频道");
-            private_row.set_subtitle("仅受邀成员可加入");
-
-            let extra = gtk::ListBox::new();
-            extra.add_css_class("boxed-list");
-            extra.set_selection_mode(gtk::SelectionMode::None);
-            extra.append(&name_row);
-            extra.append(&topic_row);
-            extra.append(&private_row);
-
-            let dialog = adw::AlertDialog::new(Some("新建频道"), None);
-            dialog.set_extra_child(Some(&extra));
-            dialog.add_responses(&[("cancel", "取消"), ("ok", "创建")]);
-            dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
-            dialog.set_close_response("cancel");
-            dialog.choose(
-                &cx.widgets.window,
-                None::<&gio::Cancellable>,
-                clone!(
-                    #[strong]
-                    cx,
-                    move |response| {
-                        if response == "ok" {
-                            let name = name_row.text().to_string();
-                            if name.trim().is_empty() {
-                                cx.toast("请填写频道名称");
-                                return;
-                            }
-                            let topic = topic_row.text().to_string();
-                            let private = private_row.is_active();
-                            if let Some(ipc) = cx.ipc.borrow().clone() {
-                                let tx = cx.ui_tx.clone();
-                                crate::spawn_rt(async move {
-                                    let r = ipc
-                                        .channel_create(name.trim(), topic.trim(), private)
-                                        .await;
-                                    let _ = tx.try_send(UiEvent::ChannelCreated(r));
-                                });
-                            }
-                        }
-                    }
-                ),
-            );
+            prompt_new_channel(&cx);
         }
     ));
 
-    // 修改昵称
+    // 修改昵称（头像点击 & 底部按钮共用）
+    ctx.widgets.self_profile_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            prompt_set_nickname(&cx);
+        }
+    ));
     ctx.widgets.nick_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
-            let entry = gtk::Entry::new();
-            entry.set_text(&cx.state.borrow().nickname);
-            let dialog = adw::AlertDialog::new(Some("修改昵称"), None);
-            dialog.set_extra_child(Some(&entry));
-            dialog.add_responses(&[("cancel", "取消"), ("ok", "确定")]);
-            dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
-            dialog.set_close_response("cancel");
-            dialog.choose(
-                &cx.widgets.window,
-                None::<&gio::Cancellable>,
-                clone!(
-                    #[strong]
-                    cx,
-                    #[strong]
-                    entry,
-                    move |response| {
-                        if response == "ok" {
-                            let name = entry.text().to_string();
-                            if let Some(ipc) = cx.ipc.borrow().clone() {
-                                let params = NickParams { name };
-                                let tx = cx.ui_tx.clone();
-                                crate::spawn_rt(async move {
-                                    let r =
-                                        ipc.invoke("SetNickname", Some(&params)).await.map(|_| ());
-                                    let _ = tx.try_send(UiEvent::NickSet(r));
-                                });
-                            }
-                        }
-                    }
-                ),
-            );
+            prompt_set_nickname(&cx);
         }
     ));
 
@@ -847,6 +1148,209 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
     ));
 }
 
+fn trigger_browse(ctx: &Rc<AppCtx>) {
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let res = ipc
+                .invoke::<()>("BrowseServers", None)
+                .await
+                .and_then(|v| serde_json::from_value::<Vec<ServerInfo>>(v).map_err(Into::into));
+            let _ = tx.try_send(UiEvent::Discovered(res));
+        });
+    }
+}
+
+fn send_text_to_target(ctx: &Rc<AppCtx>, target: &ChatTarget, text: &str) {
+    let Some(key) = target.key().map(|s| s.to_string()) else {
+        return;
+    };
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let (to, group) = if target.is_channel() {
+            (String::new(), key.clone())
+        } else {
+            (key.clone(), String::new())
+        };
+        let params = SendTextParams {
+            to,
+            text: text.to_string(),
+            group: Some(group.clone()),
+        };
+        let tx = ctx.ui_tx.clone();
+        let owned_text = text.to_string();
+        crate::spawn_rt(async move {
+            let res = ipc.invoke("SendText", Some(&params)).await.and_then(|v| {
+                v.get("msgID")
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
+            });
+            let _ = tx.try_send(UiEvent::TextSent(key, group, owned_text, res));
+        });
+    }
+}
+
+fn send_sticker_code(ctx: &Rc<AppCtx>, sticker: &str) {
+    let target = ctx.state.borrow().current_chat.clone();
+    let Some(key) = target.key().map(|s| s.to_string()) else {
+        ctx.toast("请先选择联系人或频道");
+        return;
+    };
+    let group = if target.is_channel() {
+        key.clone()
+    } else {
+        String::new()
+    };
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let sticker_owned = sticker.to_string();
+        let params = OfferParams {
+            to: key.clone(),
+            path: sticker_owned.clone(),
+        };
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let res = ipc
+                .invoke("SendSticker", Some(&params))
+                .await
+                .and_then(|v| {
+                    v.get("msgID")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                        .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
+                });
+            let _ = tx.try_send(UiEvent::TextSent(
+                key,
+                group,
+                format!("[表情] {sticker_owned}"),
+                res,
+            ));
+        });
+    }
+}
+
+fn prompt_new_channel(ctx: &Rc<AppCtx>) {
+    let name_row = adw::EntryRow::new();
+    name_row.set_title("频道名称");
+
+    let topic_row = adw::EntryRow::new();
+    topic_row.set_title("频道公告 / 主题（可选）");
+
+    let private_row = adw::SwitchRow::new();
+    private_row.set_title("私有频道");
+    private_row.set_subtitle("仅受邀成员可加入并查看消息");
+
+    let extra = gtk::ListBox::new();
+    extra.add_css_class("boxed-list");
+    extra.set_selection_mode(gtk::SelectionMode::None);
+    extra.append(&name_row);
+    extra.append(&topic_row);
+    extra.append(&private_row);
+
+    let dialog = adw::AlertDialog::new(Some("新建频道 (G2)"), None);
+    dialog.set_extra_child(Some(&extra));
+    dialog.add_responses(&[("cancel", "取消"), ("ok", "立即创建")]);
+    dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+    dialog.set_close_response("cancel");
+    dialog.choose(
+        &ctx.widgets.window,
+        None::<&gio::Cancellable>,
+        clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            move |response| {
+                if response == "ok" {
+                    let name = name_row.text().to_string();
+                    if name.trim().is_empty() {
+                        cx.toast("请填写频道名称");
+                        return;
+                    }
+                    let topic = topic_row.text().to_string();
+                    let private = private_row.is_active();
+                    if let Some(ipc) = cx.ipc.borrow().clone() {
+                        let tx = cx.ui_tx.clone();
+                        crate::spawn_rt(async move {
+                            let r = ipc.channel_create(name.trim(), topic.trim(), private).await;
+                            let _ = tx.try_send(UiEvent::ChannelCreated(r));
+                        });
+                    }
+                }
+            }
+        ),
+    );
+}
+
+fn prompt_set_nickname(ctx: &Rc<AppCtx>) {
+    let entry = gtk::Entry::new();
+    entry.set_text(&ctx.state.borrow().nickname);
+    entry.set_placeholder_text(Some("输入你的局域网展示昵称"));
+    let dialog = adw::AlertDialog::new(Some("修改个人昵称"), None);
+    dialog.set_extra_child(Some(&entry));
+    dialog.add_responses(&[("cancel", "取消"), ("ok", "保存")]);
+    dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+    dialog.set_close_response("cancel");
+    dialog.choose(
+        &ctx.widgets.window,
+        None::<&gio::Cancellable>,
+        clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            #[strong]
+            entry,
+            move |response| {
+                if response == "ok" {
+                    let name = entry.text().to_string();
+                    if let Some(ipc) = cx.ipc.borrow().clone() {
+                        let params = NickParams { name };
+                        let tx = cx.ui_tx.clone();
+                        crate::spawn_rt(async move {
+                            let r = ipc.invoke("SetNickname", Some(&params)).await.map(|_| ());
+                            let _ = tx.try_send(UiEvent::NickSet(r));
+                        });
+                    }
+                }
+            }
+        ),
+    );
+}
+
+fn prompt_search_messages(ctx: &Rc<AppCtx>) {
+    let entry = gtk::Entry::new();
+    entry.set_placeholder_text(Some("输入要检索的聊天关键词…"));
+    let dialog = adw::AlertDialog::new(Some("查找聊天记录"), None);
+    dialog.set_extra_child(Some(&entry));
+    dialog.add_responses(&[("cancel", "关闭"), ("ok", "搜索")]);
+    dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+    dialog.set_close_response("cancel");
+    dialog.choose(
+        &ctx.widgets.window,
+        None::<&gio::Cancellable>,
+        clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            #[strong]
+            entry,
+            move |response| {
+                if response == "ok" {
+                    let q = entry.text().to_string();
+                    let conv_key = cx
+                        .state
+                        .borrow()
+                        .current_chat
+                        .key()
+                        .unwrap_or("")
+                        .to_string();
+                    let hits = cx.state.borrow().search_messages(&conv_key, &q);
+                    cx.toast(&format!(
+                        "搜索“{}”：找到 {} 条匹配消息",
+                        q.trim(),
+                        hits.len()
+                    ));
+                }
+            }
+        ),
+    );
+}
+
 fn wire_window_lifecycle(ctx: &Rc<AppCtx>) {
     ctx.widgets.window.connect_close_request(clone!(
         #[strong(rename_to = cx)]
@@ -867,9 +1371,10 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
     match event {
         UiEvent::Ready(ipc) => {
             *ctx.ipc.borrow_mut() = Some(ipc);
-            ctx.set_login_busy(false, "本地服务已就绪，请发现或填写地址后连接");
+            ctx.set_login_busy(false, "本地守护已就绪，已自动扫描局域网节点");
             ctx.widgets.login_spinner.stop();
             ctx.sync_state();
+            trigger_browse(ctx);
         }
         UiEvent::Reconnected => ctx.sync_state(),
         UiEvent::State(res) => match res {
@@ -883,9 +1388,16 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
         UiEvent::Discovered(res) => match res {
             Ok(servers) => {
                 let n = servers.len();
+                if let Some(first) = servers.first() {
+                    if ctx.widgets.addr_row.text().trim().is_empty() {
+                        ctx.widgets.addr_row.set_text(&server_addr_with_path(first));
+                    }
+                }
                 ctx.state.borrow_mut().discovered = servers;
                 ctx.render_discovered();
-                ctx.toast(&format!("发现 {n} 个服务器"));
+                if n > 0 {
+                    ctx.toast(&format!("发现 {n} 个局域网中心节点"));
+                }
             }
             Err(e) => ctx.toast(&format!("发现失败：{e}")),
         },
@@ -896,17 +1408,20 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     .login_status
                     .set_text(&format!("连接请求失败：{e}"));
             }
-            // 最终是否成功以 conn.changed 为准
             ctx.sync_state();
         }
         UiEvent::TextSent(key, group, text, res) => match res {
             Ok(msg_id) => {
                 let trimmed = text.trim();
                 if msg_id == "e2ee:on" {
+                    ctx.state.borrow_mut().e2ee_enabled = true;
+                    ctx.widgets.e2ee_btn.set_label("🔐 已加密");
                     ctx.toast("已启用端到端加密 (/e2ee)");
                     return;
                 }
                 if msg_id == "e2ee:off" {
+                    ctx.state.borrow_mut().e2ee_enabled = false;
+                    ctx.widgets.e2ee_btn.set_label("🔐 加密会话");
                     ctx.toast("已关闭端到端加密");
                     return;
                 }
@@ -930,21 +1445,25 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                         ts: now,
                     });
                 }
+                ctx.render_roster();
                 if ctx.state.borrow().current_chat.key() == Some(key.as_str()) {
                     ctx.render_messages();
                 }
             }
             Err(e) => ctx.toast(&format!("发送失败：{e}")),
         },
-        UiEvent::OfferSent(res) => {
-            if let Err(e) = res {
-                ctx.toast(&format!("文件发起失败：{e}"));
+        UiEvent::OfferSent(res) => match res {
+            Ok(_) => {
+                ctx.widgets.right_drawer.set_visible(true);
+                ctx.toast("文件传输已发起");
             }
-        }
+            Err(e) => ctx.toast(&format!("文件发起失败：{e}")),
+        },
         UiEvent::ChannelCreated(res) => match res {
             Ok(id) => {
                 ctx.toast("频道已创建");
                 ctx.render_channels();
+                ctx.render_roster();
                 open_channel(ctx, &id);
             }
             Err(e) => ctx.toast(&format!("创建频道失败：{e}")),
@@ -953,23 +1472,23 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
             Ok(()) => {
                 ctx.toast("已加入频道");
                 ctx.render_channels();
+                ctx.render_roster();
                 open_channel(ctx, &id);
             }
             Err(e) => ctx.toast(&format!("加入频道失败：{e}")),
         },
         UiEvent::ChannelInvited(_id, res) => match res {
-            Ok(()) => ctx.toast("已邀请成员"),
+            Ok(()) => ctx.toast("已发送频道邀请"),
             Err(e) => ctx.toast(&format!("邀请失败：{e}")),
         },
         UiEvent::ChannelLeft(id, res) => match res {
             Ok(()) => {
                 ctx.toast("已退出频道");
                 if ctx.state.borrow().current_chat.key() == Some(id.as_str()) {
-                    ctx.state.borrow_mut().current_chat = ChatTarget::None;
-                    ctx.widgets.chat_header.set_text("选择一个联系人开始聊天");
-                    ctx.render_messages();
+                    ctx.select_chat_target(ChatTarget::Channel("*".to_string()));
                 }
                 ctx.render_channels();
+                ctx.render_roster();
             }
             Err(e) => ctx.toast(&format!("退出频道失败：{e}")),
         },
@@ -1050,11 +1569,16 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .to_string();
             ctx.state.borrow_mut().conn = state.clone();
             ctx.state.borrow_mut().conn_reason = reason.clone();
-            ctx.widgets.conn_badge.set_text(state.label());
+            ctx.widgets
+                .conn_badge
+                .set_text(&format!("● {}", state.label()));
             match state {
                 ConnState::Connected => {
                     ctx.widgets.stack.set_visible_child_name("main");
-                    ctx.toast("已连接");
+                    if ctx.state.borrow().current_chat == ChatTarget::None {
+                        ctx.select_chat_target(ChatTarget::Channel("*".to_string()));
+                    }
+                    ctx.toast("已登录 LANChat 中心节点");
                     ctx.sync_state();
                 }
                 ConnState::AuthFailed => {
@@ -1092,9 +1616,7 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 let id = id.to_string();
                 ctx.state.borrow_mut().peers.retain(|x| x.id != id);
                 if ctx.state.borrow().current_chat.key() == Some(id.as_str()) {
-                    ctx.state.borrow_mut().current_chat = ChatTarget::None;
-                    ctx.widgets.chat_header.set_text("选择一个联系人开始聊天");
-                    ctx.render_messages();
+                    ctx.select_chat_target(ChatTarget::Channel("*".to_string()));
                 }
                 ctx.render_roster();
             }
@@ -1118,6 +1640,7 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             let msg_type = p.get("type").and_then(|v| v.as_str()).unwrap_or("text");
             if msg_type == "MSG_REVOKE" {
                 if ctx.state.borrow_mut().revoke_message(&msg_id) {
+                    ctx.render_roster();
                     ctx.render_messages();
                 }
                 return;
@@ -1138,8 +1661,6 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             } else {
                 raw_text
             };
-            // 频道消息按 group（channelID）归类，sender 记录在 sender_id；
-            // 单播按 from 归类。
             let (conv_key, sender_id) = if group.is_empty() {
                 (from.clone(), String::new())
             } else {
@@ -1156,11 +1677,14 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 read_by: Vec::new(),
                 ts: now_secs(),
             });
-            if ctx.state.borrow().current_chat.key() == Some(conv_key.as_str()) {
+            let is_current = ctx.state.borrow().current_chat.key() == Some(conv_key.as_str());
+            if is_current {
+                ctx.state.borrow_mut().mark_conv_seen(&conv_key);
                 ctx.render_messages();
             } else {
                 ctx.toast("收到新消息");
             }
+            ctx.render_roster();
         }
         "transfer.progress" => {
             if let Some(t) = p
@@ -1209,7 +1733,6 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 ctx.toast(&format!("传输失败：{reason}"));
             }
         }
-        // M9/M10 群组块可用性矩阵：解析位图并更新对应传输行的块矩阵展示。
         "group.matrix" => {
             if let (Some(id), Some(b64)) = (
                 p.get("transferId").and_then(|v| v.as_str()),
@@ -1236,12 +1759,8 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             if let Some(channels) = parse_channel_updated(p) {
                 ctx.state.borrow_mut().channels = channels;
                 ctx.render_channels();
-                // 若正在查看频道，刷新标题中的成员信息。
-                if let ChatTarget::Channel(id) = &ctx.state.borrow().current_chat {
-                    if let Some(ch) = ctx.state.borrow().channel(id).cloned() {
-                        ctx.widgets.chat_header.set_text(&channel_header_text(&ch));
-                    }
-                }
+                ctx.render_roster();
+                ctx.refresh_chat_header();
             }
         }
         other => tracing::debug!("未处理通知：{other}"),
@@ -1266,15 +1785,13 @@ fn channel_header_text(ch: &Channel) -> String {
     format!("{lock}# {}（{} 名成员）{topic}", ch.name, ch.members.len())
 }
 
-/// 切换到频道会话：取消 roster 选中、设置会话键与标题、渲染消息。
+/// 切换到频道会话：更新当前会话、刷新顶部标题栏与消息列表。
 fn open_channel(ctx: &Rc<AppCtx>, channel_id: &str) {
-    let Some(ch) = ctx.state.borrow().channel(channel_id).cloned() else {
+    if ctx.state.borrow().channel(channel_id).is_none() && channel_id != "*" {
         return;
-    };
+    }
     ctx.widgets.roster.unselect_all();
-    ctx.state.borrow_mut().current_chat = ChatTarget::Channel(ch.id.clone());
-    ctx.widgets.chat_header.set_text(&channel_header_text(&ch));
-    ctx.render_messages();
+    ctx.select_chat_target(ChatTarget::Channel(channel_id.to_string()));
 }
 
 /// 邀请成员对话框：列出在线 peers，已是成员者禁用并标注；点击即邀请。
@@ -1309,6 +1826,8 @@ fn invite_member_dialog(ctx: &Rc<AppCtx>, channel_id: &str) {
         let row = adw::ActionRow::new();
         row.set_title(&peer.nickname);
         row.set_subtitle(if already { "已是成员" } else { &peer.os });
+        let av = adw::Avatar::new(32, Some(&peer.nickname), true);
+        row.add_prefix(&av);
         if already {
             row.set_sensitive(false);
         }
@@ -1316,15 +1835,14 @@ fn invite_member_dialog(ctx: &Rc<AppCtx>, channel_id: &str) {
     }
 
     let scroll = gtk::ScrolledWindow::new();
-    scroll.set_min_content_height(280);
+    scroll.set_min_content_height(260);
     scroll.set_child(Some(&list));
 
-    let dialog = adw::AlertDialog::new(Some("邀请成员加入频道"), None);
+    let dialog = adw::AlertDialog::new(Some("邀请好友加入频道"), None);
     dialog.set_extra_child(Some(&scroll));
     dialog.add_responses(&[("close", "关闭")]);
     dialog.set_close_response("close");
 
-    // 行选中（仅非成员行可点）→ 邀请后关闭。
     list.connect_row_activated(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -1376,9 +1894,15 @@ fn maybe_prompt_inbound(ctx: &Rc<AppCtx>) {
         .collect();
 
     for t in pending {
-        let dialog =
-            adw::AlertDialog::new(Some("接收文件"), Some(&format!("对方发送：{}", t.name)));
-        dialog.add_responses(&[("reject", "拒绝"), ("accept", "接收")]);
+        let dialog = adw::AlertDialog::new(
+            Some("收到文件传输请求"),
+            Some(&format!(
+                "对方发来文件：{}（{}）",
+                t.name,
+                format_size(t.size)
+            )),
+        );
+        dialog.add_responses(&[("reject", "拒绝"), ("accept", "另存为并接收")]);
         dialog.set_response_appearance("accept", adw::ResponseAppearance::Suggested);
         dialog.set_close_response("reject");
         dialog.choose(
@@ -1393,7 +1917,6 @@ fn maybe_prompt_inbound(ctx: &Rc<AppCtx>) {
                     if response != "accept" {
                         respond_transfer(&ctx, &t.id, false, String::new());
                     } else {
-                        // 选保存目录（文件名为对端提供的 name）。
                         let fdialog = gtk::FileDialog::new();
                         fdialog.set_initial_name(Some(&t.name));
                         fdialog.select_folder(
@@ -1439,15 +1962,27 @@ fn respond_transfer(ctx: &Rc<AppCtx>, id: &str, accept: bool, dest: String) {
     }
 }
 
-// ---------- 渲染 ----------
+// ---------- 渲染（Linux QQ 风格） ----------
 
 fn render_all(ctx: &Rc<AppCtx>, was_connected: bool) {
+    let nick = {
+        let st = ctx.state.borrow();
+        if st.nickname.trim().is_empty() {
+            "我".to_string()
+        } else {
+            st.nickname.clone()
+        }
+    };
+    ctx.widgets.self_avatar.set_text(Some(&nick));
     ctx.widgets
         .conn_badge
-        .set_text(ctx.state.borrow().conn.label());
-    ctx.widgets
-        .me_label
-        .set_text(&format!("我：{}", ctx.state.borrow().nickname));
+        .set_text(&format!("● {}", ctx.state.borrow().conn.label()));
+    ctx.widgets.me_label.set_text(&format!("👤 {nick}"));
+
+    if ctx.state.borrow().current_chat == ChatTarget::None {
+        ctx.state.borrow_mut().current_chat = ChatTarget::Channel("*".to_string());
+    }
+    ctx.refresh_chat_header();
     ctx.render_roster();
     ctx.render_messages();
     ctx.render_transfers();
@@ -1468,8 +2003,119 @@ impl AppCtx {
     fn set_login_busy(&self, busy: bool, status: &str) {
         self.widgets.connect_btn.set_sensitive(!busy);
         self.widgets.discover_btn.set_sensitive(!busy);
+        if busy {
+            self.widgets.login_spinner.start();
+        } else {
+            self.widgets.login_spinner.stop();
+        }
         if !status.is_empty() {
             self.widgets.login_status.set_text(status);
+        }
+    }
+
+    fn switch_nav_tab(self: &Rc<Self>, tab: NavTab) {
+        self.state.borrow_mut().nav_tab = tab;
+        self.widgets
+            .nav_sessions_btn
+            .remove_css_class("qq-rail-active");
+        self.widgets
+            .nav_contacts_btn
+            .remove_css_class("qq-rail-active");
+        self.widgets
+            .nav_channels_btn
+            .remove_css_class("qq-rail-active");
+        match tab {
+            NavTab::Sessions => self
+                .widgets
+                .nav_sessions_btn
+                .add_css_class("qq-rail-active"),
+            NavTab::Contacts => self
+                .widgets
+                .nav_contacts_btn
+                .add_css_class("qq-rail-active"),
+            NavTab::Channels => self
+                .widgets
+                .nav_channels_btn
+                .add_css_class("qq-rail-active"),
+        }
+        self.render_roster();
+    }
+
+    fn select_chat_target(self: &Rc<Self>, target: ChatTarget) {
+        if let Some(key) = target.key() {
+            self.state.borrow_mut().mark_conv_seen(key);
+        }
+        self.state.borrow_mut().current_chat = target;
+        self.refresh_chat_header();
+        self.render_roster();
+        self.render_messages();
+    }
+
+    fn refresh_chat_header(&self) {
+        let st = self.state.borrow();
+        match &st.current_chat {
+            ChatTarget::None => {
+                self.widgets.chat_avatar.set_text(Some("LANChat"));
+                self.widgets.chat_header.set_text("选择一个会话开始聊天");
+                self.widgets
+                    .chat_subtitle
+                    .set_text("P2P 直连加密传输 · 中心节点信令转发");
+                self.widgets.header_invite_btn.set_visible(false);
+                self.widgets.header_leave_btn.set_visible(false);
+            }
+            ChatTarget::Channel(cid) if cid == "*" => {
+                self.widgets.chat_avatar.set_text(Some("全员群"));
+                self.widgets
+                    .chat_header
+                    .set_text("📢 局域网全员广播群 (G1)");
+                self.widgets.chat_subtitle.set_text(&format!(
+                    "● 在线成员 {} 人 · 全员广播与 Swarm P2P 文件块分发",
+                    st.peers.len() + 1
+                ));
+                self.widgets.header_invite_btn.set_visible(false);
+                self.widgets.header_leave_btn.set_visible(false);
+            }
+            ChatTarget::Channel(cid) => {
+                if let Some(ch) = st.channel(cid) {
+                    self.widgets.chat_avatar.set_text(Some(&ch.name));
+                    self.widgets.chat_header.set_text(&channel_header_text(ch));
+                    let role = if st.is_channel_owner(cid) {
+                        "我是群主"
+                    } else {
+                        "频道成员"
+                    };
+                    self.widgets
+                        .chat_subtitle
+                        .set_text(&format!("● {role} · 支持群内聊天与 Swarm 文件分发"));
+                    self.widgets
+                        .header_invite_btn
+                        .set_visible(st.is_channel_owner(cid));
+                    self.widgets
+                        .header_leave_btn
+                        .set_visible(st.is_channel_member(cid));
+                }
+            }
+            ChatTarget::Peer(pid) => {
+                if let Some(peer) = st.peer(pid) {
+                    self.widgets.chat_avatar.set_text(Some(&peer.nickname));
+                    self.widgets.chat_header.set_text(&peer.nickname);
+                    self.widgets.chat_subtitle.set_text(&format!(
+                        "● {} · {} · P2P TCP 直连就绪",
+                        if peer.os.is_empty() { "LAN" } else { &peer.os },
+                        if peer.status.is_empty() {
+                            "在线"
+                        } else {
+                            &peer.status
+                        }
+                    ));
+                } else {
+                    self.widgets.chat_avatar.set_text(Some(pid));
+                    self.widgets.chat_header.set_text(pid);
+                    self.widgets.chat_subtitle.set_text("● 局域网对端节点");
+                }
+                self.widgets.header_invite_btn.set_visible(false);
+                self.widgets.header_leave_btn.set_visible(false);
+            }
         }
     }
 
@@ -1488,17 +2134,35 @@ impl AppCtx {
 
     fn render_discovered(&self) {
         clear_listbox(&self.widgets.server_list);
-        for srv in &self.state.borrow().discovered {
+        let st = self.state.borrow();
+        if st.discovered.is_empty() {
+            let row = adw::ActionRow::new();
+            row.set_title("暂未扫到局域网节点，可点击上方「自动发现」或直接连接");
+            row.set_sensitive(false);
+            self.widgets.server_list.append(&row);
+            return;
+        }
+        for srv in &st.discovered {
             let row = adw::ActionRow::new();
             row.set_title(if srv.name.is_empty() {
                 &srv.addr
             } else {
                 &srv.name
             });
-            row.set_subtitle(&format!("{} · {}", srv.addr, srv.version));
-            let badge = gtk::Label::new(Some(&srv.auth_mode));
+            row.set_subtitle(&format!(
+                "{} · 协议 {}",
+                server_addr_with_path(srv),
+                srv.version
+            ));
+            let av = adw::Avatar::new(34, Some(&srv.name), true);
+            row.add_prefix(&av);
+            let badge = gtk::Label::new(Some(if srv.auth_mode == "none" {
+                "🔓 免密开放"
+            } else {
+                "🔒 PSK 鉴权"
+            }));
             badge.add_css_class("caption-heading");
-            badge.add_css_class("dim-label");
+            badge.add_css_class("qq-tag-badge");
             row.add_suffix(&badge);
             self.widgets.server_list.append(&row);
         }
@@ -1506,19 +2170,127 @@ impl AppCtx {
 
     fn render_roster(&self) {
         clear_listbox(&self.widgets.roster);
+        self.session_targets.borrow_mut().clear();
+
         let st = self.state.borrow();
-        if st.peers.is_empty() {
-            let row = adw::ActionRow::new();
-            row.set_title("暂无在线联系人");
-            row.set_sensitive(false);
+        let q = st.search_filter.trim().to_lowercase();
+        let tab = st.nav_tab;
+        let current = st.current_chat.clone();
+
+        // 1. 置顶：📢 局域网全员广播群（在「消息」与「频道」页签展示）
+        if matches!(tab, NavTab::Sessions | NavTab::Channels)
+            && (q.is_empty() || "局域网全员广播群".contains(&q))
+        {
+            let preview = st
+                .last_message("*")
+                .map(|m| m.text.clone())
+                .unwrap_or_else(|| "点击向全员发送广播消息或群发文件".to_string());
+            let time_str = st
+                .last_message("*")
+                .map(|m| format_hhmm(m.ts))
+                .unwrap_or_else(|| "置顶".to_string());
+            let unread = st.unseen_count("*");
+            let active = current == ChatTarget::Channel("*".to_string());
+            let row = build_qq_session_row(
+                "全员",
+                "📢 局域网全员广播群",
+                &time_str,
+                &preview,
+                unread,
+                active,
+            );
             self.widgets.roster.append(&row);
-            return;
+            self.session_targets
+                .borrow_mut()
+                .push(ChatTarget::Channel("*".to_string()));
         }
-        for peer in &st.peers {
-            let row = adw::ActionRow::new();
-            row.set_title(&peer.nickname);
-            row.set_subtitle(&format!("{} · {}", peer.os, peer.status));
-            self.widgets.roster.append(&row);
+
+        // 2. 自定义频道（在「消息」与「频道」页签展示）
+        if matches!(tab, NavTab::Sessions | NavTab::Channels) {
+            for ch in &st.channels {
+                if !q.is_empty()
+                    && !ch.name.to_lowercase().contains(&q)
+                    && !ch.topic.to_lowercase().contains(&q)
+                {
+                    continue;
+                }
+                let lock = if ch.private { "🔒 " } else { "# " };
+                let title = format!("{lock}{}", ch.name);
+                let preview = st
+                    .last_message(&ch.id)
+                    .map(|m| m.text.clone())
+                    .unwrap_or_else(|| {
+                        if ch.topic.trim().is_empty() {
+                            format!("{} 名成员", ch.members.len())
+                        } else {
+                            ch.topic.clone()
+                        }
+                    });
+                let time_str = st
+                    .last_message(&ch.id)
+                    .map(|m| format_hhmm(m.ts))
+                    .unwrap_or_else(|| format!("{}人", ch.members.len()));
+                let unread = st.unseen_count(&ch.id);
+                let active = current == ChatTarget::Channel(ch.id.clone());
+                let row =
+                    build_qq_session_row(&ch.name, &title, &time_str, &preview, unread, active);
+                self.widgets.roster.append(&row);
+                self.session_targets
+                    .borrow_mut()
+                    .push(ChatTarget::Channel(ch.id.clone()));
+            }
+        }
+
+        // 3. 在线联系人（在「消息」与「好友」页签展示）
+        if matches!(tab, NavTab::Sessions | NavTab::Contacts) {
+            for peer in &st.peers {
+                if !q.is_empty()
+                    && !peer.nickname.to_lowercase().contains(&q)
+                    && !peer.os.to_lowercase().contains(&q)
+                {
+                    continue;
+                }
+                let preview = st
+                    .last_message(&peer.id)
+                    .map(|m| m.text.clone())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "[在线] {} · {}",
+                            if peer.os.is_empty() { "LAN" } else { &peer.os },
+                            if peer.status.is_empty() {
+                                "P2P 直连就绪"
+                            } else {
+                                &peer.status
+                            }
+                        )
+                    });
+                let time_str = st
+                    .last_message(&peer.id)
+                    .map(|m| format_hhmm(m.ts))
+                    .unwrap_or_else(|| peer.os.clone());
+                let unread = st.unseen_count(&peer.id);
+                let active = current == ChatTarget::Peer(peer.id.clone());
+                let row = build_qq_session_row(
+                    &peer.nickname,
+                    &peer.nickname,
+                    &time_str,
+                    &preview,
+                    unread,
+                    active,
+                );
+                self.widgets.roster.append(&row);
+                self.session_targets
+                    .borrow_mut()
+                    .push(ChatTarget::Peer(peer.id.clone()));
+            }
+        }
+
+        if self.session_targets.borrow().is_empty() {
+            let empty_row = adw::ActionRow::new();
+            empty_row.set_title("暂无匹配的联系人或频道");
+            empty_row.set_subtitle("可切换上方页签或点击「＋」创建新频道");
+            empty_row.set_sensitive(false);
+            self.widgets.roster.append(&empty_row);
         }
     }
 
@@ -1533,7 +2305,7 @@ impl AppCtx {
         let self_id = st.self_id.clone();
         if st.channels.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("暂无频道，点击上方「新建频道」");
+            row.set_title("暂无自定义频道，点击上方「＋ 新建频道」创建");
             row.set_sensitive(false);
             self.widgets.channels_list.append(&row);
             return;
@@ -1541,6 +2313,8 @@ impl AppCtx {
         for ch in &st.channels {
             let row = adw::ActionRow::new();
             row.set_title(&ch.name);
+            let av = adw::Avatar::new(36, Some(&ch.name), true);
+            row.add_prefix(&av);
             let members_text = ch
                 .members
                 .iter()
@@ -1571,7 +2345,6 @@ impl AppCtx {
             let member = ch.members.iter().any(|m| m == &self_id);
             let channel_id = ch.id.clone();
             if member {
-                // 仅 owner 显示「邀请」入口。
                 if is_owner {
                     let invite_btn = gtk::Button::with_label("邀请");
                     invite_btn.connect_clicked(clone!(
@@ -1586,7 +2359,6 @@ impl AppCtx {
                     row.add_suffix(&invite_btn);
                 }
 
-                // 已加入频道显示「退出」按钮。
                 let leave_btn = gtk::Button::with_label("退出");
                 leave_btn.connect_clicked(clone!(
                     #[strong(rename_to = cx)]
@@ -1643,17 +2415,51 @@ impl AppCtx {
         }
     }
 
-    fn render_messages(&self) {
+    fn render_messages(self: &Rc<Self>) {
         clear_listbox(&self.widgets.msg_list);
         let st = self.state.borrow();
         let target = st.current_chat.clone();
         let Some(conv_key) = target.key().map(|s| s.to_string()) else {
             return;
         };
+        let self_nick = if st.nickname.trim().is_empty() {
+            "我".to_string()
+        } else {
+            st.nickname.clone()
+        };
         let Some(msgs) = st.messages.get(&conv_key) else {
+            // 空会话引导气泡
+            let hint = gtk::Label::new(Some(
+                "💬 暂无消息记录，在下方输入框发送第一条消息或表情贴纸吧！",
+            ));
+            hint.add_css_class("dim-label");
+            hint.add_css_class("caption");
+            hint.set_margin_top(28);
+            hint.set_margin_bottom(12);
+            self.widgets.msg_list.append(&hint);
             return;
         };
+
         for m in msgs {
+            let sender_name = if m.inbound {
+                if !m.sender_id.is_empty() {
+                    st.peer(&m.sender_id)
+                        .map(|p| p.nickname.clone())
+                        .unwrap_or_else(|| {
+                            m.sender_id
+                                .get(0..6)
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "成员".to_string())
+                        })
+                } else {
+                    st.peer(&m.peer_id)
+                        .map(|p| p.nickname.clone())
+                        .unwrap_or_else(|| "好友".to_string())
+                }
+            } else {
+                self_nick.clone()
+            };
+
             let read_suffix = if !m.inbound && !m.revoked && !m.read_by.is_empty() {
                 if m.read_by.len() > 1 {
                     format!(" · ✓ 已读({})", m.read_by.len())
@@ -1663,53 +2469,127 @@ impl AppCtx {
             } else {
                 String::new()
             };
-            let label_text = if target.is_channel() && m.inbound {
-                let who = st
-                    .peer(&m.sender_id)
-                    .map(|p| p.nickname.clone())
-                    .unwrap_or_else(|| {
-                        m.sender_id
-                            .get(0..6)
-                            .map(|s| s.to_string())
-                            .unwrap_or_default()
-                    });
-                glib::markup_escape_text(&format!("{who}：{}{read_suffix}", m.text)).to_string()
-            } else {
-                glib::markup_escape_text(&format!("{}{read_suffix}", m.text)).to_string()
-            };
+
+            let meta_line = gtk::Label::new(Some(&format!(
+                "{}  {}{}",
+                sender_name,
+                format_hhmmss(m.ts),
+                read_suffix
+            )));
+            meta_line.add_css_class("caption");
+            meta_line.add_css_class("dim-label");
+            meta_line.set_xalign(if m.inbound { 0.0 } else { 1.0 });
+
+            let escaped = glib::markup_escape_text(&m.text).to_string();
             let bubble = gtk::Label::new(None);
             bubble.set_use_markup(true);
-            bubble.set_label(&label_text);
+            bubble.set_selectable(true);
+            bubble.set_label(&escaped);
             bubble.set_wrap(true);
-            bubble.set_max_width_chars(60);
-            bubble.set_xalign(if m.inbound { 0.0 } else { 1.0 });
+            bubble.set_max_width_chars(56);
+            bubble.set_xalign(0.0);
             bubble.add_css_class(if m.inbound { "bubble-in" } else { "bubble-out" });
             if m.revoked {
                 bubble.add_css_class("dim-label");
             }
 
-            let row = gtk::Box::new(Orientation::Horizontal, 0);
+            let bubble_wrap = gtk::Box::new(Orientation::Horizontal, 6);
             if !m.inbound {
-                row.set_halign(Align::End);
+                bubble_wrap.set_halign(Align::End);
+            } else {
+                bubble_wrap.set_halign(Align::Start);
             }
-            row.append(&bubble);
-            row.set_margin_top(3);
-            row.set_margin_bottom(3);
+
+            // 快捷操作按钮：引用回复 & 撤回
+            let actions_box = gtk::Box::new(Orientation::Horizontal, 2);
+            actions_box.set_valign(Align::Center);
+            if !m.revoked && !m.msg_id.is_empty() {
+                let reply_btn = gtk::Button::with_label("↩");
+                reply_btn.add_css_class("flat");
+                reply_btn.add_css_class("qq-msg-action");
+                reply_btn.set_tooltip_text(Some("引用回复此消息"));
+                let mid = m.msg_id.clone();
+                reply_btn.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |_| {
+                        cx.widgets
+                            .input
+                            .buffer()
+                            .set_text(&format!("/reply {mid} "));
+                        cx.widgets.input.grab_focus();
+                    }
+                ));
+                actions_box.append(&reply_btn);
+
+                if !m.inbound {
+                    let revoke_btn = gtk::Button::with_label("撤回");
+                    revoke_btn.add_css_class("flat");
+                    revoke_btn.add_css_class("qq-msg-action");
+                    revoke_btn.set_tooltip_text(Some("撤回这条消息"));
+                    let mid2 = m.msg_id.clone();
+                    let tgt = target.clone();
+                    revoke_btn.connect_clicked(clone!(
+                        #[strong(rename_to = cx)]
+                        self,
+                        move |_| {
+                            send_text_to_target(&cx, &tgt, &format!("/revoke {mid2}"));
+                        }
+                    ));
+                    actions_box.append(&revoke_btn);
+                }
+            }
+
+            if m.inbound {
+                bubble_wrap.append(&bubble);
+                bubble_wrap.append(&actions_box);
+            } else {
+                bubble_wrap.append(&actions_box);
+                bubble_wrap.append(&bubble);
+            }
+
+            let col = gtk::Box::new(Orientation::Vertical, 3);
+            col.append(&meta_line);
+            col.append(&bubble_wrap);
+
+            let avatar = adw::Avatar::new(36, Some(&sender_name), true);
+            avatar.set_valign(Align::Start);
+
+            let row = gtk::Box::new(Orientation::Horizontal, 10);
+            row.set_margin_top(6);
+            row.set_margin_bottom(6);
+            row.set_margin_start(14);
+            row.set_margin_end(14);
+            if m.inbound {
+                row.set_halign(Align::Start);
+                row.append(&avatar);
+                row.append(&col);
+            } else {
+                row.set_halign(Align::End);
+                row.append(&col);
+                row.append(&avatar);
+            }
             self.widgets.msg_list.append(&row);
         }
         drop(st);
-        // 滚动到底部。
         let adj = self.widgets.msg_scroll.vadjustment();
         adj.set_value(adj.upper());
     }
 
     fn render_transfers(self: &Rc<Self>) {
-        clear_listbox(&self.widgets.transfers_list);
+        self.populate_transfer_listbox(&self.widgets.drawer_transfers_list);
+        self.populate_transfer_listbox(&self.widgets.transfers_list);
+    }
+
+    fn populate_transfer_listbox(self: &Rc<Self>, target_list: &gtk::ListBox) {
+        clear_listbox(target_list);
         let st = self.state.borrow();
         if st.transfers.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("暂无传输任务");
-            self.widgets.transfers_list.append(&row);
+            row.set_title("暂无文件传输任务");
+            row.set_subtitle("在聊天框点击「📁 发送文件」即可高速直连传输");
+            row.set_sensitive(false);
+            target_list.append(&row);
             return;
         }
         for t in &st.transfers {
@@ -1727,6 +2607,8 @@ impl AppCtx {
             path_badge.add_css_class("caption-heading");
             if t.via_relay {
                 path_badge.add_css_class("warning");
+            } else {
+                path_badge.add_css_class("qq-direct-badge");
             }
 
             let kind_badge = gtk::Label::new(Some(match t.kind {
@@ -1759,14 +2641,19 @@ impl AppCtx {
 
             let name_label = gtk::Label::builder()
                 .label(if t.kind == crate::models::PathKind::Channel {
-                    format!("{} · #{} · {}", t.direction.label(), t.group_id, t.name)
+                    format!("📄 {} · #{} · {}", t.direction.label(), t.group_id, t.name)
                 } else {
-                    format!("{} · {}", t.direction.label(), t.name)
+                    format!("📄 {} · {}", t.direction.label(), t.name)
                 })
                 .halign(Align::Start)
+                .ellipsize(gtk::pango::EllipsizeMode::Middle)
                 .build();
 
             let body = gtk::Box::new(Orientation::Vertical, 4);
+            body.set_margin_top(6);
+            body.set_margin_bottom(6);
+            body.set_margin_start(8);
+            body.set_margin_end(8);
             body.append(&name_label);
             body.append(&bar);
             body.append(&meta);
@@ -1823,9 +2710,78 @@ impl AppCtx {
                 err.add_css_class("caption");
                 row.add_suffix(&err);
             }
-            self.widgets.transfers_list.append(&row);
+            target_list.append(&row);
         }
     }
+}
+
+/// 构建一行桌面 QQ 风格的会话卡片（左圆形头像 + 上行名称/时间 + 下行消息摘要/红点角标）。
+fn build_qq_session_row(
+    avatar_seed: &str,
+    title: &str,
+    time_tag: &str,
+    subtitle: &str,
+    unread: usize,
+    active: bool,
+) -> gtk::ListBoxRow {
+    let avatar = adw::Avatar::new(42, Some(avatar_seed), true);
+    avatar.set_valign(Align::Center);
+
+    let title_lbl = gtk::Label::new(Some(title));
+    title_lbl.set_xalign(0.0);
+    title_lbl.set_hexpand(true);
+    title_lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    title_lbl.add_css_class("heading");
+
+    let time_lbl = gtk::Label::new(Some(time_tag));
+    time_lbl.set_xalign(1.0);
+    time_lbl.add_css_class("caption");
+    time_lbl.add_css_class("dim-label");
+
+    let top_row = gtk::Box::new(Orientation::Horizontal, 6);
+    top_row.append(&title_lbl);
+    top_row.append(&time_lbl);
+
+    let sub_lbl = gtk::Label::new(Some(subtitle));
+    sub_lbl.set_xalign(0.0);
+    sub_lbl.set_hexpand(true);
+    sub_lbl.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    sub_lbl.add_css_class("caption");
+    sub_lbl.add_css_class("dim-label");
+
+    let bottom_row = gtk::Box::new(Orientation::Horizontal, 6);
+    bottom_row.append(&sub_lbl);
+    if unread > 0 {
+        let badge = gtk::Label::new(Some(&if unread > 99 {
+            "99+".to_string()
+        } else {
+            unread.to_string()
+        }));
+        badge.add_css_class("qq-unread-badge");
+        bottom_row.append(&badge);
+    }
+
+    let text_col = gtk::Box::new(Orientation::Vertical, 4);
+    text_col.set_hexpand(true);
+    text_col.set_valign(Align::Center);
+    text_col.append(&top_row);
+    text_col.append(&bottom_row);
+
+    let hbox = gtk::Box::new(Orientation::Horizontal, 10);
+    hbox.set_margin_top(8);
+    hbox.set_margin_bottom(8);
+    hbox.set_margin_start(10);
+    hbox.set_margin_end(10);
+    hbox.append(&avatar);
+    hbox.append(&text_col);
+
+    let row = gtk::ListBoxRow::new();
+    row.set_child(Some(&hbox));
+    row.add_css_class("qq-session-row");
+    if active {
+        row.add_css_class("qq-session-active");
+    }
+    row
 }
 
 fn pause_transfer(ctx: &Rc<AppCtx>, id: &str) {
@@ -1881,7 +2837,7 @@ fn server_addr_with_path(srv: &ServerInfo) -> String {
     if addr.contains('/') {
         addr.clone()
     } else {
-        format!("{addr}/lanchat")
+        format!("{addr}/lctp")
     }
 }
 
@@ -1892,18 +2848,149 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+fn format_hhmm(ts: i64) -> String {
+    if ts <= 0 {
+        return String::new();
+    }
+    let secs = ts.rem_euclid(86400);
+    let h = (secs / 3600 + 8) % 24;
+    let m = (secs % 3600) / 60;
+    format!("{h:02}:{m:02}")
+}
+
+fn format_hhmmss(ts: i64) -> String {
+    if ts <= 0 {
+        return String::new();
+    }
+    let secs = ts.rem_euclid(86400);
+    let h = (secs / 3600 + 8) % 24;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02}")
+}
+
 fn load_css() {
     const CSS: &str = r#"
-    .messages { background: transparent; }
-    .bubble-in, .bubble-out {
-        padding: 8px 12px;
-        border-radius: 10px;
+    .qq-login-bg {
+        background: linear-gradient(145deg, alpha(#0099ff, 0.14), alpha(#0066cc, 0.05));
     }
-    .bubble-in { background: alpha(#888, .18); }
-    .bubble-out { background: #3584e4; color: white; }
+    .qq-login-card {
+        background: @card_bg_color;
+        border-radius: 18px;
+        padding: 24px 28px;
+        box-shadow: 0 10px 32px alpha(black, 0.18);
+        border: 1px solid alpha(#0099ff, 0.22);
+    }
+    .qq-login-btn {
+        background: linear-gradient(90deg, #0099ff, #0077ee);
+        color: white;
+        font-weight: 700;
+        min-height: 42px;
+    }
+    .qq-left-rail {
+        background: #1b1f2a;
+        color: #d8dee9;
+        padding-top: 14px;
+        padding-bottom: 12px;
+        padding-left: 6px;
+        padding-right: 6px;
+    }
+    .qq-rail-btn {
+        color: alpha(white, 0.72);
+        border-radius: 12px;
+        padding: 8px 4px;
+        font-size: 0.82em;
+    }
+    .qq-rail-btn:hover {
+        background: alpha(white, 0.10);
+        color: white;
+    }
+    .qq-rail-active {
+        background: #0099ff;
+        color: white;
+        font-weight: 700;
+    }
+    .qq-rail-sub-btn {
+        color: alpha(white, 0.68);
+        border-radius: 10px;
+        padding: 6px;
+    }
+    .qq-session-pane {
+        background: alpha(@window_bg_color, 0.96);
+    }
+    .qq-session-row {
+        border-radius: 10px;
+        margin: 2px 6px;
+    }
+    .qq-session-active {
+        background: alpha(#0099ff, 0.16);
+    }
+    .qq-unread-badge {
+        background: #ff3b30;
+        color: white;
+        border-radius: 999px;
+        padding: 1px 7px;
+        font-size: 0.75em;
+        font-weight: 700;
+    }
+    .qq-online-pill {
+        color: #22c55e;
+        font-size: 0.82em;
+        font-weight: 700;
+    }
+    .qq-plus-btn {
+        background: alpha(#0099ff, 0.14);
+        color: #0099ff;
+        border-radius: 8px;
+        font-weight: 700;
+    }
+    .qq-chat-header {
+        background: @headerbar_bg_color;
+    }
+    .qq-msg-scroll, .messages {
+        background: alpha(#8a94a6, 0.07);
+    }
+    .bubble-in, .bubble-out {
+        padding: 10px 14px;
+        border-radius: 14px;
+    }
+    .bubble-in {
+        background: @card_bg_color;
+        border: 1px solid alpha(#888, 0.16);
+    }
+    .bubble-out {
+        background: linear-gradient(135deg, #0099ff, #0077ee);
+        color: white;
+    }
+    .qq-msg-action {
+        font-size: 0.75em;
+        opacity: 0.65;
+        padding: 2px 6px;
+    }
+    .qq-msg-action:hover {
+        opacity: 1.0;
+    }
+    .qq-input-card {
+        background: @card_bg_color;
+        border-radius: 10px;
+        border: 1px solid alpha(#0099ff, 0.20);
+    }
+    .qq-input-view {
+        background: transparent;
+    }
+    .qq-send-btn {
+        background: #0099ff;
+        color: white;
+        border-radius: 8px;
+        padding: 6px 20px;
+        font-weight: 700;
+    }
+    .qq-direct-badge {
+        color: #22c55e;
+    }
     .warning { color: #e5a50a; }
     .error { color: #e01b24; }
-    .caption { font-size: 0.8em; }
+    .caption { font-size: 0.82em; }
     "#;
     let provider = gtk::CssProvider::new();
     provider.load_from_string(CSS);
@@ -1958,5 +3045,14 @@ mod tests {
         assert_eq!(ChatTarget::Peer("p1".into()).key(), Some("p1"));
         assert!(ChatTarget::Channel("c1".into()).is_channel());
         assert!(!ChatTarget::Peer("p1".into()).is_channel());
+    }
+
+    #[test]
+    fn default_server_path_is_lctp() {
+        let s = ServerInfo {
+            addr: "192.168.1.10:19090".into(),
+            ..Default::default()
+        };
+        assert_eq!(server_addr_with_path(&s), "192.168.1.10:19090/lctp");
     }
 }

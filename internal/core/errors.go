@@ -19,7 +19,6 @@ var (
 	errEmptyPath     = errors.New("core: path must not be empty")
 	errEmptyNickname = errors.New("core: nickname must not be empty")
 	errEmptyText     = errors.New("core: text must not be empty")
-	errEmptyAddress  = errors.New("core: server address must not be empty")
 	errNotConnected  = errors.New("core: not connected")
 	errPeerNotFound  = errors.New("core: peer not found")
 	errFileNotFound  = errors.New("core: file not found")

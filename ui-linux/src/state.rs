@@ -92,6 +92,8 @@ impl AppState {
             }
             let text = if m.revoked {
                 "[消息已撤回]".to_string()
+            } else if m.text.starts_with("data:image/") {
+                m.text
             } else if m.msg_type == "STICKER_MSG" || m.msg_type == "sticker" {
                 format!("[表情] {}", m.text)
             } else {

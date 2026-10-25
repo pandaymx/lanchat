@@ -145,7 +145,9 @@ struct Widgets {
     sticker_menu_btn: gtk::MenuButton,
     sticker_popover: gtk::Popover,
     file_btn: gtk::Button,
+    voice_btn: gtk::Button,
     e2ee_btn: gtk::Button,
+    fingerprint_btn: gtk::Button,
     search_chat_btn: gtk::Button,
 
     // 右侧可折叠文件传输侧栏（Column 3）+ 独立窗口兼容
@@ -262,8 +264,8 @@ fn build_ui(app: &adw::Application) -> Widgets {
     server_scroll.set_child(Some(&server_list));
 
     let addr_row = adw::EntryRow::new();
-    addr_row.set_title("服务器地址 (ws://host:port/lctp)");
-    addr_row.set_text("ws://127.0.0.1:19090/lctp");
+    addr_row.set_title("服务器地址 (auto 或留空零配置自动选主)");
+    addr_row.set_text("auto");
 
     let psk_row = adw::PasswordEntryRow::new();
     psk_row.set_title("共享口令 PSK（免密节点可留空）");
@@ -505,10 +507,20 @@ fn build_ui(app: &adw::Application) -> Widgets {
     file_btn.add_css_class("qq-tool-btn");
     file_btn.set_tooltip_text(Some("发起 P2P 直连 / 群发文件传输"));
 
+    let voice_btn = gtk::Button::with_label("🎤 语音");
+    voice_btn.add_css_class("flat");
+    voice_btn.add_css_class("qq-tool-btn");
+    voice_btn.set_tooltip_text(Some("发送语音消息 (/voice)"));
+
     let e2ee_btn = gtk::Button::with_label("🔐 加密会话");
     e2ee_btn.add_css_class("flat");
     e2ee_btn.add_css_class("qq-tool-btn");
     e2ee_btn.set_tooltip_text(Some("切换端到端加密 (/e2ee)"));
+
+    let fingerprint_btn = gtk::Button::with_label("🛡️ 安全码");
+    fingerprint_btn.add_css_class("flat");
+    fingerprint_btn.add_css_class("qq-tool-btn");
+    fingerprint_btn.set_tooltip_text(Some("核验 X25519 端到端安全码指纹 (/fingerprint)"));
 
     let search_chat_btn = gtk::Button::with_label("🔍 查找记录");
     search_chat_btn.add_css_class("flat");
@@ -526,7 +538,9 @@ fn build_ui(app: &adw::Application) -> Widgets {
     composer_toolbar.append(&sticker_menu_btn);
     composer_toolbar.append(&sticker_btn);
     composer_toolbar.append(&file_btn);
+    composer_toolbar.append(&voice_btn);
     composer_toolbar.append(&e2ee_btn);
+    composer_toolbar.append(&fingerprint_btn);
     composer_toolbar.append(&search_chat_btn);
     composer_toolbar.append(&toolbar_spacer);
     composer_toolbar.append(&shortcut_hint);
@@ -725,7 +739,9 @@ fn build_ui(app: &adw::Application) -> Widgets {
         sticker_menu_btn,
         sticker_popover,
         file_btn,
+        voice_btn,
         e2ee_btn,
+        fingerprint_btn,
         search_chat_btn,
         right_drawer,
         drawer_transfers_list,
@@ -793,18 +809,19 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 连接
+    // 连接（支持留空或 "auto" 零配置自动选主与自举）
     ctx.widgets.connect_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
-            let addr = cx.widgets.addr_row.text().to_string();
+            let raw_addr = cx.widgets.addr_row.text().to_string();
+            let addr = if raw_addr.trim().is_empty() {
+                "auto".to_string()
+            } else {
+                raw_addr
+            };
             let psk = cx.widgets.psk_row.text().to_string();
-            if addr.trim().is_empty() {
-                cx.toast("请填写或选择服务器地址");
-                return;
-            }
-            cx.set_login_busy(true, "正在连接中心节点…");
+            cx.set_login_busy(true, "正在连接或自举局域网节点…");
             if let Some(ipc) = cx.ipc.borrow().clone() {
                 let params = ConnectParams { addr, psk };
                 let tx = cx.ui_tx.clone();
@@ -924,6 +941,20 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
+    // 语音消息快捷发送 (/voice)
+    ctx.widgets.voice_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                cx.toast("请先选择聊天会话");
+                return;
+            }
+            send_text_to_target(&cx, &target, "/voice 3");
+        }
+    ));
+
     // 切换端到端加密（/e2ee）
     ctx.widgets.e2ee_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
@@ -940,6 +971,20 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             } else {
                 send_text_to_target(&cx, &target, "/e2ee lanchat-qq-key");
             }
+        }
+    ));
+
+    // 安全码指纹核验 (/fingerprint)
+    ctx.widgets.fingerprint_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                cx.toast("请先选择聊天会话");
+                return;
+            }
+            send_text_to_target(&cx, &target, "/fingerprint");
         }
     ));
 
@@ -1425,6 +1470,11 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     ctx.toast("已关闭端到端加密");
                     return;
                 }
+                if let Some(fp) = msg_id.strip_prefix("fp:") {
+                    ctx.toast(&format!("🛡️ X25519 安全码：{fp}"));
+                    ctx.sync_state();
+                    return;
+                }
                 if trimmed.starts_with("/revoke ") {
                     ctx.state.borrow_mut().revoke_message(&msg_id);
                 } else if trimmed.starts_with("/read ") {
@@ -1432,7 +1482,13 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     ctx.state.borrow_mut().mark_read(&msg_id, &me);
                 } else {
                     let now = now_secs();
-                    let display_text = ctx.state.borrow().format_reply_text(&text);
+                    let display_text = if trimmed == "/voice" || trimmed.starts_with("/voice ") {
+                        let sec = trimmed.trim_start_matches("/voice").trim();
+                        let sec = if sec.is_empty() { "3" } else { sec };
+                        format!("🎤 [语音消息 {sec}\"]")
+                    } else {
+                        ctx.state.borrow().format_reply_text(&text)
+                    };
                     ctx.state.borrow_mut().push_message(ChatMessage {
                         peer_id: key.clone(),
                         sender_id: String::new(),
@@ -1656,7 +1712,9 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let text = if msg_type == "STICKER_MSG" || msg_type == "sticker" {
+            let text = if raw_text.starts_with("data:image/") {
+                raw_text
+            } else if msg_type == "STICKER_MSG" || msg_type == "sticker" {
                 format!("[表情] {raw_text}")
             } else {
                 raw_text
@@ -2480,7 +2538,31 @@ impl AppCtx {
             meta_line.add_css_class("dim-label");
             meta_line.set_xalign(if m.inbound { 0.0 } else { 1.0 });
 
-            let escaped = glib::markup_escape_text(&m.text).to_string();
+            let bubble_card = gtk::Box::new(Orientation::Vertical, 6);
+            bubble_card.add_css_class(if m.inbound { "bubble-in" } else { "bubble-out" });
+
+            if !m.revoked {
+                if let Some(b64) = extract_inline_image_b64(&m.text) {
+                    let bytes = glib::base64_decode(b64);
+                    if !bytes.is_empty() {
+                        let gbytes = glib::Bytes::from_owned(bytes);
+                        if let Ok(texture) = gdk::Texture::from_bytes(&gbytes) {
+                            let pic = gtk::Picture::for_paintable(&texture);
+                            pic.set_can_shrink(true);
+                            pic.set_content_fit(gtk::ContentFit::Contain);
+                            pic.set_size_request(180, 130);
+                            bubble_card.append(&pic);
+                        }
+                    }
+                }
+            }
+
+            let display_body = if !m.revoked && extract_inline_image_b64(&m.text).is_some() {
+                "🖼️ [图片缩略图]".to_string()
+            } else {
+                m.text.clone()
+            };
+            let escaped = glib::markup_escape_text(&display_body).to_string();
             let bubble = gtk::Label::new(None);
             bubble.set_use_markup(true);
             bubble.set_selectable(true);
@@ -2488,9 +2570,28 @@ impl AppCtx {
             bubble.set_wrap(true);
             bubble.set_max_width_chars(56);
             bubble.set_xalign(0.0);
-            bubble.add_css_class(if m.inbound { "bubble-in" } else { "bubble-out" });
             if m.revoked {
                 bubble.add_css_class("dim-label");
+            }
+            bubble_card.append(&bubble);
+
+            // 右键点击气泡快捷触发引用回复
+            if !m.revoked && !m.msg_id.is_empty() {
+                let rclick = gtk::GestureClick::new();
+                rclick.set_button(3);
+                let mid_rc = m.msg_id.clone();
+                rclick.connect_pressed(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |_, _, _, _| {
+                        cx.widgets
+                            .input
+                            .buffer()
+                            .set_text(&format!("/reply {mid_rc} "));
+                        cx.widgets.input.grab_focus();
+                    }
+                ));
+                bubble_card.add_controller(rclick);
             }
 
             let bubble_wrap = gtk::Box::new(Orientation::Horizontal, 6);
@@ -2541,11 +2642,11 @@ impl AppCtx {
             }
 
             if m.inbound {
-                bubble_wrap.append(&bubble);
+                bubble_wrap.append(&bubble_card);
                 bubble_wrap.append(&actions_box);
             } else {
                 bubble_wrap.append(&actions_box);
-                bubble_wrap.append(&bubble);
+                bubble_wrap.append(&bubble_card);
             }
 
             let col = gtk::Box::new(Orientation::Vertical, 3);
@@ -2832,6 +2933,21 @@ fn clear_listbox(lb: &gtk::ListBox) {
     }
 }
 
+/// 从 `data:image/<mime>;base64,<b64>`（或带 `[表情] ` 前缀的文本）中提取内联图片 Base64 数据（M17）。
+fn extract_inline_image_b64(text: &str) -> Option<&str> {
+    let trimmed = text.trim().strip_prefix("[表情] ").unwrap_or(text.trim());
+    if !trimmed.starts_with("data:image/") {
+        return None;
+    }
+    let idx = trimmed.find(";base64,")?;
+    let b64 = trimmed[idx + ";base64,".len()..].trim();
+    if b64.is_empty() {
+        None
+    } else {
+        Some(b64)
+    }
+}
+
 fn server_addr_with_path(srv: &ServerInfo) -> String {
     let addr = &srv.addr;
     if addr.contains('/') {
@@ -3054,5 +3170,18 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(server_addr_with_path(&s), "192.168.1.10:19090/lctp");
+    }
+
+    #[test]
+    fn inline_image_b64_extracted() {
+        assert_eq!(
+            extract_inline_image_b64("data:image/png;base64,iVBORw=="),
+            Some("iVBORw==")
+        );
+        assert_eq!(
+            extract_inline_image_b64("[表情] data:image/jpeg;base64,/9j/4AA="),
+            Some("/9j/4AA=")
+        );
+        assert_eq!(extract_inline_image_b64("普通文本"), None);
     }
 }

@@ -1,13 +1,6 @@
 # Changelog
 
-## [1.6.1](https://github.com/pandaymx/lanchat/compare/v1.6.0...v1.6.1) (2026-10-25)
-
-
-### Bug Fixes
-
-* **ui-ios:** use Section header/footer ViewBuilder overload in CreateChannelView ([598a1c8](https://github.com/pandaymx/lanchat/commit/598a1c894911419738fdccc9178456cc8279f915))
-
-## [1.6.0](https://github.com/pandaymx/lanchat/compare/v1.5.0...v1.6.0) (2026-10-25)
+## [1.6.1](https://github.com/pandaymx/lanchat/compare/v1.5.0...v1.6.1) (2026-10-25)
 
 
 ### Features
@@ -17,6 +10,11 @@
 * **ui-linux:** redesign GTK4 interface with desktop QQ 4-column layout ([333b11c](https://github.com/pandaymx/lanchat/commit/333b11c8697f3692379a1182efc540df5cab506d))
 * **ui-macos:** redesign SwiftUI interface with desktop QQ 4-column layout ([94aaaa2](https://github.com/pandaymx/lanchat/commit/94aaaa2cf24b12252583d47455cc5c0c31bd94fd))
 * **ui-win:** redesign WinUI 3 interface with desktop QQ 4-column layout ([247d985](https://github.com/pandaymx/lanchat/commit/247d985c3c1c3082e8a1f16727109182e2fc8f88))
+
+
+### Bug Fixes
+
+* **ui-ios:** use Section header/footer ViewBuilder overload in CreateChannelView ([598a1c8](https://github.com/pandaymx/lanchat/commit/598a1c894911419738fdccc9178456cc8279f915))
 
 ## [1.5.0](https://github.com/pandaymx/lanchat/compare/v1.4.0...v1.5.0) (2026-10-25)
 

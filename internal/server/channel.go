@@ -78,6 +78,9 @@ func (h *hub) onInvite(c *Client, env *protocol.Envelope) {
 		return
 	}
 	h.ack(c, env.ID, "delivered")
+	if target, ok := h.reg.get(p.MemberID); ok {
+		h.replayChannelHistory(target, p.ChannelID)
+	}
 }
 
 // onLeave 处理 CHANNEL_LEAVE：成员主动退出频道。
@@ -114,6 +117,20 @@ func (h *hub) onJoin(c *Client, env *protocol.Envelope) {
 		return
 	}
 	h.ack(c, env.ID, "delivered")
+	h.replayChannelHistory(c, p.ChannelID)
+}
+
+// replayChannelHistory 向刚加入频道的成员补发该频道最近历史消息快照（M16）。
+func (h *hub) replayChannelHistory(c *Client, channelID string) {
+	if h.spool == nil || c == nil {
+		return
+	}
+	for _, histEnv := range h.spool.channelHistory(channelID, h.now()) {
+		if !c.enqueue(histEnv) {
+			h.drop(c)
+			return
+		}
+	}
 }
 
 // onChannelList 处理 CHANNEL_LIST 请求：仅向请求者回复（带 ReplyTo）。

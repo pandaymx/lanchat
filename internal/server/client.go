@@ -25,6 +25,7 @@ type Client struct {
 	id       string // selfID（=deviceID，缺失则由服务端生成 UUID）
 	nickname string
 	os       string
+	pubKey   string // 客户端静态 X25519 公钥（base64，M15）
 	addr     string // 远端地址（鉴权限流用）
 	conn     *websocket.Conn
 
@@ -52,7 +53,7 @@ func newClient(conn *websocket.Conn, addr string) *Client {
 
 // user 返回该客户端对应的在线用户条目。
 func (c *Client) user() protocol.User {
-	return protocol.User{ID: c.id, Nickname: c.nickname, OS: c.os}
+	return protocol.User{ID: c.id, Nickname: c.nickname, OS: c.os, PubKey: c.pubKey}
 }
 
 func (c *Client) touch() {

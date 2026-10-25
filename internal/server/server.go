@@ -63,6 +63,12 @@ func New(opts Options, logf func(string, ...any)) (*Server, error) {
 		logf:      logf,
 	}
 	s.mux.HandleFunc(opts.Path, s.handleWS)
+	if opts.Path != "/lctp" {
+		s.mux.HandleFunc("/lctp", s.handleWS)
+	}
+	if opts.Path != "/lanchat" {
+		s.mux.HandleFunc("/lanchat", s.handleWS)
+	}
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/api/status", s.handleStatusAPI)
 	s.mux.HandleFunc("/status", s.handleStatusPage)
@@ -213,9 +219,10 @@ func (s *Server) handshake(parent context.Context, c *Client) error {
 	}
 	c.nickname = hello.Nickname
 	c.os = hello.OS
+	c.pubKey = strings.TrimSpace(hello.PubKey)
 
 	// 先同步完成注册，拿到含自己的全量在线表，再下发 WELCOME/USER_LIST。
-	rev, users := s.hub.registerSnapshot(parent, c)
+	rev, users, offline := s.hub.registerSnapshot(parent, c)
 	s.mustEnqueue(c, protocol.Welcome, protocol.WelcomePayload{
 		SelfID:            c.id,
 		ProtocolVersion:   protocol.ProtocolVersion,
@@ -226,6 +233,12 @@ func (s *Server) handshake(parent context.Context, c *Client) error {
 	s.mustEnqueue(c, protocol.UserList, protocol.UserListPayload{
 		Revision: rev, Users: users,
 	})
+	for _, offEnv := range offline {
+		if !c.enqueue(offEnv) {
+			s.dropClient(c)
+			break
+		}
+	}
 	return nil
 }
 

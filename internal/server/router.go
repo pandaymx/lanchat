@@ -108,6 +108,9 @@ func (h *hub) routeChatEnvelope(c *Client, env *protocol.Envelope) {
 // targets 为 nil 表示 G1 全体（除发送者外的所有在线客户端）。
 func (h *hub) fanoutGroup(c *Client, env *protocol.Envelope, targets []string) {
 	env.From = c.id
+	if h.spool != nil {
+		h.spool.appendChannel(env.Group, env, h.now())
+	}
 	if targets == nil {
 		_, users := h.reg.snapshot()
 		targets = make([]string, 0, len(users))
@@ -191,6 +194,9 @@ func (h *hub) onPresenceUpdate(c *Client, env *protocol.Envelope) {
 		return
 	}
 	c.nickname = nick
+	if strings.TrimSpace(p.User.PubKey) != "" {
+		c.pubKey = strings.TrimSpace(p.User.PubKey)
+	}
 	rev := h.reg.bumpRevision()
 	h.fanoutExcept(c, protocol.PresenceUpdate, protocol.UserUpdatePayload{
 		User: c.user(), Revision: rev,
@@ -199,11 +205,16 @@ func (h *hub) onPresenceUpdate(c *Client, env *protocol.Envelope) {
 }
 
 // forward 把消息强制盖发送者印章后单播给 env.To，并向发送者回 MSG_ACK。
+// 当目标离线且消息为 TEXT_MSG/STICKER_MSG/MSG_REVOKE 时，进入 M16 离线暂存队列并回 queued。
 func (h *hub) forward(c *Client, env *protocol.Envelope) {
 	env.From = c.id // 客户端不可伪造发送者
 
 	target, ok := h.reg.get(env.To)
 	if env.To == "" || !ok {
+		if h.spool != nil && h.spool.enqueueUser(env.To, env, h.now()) {
+			h.ack(c, env.ID, "queued")
+			return
+		}
 		h.ack(c, env.ID, "undeliverable")
 		return
 	}

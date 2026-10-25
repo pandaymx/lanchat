@@ -311,3 +311,58 @@ func TestStatusAndHealthEndpoints(t *testing.T) {
 		t.Fatalf("/status status = %d", pageResp.StatusCode)
 	}
 }
+
+func TestSpoolOfflineStoreAndChannelHistory(t *testing.T) {
+	h := newHub(Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          "none",
+		HeartbeatInterval: time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownGrace:     time.Second,
+	}, nil)
+	c1 := newClient(&websocket.Conn{}, "127.0.0.1")
+	c1.id = "dev-sender"
+	c1.nickname = "Sender"
+	h.reg.add(c1)
+
+	// 发送给离线目标 u-offline，应暂存并返回 status="queued"。
+	env, err := protocol.NewEnvelope("m-offline-1", protocol.TextMsg, protocol.TextPayload{Text: "offline hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.To = "dev-offline"
+	h.route(c1, env)
+
+	ack := <-c1.send
+	if ack.Type != protocol.MsgAck {
+		t.Fatalf("expected MSG_ACK, got %+v", ack)
+	}
+	var ackBody protocol.MsgAckPayload
+	if err := ack.DecodePayload(&ackBody); err != nil {
+		t.Fatal(err)
+	}
+	if ackBody.Status != "queued" {
+		t.Fatalf("expected queued status, got %q", ackBody.Status)
+	}
+
+	// 当 dev-offline 上线时，drainUser 应按序吐出暂存消息。
+	offline := h.spool.drainUser("dev-offline", time.Now())
+	if len(offline) != 1 || offline[0].ID != "m-offline-1" {
+		t.Fatalf("expected 1 offline message replayed, got %+v", offline)
+	}
+
+	// 频道历史缓冲与回放验证。
+	chMsg, err := protocol.NewEnvelope("ch-msg-1", protocol.TextMsg, protocol.TextPayload{Text: "channel hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chMsg.From = "dev-sender"
+	chMsg.Group = "ch-1"
+	now := time.Now()
+	h.spool.appendChannel("ch-1", chMsg, now)
+	hist := h.spool.channelHistory("ch-1", now)
+	if len(hist) != 1 || hist[0].ID != "ch-msg-1" {
+		t.Fatalf("expected 1 channel history message, got %+v", hist)
+	}
+}

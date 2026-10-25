@@ -45,6 +45,7 @@ type hub struct {
 	channels *group.Registry // G2 自定义频道注册表
 
 	swarms *swarmSessions // 群组文件分发会话表（服务端 swarm 无感，仅转发）
+	spool  *messageSpool  // M16 离线消息环形暂存与频道历史快照
 }
 
 // relayServer 是中继数据面的最小依赖接口。
@@ -63,6 +64,7 @@ func newHub(opts Options, logf func(string, ...any)) *hub {
 	}
 	h.channels = group.NewRegistry(channelSink{h: h})
 	h.swarms = newSwarmSessions()
+	h.spool = newMessageSpool()
 	return h
 }
 
@@ -70,23 +72,24 @@ func newHub(opts Options, logf func(string, ...any)) *hub {
 type queryResult struct {
 	revision uint64
 	users    []protocol.User
+	offline  []*protocol.Envelope
 }
 
-// registerSnapshot 同步完成注册并返回注册后的 revision 与全量在线表，
+// registerSnapshot 同步完成注册并返回注册后的 revision、全量在线表与待补发的离线暂存消息，
 // 供握手阶段在发 USER_LIST 前调用，保证首个客户端的在线表也含自己。
-func (h *hub) registerSnapshot(ctx context.Context, c *Client) (uint64, []protocol.User) {
+func (h *hub) registerSnapshot(ctx context.Context, c *Client) (uint64, []protocol.User, []*protocol.Envelope) {
 	ch := make(chan queryResult, 1)
 	ev := hubEvent{kind: evRegisterSnapshot, client: c, reply: ch}
 	select {
 	case h.events <- ev:
 	case <-ctx.Done():
-		return 0, nil
+		return 0, nil, nil
 	}
 	select {
 	case r := <-ch:
-		return r.revision, r.users
+		return r.revision, r.users, r.offline
 	case <-ctx.Done():
-		return 0, nil
+		return 0, nil, nil
 	}
 }
 
@@ -125,7 +128,11 @@ func (h *hub) handle(ev hubEvent) {
 	case evRegisterSnapshot:
 		rev := h.onRegister(ev.client)
 		_, users := h.reg.snapshot()
-		ev.reply <- queryResult{revision: rev, users: users}
+		var offline []*protocol.Envelope
+		if h.spool != nil {
+			offline = h.spool.drainUser(ev.client.id, h.now())
+		}
+		ev.reply <- queryResult{revision: rev, users: users, offline: offline}
 	case evUnregister:
 		h.onUnregister(ev.client)
 	case evListReq:
@@ -204,8 +211,11 @@ func (h *hub) onListReq(c *Client) {
 	h.send(c, protocol.UserList, protocol.UserListPayload{Revision: rev, Users: users})
 }
 
-// sweep 淘汰超过 IdleTimeout 无任何帧的客户端。
+// sweep 淘汰超过 IdleTimeout 无任何帧的客户端，并清理过期离线暂存。
 func (h *hub) sweep(now time.Time) {
+	if h.spool != nil {
+		h.spool.prune(now)
+	}
 	cutoff := now.Add(-h.opts.IdleTimeout)
 	for _, c := range h.reg.idleClients(cutoff) {
 		h.logf("客户端 %s 超过 %s 无活动，断开", c.id, h.opts.IdleTimeout)

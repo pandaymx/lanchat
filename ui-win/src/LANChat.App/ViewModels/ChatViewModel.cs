@@ -98,6 +98,16 @@ public sealed partial class ChatViewModel : ViewModelBase
             return;
         }
 
+        if (text.StartsWith("/search ", StringComparison.Ordinal))
+        {
+            var query = text[8..].Trim();
+            var activeKey = CurrentChannel?.Id ?? CurrentPeer?.Id ?? "";
+            var count = SearchConversation(activeKey, query).Count;
+            AppendSystemMessage($"搜索“{query}”：共 {count} 条匹配消息");
+            Draft = "";
+            return;
+        }
+
         if (CurrentChannel is not null)
         {
             if (!IsMember(CurrentChannel))
@@ -114,6 +124,13 @@ public sealed partial class ChatViewModel : ViewModelBase
                     text,
                     group = CurrentChannel.Id,
                 });
+                var msgId = result.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
+                if (msgId is "e2ee:on" or "e2ee:off")
+                {
+                    AppendSystemMessage(msgId == "e2ee:on" ? "已启用端到端消息加密" : "已关闭端到端消息加密");
+                    Draft = "";
+                    return;
+                }
                 if (text.StartsWith("/revoke ", StringComparison.Ordinal))
                 {
                     RevokeMessage(text[8..].Trim());
@@ -126,14 +143,13 @@ public sealed partial class ChatViewModel : ViewModelBase
                     Draft = "";
                     return;
                 }
-                var msgId = result.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
                 AppendMessage(new ChatMessage
                 {
                     MsgId = msgId,
                     FromId = SelfId,
                     FromName = "我",
                     GroupId = CurrentChannel.Id,
-                    Text = text,
+                    Text = FormatReplyText(text),
                     Type = "text",
                     IsSelf = true,
                 });
@@ -159,6 +175,13 @@ public sealed partial class ChatViewModel : ViewModelBase
                 to = CurrentPeer.Id,
                 text,
             });
+            var msgId = result.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
+            if (msgId is "e2ee:on" or "e2ee:off")
+            {
+                AppendSystemMessage(msgId == "e2ee:on" ? "已启用端到端消息加密" : "已关闭端到端消息加密");
+                Draft = "";
+                return;
+            }
             if (text.StartsWith("/revoke ", StringComparison.Ordinal))
             {
                 RevokeMessage(text[8..].Trim());
@@ -171,13 +194,12 @@ public sealed partial class ChatViewModel : ViewModelBase
                 Draft = "";
                 return;
             }
-            var msgId = result.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
             AppendMessage(new ChatMessage
             {
                 MsgId = msgId,
                 FromId = SelfId,
                 FromName = "我",
-                Text = text,
+                Text = FormatReplyText(text),
                 Type = "text",
                 IsSelf = true,
             });
@@ -526,6 +548,41 @@ public sealed partial class ChatViewModel : ViewModelBase
             Text = text,
             Type = "system",
         });
+    }
+
+    private List<ChatMessage> SearchConversation(string key, string query)
+    {
+        if (string.IsNullOrWhiteSpace(query) || !_conversations.TryGetValue(key, out var list))
+        {
+            return [];
+        }
+        return list.Where(m => !m.Revoked && m.Text.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    private string FormatReplyText(string raw)
+    {
+        var trimmed = raw.Trim();
+        if (!trimmed.StartsWith("/reply ", StringComparison.Ordinal))
+        {
+            return raw;
+        }
+        var rest = trimmed[7..].Trim();
+        var parts = rest.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2)
+        {
+            return raw;
+        }
+        var targetId = parts[0].Trim();
+        var body = parts[1].Trim();
+        foreach (var list in _conversations.Values)
+        {
+            var orig = list.FirstOrDefault(m => m.MsgId == targetId && !m.Revoked);
+            if (orig is not null)
+            {
+                return $"「{orig.Text}」\n{body}";
+            }
+        }
+        return $"[re:{targetId}] {body}";
     }
 
     partial void OnCurrentPeerChanged(Peer? value)

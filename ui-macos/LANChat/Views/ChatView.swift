@@ -411,6 +411,18 @@ struct ChatView: View {
                 .help("发送文件或文件夹")
 
                 Button {
+                    Task { await store.sendText(to: peer.id, text: "/voice 3") }
+                } label: {
+                    Text("🎤 语音")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary.opacity(0.85))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .help("发送语音消息 (/voice)")
+
+                Button {
                     let cmd = isE2EE ? "/e2ee off" : "/e2ee on"
                     Task { await store.sendText(to: peer.id, text: cmd) }
                 } label: {
@@ -426,6 +438,18 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("切换端到端加密会话状态")
+
+                Button {
+                    Task { await store.sendText(to: peer.id, text: "/fingerprint") }
+                } label: {
+                    Text("🛡️ 安全码")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary.opacity(0.85))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .help("核验 X25519 端到端安全码指纹 (/fingerprint)")
 
                 Button {
                     showSearchBar.toggle()
@@ -646,6 +670,16 @@ struct BubbleRow: View {
         }
     }
 
+    private func inlineNSImage(from raw: String) -> NSImage? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let clean = trimmed.hasPrefix("[表情] ") ? String(trimmed.dropFirst(5)) : trimmed
+        guard clean.hasPrefix("data:image/"),
+              let range = clean.range(of: ";base64,") else { return nil }
+        let b64 = String(clean[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = Data(base64Encoded: b64) else { return nil }
+        return NSImage(data: data)
+    }
+
     @ViewBuilder
     private var bubbleContent: some View {
         if message.revoked {
@@ -659,6 +693,34 @@ struct BubbleRow: View {
                     Capsule()
                         .fill(Color.primary.opacity(0.05))
                 )
+        } else if let img = inlineNSImage(from: message.text) {
+            VStack(alignment: .leading, spacing: 4) {
+                Image(nsImage: img)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: 220, maxHeight: 160)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text("🖼️ 图片缩略图")
+                    .font(.system(size: 11))
+                    .foregroundColor(isSelf ? .white.opacity(0.85) : .secondary)
+            }
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .fill(
+                        isSelf
+                            ? LinearGradient(
+                                colors: [QQPalette.qqBlue, QQPalette.qqBlueDark],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                            : LinearGradient(
+                                colors: [Color(nsColor: .controlBackgroundColor), Color(nsColor: .controlBackgroundColor)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                    )
+            )
         } else {
             Text(message.text)
                 .font(.system(size: 13.5))

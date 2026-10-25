@@ -96,7 +96,14 @@ final class ChatStore: ObservableObject {
                 } else if p.type == "MSG_READ" {
                     markMessageRead(id: p.msgId, readerId: p.from)
                 } else {
-                    let display = (p.type == "STICKER_MSG" || p.type == "sticker") ? "[表情] \(p.text)" : p.text
+                    let display: String
+                    if p.text.hasPrefix("data:image/") {
+                        display = p.text
+                    } else if p.type == "STICKER_MSG" || p.type == "sticker" {
+                        display = "[表情] \(p.text)"
+                    } else {
+                        display = p.text
+                    }
                     let key = (p.group?.isEmpty == false) ? p.group! : p.from
                     append(ChatMessage(
                         id: p.msgId, peerId: p.from, text: display,
@@ -203,6 +210,10 @@ final class ChatStore: ObservableObject {
 
     private func formatReplyText(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "/voice" || trimmed.hasPrefix("/voice ") {
+            let sec = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            return "🎤 [语音消息 \(sec.isEmpty ? "3" : sec)\"]"
+        }
         guard trimmed.hasPrefix("/reply ") else { return raw }
         let rest = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces)
         let parts = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
@@ -252,6 +263,8 @@ final class ChatStore: ObservableObject {
             let display: String
             if isRevoked {
                 display = "[消息已撤回]"
+            } else if m.text.hasPrefix("data:image/") {
+                display = m.text
             } else if m.type == "STICKER_MSG" || m.type == "sticker" {
                 display = "[表情] \(m.text)"
             } else {
@@ -276,8 +289,10 @@ final class ChatStore: ObservableObject {
     }
 
     func connect(addr: String, psk: String) async {
+        let trimmed = addr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetAddr = trimmed.isEmpty ? "auto" : trimmed
         do {
-            _ = try await ipc.call("Connect", params: ["addr": addr, "psk": psk])
+            _ = try await ipc.call("Connect", params: ["addr": targetAddr, "psk": psk])
         } catch {
             self.error = error.localizedDescription
         }
@@ -302,6 +317,9 @@ final class ChatStore: ObservableObject {
                 }
                 let notice = (r.msgID == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
                 append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: notice, inbound: false, timestamp: Date()))
+            } else if r.msgID.hasPrefix("fp:") {
+                let fp = String(r.msgID.dropFirst(3))
+                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "🛡️ [安全码指纹核验] \(fp)", inbound: false, timestamp: Date()))
             } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {

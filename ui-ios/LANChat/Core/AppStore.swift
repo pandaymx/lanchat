@@ -48,11 +48,8 @@ final class AppStore: ObservableObject {
     }
 
     func connect(addr: String, psk: String) {
-        let target = addr.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !target.isEmpty else {
-            error = "请输入服务器地址"
-            return
-        }
+        let trimmed = addr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target = trimmed.isEmpty ? "auto" : trimmed
         run {
             try await self.engine.connect(addr: target, psk: psk)
             await self.refresh()
@@ -78,6 +75,12 @@ final class AppStore: ObservableObject {
             if msgId == "e2ee:on" || msgId == "e2ee:off" {
                 let notice = (msgId == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
                 self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: notice,
+                                               inbound: false, timestamp: Date()))
+                return
+            }
+            if msgId.hasPrefix("fp:") {
+                let fp = String(msgId.dropFirst(3))
+                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "🛡️ [安全码指纹核验] \(fp)",
                                                inbound: false, timestamp: Date()))
                 return
             }
@@ -362,6 +365,10 @@ final class AppStore: ObservableObject {
 
     private func formatReplyText(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "/voice" || trimmed.hasPrefix("/voice ") {
+            let sec = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            return "🎤 [语音消息 \(sec.isEmpty ? "3" : sec)\"]"
+        }
         guard trimmed.hasPrefix("/reply ") else { return raw }
         let rest = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces)
         let parts = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)

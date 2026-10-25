@@ -277,6 +277,17 @@ struct ChatView: View {
                 }
 
                 Button {
+                    store.sendText(to: peer.id, text: "/voice 3")
+                } label: {
+                    Text("🎤 语音")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
+                }
+
+                Button {
                     e2eeEnabled.toggle()
                     store.sendText(to: peer.id, text: e2eeEnabled ? "/e2ee on" : "/e2ee off")
                 } label: {
@@ -291,6 +302,17 @@ struct ChatView: View {
                                 : Color(.tertiarySystemGroupedBackground),
                             in: Capsule()
                         )
+                }
+
+                Button {
+                    store.sendText(to: peer.id, text: "/fingerprint")
+                } label: {
+                    Text("🛡️ 安全码")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
                 }
 
                 Button {
@@ -389,19 +411,39 @@ struct BubbleRow: View {
                         .foregroundStyle(.tertiary)
                 }
 
-                // 手机 QQ 圆角聊天气泡（入站白色/次级背景，出站 #0099FF 蓝底白字）
-                Text(message.text)
-                    .font(.system(size: 15))
-                    .italic(message.revoked)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        bubbleBackground,
-                        in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    )
-                    .foregroundStyle(bubbleForeground)
-                    .textSelection(.enabled)
-                    .contextMenu {
+                // 手机 QQ 圆角聊天气泡（入站白色/次级背景，出站 #0099FF 蓝底白字，支持 M17 内联图片缩略图）
+                Group {
+                    if !message.revoked, let img = inlineUIImage(from: message.text) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Image(uiImage: img)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 210, maxHeight: 150)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            Text("🖼️ 图片缩略图")
+                                .font(.caption2)
+                                .foregroundStyle(bubbleForeground.opacity(0.85))
+                        }
+                        .padding(8)
+                        .background(
+                            bubbleBackground,
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        )
+                    } else {
+                        Text(message.text)
+                            .font(.system(size: 15))
+                            .italic(message.revoked)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
+                            .background(
+                                bubbleBackground,
+                                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            )
+                            .foregroundStyle(bubbleForeground)
+                            .textSelection(.enabled)
+                    }
+                }
+                .contextMenu {
                         if !message.revoked {
                             Button {
                                 onReply?()
@@ -479,5 +521,14 @@ struct BubbleRow: View {
             return .secondary
         }
         return message.inbound ? .primary : .white
+    }
+
+    private func inlineUIImage(from raw: String) -> UIImage? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("data:image/"),
+              let range = trimmed.range(of: ";base64,") else { return nil }
+        let b64 = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = Data(base64Encoded: b64) else { return nil }
+        return UIImage(data: data)
     }
 }

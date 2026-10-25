@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/pandaymx/lanchat/compare/v1.3.0...v1.4.0) (2026-10-25)
+
+
+### Features
+
+* **ci:** build and publish Ubuntu deb and Red Hat rpm packages ([dbf8a1d](https://github.com/pandaymx/lanchat/commit/dbf8a1d20a04d750479ee531fd3c9feb5971ca0c))
+* **ui-linux:** add desktop entry, icon, and deb/rpm packaging script ([9dcf57b](https://github.com/pandaymx/lanchat/commit/9dcf57bc9f68deff9a205680eda8c8272722ddc3))
+
 ## [1.3.0](https://github.com/pandaymx/lanchat/compare/v1.2.0...v1.3.0) (2026-10-25)
 
 

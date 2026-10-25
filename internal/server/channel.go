@@ -20,6 +20,9 @@ func (s channelSink) OnChannel(ev group.ChannelEvent) {
 	if ev.Kind != group.ChannelChanged {
 		return
 	}
+	if s.h.spool != nil {
+		s.h.spool.saveState(s.h.now())
+	}
 	s.h.pushChannels(s.toProtocol(ev.Channels), "")
 }
 

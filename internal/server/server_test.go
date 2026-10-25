@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -364,5 +365,42 @@ func TestSpoolOfflineStoreAndChannelHistory(t *testing.T) {
 	hist := h.spool.channelHistory("ch-1", now)
 	if len(hist) != 1 || hist[0].ID != "ch-msg-1" {
 		t.Fatalf("expected 1 channel history message, got %+v", hist)
+	}
+
+	// M18: 验证 StateFile 原子落盘与服务端重启后恢复离线队列及频道列表。
+	stateFile := filepath.Join(t.TempDir(), "server-state.json")
+	hPersist := newHub(Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          "none",
+		HeartbeatInterval: time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownGrace:     time.Second,
+		StateFile:         stateFile,
+	}, nil)
+	chID, err := hPersist.channels.Create("架构讨论组", "dev-sender", "M18 持久化", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hPersist.spool.enqueueUser("dev-offline-2", env, now)
+	hPersist.spool.appendChannel(chID, chMsg, now)
+
+	hRestored := newHub(Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          "none",
+		HeartbeatInterval: time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownGrace:     time.Second,
+		StateFile:         stateFile,
+	}, nil)
+	if len(hRestored.channels.List()) != 1 || hRestored.channels.List()[0].ID != chID {
+		t.Fatalf("expected restored channel %s, got %+v", chID, hRestored.channels.List())
+	}
+	if len(hRestored.spool.drainUser("dev-offline-2", now)) != 1 {
+		t.Fatal("expected restored offline message for dev-offline-2")
+	}
+	if len(hRestored.spool.channelHistory(chID, now)) != 1 {
+		t.Fatal("expected restored channel history for chID")
 	}
 }

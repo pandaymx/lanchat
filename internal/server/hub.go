@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/pandaymx/lanchat/internal/group"
@@ -64,7 +66,17 @@ func newHub(opts Options, logf func(string, ...any)) *hub {
 	}
 	h.channels = group.NewRegistry(channelSink{h: h})
 	h.swarms = newSwarmSessions()
-	h.spool = newMessageSpool()
+	stateFile := strings.TrimSpace(opts.StateFile)
+	if stateFile == "" {
+		stateFile = strings.TrimSpace(os.Getenv("LANCHAT_SERVER_STATE_FILE"))
+	}
+	spool, restoredChannels := newMessageSpool(stateFile, func() []group.ChannelInfo {
+		return h.channels.List()
+	})
+	h.spool = spool
+	if len(restoredChannels) > 0 {
+		h.channels.Restore(restoredChannels)
+	}
 	return h
 }
 

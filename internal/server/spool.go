@@ -1,8 +1,13 @@
 package server
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/pandaymx/lanchat/internal/group"
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
@@ -20,18 +25,36 @@ type spooledEnvelope struct {
 	queuedAt time.Time
 }
 
-// messageSpool 维护服务端内存级单播离线暂存队列（Store-and-Forward）与频道最近历史快照（M16）。
-// 所有方法均在 hub 单 goroutine 内调用，无需额外互斥锁。
-type messageSpool struct {
-	userQueues  map[string][]spooledEnvelope
-	channelHist map[string][]spooledEnvelope
+type persistedSpoolItem struct {
+	Env      *protocol.Envelope `json:"env"`
+	QueuedAt int64              `json:"queuedAt"`
 }
 
-func newMessageSpool() *messageSpool {
-	return &messageSpool{
+type persistedServerState struct {
+	UserQueues  map[string][]persistedSpoolItem `json:"userQueues,omitempty"`
+	ChannelHist map[string][]persistedSpoolItem `json:"channelHist,omitempty"`
+	Channels    []group.ChannelInfo             `json:"channels,omitempty"`
+}
+
+// messageSpool 维护服务端单播离线暂存队列（Store-and-Forward）、频道最近历史快照（M16）
+// 以及可选的原子落盘快照持久化（M18）。
+// 所有方法均在 hub 单 goroutine 内调用，无需额外互斥锁。
+type messageSpool struct {
+	stateFile   string
+	userQueues  map[string][]spooledEnvelope
+	channelHist map[string][]spooledEnvelope
+	channelsFn  func() []group.ChannelInfo
+}
+
+func newMessageSpool(stateFile string, channelsFn func() []group.ChannelInfo) (*messageSpool, []group.ChannelInfo) {
+	s := &messageSpool{
+		stateFile:   strings.TrimSpace(stateFile),
 		userQueues:  make(map[string][]spooledEnvelope),
 		channelHist: make(map[string][]spooledEnvelope),
+		channelsFn:  channelsFn,
 	}
+	restored := s.loadState(time.Now())
+	return s, restored
 }
 
 // isSpoolableType 判定消息类型是否支持离线暂存与频道历史回放。
@@ -75,6 +98,7 @@ func (s *messageSpool) enqueueUser(userID string, env *protocol.Envelope, now ti
 		q = append([]spooledEnvelope(nil), q[len(q)-maxSpoolPerUser:]...)
 	}
 	s.userQueues[userID] = q
+	s.saveState(now)
 	return true
 }
 
@@ -85,6 +109,7 @@ func (s *messageSpool) drainUser(userID string, now time.Time) []*protocol.Envel
 		return nil
 	}
 	delete(s.userQueues, userID)
+	s.saveState(now)
 	valid := s.filterValid(q, now)
 	if len(valid) == 0 {
 		return nil
@@ -110,6 +135,7 @@ func (s *messageSpool) appendChannel(channelID string, env *protocol.Envelope, n
 		q = append([]spooledEnvelope(nil), q[len(q)-maxChannelHistory:]...)
 	}
 	s.channelHist[channelID] = q
+	s.saveState(now)
 }
 
 // channelHistory 返回指定频道未过期的最近历史消息快照列表。
@@ -162,4 +188,91 @@ func (s *messageSpool) filterValid(items []spooledEnvelope, now time.Time) []spo
 		}
 	}
 	return out
+}
+
+// loadState 从 stateFile 加载持久化离线队列与频道结构快照（M18）。
+func (s *messageSpool) loadState(now time.Time) []group.ChannelInfo {
+	if s.stateFile == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(s.stateFile)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	var st persistedServerState
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return nil
+	}
+	for uid, items := range st.UserQueues {
+		var q []spooledEnvelope
+		for _, it := range items {
+			if it.Env == nil {
+				continue
+			}
+			ts := time.UnixMilli(it.QueuedAt)
+			if now.Sub(ts) <= spoolTTL {
+				q = append(q, spooledEnvelope{env: cloneEnvelope(it.Env), queuedAt: ts})
+			}
+		}
+		if len(q) > 0 {
+			s.userQueues[uid] = q
+		}
+	}
+	for cid, items := range st.ChannelHist {
+		var q []spooledEnvelope
+		for _, it := range items {
+			if it.Env == nil {
+				continue
+			}
+			ts := time.UnixMilli(it.QueuedAt)
+			if now.Sub(ts) <= spoolTTL {
+				q = append(q, spooledEnvelope{env: cloneEnvelope(it.Env), queuedAt: ts})
+			}
+		}
+		if len(q) > 0 {
+			s.channelHist[cid] = q
+		}
+	}
+	return st.Channels
+}
+
+// saveState 将当前离线队列、频道历史与活跃频道元信息原子落盘（M18）。
+func (s *messageSpool) saveState(now time.Time) {
+	if s.stateFile == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(s.stateFile), 0o755); err != nil {
+		return
+	}
+	st := persistedServerState{
+		UserQueues:  make(map[string][]persistedSpoolItem, len(s.userQueues)),
+		ChannelHist: make(map[string][]persistedSpoolItem, len(s.channelHist)),
+	}
+	for uid, q := range s.userQueues {
+		for _, it := range s.filterValid(q, now) {
+			st.UserQueues[uid] = append(st.UserQueues[uid], persistedSpoolItem{
+				Env:      cloneEnvelope(it.env),
+				QueuedAt: it.queuedAt.UnixMilli(),
+			})
+		}
+	}
+	for cid, q := range s.channelHist {
+		for _, it := range s.filterValid(q, now) {
+			st.ChannelHist[cid] = append(st.ChannelHist[cid], persistedSpoolItem{
+				Env:      cloneEnvelope(it.env),
+				QueuedAt: it.queuedAt.UnixMilli(),
+			})
+		}
+	}
+	if s.channelsFn != nil {
+		st.Channels = s.channelsFn()
+	}
+	raw, err := json.Marshal(st)
+	if err != nil {
+		return
+	}
+	tmp := s.stateFile + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err == nil {
+		_ = os.Rename(tmp, s.stateFile)
+	}
 }

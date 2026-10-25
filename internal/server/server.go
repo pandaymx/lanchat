@@ -32,6 +32,7 @@ type Options struct {
 
 	RelayListen string // 中继数据面监听地址；空=不启用
 	RelayHost   string // 宣告给客户端的中继主机（LAN IP）
+	StateFile   string // M18 可选的服务端状态快照落盘路径（频道与离线队列）
 }
 
 // Server 是信令服务器。

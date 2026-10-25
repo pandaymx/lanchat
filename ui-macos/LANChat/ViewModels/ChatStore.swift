@@ -171,6 +171,28 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    func searchMessages(in key: String, query: String) -> [ChatMessage] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return [] }
+        return (messages[key] ?? []).filter { !$0.revoked && $0.text.lowercased().contains(q) }
+    }
+
+    private func formatReplyText(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("/reply ") else { return raw }
+        let rest = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+        let parts = rest.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.count == 2 else { return raw }
+        let targetId = String(parts[0])
+        let body = String(parts[1])
+        for list in messages.values {
+            if let orig = list.first(where: { $0.id == targetId && !$0.revoked }) {
+                return "「\(orig.text)」\n\(body)"
+            }
+        }
+        return "[re:\(targetId)] \(body)"
+    }
+
     private func upsertTransfer(_ t: Transfer) {
         if let idx = transfers.firstIndex(where: { $0.id == t.id }) {
             transfers[idx] = t
@@ -238,16 +260,25 @@ final class ChatStore: ObservableObject {
     }
 
     func sendText(to peerId: String, text: String) async {
-        guard !text.isEmpty else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if trimmed.hasPrefix("/search ") {
+            let q = String(trimmed.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+            let hits = searchMessages(in: peerId, query: q)
+            append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "[搜索“\(q)”：共 \(hits.count) 条匹配]", inbound: false, timestamp: Date()))
+            return
+        }
         do {
             let r = try await ipc.call("SendText", params: ["to": peerId, "text": text, "group": ""], as: MsgIDResult.self)
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("/revoke ") {
+            if r.msgID == "e2ee:on" || r.msgID == "e2ee:off" {
+                let notice = (r.msgID == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
+                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: notice, inbound: false, timestamp: Date()))
+            } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {
                 markMessageRead(id: r.msgID, readerId: selfId)
             } else {
-                append(ChatMessage(id: r.msgID, peerId: peerId, text: text, inbound: false, timestamp: Date()))
+                append(ChatMessage(id: r.msgID, peerId: peerId, text: formatReplyText(text), inbound: false, timestamp: Date()))
             }
         } catch {
             self.error = error.localizedDescription
@@ -332,19 +363,32 @@ final class ChatStore: ObservableObject {
 
     /// 频道群文本：group 为频道 ID；to 留空（group 优先）。
     func sendChannelText(channelID: String, text: String) async {
-        guard !text.isEmpty else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if trimmed.hasPrefix("/search ") {
+            let q = String(trimmed.dropFirst(8)).trimmingCharacters(in: .whitespaces)
+            let hits = searchMessages(in: channelID, query: q)
+            append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "[搜索“\(q)”：共 \(hits.count) 条匹配]",
+                               inbound: false, timestamp: Date()),
+                   threadKey: channelID)
+            return
+        }
         do {
             let r = try await ipc.call(
                 "SendText",
                 params: ["to": "", "text": text, "group": channelID],
                 as: MsgIDResult.self)
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.hasPrefix("/revoke ") {
+            if r.msgID == "e2ee:on" || r.msgID == "e2ee:off" {
+                let notice = (r.msgID == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
+                append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: notice,
+                                   inbound: false, timestamp: Date()),
+                       threadKey: channelID)
+            } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {
                 markMessageRead(id: r.msgID, readerId: selfId)
             } else {
-                append(ChatMessage(id: r.msgID, peerId: selfId, text: text,
+                append(ChatMessage(id: r.msgID, peerId: selfId, text: formatReplyText(text),
                                    inbound: false, timestamp: Date()),
                        threadKey: channelID)
             }

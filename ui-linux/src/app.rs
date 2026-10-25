@@ -542,7 +542,18 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             let text = buffer
                 .text(&buffer.start_iter(), &buffer.end_iter(), false)
                 .to_string();
-            if text.trim().is_empty() {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return;
+            }
+            if let Some(query) = trimmed.strip_prefix("/search ") {
+                let hits = cx.state.borrow().search_messages(&key, query);
+                buffer.set_text("");
+                cx.toast(&format!(
+                    "搜索“{}”：匹配 {} 条消息",
+                    query.trim(),
+                    hits.len()
+                ));
                 return;
             }
             if let Some(ipc) = cx.ipc.borrow().clone() {
@@ -891,6 +902,14 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
         UiEvent::TextSent(key, group, text, res) => match res {
             Ok(msg_id) => {
                 let trimmed = text.trim();
+                if msg_id == "e2ee:on" {
+                    ctx.toast("已启用端到端加密 (/e2ee)");
+                    return;
+                }
+                if msg_id == "e2ee:off" {
+                    ctx.toast("已关闭端到端加密");
+                    return;
+                }
                 if trimmed.starts_with("/revoke ") {
                     ctx.state.borrow_mut().revoke_message(&msg_id);
                 } else if trimmed.starts_with("/read ") {
@@ -898,12 +917,13 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     ctx.state.borrow_mut().mark_read(&msg_id, &me);
                 } else {
                     let now = now_secs();
+                    let display_text = ctx.state.borrow().format_reply_text(&text);
                     ctx.state.borrow_mut().push_message(ChatMessage {
                         peer_id: key.clone(),
                         sender_id: String::new(),
                         group,
                         msg_id,
-                        text,
+                        text: display_text,
                         inbound: false,
                         revoked: false,
                         read_by: Vec::new(),

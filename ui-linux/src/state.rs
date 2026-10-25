@@ -188,6 +188,46 @@ impl AppState {
             .map(|v| v.iter().filter(|m| m.inbound).count())
             .unwrap_or(0)
     }
+
+    /// 在指定会话（或空键表示全部会话）中按关键字检索未撤回消息（M12）。
+    pub fn search_messages(&self, conv_key: &str, query: &str) -> Vec<ChatMessage> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (k, list) in &self.messages {
+            if !conv_key.is_empty() && k != conv_key {
+                continue;
+            }
+            for m in list {
+                if !m.revoked && m.text.to_lowercase().contains(&q) {
+                    out.push(m.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// 将 `/reply <msgID> <body>` 展开为带原消息引用的展示文本（M12）。
+    pub fn format_reply_text(&self, raw: &str) -> String {
+        let trimmed = raw.trim();
+        let Some(rest) = trimmed.strip_prefix("/reply ") else {
+            return raw.to_string();
+        };
+        let mut parts = rest.trim().splitn(2, ' ');
+        let target_id = parts.next().unwrap_or("").trim();
+        let body = parts.next().unwrap_or("").trim();
+        if target_id.is_empty() || body.is_empty() {
+            return raw.to_string();
+        }
+        for list in self.messages.values() {
+            if let Some(orig) = list.iter().find(|m| m.msg_id == target_id && !m.revoked) {
+                return format!("「{}」\n{}", orig.text, body);
+            }
+        }
+        format!("[re:{target_id}] {body}")
+    }
 }
 
 #[cfg(test)]
@@ -241,7 +281,10 @@ mod tests {
             ts: 2,
         });
         assert!(st.mark_read("m1", "p3"));
+        assert_eq!(st.search_messages("c1", "频道").len(), 1);
+        assert_eq!(st.format_reply_text("/reply m1 收到"), "「频道消息」\n收到");
         assert!(st.revoke_message("m2"));
+        assert_eq!(st.search_messages("p2", "私聊").len(), 0);
         assert_eq!(st.messages.get("c1").unwrap().len(), 1);
         assert_eq!(st.messages.get("p2").unwrap()[0].text, "[消息已撤回]");
         st.current_chat = ChatTarget::Channel("c1".into());

@@ -72,6 +72,20 @@ object Conversations {
         }
     }
 
+    /** M20: 更新指定 msgId 的消息文本（用于表情回应、二次编辑与置顶标记）。 */
+    fun updateMessageText(
+        messagesByConversation: Map<String, List<ChatMessage>>,
+        msgId: String,
+        newText: String,
+    ): Map<String, List<ChatMessage>> {
+        if (msgId.isEmpty()) return messagesByConversation
+        return messagesByConversation.mapValues { (_, list) ->
+            list.map { m ->
+                if (m.msgId == msgId && !m.revoked) m.copy(text = newText) else m
+            }
+        }
+    }
+
     /** 记录对端已读指定 msgId 的消息。 */
     fun markRead(
         messagesByConversation: Map<String, List<ChatMessage>>,

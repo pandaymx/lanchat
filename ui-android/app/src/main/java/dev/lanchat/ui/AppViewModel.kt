@@ -134,6 +134,19 @@ class AppViewModel : ViewModel() {
                 )
                 return@launchOp
             }
+            if (msgId.startsWith("bwlimit:")) {
+                val lim = msgId.removePrefix("bwlimit:")
+                appendMessage(
+                    ChatMessage(
+                        peerId = to,
+                        msgId = "bwlimit-${System.currentTimeMillis()}",
+                        text = "⚡ [带宽限速已设置为 $lim MB/s]",
+                        inbound = false,
+                        timestamp = System.currentTimeMillis(),
+                    ),
+                )
+                return@launchOp
+            }
             if (content.startsWith("/revoke ")) {
                 val targetId = content.removePrefix("/revoke ").trim()
                 _ui.update {
@@ -146,6 +159,10 @@ class AppViewModel : ViewModel() {
                 _ui.update {
                     it.copy(messagesByConversation = Conversations.markRead(it.messagesByConversation, targetId, it.selfId))
                 }
+                return@launchOp
+            }
+            if (content.startsWith("/react ") || content.startsWith("/edit ") || content.startsWith("/pin ")) {
+                refresh()
                 return@launchOp
             }
             val display = Conversations.formatReplyText(_ui.value.messagesByConversation, content)
@@ -207,6 +224,10 @@ class AppViewModel : ViewModel() {
                 _ui.update {
                     it.copy(messagesByConversation = Conversations.markRead(it.messagesByConversation, targetId, it.selfId))
                 }
+                return@launchOp
+            }
+            if (content.startsWith("/react ") || content.startsWith("/edit ") || content.startsWith("/pin ")) {
+                refresh()
                 return@launchOp
             }
             val display = Conversations.formatReplyText(_ui.value.messagesByConversation, content)
@@ -400,6 +421,18 @@ class AppViewModel : ViewModel() {
                                 state.messagesByConversation,
                                 event.msgId,
                                 event.from,
+                            ),
+                        )
+                    }
+                    return
+                }
+                if (event.type == "MSG_REACT" || event.type == "MSG_EDIT" || event.type == "MSG_PIN") {
+                    _ui.update { state ->
+                        state.copy(
+                            messagesByConversation = Conversations.updateMessageText(
+                                state.messagesByConversation,
+                                event.msgId,
+                                event.text,
                             ),
                         )
                     }

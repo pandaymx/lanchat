@@ -376,6 +376,8 @@ private fun ConversationScaffold(
                         onReply = { replyTarget = message },
                         onRevoke = { onSend("/revoke ${message.msgId}") },
                         onMarkRead = { onSend("/read ${message.msgId}") },
+                        onReact = { onSend("/react ${message.msgId} 👍") },
+                        onPin = { onSend("/pin ${message.msgId}") },
                     )
                 }
             }
@@ -661,6 +663,8 @@ private fun MessageBubbleRow(
     onReply: () -> Unit,
     onRevoke: () -> Unit,
     onMarkRead: () -> Unit,
+    onReact: () -> Unit = {},
+    onPin: () -> Unit = {},
 ) {
     // 已撤回消息居中灰色提示条
     if (message.revoked) {
@@ -801,6 +805,18 @@ private fun MessageBubbleRow(
                         fontSize = 10.sp,
                         color = QqPrimaryBlue,
                         modifier = Modifier.clickable(onClick = onReply),
+                    )
+                    Text(
+                        text = "👍 点赞",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable(onClick = onReact),
+                    )
+                    Text(
+                        text = "📌 置顶",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable(onClick = onPin),
                     )
                     if (!message.inbound) {
                         Text(

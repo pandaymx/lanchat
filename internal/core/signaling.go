@@ -94,9 +94,8 @@ func (c *Client) Connect(addr, psk string) error {
 
 	c.listener().OnConnChanged(appapi.ConnConnected, "")
 	go c.watch(gen, s, time.Second)
-	if hasDesiredChannels {
-		_, _ = c.sendTo(s.conn, protocol.ChannelList, "", nil)
-	}
+	_, _ = c.sendTo(s.conn, protocol.ChannelList, "", nil)
+	_ = hasDesiredChannels
 	return nil
 }
 

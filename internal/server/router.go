@@ -37,7 +37,7 @@ func (h *hub) route(c *Client, env *protocol.Envelope) {
 		h.routeMsgRevoke(c, env)
 	case protocol.Typing:
 		h.forward(c, env)
-	case protocol.FileOffer, protocol.FileAccept, protocol.FileReject, protocol.FileCancel, protocol.FileReverse:
+	case protocol.FileOffer, protocol.FileAccept, protocol.FileReject, protocol.FileCancel, protocol.FileReverse, protocol.FileDone:
 		h.forward(c, env)
 	case protocol.GroupOffer:
 		h.onGroupOffer(c, env)
@@ -85,6 +85,7 @@ func (h *hub) routeText(c *Client, env *protocol.Envelope) {
 }
 
 func (h *hub) routeChatEnvelope(c *Client, env *protocol.Envelope) {
+	h.messagesRouted++
 	switch env.Group {
 	case protocol.GroupUnicast:
 		h.forward(c, env)
@@ -212,6 +213,7 @@ func (h *hub) forward(c *Client, env *protocol.Envelope) {
 	target, ok := h.reg.get(env.To)
 	if env.To == "" || !ok {
 		if h.spool != nil && h.spool.enqueueUser(env.To, env, h.now()) {
+			h.offlineQueued++
 			h.ack(c, env.ID, "queued")
 			return
 		}

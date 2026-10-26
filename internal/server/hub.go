@@ -48,6 +48,10 @@ type hub struct {
 
 	swarms *swarmSessions // 群组文件分发会话表（服务端 swarm 无感，仅转发）
 	spool  *messageSpool  // M16 离线消息环形暂存与频道历史快照
+
+	messagesRouted uint64 // M25 累计路由聊天消息数
+	offlineQueued  uint64 // M25 累计离线入队消息数
+	relaySessions  uint64 // M25 累计中继会话配对数
 }
 
 // relayServer 是中继数据面的最小依赖接口。
@@ -164,6 +168,9 @@ func (h *hub) handle(ev hubEvent) {
 			ChannelCount:    len(channels),
 			Channels:        channels,
 			ActiveSwarms:    len(h.swarms.sessions),
+			MessagesRouted:  h.messagesRouted,
+			OfflineQueued:   h.offlineQueued,
+			RelaySessions:   h.relaySessions,
 		}
 	}
 }

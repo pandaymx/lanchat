@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -402,5 +403,36 @@ func TestSpoolOfflineStoreAndChannelHistory(t *testing.T) {
 	}
 	if len(hRestored.spool.channelHistory(chID, now)) != 1 {
 		t.Fatal("expected restored channel history for chID")
+	}
+
+	// M25: 验证 /metrics Prometheus 端点与路由计数指标。
+	srv, err := New(Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          "none",
+		HeartbeatInterval: time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownGrace:     time.Second,
+		StateFile:         stateFile,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+	<-srv.Ready()
+
+	resp, err := http.Get("http://" + srv.ListenAddr() + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /metrics, got %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "lanchat_active_channels 1") {
+		t.Fatalf("unexpected /metrics output:\n%s", string(body))
 	}
 }

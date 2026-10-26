@@ -3,6 +3,7 @@
 // 子命令：
 //
 //	lanchat serve   [--config path] [--listen addr] ...   启动信令服务器
+//	lanchat cli     [--addr auto] [--psk secret] ...      启动终端交互式聊天客户端
 //	lanchat browse  [--timeout sec]                       浏览局域网内的服务器
 //	lanchat genpsk                                        生成 PSK 的 bcrypt 哈希
 //	lanchat version                                       打印版本信息
@@ -46,6 +47,8 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = runServe(os.Args[2:])
+	case "cli":
+		err = runCLI(os.Args[2:])
 	case "browse":
 		err = runBrowse(os.Args[2:])
 	case "genpsk":
@@ -70,10 +73,12 @@ func usage() {
 
 用法:
   lanchat serve   [--config path] [--listen addr] [--path p]
-                  [--auth-mode psk|none] [--psk-hash hash]
+                  [--auth-mode psk|none] [--psk-hash hash] [--state-file path]
                   [--heartbeat-sec n] [--idle-timeout-sec n] [--shutdown-grace-sec n]
                   [--relay-enabled] [--relay-listen addr] [--relay-host ip] [--relay-force]
                   [--discover] [--server-name name] [--server-id id]
+  lanchat cli     [--addr auto|ws://host:port/lctp] [--psk secret]
+                  [--nick name] [--dir downloadDir]
   lanchat browse  [--timeout sec]
   lanchat genpsk
   lanchat version
@@ -88,11 +93,12 @@ func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var configPath string
 	fs.StringVar(&configPath, "config", "", "yaml 配置文件路径（可选）")
-	var listen, path, authMode, pskHash string
+	var listen, path, authMode, pskHash, stateFile string
 	fs.StringVar(&listen, "listen", "", "监听地址，如 :19090")
 	fs.StringVar(&path, "path", "", "WebSocket 路径，如 /lctp")
 	fs.StringVar(&authMode, "auth-mode", "", "鉴权模式 psk|none")
 	fs.StringVar(&pskHash, "psk-hash", "", "PSK 的 bcrypt 哈希")
+	fs.StringVar(&stateFile, "state-file", "", "服务端状态快照落盘路径（可选）")
 	var heartbeatSec, idleTimeoutSec, shutdownGraceSec int
 	fs.IntVar(&heartbeatSec, "heartbeat-sec", 0, "心跳间隔（秒）")
 	fs.IntVar(&idleTimeoutSec, "idle-timeout-sec", 0, "空闲超时（秒）")
@@ -121,6 +127,7 @@ func runServe(args []string) error {
 		HeartbeatInterval: time.Duration(cfg.Server.HeartbeatSec) * time.Second,
 		IdleTimeout:       time.Duration(cfg.Server.IdleTimeoutSec) * time.Second,
 		ShutdownGrace:     time.Duration(cfg.Server.ShutdownGraceSec) * time.Second,
+		StateFile:         cfg.Server.StateFile,
 	}
 	if cfg.Relay.Enabled {
 		opts.RelayListen = cfg.Relay.Listen

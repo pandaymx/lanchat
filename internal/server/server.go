@@ -73,6 +73,7 @@ func New(opts Options, logf func(string, ...any)) (*Server, error) {
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 	s.mux.HandleFunc("/api/status", s.handleStatusAPI)
 	s.mux.HandleFunc("/status", s.handleStatusPage)
+	s.mux.HandleFunc("/metrics", s.handleMetrics)
 	s.http = &http.Server{
 		Handler:           s.mux,
 		ReadHeaderTimeout: 5 * time.Second,

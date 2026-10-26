@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -21,6 +22,9 @@ type StatusSnapshot struct {
 	ChannelCount    int                `json:"channelCount"`
 	Channels        []protocol.Channel `json:"channels"`
 	ActiveSwarms    int                `json:"activeSwarms"`
+	MessagesRouted  uint64             `json:"messagesRouted"`
+	OfflineQueued   uint64             `json:"offlineQueued"`
+	RelaySessions   uint64             `json:"relaySessions"`
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
@@ -45,6 +49,46 @@ func (s *Server) handleStatusPage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(statusPageHTML))
+}
+
+// handleMetrics 输出标准 Prometheus 文本格式指标（GET /metrics，M25）。
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	snap := s.hub.statusSnapshot(ctx, s.startedAt)
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = fmt.Fprintf(w,
+		"# HELP lanchat_online_users Current number of connected signaling clients.\n"+
+			"# TYPE lanchat_online_users gauge\n"+
+			"lanchat_online_users %d\n"+
+			"# HELP lanchat_active_channels Current number of custom G2 channels.\n"+
+			"# TYPE lanchat_active_channels gauge\n"+
+			"lanchat_active_channels %d\n"+
+			"# HELP lanchat_active_swarms Current number of active group file swarm sessions.\n"+
+			"# TYPE lanchat_active_swarms gauge\n"+
+			"lanchat_active_swarms %d\n"+
+			"# HELP lanchat_messages_routed_total Total number of chat messages routed by hub.\n"+
+			"# TYPE lanchat_messages_routed_total counter\n"+
+			"lanchat_messages_routed_total %d\n"+
+			"# HELP lanchat_offline_queued_total Total number of messages queued in offline spool.\n"+
+			"# TYPE lanchat_offline_queued_total counter\n"+
+			"lanchat_offline_queued_total %d\n"+
+			"# HELP lanchat_relay_sessions_total Total number of relay grants issued.\n"+
+			"# TYPE lanchat_relay_sessions_total counter\n"+
+			"lanchat_relay_sessions_total %d\n"+
+			"# HELP lanchat_uptime_seconds Server uptime in seconds.\n"+
+			"# TYPE lanchat_uptime_seconds gauge\n"+
+			"lanchat_uptime_seconds %d\n",
+		snap.OnlineCount,
+		snap.ChannelCount,
+		snap.ActiveSwarms,
+		snap.MessagesRouted,
+		snap.OfflineQueued,
+		snap.RelaySessions,
+		snap.UptimeSec,
+	)
 }
 
 const statusPageHTML = `<!DOCTYPE html>

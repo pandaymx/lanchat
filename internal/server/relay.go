@@ -29,6 +29,7 @@ func (h *hub) onRelayRequest(c *Client, env *protocol.Envelope) {
 	}
 
 	relayID := uuid.NewString()
+	h.relaySessions++
 	relayAddr := ""
 	if h.relaySrv != nil {
 		relayAddr = h.relaySrv.AdvertiseAddr(h.relayHost)

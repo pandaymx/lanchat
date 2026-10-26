@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/pandaymx/lanchat/compare/v1.15.0...v1.16.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add M31 serverless mDNS mesh split-brain convergence and /mesh command ([25e68cc](https://github.com/pandaymx/lanchat/commit/25e68cc6e0e3d7cb8bd9257115831bab0ae238e5))
+
 ## [1.15.0](https://github.com/pandaymx/lanchat/compare/v1.14.0...v1.15.0) (2026-10-26)
 
 

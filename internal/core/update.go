@@ -19,7 +19,7 @@ import (
 )
 
 // CurrentVersion 当前客户端核心版本。
-const CurrentVersion = "1.10.2"
+const CurrentVersion = "1.10.3"
 
 // DefaultReleaseBaseURL GitHub Releases 默认基础地址。
 const DefaultReleaseBaseURL = "https://github.com/pandaymx/lanchat/releases"

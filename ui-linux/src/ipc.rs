@@ -204,6 +204,7 @@ where
                             }
                         }
                         Err(_) => {
+                            crate::daemon::ensure_daemon(&self.socket_path, None).await;
                             sleep(Duration::from_millis(backoff_ms)).await;
                             backoff_ms = (backoff_ms * 2).min(5000);
                         }

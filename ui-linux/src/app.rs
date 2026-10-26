@@ -111,6 +111,7 @@ struct Widgets {
     connect_btn: gtk::Button,
     login_status: gtk::Label,
     login_spinner: gtk::Spinner,
+    copy_status_btn: gtk::Button,
 
     // 左侧 QQ 窄导航栏（Column 0）
     self_avatar: adw::Avatar,
@@ -279,8 +280,15 @@ fn build_ui(app: &adw::Application) -> Widgets {
     let login_status = gtk::Label::new(Some("正在启动本地守护服务…"));
     login_status.set_xalign(0.5);
     login_status.set_wrap(true);
+    login_status.set_selectable(true);
     login_status.add_css_class("dim-label");
     login_status.add_css_class("caption");
+
+    let copy_status_btn = gtk::Button::with_label("📋 复制");
+    copy_status_btn.add_css_class("flat");
+    copy_status_btn.add_css_class("caption");
+    copy_status_btn.set_tooltip_text(Some("复制状态或错误信息到剪贴板"));
+    copy_status_btn.set_visible(false);
 
     let login_spinner = gtk::Spinner::new();
     login_spinner.start();
@@ -288,6 +296,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     status_row.set_halign(Align::Center);
     status_row.append(&login_spinner);
     status_row.append(&login_status);
+    status_row.append(&copy_status_btn);
 
     let connect_btn = gtk::Button::with_label("立即登录");
     connect_btn.add_css_class("pill");
@@ -405,6 +414,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     let me_label = gtk::Label::new(Some("我"));
     me_label.set_xalign(0.0);
     me_label.set_hexpand(true);
+    me_label.set_selectable(true);
     me_label.add_css_class("caption-heading");
 
     let conn_badge = gtk::Label::new(Some("● 在线"));
@@ -439,10 +449,12 @@ fn build_ui(app: &adw::Application) -> Widgets {
     let chat_avatar = adw::Avatar::new(38, Some("局域网全员广播群"), true);
     let chat_header = gtk::Label::new(Some("📢 局域网全员广播群"));
     chat_header.set_xalign(0.0);
+    chat_header.set_selectable(true);
     chat_header.add_css_class("title-4");
 
     let chat_subtitle = gtk::Label::new(Some("● 全员在线广播 (G1 Swarm) · P2P 高速直连就绪"));
     chat_subtitle.set_xalign(0.0);
+    chat_subtitle.set_selectable(true);
     chat_subtitle.add_css_class("caption");
     chat_subtitle.add_css_class("dim-label");
 
@@ -711,6 +723,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
         connect_btn,
         login_status,
         login_spinner,
+        copy_status_btn,
         self_avatar,
         self_profile_btn,
         nav_sessions_btn,
@@ -809,6 +822,21 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
+    // 复制登录状态/错误信息到剪贴板
+    ctx.widgets.copy_status_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let text = cx.widgets.login_status.text();
+            if !text.is_empty() {
+                if let Some(display) = Display::default() {
+                    display.clipboard().set_text(&text);
+                    cx.toast("已复制错误信息到剪贴板");
+                }
+            }
+        }
+    ));
+
     // 连接（支持留空或 "auto" 零配置自动选主与自举）
     ctx.widgets.connect_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
@@ -821,6 +849,15 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 raw_addr
             };
             let psk = cx.widgets.psk_row.text().to_string();
+            if cx.state.borrow().conn == ConnState::Connected
+                && (addr.eq_ignore_ascii_case("auto") || addr == cx.state.borrow().server_addr)
+            {
+                cx.widgets.copy_status_btn.set_visible(false);
+                cx.widgets.stack.set_visible_child_name("main");
+                cx.sync_state();
+                return;
+            }
+            cx.widgets.copy_status_btn.set_visible(false);
             cx.set_login_busy(true, "正在连接或自举局域网节点…");
             if let Some(ipc) = cx.ipc.borrow().clone() {
                 let params = ConnectParams { addr, psk };
@@ -1444,14 +1481,28 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     ctx.toast(&format!("发现 {n} 个局域网中心节点"));
                 }
             }
-            Err(e) => ctx.toast(&format!("发现失败：{e}")),
+            Err(e) => {
+                ctx.widgets.login_status.set_text(&format!("发现失败：{e}"));
+                ctx.widgets.copy_status_btn.set_visible(true);
+                ctx.toast(&format!("发现失败：{e}"));
+            }
         },
         UiEvent::Connected(res) => {
             ctx.set_login_busy(false, "");
-            if let Err(e) = res {
-                ctx.widgets
-                    .login_status
-                    .set_text(&format!("连接请求失败：{e}"));
+            match res {
+                Ok(()) => {
+                    ctx.widgets.copy_status_btn.set_visible(false);
+                    ctx.widgets.stack.set_visible_child_name("main");
+                    if ctx.state.borrow().current_chat == ChatTarget::None {
+                        ctx.select_chat_target(ChatTarget::Channel("*".to_string()));
+                    }
+                }
+                Err(e) => {
+                    ctx.widgets
+                        .login_status
+                        .set_text(&format!("连接请求失败：{e}"));
+                    ctx.widgets.copy_status_btn.set_visible(true);
+                }
             }
             ctx.sync_state();
         }
@@ -1646,6 +1697,7 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .set_text(&format!("● {}", state.label()));
             match state {
                 ConnState::Connected => {
+                    ctx.widgets.copy_status_btn.set_visible(false);
                     ctx.widgets.stack.set_visible_child_name("main");
                     if ctx.state.borrow().current_chat == ChatTarget::None {
                         ctx.select_chat_target(ChatTarget::Channel("*".to_string()));
@@ -1655,6 +1707,7 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 }
                 ConnState::AuthFailed => {
                     ctx.widgets.login_status.set_text("口令错误，请重新输入");
+                    ctx.widgets.copy_status_btn.set_visible(true);
                     ctx.widgets.stack.set_visible_child_name("login");
                     ctx.toast("口令错误");
                 }
@@ -1662,9 +1715,11 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                     ctx.widgets
                         .login_status
                         .set_text(&format!("连接已断开：{reason}"));
+                    ctx.widgets.copy_status_btn.set_visible(true);
                     ctx.widgets.stack.set_visible_child_name("login");
                 }
                 ConnState::Connecting => {
+                    ctx.widgets.copy_status_btn.set_visible(false);
                     ctx.widgets.login_status.set_text("正在连接…");
                 }
             }
@@ -2074,9 +2129,11 @@ fn render_all(ctx: &Rc<AppCtx>, was_connected: bool) {
     ctx.render_transfers();
 
     let now_connected = ctx.state.borrow().conn == ConnState::Connected;
-    if now_connected && !was_connected {
-        ctx.widgets.stack.set_visible_child_name("main");
-    } else if !now_connected && was_connected {
+    if now_connected {
+        if ctx.widgets.stack.visible_child_name().as_deref() != Some("main") {
+            ctx.widgets.stack.set_visible_child_name("main");
+        }
+    } else if was_connected {
         ctx.widgets.stack.set_visible_child_name("login");
     }
 }
@@ -2865,6 +2922,7 @@ impl AppCtx {
             }
             if let Some(reason) = &t.error_reason {
                 let err = gtk::Label::new(Some(reason));
+                err.set_selectable(true);
                 err.add_css_class("error");
                 err.add_css_class("caption");
                 row.add_suffix(&err);

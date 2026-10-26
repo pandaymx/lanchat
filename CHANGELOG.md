@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.1](https://github.com/pandaymx/lanchat/compare/v2.0.0...v2.0.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **ui-android:** handle system back gesture in ChatScreen and MainScreen to return home ([dca4785](https://github.com/pandaymx/lanchat/commit/dca47850bbaafab344220e37b5c89a8d88d0a304))
+
 ## [2.0.0](https://github.com/pandaymx/lanchat/compare/v1.19.0...v2.0.0) (2026-10-26)
 
 

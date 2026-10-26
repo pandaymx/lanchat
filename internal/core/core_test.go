@@ -1383,3 +1383,71 @@ func TestCLISelfUpdateBinaryInPlace(t *testing.T) {
 		t.Fatalf("replaced binary content mismatch: err=%v, got=%q", err, string(got))
 	}
 }
+
+// TestM28DirectoryTreeStreamingAndAutoUnpack 验证 M28 文件夹整包流式传输、接收端自动解包还原目录层级与权限、以及 Zip-Slip 防护。
+func TestM28DirectoryTreeStreamingAndAutoUnpack(t *testing.T) {
+	wsURL := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	srcFolder := filepath.Join(dirA, "sdk-release")
+	if err := os.MkdirAll(filepath.Join(srcFolder, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(srcFolder, "empty-sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcFolder, "README.md"), []byte("# SDK v1.13"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcFolder, "bin", "run.sh"), []byte("#!/bin/sh\necho ok\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	a := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	// Alice 通过 /senddir 指令直接发送整个文件夹
+	transferID, err := a.SendText(bID, "/senddir "+srcFolder, "")
+	if err != nil || transferID == "" {
+		t.Fatalf("/senddir failed: id=%q err=%v", transferID, err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(b.GetState().Transfers) == 1
+	})
+
+	destZip := filepath.Join(dirB, "sdk-release.zip")
+	if err := b.RespondFile(transferID, true, destZip); err != nil {
+		t.Fatalf("RespondFile: %v", err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		trs := b.GetState().Transfers
+		return len(trs) == 1 && trs[0].State == appapi.TransferDone
+	})
+
+	// 接收端应已自动解包还原出 sdk-release/ 目录树（含子目录、空目录与脚本内容）
+	unpackedRoot := filepath.Join(dirB, "sdk-release")
+	readmeBytes, err := os.ReadFile(filepath.Join(unpackedRoot, "README.md"))
+	if err != nil || string(readmeBytes) != "# SDK v1.13" {
+		t.Fatalf("unpacked README.md mismatch: err=%v, got=%q", err, string(readmeBytes))
+	}
+	scriptBytes, err := os.ReadFile(filepath.Join(unpackedRoot, "bin", "run.sh"))
+	if err != nil || string(scriptBytes) != "#!/bin/sh\necho ok\n" {
+		t.Fatalf("unpacked bin/run.sh mismatch: err=%v, got=%q", err, string(scriptBytes))
+	}
+	if st, err := os.Stat(filepath.Join(unpackedRoot, "empty-sub")); err != nil || !st.IsDir() {
+		t.Fatalf("expected unpacked empty-sub directory, err=%v", err)
+	}
+}

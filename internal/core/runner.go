@@ -149,8 +149,11 @@ func (c *Client) abortCanceled(t *transferTask) bool {
 // finishOrSwitch 处理路径结束：成功 / 对端终止 / 被取消返回 true；其余（失败）返回 false。
 func (c *Client) finishOrSwitch(t *transferTask, out pathOutcome) bool {
 	if out.succeeded() {
-		if t.snap.Direction == "inbound" && t.sha256 != "" && t.destPath != "" {
-			c.registerCAS(t.sha256, t.destPath)
+		if t.snap.Direction == "inbound" && t.destPath != "" {
+			if t.sha256 != "" {
+				c.registerCAS(t.sha256, t.destPath)
+			}
+			_, _, _ = maybeUnpackDirectoryBundle(t.destPath)
 		}
 		t.done()
 		return true

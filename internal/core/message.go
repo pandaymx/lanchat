@@ -80,6 +80,16 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		transfer.SetBandwidthLimitBps(int64(mb * 1024 * 1024))
 		return fmt.Sprintf("bwlimit:%.1fMB/s", mb), nil
 	}
+	if strings.HasPrefix(trimmed, "/senddir ") || strings.HasPrefix(trimmed, "/folder ") {
+		dirPath := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "/senddir"), "/folder"))
+		if dirPath == "" {
+			return "", errEmptyPath
+		}
+		if group != "" {
+			return c.OfferFileToGroup(group, dirPath)
+		}
+		return c.OfferFile(to, dirPath)
+	}
 	if group == "" && to == "" {
 		return "", errPeerNotFound
 	}

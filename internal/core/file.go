@@ -134,6 +134,7 @@ func (c *Client) RespondFile(transferID string, accept bool, dest string) error 
 	// M24: 内容寻址秒传去重（CAS Instant Transfer）：若本地已有同 SHA-256 且校验通过的文件，
 	// 直接本地复制并通知发送方 FILE_DONE，0 字节瞬时完成。
 	if t.sha256 != "" && c.tryCASInstantCopy(t.sha256, t.snap.Size, destPath) {
+		_, _, _ = maybeUnpackDirectoryBundle(destPath)
 		_, _ = c.sendTo(conn, protocol.FileDone, t.snap.PeerID, protocol.FileDonePayload{
 			TransferID: transferID,
 			SHA256:     t.sha256,

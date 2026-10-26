@@ -65,23 +65,51 @@ func openFileInfo(path string) (*fileInfo, error) {
 	return &fileInfo{file: f, name: st.Name(), size: st.Size()}, nil
 }
 
-// packDirectoryToZip 将非空目录递归打包为临时 .zip 归档供文件传输管道发送（M11b）。
+// dirBundleCommentPrefix 标识由 LANChat 自动打包的目录树归档（M28：接收端据此自动解包还原目录结构）。
+const dirBundleCommentPrefix = "LANCHAT-DIR-TREE-V1:"
+
+// packDirectoryToZip 将非空目录递归打包为临时 .zip 归档供文件传输管道发送（M11b/M28：保留子目录层级、文件权限并写入目录树标识）。
 func packDirectoryToZip(dirPath string) (*fileInfo, error) {
-	var files []string
-	err := filepath.Walk(dirPath, func(p string, info os.FileInfo, walkErr error) error {
+	type dirEntry struct {
+		fullPath string
+		relSlash string
+		info     os.FileInfo
+	}
+	var entries []dirEntry
+	var regularCount int
+	cleanRoot := filepath.Clean(dirPath)
+	err := filepath.Walk(cleanRoot, func(p string, info os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		if filepath.Clean(p) == cleanRoot {
+			return nil
+		}
+		rel, err := filepath.Rel(cleanRoot, p)
+		if err != nil {
+			return err
+		}
+		relSlash := filepath.ToSlash(rel)
+		if info.IsDir() {
+			entries = append(entries, dirEntry{fullPath: p, relSlash: strings.TrimSuffix(relSlash, "/") + "/", info: info})
+			return nil
+		}
 		if info.Mode().IsRegular() {
-			files = append(files, p)
+			regularCount++
+			entries = append(entries, dirEntry{fullPath: p, relSlash: relSlash, info: info})
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if len(files) == 0 {
+	if regularCount == 0 && len(entries) == 0 {
 		return nil, fmt.Errorf("core: %s is an empty directory", dirPath)
+	}
+
+	base := filepath.Base(cleanRoot)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		base = "archive"
 	}
 
 	tmp, err := os.CreateTemp("", "lanchat-dir-*.zip")
@@ -89,20 +117,33 @@ func packDirectoryToZip(dirPath string) (*fileInfo, error) {
 		return nil, err
 	}
 	zw := zip.NewWriter(tmp)
-	for _, fullPath := range files {
-		rel, err := filepath.Rel(dirPath, fullPath)
+	_ = zw.SetComment(dirBundleCommentPrefix + base)
+
+	for _, e := range entries {
+		hdr, err := zip.FileInfoHeader(e.info)
 		if err != nil {
 			_ = zw.Close()
 			_ = tmp.Close()
 			return nil, err
 		}
-		fw, err := zw.Create(filepath.ToSlash(rel))
+		hdr.Name = e.relSlash
+		if e.info.IsDir() {
+			hdr.Method = zip.Store
+			if _, err := zw.CreateHeader(hdr); err != nil {
+				_ = zw.Close()
+				_ = tmp.Close()
+				return nil, err
+			}
+			continue
+		}
+		hdr.Method = zip.Deflate
+		fw, err := zw.CreateHeader(hdr)
 		if err != nil {
 			_ = zw.Close()
 			_ = tmp.Close()
 			return nil, err
 		}
-		src, err := os.Open(fullPath)
+		src, err := os.Open(e.fullPath)
 		if err != nil {
 			_ = zw.Close()
 			_ = tmp.Close()
@@ -129,11 +170,78 @@ func packDirectoryToZip(dirPath string) (*fileInfo, error) {
 		_ = tmp.Close()
 		return nil, err
 	}
-	base := filepath.Base(filepath.Clean(dirPath))
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		base = "archive"
-	}
 	return &fileInfo{file: tmp, name: base + ".zip", size: st.Size()}, nil
+}
+
+// maybeUnpackDirectoryBundle 检查接收完成的归档是否带有 LANChat 目录树标识；若是则安全解包还原完整子目录树与文件权限（M28，含 Zip-Slip 路径穿越防护）。
+func maybeUnpackDirectoryBundle(destPath string) (string, bool, error) {
+	if destPath == "" {
+		return "", false, nil
+	}
+	zr, err := zip.OpenReader(destPath)
+	if err != nil {
+		return "", false, nil
+	}
+	defer func() { _ = zr.Close() }()
+
+	if !strings.HasPrefix(zr.Comment, dirBundleCommentPrefix) {
+		return "", false, nil
+	}
+	dirName := strings.TrimSpace(strings.TrimPrefix(zr.Comment, dirBundleCommentPrefix))
+	targetRoot := strings.TrimSuffix(destPath, filepath.Ext(destPath))
+	if targetRoot == destPath {
+		if dirName != "" {
+			targetRoot = filepath.Join(filepath.Dir(destPath), filepath.Base(dirName))
+		} else {
+			targetRoot = destPath + ".unpacked"
+		}
+	}
+	cleanTargetRoot := filepath.Clean(targetRoot)
+	if err := os.MkdirAll(cleanTargetRoot, 0o755); err != nil {
+		return "", true, err
+	}
+
+	for _, zf := range zr.File {
+		relPath := filepath.FromSlash(zf.Name)
+		fullOut := filepath.Clean(filepath.Join(cleanTargetRoot, relPath))
+		// Zip-Slip 路径穿越防御
+		relCheck, relErr := filepath.Rel(cleanTargetRoot, fullOut)
+		if relErr != nil || relCheck == ".." || strings.HasPrefix(relCheck, ".."+string(filepath.Separator)) {
+			return "", true, fmt.Errorf("core: illegal zip entry path %q", zf.Name)
+		}
+		if zf.FileInfo().IsDir() || strings.HasSuffix(zf.Name, "/") {
+			if err := os.MkdirAll(fullOut, 0o755); err != nil {
+				return "", true, err
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(fullOut), 0o755); err != nil {
+			return "", true, err
+		}
+		rc, err := zf.Open()
+		if err != nil {
+			return "", true, err
+		}
+		perm := zf.Mode().Perm()
+		if perm == 0 {
+			perm = 0o644
+		}
+		outFile, err := os.OpenFile(fullOut, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+		if err != nil {
+			_ = rc.Close()
+			return "", true, err
+		}
+		_, copyErr := io.Copy(outFile, rc)
+		_ = rc.Close()
+		closeErr := outFile.Close()
+		if copyErr != nil {
+			return "", true, copyErr
+		}
+		if closeErr != nil {
+			return "", true, closeErr
+		}
+	}
+	return cleanTargetRoot, true, nil
 }
 
 // openClipboardDataURI 将剪贴板内联 `data:image/<ext>;base64,...` 解码为临时图片文件（M11b）。

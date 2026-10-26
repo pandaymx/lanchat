@@ -158,6 +158,7 @@ func (s *fileBlockSource) finalizeLocked() error {
 	if err := os.Rename(s.part, s.dest); err != nil {
 		return err
 	}
+	_, _, _ = maybeUnpackDirectoryBundle(s.dest)
 	return nil
 }
 

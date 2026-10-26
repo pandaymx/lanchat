@@ -579,16 +579,7 @@ private fun ConversationScaffold(
                                             shape = RoundedCornerShape(12.dp),
                                             color = QqPrimaryBlue.copy(alpha = 0.08f),
                                             modifier = Modifier.clickable {
-                                                val lastMsg = messages.lastOrNull {
-                                                    !it.revoked && it.msgId.isNotEmpty() &&
-                                                        !it.msgId.startsWith("search-") &&
-                                                        !it.msgId.startsWith("e2ee-")
-                                                }
-                                                if (sticker.emoji == "👍" && lastMsg != null) {
-                                                    onSend("/react ${lastMsg.msgId} 👍")
-                                                } else {
-                                                    onSendSticker(sticker.code)
-                                                }
+                                                input += sticker.emoji
                                                 showStickerPanel = false
                                             },
                                         ) {

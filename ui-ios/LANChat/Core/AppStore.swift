@@ -90,6 +90,12 @@ final class AppStore: ObservableObject {
                                                inbound: false, timestamp: Date()))
                 return
             }
+            if msgId.hasPrefix("status:") {
+                let st = String(msgId.dropFirst(7))
+                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "📊 [诊断状态] \(st)",
+                                               inbound: false, timestamp: Date()))
+                return
+            }
             if content.hasPrefix("/revoke ") {
                 let targetId = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
                 self.revokeMessage(id: targetId)

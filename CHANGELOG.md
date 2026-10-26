@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.9.3](https://github.com/pandaymx/lanchat/compare/v1.9.2...v1.9.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **core:** emit local reaction events and preserve reaction badges on edit ([b5782ea](https://github.com/pandaymx/lanchat/commit/b5782eab39aa6806638b2e8009f1877fcf8802cc))
+* **ui-android:** render reaction pills beneath chat bubbles instead of inside text ([2801613](https://github.com/pandaymx/lanchat/commit/2801613863277fea01153555c7f17b7663aa6b51))
+* **ui-ios:** render reaction pills and like button beneath chat bubbles ([a70a78f](https://github.com/pandaymx/lanchat/commit/a70a78fb590e8eec74ebbd1d5e741fec8f5f2b5d))
+* **ui-linux:** render reaction pills and like action beneath chat bubbles ([ef4c429](https://github.com/pandaymx/lanchat/commit/ef4c42925ebdf0b19850af8f52acd3eb08d5413b))
+* **ui-macos:** render reaction pills and like button beneath chat bubbles ([c8bbd8e](https://github.com/pandaymx/lanchat/commit/c8bbd8e61b6d86678eec8c7b523f9d8513a0f0e3))
+* **ui-win:** render reaction badges and like button beneath chat bubbles ([2c473ee](https://github.com/pandaymx/lanchat/commit/2c473eef3f77f52dcd6f05691216b07c0666568b))
+
 ## [1.9.2](https://github.com/pandaymx/lanchat/compare/v1.9.1...v1.9.2) (2026-10-26)
 
 

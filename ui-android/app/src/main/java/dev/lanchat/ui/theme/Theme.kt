@@ -71,6 +71,26 @@ fun qqAvatarColor(seed: String): Color {
     return QqAvatarPalette[idx]
 }
 
+/**
+ * 提取头像显示字符：按完整 Unicode Code Point 解析，避免 Emoji（UTF-16 代理对，如 📢 / 🔒）
+ * 被 `firstOrNull()` 截断成半个代理项而显示为乱码 ``。
+ * 优先取首个汉字/字母/数字；若全为符号或 Emoji，则取首个完整 Code Point。
+ */
+fun extractAvatarGlyph(name: String): String {
+    val trimmed = name.trim()
+    if (trimmed.isEmpty()) return "Q"
+    var i = 0
+    while (i < trimmed.length) {
+        val cp = trimmed.codePointAt(i)
+        if (Character.isLetterOrDigit(cp)) {
+            return String(Character.toChars(Character.toUpperCase(cp)))
+        }
+        i += Character.charCount(cp)
+    }
+    val firstCp = trimmed.codePointAt(0)
+    return String(Character.toChars(firstCp))
+}
+
 /** 手机 QQ 风格彩色圆形头像（可选右下角在线绿点与点击事件）。 */
 @Composable
 fun QqAvatar(
@@ -84,7 +104,7 @@ fun QqAvatar(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
-    val displayChar = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "Q"
+    val displayChar = extractAvatarGlyph(name)
     val dotSize = (size.value * 0.28f).coerceIn(10f, 18f).dp
     Box(
         modifier = modifier

@@ -378,7 +378,7 @@ class AppViewModel : ViewModel() {
             }
 
             is CoreEvent.Message -> {
-                if (event.type == "MSG_REVOKE") {
+                if (event.type == "MSG_REVOKE" || event.type == "MSG_BURN") {
                     _ui.update { state ->
                         state.copy(
                             messagesByConversation = Conversations.revokeMessage(
@@ -387,6 +387,10 @@ class AppViewModel : ViewModel() {
                             ),
                         )
                     }
+                    return
+                }
+                if (event.type == "CLIP_SYNC") {
+                    _ui.update { it.copy(error = event.text) }
                     return
                 }
                 if (event.type == "MSG_READ") {

@@ -18,11 +18,15 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.6.0"
+        ndk {
+            abiFilters += listOf("arm64-v8a")
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -40,6 +44,10 @@ android {
     }
 
     packaging {
+        jniLibs {
+            // 将 libgojni.so 以 Deflate 压缩打入 APK，避免未压缩存储占 ~14 MB
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "/META-INF/{AL20.0,LGPL2.1}"
         }

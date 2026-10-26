@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.9.0](https://github.com/pandaymx/lanchat/compare/v1.8.0...v1.9.0) (2026-10-26)
+
+
+### Features
+
+* **config:** add state-file server configuration option ([33119fe](https://github.com/pandaymx/lanchat/commit/33119fe848834db6811c3e7015bf55b111b25420))
+* **core:** add encrypted history at rest, CAS instant transfer, and /status ([3a98218](https://github.com/pandaymx/lanchat/commit/3a98218d0cd050f251cdee4a2cc46e89204e310a))
+* **server:** add Prometheus /metrics endpoint, FILE_DONE routing, and CLI client ([2070996](https://github.com/pandaymx/lanchat/commit/207099602d4ce50663025cccdbf093eeda2a7ee8))
+* **transfer:** add HKDF and AES-GCM helpers for at-rest history encryption ([f6ef618](https://github.com/pandaymx/lanchat/commit/f6ef618772e25d61a897de948c8429d8786f2e6f))
+* **ui-android:** support /status diagnostic command display ([66cef5c](https://github.com/pandaymx/lanchat/commit/66cef5c1d32b73354ef4db67c1ab5d9d64b2fefa))
+* **ui-ios:** support /status diagnostic command display ([3a661aa](https://github.com/pandaymx/lanchat/commit/3a661aa4854681603eb9a51e6c7bb20fa7759d6b))
+* **ui-linux:** support /status diagnostic command display ([504ed90](https://github.com/pandaymx/lanchat/commit/504ed903d621999ac3a467ba488f4c6a82df22e3))
+* **ui-macos:** support /status diagnostic command display ([d0449cc](https://github.com/pandaymx/lanchat/commit/d0449ccd5cff4218bbfe5492aff947850e6d830e))
+* **ui-win:** support /status diagnostic command display ([095d0d0](https://github.com/pandaymx/lanchat/commit/095d0d067331ff49bae72e9e654cea11a8d0382e))
+
 ## [1.8.0](https://github.com/pandaymx/lanchat/compare/v1.7.0...v1.8.0) (2026-10-25)
 
 

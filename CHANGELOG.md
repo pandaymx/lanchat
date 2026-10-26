@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.3.0](https://github.com/pandaymx/lanchat/compare/v2.2.0...v2.3.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add P2P screen share snap encoding and native live canvas UI (v2.3.0) ([fbbc991](https://github.com/pandaymx/lanchat/commit/fbbc991bb4296334912eedb526d74bba5f6c6bbd))
+
 ## [2.2.0](https://github.com/pandaymx/lanchat/compare/v2.1.0...v2.2.0) (2026-10-26)
 
 

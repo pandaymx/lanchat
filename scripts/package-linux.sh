@@ -70,6 +70,13 @@ Description: LAN P2P Chat and File Transfer Client (GTK4 + libadwaita)
 EOF
   chmod 0755 "${DEB_ROOT}/DEBIAN"
   chmod 0644 "${DEB_ROOT}/DEBIAN/control"
+  cat > "${DEB_ROOT}/DEBIAN/postinst" <<'POSTINST'
+#!/bin/sh
+set -e
+pkill -9 -x lanchat-daemon >/dev/null 2>&1 || true
+exit 0
+POSTINST
+  chmod 0755 "${DEB_ROOT}/DEBIAN/postinst"
   find "$DEB_ROOT" -type d -exec chmod 0755 {} +
 
   dpkg-deb --build --root-owner-group "$DEB_ROOT" "${OUT_DIR_ABS}/LANChat-${VERSION}-linux-amd64.deb"
@@ -120,6 +127,10 @@ install -m 0644 "${ICON_FILE}" %{buildroot}/usr/share/icons/hicolor/scalable/app
 %attr(0755, root, root) /usr/bin/lanchat-daemon
 %attr(0644, root, root) /usr/share/applications/dev.lanchat.LANChat.desktop
 %attr(0644, root, root) /usr/share/icons/hicolor/scalable/apps/lanchat.svg
+
+%post
+pkill -9 -x lanchat-daemon >/dev/null 2>&1 || true
+exit 0
 EOF
 
   rpmbuild -bb \

@@ -1265,4 +1265,68 @@ func TestM26SilentUpdateWithDomesticProxyFallback(t *testing.T) {
 	if err != nil || string(got) != string(pkgBytes) {
 		t.Fatalf("silent downloaded package content mismatch: err=%v, got=%q", err, string(got))
 	}
+	if len(cli.GetState().Messages) != 0 {
+		t.Fatalf("/update should not pollute chat message history, got %+v", cli.GetState().Messages)
+	}
+}
+
+// TestDiagnosticExclusionAndReplyReactionSanitization 验证安全码指纹/状态诊断不进入聊天气泡流，且回复消息不会将 [👍] 或旧版指纹引用带入气泡正文。
+func TestDiagnosticExclusionAndReplyReactionSanitization(t *testing.T) {
+	if got := sanitizeQuoteAndReactions("「[安全码指纹] 本机: F3A8-8288-9F58 [👍]」\n你好"); got != "你好" {
+		t.Fatalf("sanitizeQuoteAndReactions diagnostic quote got %q, want %q", got, "你好")
+	}
+	if got := sanitizeQuoteAndReactions("「今天发版顺利 [👍] [🎉]」\n收到 [👍]"); got != "「今天发版顺利」\n收到 [👍]" {
+		t.Fatalf("sanitizeQuoteAndReactions normal quote got %q", got)
+	}
+
+	wsURL := startServer(t)
+	a := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	aID := a.GetState().SelfID
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	// /fingerprint 与 /status 不应写入聊天气泡列表
+	if _, err := a.SendText(bID, "/fingerprint", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SendText(bID, "/status", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.GetState().Messages) != 0 {
+		t.Fatalf("diagnostic commands should not appear in chat messages, got %+v", a.GetState().Messages)
+	}
+
+	// 发送一条普通消息并点赞，随后引用回复该消息，引用块内不应包含 [👍]
+	msgID, err := a.SendText(bID, "下午三点对齐接口", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(b.GetState().Messages) == 1
+	})
+	if _, err := b.SendText(aID, "/react "+msgID+" 👍", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := a.GetState().Messages
+		return len(msgs) == 1 && strings.HasSuffix(msgs[0].Text, " [👍]")
+	})
+	if _, err := b.SendText(aID, "/reply "+msgID+" 好的没问题", ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		msgs := a.GetState().Messages
+		return len(msgs) == 2 && msgs[1].Text == "「下午三点对齐接口」\n好的没问题"
+	})
 }

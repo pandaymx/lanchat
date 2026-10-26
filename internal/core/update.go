@@ -16,15 +16,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
-
-	"github.com/pandaymx/lanchat/internal/appapi"
-	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
 // CurrentVersion 当前客户端核心版本。
-const CurrentVersion = "1.10.1"
+const CurrentVersion = "1.10.2"
 
 // DefaultReleaseBaseURL GitHub Releases 默认基础地址。
 const DefaultReleaseBaseURL = "https://github.com/pandaymx/lanchat/releases"
@@ -441,7 +436,7 @@ func downloadFileWithSHA256(ctx context.Context, cli *http.Client, reqURL, destP
 	return verified, nil
 }
 
-func (c *Client) handleUpdateCommand(arg, to, group string) (string, error) {
+func (c *Client) handleUpdateCommand(arg, _, _ string) (string, error) {
 	sub := strings.TrimSpace(arg)
 	if sub == "proxies" || sub == "mirrors" {
 		names := make([]string, 0, len(DefaultDomesticProxies))
@@ -449,7 +444,6 @@ func (c *Client) handleUpdateCommand(arg, to, group string) (string, error) {
 			names = append(names, proxyDisplayName(p))
 		}
 		msg := "内置国内加速代理节点: " + strings.Join(names, " -> ")
-		c.appendUpdateHistory(to, group, msg)
 		return "update:" + msg, nil
 	}
 
@@ -467,18 +461,5 @@ func (c *Client) handleUpdateCommand(arg, to, group string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	c.appendUpdateHistory(to, group, res.Summary)
 	return "update:" + res.Summary, nil
-}
-
-func (c *Client) appendUpdateHistory(to, group, summary string) {
-	c.history.append(appapi.ChatMessage{
-		ID:    "update-" + uuid.NewString(),
-		From:  c.selfIDValue(),
-		To:    to,
-		Group: group,
-		Type:  protocol.TextMsg,
-		Text:  "🚀 [版本更新] " + summary,
-		TS:    time.Now().UnixMilli(),
-	})
 }

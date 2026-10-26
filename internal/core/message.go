@@ -9,7 +9,6 @@ import (
 	"unicode"
 
 	"github.com/coder/websocket"
-	"github.com/google/uuid"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
@@ -29,15 +28,6 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	}
 	if trimmed == "/status" || strings.HasPrefix(trimmed, "/status ") {
 		diag := c.diagnosticSummary()
-		c.history.append(appapi.ChatMessage{
-			ID:    "status-" + uuid.NewString(),
-			From:  c.selfIDValue(),
-			To:    to,
-			Group: group,
-			Type:  protocol.TextMsg,
-			Text:  "📊 [诊断状态] " + diag,
-			TS:    time.Now().UnixMilli(),
-		})
 		return "status:" + diag, nil
 	}
 	if trimmed == "/update" || strings.HasPrefix(trimmed, "/update ") {
@@ -51,21 +41,10 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		selfFP := c.Fingerprint()
 		peerFP := c.PeerFingerprint(peerID)
-		summary := "本机: " + selfFP
 		ret := "fp:" + selfFP
 		if peerFP != "" {
-			summary += " | 对端: " + peerFP
 			ret += "/" + peerFP
 		}
-		c.history.append(appapi.ChatMessage{
-			ID:    "fp-" + uuid.NewString(),
-			From:  c.selfIDValue(),
-			To:    to,
-			Group: group,
-			Type:  protocol.TextMsg,
-			Text:  "[安全码指纹] " + summary,
-			TS:    time.Now().UnixMilli(),
-		})
 		return ret, nil
 	}
 	if trimmed == "/e2ee off" || trimmed == "/e2ee clear" {
@@ -195,7 +174,8 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		explicitReplyTo = strings.TrimSpace(parts[0])
 		body := strings.TrimSpace(parts[1])
 		if orig, ok := c.history.findByID(explicitReplyTo); ok && !orig.Revoked {
-			text = "「" + orig.Text + "」\n" + body
+			cleanOrig, _ := splitReactionBadges(orig.Text)
+			text = "「" + cleanOrig + "」\n" + body
 		} else {
 			text = "[re:" + explicitReplyTo + "] " + body
 		}

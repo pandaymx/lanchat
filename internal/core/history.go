@@ -76,6 +76,10 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 		}
 		var m appapi.ChatMessage
 		if err := json.Unmarshal(rawBytes, &m); err == nil && m.ID != "" {
+			if isSystemDiagnosticMessage(m) {
+				continue
+			}
+			m.Text = sanitizeQuoteAndReactions(m.Text)
 			if idx, ok := idxByID[m.ID]; ok {
 				loaded[idx] = m
 			} else if !existing[m.ID] {
@@ -92,6 +96,10 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 }
 
 func (h *historyStore) append(m appapi.ChatMessage) bool {
+	if isSystemDiagnosticMessage(m) {
+		return false
+	}
+	m.Text = sanitizeQuoteAndReactions(m.Text)
 	if m.TS == 0 {
 		m.TS = time.Now().UnixMilli()
 	}
@@ -302,6 +310,42 @@ func splitReactionBadges(text string) (body, suffix string) {
 		body = body[:idx]
 	}
 	return body, suffix
+}
+
+func isSystemDiagnosticText(text string) bool {
+	t := strings.TrimSpace(text)
+	return strings.HasPrefix(t, "[安全码指纹]") ||
+		strings.HasPrefix(t, "🛡️ [安全码指纹") ||
+		strings.HasPrefix(t, "📊 [诊断状态]") ||
+		strings.HasPrefix(t, "🚀 [版本更新]") ||
+		strings.HasPrefix(t, "⚡ [带宽限速")
+}
+
+func isSystemDiagnosticMessage(m appapi.ChatMessage) bool {
+	for _, p := range []string{"fp-", "status-", "update-", "search-", "e2ee-", "bwlimit-"} {
+		if strings.HasPrefix(m.ID, p) {
+			return true
+		}
+	}
+	return isSystemDiagnosticText(m.Text)
+}
+
+// sanitizeQuoteAndReactions 清理引用前缀 `「...」\n` 中遗留的 `[👍]` 表情回应后缀与系统诊断伪消息引用。
+func sanitizeQuoteAndReactions(text string) string {
+	body, suffix := splitReactionBadges(text)
+	if strings.HasPrefix(body, "「") {
+		if idx := strings.Index(body, "」\n"); idx > len("「") {
+			quoted := body[len("「"):idx]
+			rest := body[idx+len("」\n"):]
+			cleanQuoted, _ := splitReactionBadges(quoted)
+			if isSystemDiagnosticText(cleanQuoted) {
+				body = rest
+			} else {
+				body = "「" + cleanQuoted + "」\n" + rest
+			}
+		}
+	}
+	return body + suffix
 }
 
 // edit 原地修改指定消息文本（校验发送者，保留置顶前缀与尾部表情回应，M20）。

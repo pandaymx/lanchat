@@ -25,8 +25,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // 关闭 R8 激进裁剪，避免 gomobile JNI / Compose 反射符号被误删引发运行期闪退；
+            // APK 体积主要由 useLegacyPackaging (Deflate 压缩 libgojni.so) 与 arm64 单架构控制。
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

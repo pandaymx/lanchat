@@ -8,7 +8,8 @@ import android.os.Build
 class LANChatApp : Application() {
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        runCatching { createNotificationChannel() }
+        runCatching { dev.lanchat.core.ServiceLocator.ensureStarted(this) }
     }
 
     private fun createNotificationChannel() {

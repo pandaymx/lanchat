@@ -3,7 +3,10 @@
 -keep interface dev.lanchat.bindings.** { *; }
 -keep class go.** { *; }
 -keep interface go.** { *; }
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
 
-# 移动端实现的 Listener 与前台服务需保留
--keep class dev.lanchat.core.GoListener { *; }
--keep class dev.lanchat.service.** { *; }
+# 移动端实现的 Listener、模型与前台服务需保留
+-keep class dev.lanchat.** { *; }
+-keep interface dev.lanchat.** { *; }

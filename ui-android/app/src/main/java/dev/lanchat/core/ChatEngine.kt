@@ -46,80 +46,102 @@ class ChatEngine {
     private val _events = MutableSharedFlow<CoreEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<CoreEvent> = _events.asSharedFlow()
 
+    @Volatile
     private var client: GoClient? = null
     private var downloadDir: String = ""
 
+    @Volatile
+    var initError: String? = null
+        private set
+
     /** 在已取得必要参数后创建核心；listener 回调来自 Go 线程，需 post 到主线程。 */
+    @Synchronized
     fun start(nickname: String, downloadDir: String, postToMain: (() -> Unit) -> Unit) {
         if (client != null) return
         this.downloadDir = downloadDir
         val listener = GoListener { event ->
             postToMain { _events.tryEmit(event) }
         }
-        client = Mobile.newClient(nickname, "android", downloadDir, listener)
+        try {
+            client = Mobile.newClient(nickname, "android", downloadDir, listener)
+            initError = null
+        } catch (t: Throwable) {
+            initError = t.message ?: t.javaClass.simpleName
+        }
     }
 
+    @Synchronized
     fun close() {
-        client?.close()
+        runCatching { client?.close() }
         client = null
     }
 
-    suspend fun getState(): FullState = ioOp { decodeState(client!!.stateJSON) }
+    private fun requireClient(): GoClient {
+        val c = client
+        if (c != null) return c
+        val reason = initError ?: "核心尚未就绪"
+        throw IllegalStateException(reason)
+    }
 
-    suspend fun connect(addr: String, psk: String): Unit = ioOp { client!!.connect(addr, psk) }
+    suspend fun getState(): FullState = ioOp {
+        val c = client ?: return@ioOp FullState()
+        decodeState(c.stateJSON)
+    }
+
+    suspend fun connect(addr: String, psk: String): Unit = ioOp { requireClient().connect(addr, psk) }
 
     // gomobile 只把 Get* 前缀的 Go 方法生成成 Java getter（stateJSON 可用属性语法），
     // BrowseServersJSON / ChannelListJSON 没有 Get 前缀，生成的是普通方法，必须带括号调用。
     suspend fun browseServers(): List<ServerInfo> =
-        ioOp { decodeServers(client!!.browseServersJSON()) }
+        ioOp { decodeServers(requireClient().browseServersJSON()) }
 
     suspend fun sendText(to: String, text: String, group: String = ""): String =
-        ioOp { client!!.sendText(to, text, group) }
+        ioOp { requireClient().sendText(to, text, group) }
 
     suspend fun sendSticker(to: String, path: String): String =
-        ioOp { client!!.sendSticker(to, path) }
+        ioOp { requireClient().sendSticker(to, path) }
 
     suspend fun offerFile(to: String, path: String): String =
-        ioOp { client!!.offerFile(to, path) }
+        ioOp { requireClient().offerFile(to, path) }
 
     suspend fun offerFileToGroup(group: String, path: String): String =
-        ioOp { client!!.offerFileToGroup(group, path) }
+        ioOp { requireClient().offerFileToGroup(group, path) }
 
     suspend fun respondFile(transferId: String, accept: Boolean, dest: String): Unit =
-        ioOp { client!!.respondFile(transferId, accept, dest) }
+        ioOp { requireClient().respondFile(transferId, accept, dest) }
 
     /** 以默认下载目录 + 文件名接受入站传输。 */
     suspend fun acceptInbound(transferId: String, name: String): Unit =
         respondFile(transferId, true, joinPath(downloadDir, safeName(name)))
 
     suspend fun cancelFile(transferId: String): Unit =
-        ioOp { client!!.cancelFile(transferId) }
+        ioOp { requireClient().cancelFile(transferId) }
 
     suspend fun pauseFile(transferId: String): Unit =
-        ioOp { client!!.pauseFile(transferId) }
+        ioOp { requireClient().pauseFile(transferId) }
 
     suspend fun resumeFile(transferId: String): Unit =
-        ioOp { client!!.resumeFile(transferId) }
+        ioOp { requireClient().resumeFile(transferId) }
 
-    suspend fun setNickname(name: String): Unit = ioOp { client!!.setNickname(name) }
+    suspend fun setNickname(name: String): Unit = ioOp { requireClient().setNickname(name) }
 
-    suspend fun pickDownloadDir(path: String): Unit = ioOp { client!!.pickDownloadDir(path) }
+    suspend fun pickDownloadDir(path: String): Unit = ioOp { requireClient().pickDownloadDir(path) }
 
     /** 创建频道；private 频道仅可经邀请加入。返回值频道 ID 当前为空（以 channel.updated 为准）。 */
     suspend fun channelCreate(name: String, topic: String, private: Boolean): Unit =
-        ioOp { client!!.channelCreate(name, topic, private) }
+        ioOp { requireClient().channelCreate(name, topic, private) }
 
     suspend fun channelJoin(channelId: String): Unit =
-        ioOp { client!!.channelJoin(channelId) }
+        ioOp { requireClient().channelJoin(channelId) }
 
     suspend fun channelInvite(channelId: String, memberId: String): Unit =
-        ioOp { client!!.channelInvite(channelId, memberId) }
+        ioOp { requireClient().channelInvite(channelId, memberId) }
 
     suspend fun channelLeave(channelId: String): Unit =
-        ioOp { client!!.channelLeave(channelId) }
+        ioOp { requireClient().channelLeave(channelId) }
 
     suspend fun channelList(): List<Channel> =
-        ioOp { decodeChannels(client!!.channelListJSON()) }
+        ioOp { decodeChannels(requireClient().channelListJSON()) }
 
     private suspend fun <T> ioOp(block: () -> T): T =
         withContext(Dispatchers.IO) {

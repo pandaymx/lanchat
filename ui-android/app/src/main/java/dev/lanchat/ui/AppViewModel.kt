@@ -499,8 +499,10 @@ class AppViewModel : ViewModel() {
             _ui.update { it.copy(busy = true) }
             try {
                 block()
-            } catch (e: Exception) {
-                _ui.update { it.copy(error = e.message ?: "操作失败") }
+            } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                _ui.update { it.copy(error = t.message ?: "操作失败") }
             } finally {
                 _ui.update { it.copy(busy = false) }
             }

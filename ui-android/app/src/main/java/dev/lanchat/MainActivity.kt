@@ -26,9 +26,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
-        CoreService.start(this)
-        requestNotificationPermission()
+        runCatching { enableEdgeToEdge() }
+        runCatching { dev.lanchat.core.ServiceLocator.ensureStarted(this) }
+        runCatching { CoreService.start(this) }
+        runCatching { requestNotificationPermission() }
         setContent {
             LANChatTheme {
                 val vm: AppViewModel = viewModel()

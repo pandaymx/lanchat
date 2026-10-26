@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.3](https://github.com/pandaymx/lanchat/compare/v1.17.2...v1.17.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **ui-android:** fix emoji surrogate avatar glyph and align chat bubble with avatar ([cf4fff3](https://github.com/pandaymx/lanchat/commit/cf4fff351f71f956fc98d5ed6645f931a7351b06))
+
 ## [1.17.2](https://github.com/pandaymx/lanchat/compare/v1.17.1...v1.17.2) (2026-10-26)
 
 

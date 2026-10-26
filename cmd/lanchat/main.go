@@ -3,7 +3,9 @@
 // 子命令：
 //
 //	lanchat serve   [--config path] [--listen addr] ...   启动信令服务器
-//	lanchat cli     [--addr auto] [--psk secret] ...      启动终端交互式聊天客户端
+//	lanchat tui     [--addr auto] [--psk secret] ...      启动全屏交互式 TUI 客户端
+//	lanchat cli     [--addr auto] [--psk secret] ...      启动终端聊天客户端（TTY 默认进入 TUI，--no-tui 为行模式）
+//	lanchat update  [--check] [--proxy url] ...           通过国内加速代理静默自更新 CLI 二进制
 //	lanchat browse  [--timeout sec]                       浏览局域网内的服务器
 //	lanchat genpsk                                        生成 PSK 的 bcrypt 哈希
 //	lanchat version                                       打印版本信息
@@ -47,8 +49,12 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = runServe(os.Args[2:])
+	case "tui":
+		err = runTUI(os.Args[2:])
 	case "cli":
 		err = runCLI(os.Args[2:])
+	case "update", "upgrade":
+		err = runUpdate(os.Args[2:])
 	case "browse":
 		err = runBrowse(os.Args[2:])
 	case "genpsk":
@@ -69,7 +75,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `lanchat — LANChat 信令服务器
+	fmt.Fprint(os.Stderr, `lanchat — LANChat 信令服务器与终端客户端
 
 用法:
   lanchat serve   [--config path] [--listen addr] [--path p]
@@ -77,8 +83,11 @@ func usage() {
                   [--heartbeat-sec n] [--idle-timeout-sec n] [--shutdown-grace-sec n]
                   [--relay-enabled] [--relay-listen addr] [--relay-host ip] [--relay-force]
                   [--discover] [--server-name name] [--server-id id]
-  lanchat cli     [--addr auto|ws://host:port/lctp] [--psk secret]
+  lanchat tui     [--addr auto|ws://host:port/lctp] [--psk secret]
                   [--nick name] [--dir downloadDir]
+  lanchat cli     [--addr auto|ws://host:port/lctp] [--psk secret]
+                  [--nick name] [--dir downloadDir] [--no-tui]
+  lanchat update  [--check] [--proxy url] [--dir downloadDir]
   lanchat browse  [--timeout sec]
   lanchat genpsk
   lanchat version

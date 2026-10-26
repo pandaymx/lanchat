@@ -14,6 +14,8 @@ import (
 	"sync"
 	"syscall"
 
+	"golang.org/x/term"
+
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/core"
 )
@@ -23,6 +25,7 @@ type cliOptions struct {
 	psk         string
 	nick        string
 	downloadDir string
+	noTUI       bool
 }
 
 type cliListener struct {
@@ -91,13 +94,56 @@ func runCLI(args []string) error {
 	fs.StringVar(&opts.psk, "psk", "", "预共享口令 PSK")
 	fs.StringVar(&opts.nick, "nick", "", "本机昵称")
 	fs.StringVar(&opts.downloadDir, "dir", ".", "默认下载与身份存储目录")
+	fs.BoolVar(&opts.noTUI, "no-tui", false, "禁用全屏 TUI，使用传统行交互模式")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if !opts.noTUI && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+		return runInteractiveTUI(ctx, opts)
+	}
 	return runCLISession(ctx, os.Stdin, os.Stdout, opts)
+}
+
+func runTUI(args []string) error {
+	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+	var opts cliOptions
+	fs.StringVar(&opts.addr, "addr", "auto", "信令服务器地址（auto/local 或 ws://host:port/lctp）")
+	fs.StringVar(&opts.psk, "psk", "", "预共享口令 PSK")
+	fs.StringVar(&opts.nick, "nick", "", "本机昵称")
+	fs.StringVar(&opts.downloadDir, "dir", ".", "默认下载与身份存储目录")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return runInteractiveTUI(ctx, opts)
+}
+
+func runUpdate(args []string) error {
+	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	var checkOnly bool
+	var proxyURL, downloadDir string
+	fs.BoolVar(&checkOnly, "check", false, "仅检查是否有新版本，不执行下载替换")
+	fs.StringVar(&proxyURL, "proxy", "", "指定国内加速代理前缀（默认自动按优先级回退）")
+	fs.StringVar(&downloadDir, "dir", ".", "当可执行文件目录只读时的回退保存目录")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	execPath, _ := os.Executable()
+	res, err := core.SelfUpdateBinary(ctx, version, proxyURL, execPath, downloadDir, checkOnly, "", nil, nil)
+	if err != nil {
+		return err
+	}
+	fmt.Println(res.Summary)
+	return nil
 }
 
 func runCLISession(ctx context.Context, in io.Reader, out io.Writer, opts cliOptions) error {
@@ -115,6 +161,7 @@ func runCLISession(ctx context.Context, in io.Reader, out io.Writer, opts cliOpt
 	}
 
 	target := "*"
+	var lastRecalledText string
 	listener.printf("已连接（SelfID=%s, 指纹=%s）。默认发送目标: %s（输入 /help 查看命令）",
 		client.GetState().SelfID, client.Fingerprint(), target)
 
@@ -147,7 +194,58 @@ func runCLISession(ctx context.Context, in io.Reader, out io.Writer, opts cliOpt
 				return nil
 			}
 			if line == "/help" {
-				listener.printf("可用命令: /peers | /channels | /to <peerID|*|chID> | /create <name> | /join <chID> | /send <path> | /accept <transferID> | /status | /fingerprint | /quit")
+				listener.printf("可用命令: /peers | /channels | /to <peerID|*|chID> | /create <name> | /join <chID> | /send <path> | /accept <transferID> | /recall [msgID] | /reedit [追加文本] | /react [👍] | /update [self|check] | /status | /fingerprint | /quit")
+				continue
+			}
+			if line == "/recall" || strings.HasPrefix(line, "/recall ") {
+				arg := strings.TrimSpace(strings.TrimPrefix(line, "/recall"))
+				st := client.GetState()
+				msgs := filterMessagesForTarget(st, target)
+				targetID := arg
+				if targetID == "" {
+					for i := len(msgs) - 1; i >= 0; i-- {
+						if (msgs[i].From == st.SelfID || msgs[i].From == "me") && !msgs[i].Revoked {
+							targetID = msgs[i].ID
+							lastRecalledText = parseTUIMessageParts(msgs[i].Text).BodyText
+							break
+						}
+					}
+				} else {
+					for i := len(msgs) - 1; i >= 0; i-- {
+						if msgs[i].ID == targetID && !msgs[i].Revoked {
+							lastRecalledText = parseTUIMessageParts(msgs[i].Text).BodyText
+							break
+						}
+					}
+				}
+				if targetID == "" {
+					listener.printf("[错误] 未找到可撤回的消息")
+					continue
+				}
+				to, group := resolveTargetToAndGroup(client, target)
+				if _, err := client.SendText(to, "/revoke "+targetID, group); err != nil {
+					listener.printf("[错误] 撤回失败: %v", err)
+				} else {
+					listener.printf("[撤回] 你撤回了一条消息（可输入 /reedit 重新编辑）")
+				}
+				continue
+			}
+			if line == "/reedit" || strings.HasPrefix(line, "/reedit ") {
+				extra := strings.TrimSpace(strings.TrimPrefix(line, "/reedit"))
+				if lastRecalledText == "" && extra == "" {
+					listener.printf("[提示] 暂无已撤回的消息文本")
+					continue
+				}
+				newText := lastRecalledText
+				if extra != "" {
+					newText = extra
+				}
+				to, group := resolveTargetToAndGroup(client, target)
+				if _, err := client.SendText(to, newText, group); err != nil {
+					listener.printf("[错误] 重新发送失败: %v", err)
+				} else {
+					listener.printf("[重编辑已发送] %s", newText)
+				}
 				continue
 			}
 			if line == "/peers" {
@@ -227,7 +325,7 @@ func runCLISession(ctx context.Context, in io.Reader, out io.Writer, opts cliOpt
 			}
 			if err != nil {
 				listener.printf("[错误] 发送失败: %v", err)
-			} else if strings.HasPrefix(res, "status:") || strings.HasPrefix(res, "fp:") || strings.HasPrefix(res, "bwlimit:") {
+			} else if strings.HasPrefix(res, "update:") || strings.HasPrefix(res, "status:") || strings.HasPrefix(res, "fp:") || strings.HasPrefix(res, "bwlimit:") || strings.HasPrefix(res, "e2ee:") {
 				listener.printf("[结果] %s", res)
 			}
 		}

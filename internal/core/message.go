@@ -114,23 +114,34 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		return targetID, nil
 	}
-	if strings.HasPrefix(trimmed, "/react ") {
-		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/react "))
+	if trimmed == "/react" || strings.HasPrefix(trimmed, "/react ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/react"))
 		parts := strings.SplitN(rest, " ", 2)
-		targetID := strings.TrimSpace(parts[0])
+		targetID := ""
+		if len(parts) > 0 {
+			targetID = strings.TrimSpace(parts[0])
+		}
 		emoji := "👍"
 		if len(parts) == 2 && strings.TrimSpace(parts[1]) != "" {
 			emoji = strings.TrimSpace(parts[1])
+		} else if len(parts) == 1 && isReactionEmojiToken(targetID) {
+			emoji = targetID
+			targetID = ""
+		}
+		if targetID == "" {
+			targetID = c.history.lastMessageID(to, group)
 		}
 		if targetID == "" {
 			return "", errEmptyText
 		}
-		if _, ok := c.history.react(targetID, emoji); !ok {
+		updated, ok := c.history.react(targetID, emoji)
+		if !ok {
 			return "", errInvalidState
 		}
 		if err := c.sendControlText(to, group, "sys:react:"+targetID+":"+emoji); err != nil {
 			return "", err
 		}
+		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_REACT", updated.Text)
 		return targetID, nil
 	}
 	if strings.HasPrefix(trimmed, "/edit ") {
@@ -141,12 +152,14 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		targetID := strings.TrimSpace(parts[0])
 		newBody := strings.TrimSpace(parts[1])
-		if _, ok := c.history.edit(targetID, c.selfIDValue(), newBody); !ok {
+		updated, ok := c.history.edit(targetID, c.selfIDValue(), newBody)
+		if !ok {
 			return "", errInvalidState
 		}
 		if err := c.sendControlText(to, group, "sys:edit:"+targetID+":"+newBody); err != nil {
 			return "", err
 		}
+		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_EDIT", updated.Text)
 		return targetID, nil
 	}
 	if strings.HasPrefix(trimmed, "/pin ") {
@@ -154,12 +167,14 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		if targetID == "" {
 			return "", errEmptyText
 		}
-		if _, ok := c.history.pin(targetID); !ok {
+		updated, ok := c.history.pin(targetID)
+		if !ok {
 			return "", errInvalidState
 		}
 		if err := c.sendControlText(to, group, "sys:pin:"+targetID); err != nil {
 			return "", err
 		}
+		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_PIN", updated.Text)
 		return targetID, nil
 	}
 	if trimmed == "/voice" || strings.HasPrefix(trimmed, "/voice ") {

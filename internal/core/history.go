@@ -252,7 +252,59 @@ func (h *historyStore) react(msgID, emoji string) (appapi.ChatMessage, bool) {
 	return appapi.ChatMessage{}, false
 }
 
-// edit 原地修改指定消息文本（校验发送者，保留置顶前缀，M20）。
+// lastMessageID 返回指定会话（单播 to 或群组 group）中最近一条未撤回消息的 ID。
+func (h *historyStore) lastMessageID(to, group string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := len(h.msgs) - 1; i >= 0; i-- {
+		m := h.msgs[i]
+		if m.Revoked || m.ID == "" {
+			continue
+		}
+		if group != "" {
+			if m.Group == group {
+				return m.ID
+			}
+			continue
+		}
+		if m.Group == "" && (m.From == to || m.To == to) {
+			return m.ID
+		}
+	}
+	return ""
+}
+
+func isReactionEmojiToken(token string) bool {
+	if token == "" || len(token) > 24 {
+		return false
+	}
+	for _, r := range token {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') ||
+			(r >= 0x4E00 && r <= 0x9FFF) || r == ':' || r == '"' || r == ' ' {
+			return false
+		}
+	}
+	return true
+}
+
+func splitReactionBadges(text string) (body, suffix string) {
+	body = text
+	for {
+		idx := strings.LastIndex(body, " [")
+		if idx < 0 || !strings.HasSuffix(body, "]") {
+			break
+		}
+		token := body[idx+2 : len(body)-1]
+		if !isReactionEmojiToken(token) {
+			break
+		}
+		suffix = body[idx:] + suffix
+		body = body[:idx]
+	}
+	return body, suffix
+}
+
+// edit 原地修改指定消息文本（校验发送者，保留置顶前缀与尾部表情回应，M20）。
 func (h *historyStore) edit(msgID, actorID, newText string) (appapi.ChatMessage, bool) {
 	newText = strings.TrimSpace(newText)
 	if msgID == "" || newText == "" {
@@ -271,7 +323,8 @@ func (h *historyStore) edit(msgID, actorID, newText string) (appapi.ChatMessage,
 		if strings.HasPrefix(h.msgs[i].Text, "📌 [置顶] ") {
 			prefix = "📌 [置顶] "
 		}
-		h.msgs[i].Text = prefix + newText + " (已编辑)"
+		_, reactSuffix := splitReactionBadges(h.msgs[i].Text)
+		h.msgs[i].Text = prefix + newText + " (已编辑)" + reactSuffix
 		updated := h.msgs[i]
 		h.persistLocked(updated)
 		return updated, true

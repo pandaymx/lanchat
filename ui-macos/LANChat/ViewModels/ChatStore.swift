@@ -339,6 +339,9 @@ final class ChatStore: ObservableObject {
             } else if r.msgID.hasPrefix("bwlimit:") {
                 let lim = String(r.msgID.dropFirst(8))
                 append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "⚡ [带宽限速已设置为 \(lim) MB/s]", inbound: false, timestamp: Date()))
+            } else if r.msgID.hasPrefix("status:") {
+                let st = String(r.msgID.dropFirst(7))
+                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "📊 [诊断状态] \(st)", inbound: false, timestamp: Date()))
             } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {
@@ -460,6 +463,11 @@ final class ChatStore: ObservableObject {
             } else if r.msgID.hasPrefix("bwlimit:") {
                 let lim = String(r.msgID.dropFirst(8))
                 append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "⚡ [带宽限速已设置为 \(lim) MB/s]",
+                                   inbound: false, timestamp: Date()),
+                       threadKey: channelID)
+            } else if r.msgID.hasPrefix("status:") {
+                let st = String(r.msgID.dropFirst(7))
+                append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "📊 [诊断状态] \(st)",
                                    inbound: false, timestamp: Date()),
                        threadKey: channelID)
             } else if trimmed.hasPrefix("/revoke ") {

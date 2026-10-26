@@ -67,10 +67,10 @@ type Client struct {
 
 	browser *discover.Browser
 
-	downloadDir   string
-	history       *historyStore
-	e2eeKey       string
-	casIndex      map[string]string
+	downloadDir    string
+	history        *historyStore
+	e2eeKey        string
+	casIndex       map[string]string
 	sharedClip     string
 	dnd            bool
 	unreadCounts   map[string]int

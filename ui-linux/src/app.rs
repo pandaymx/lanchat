@@ -136,6 +136,7 @@ struct Widgets {
     chat_avatar: adw::Avatar,
     chat_header: gtk::Label,
     chat_subtitle: gtk::Label,
+    header_call_btn: gtk::Button,
     header_invite_btn: gtk::Button,
     header_leave_btn: gtk::Button,
     header_drawer_btn: gtk::Button,
@@ -486,6 +487,12 @@ fn build_ui(app: &adw::Application) -> Widgets {
     header_leave_btn.set_visible(false);
     header_leave_btn.set_tooltip_text(Some("退出当前自定义频道"));
 
+    let header_call_btn = gtk::Button::with_label("📞 语音通话");
+    header_call_btn.add_css_class("flat");
+    header_call_btn.set_tooltip_text(Some(
+        "发起/挂断局域网实时 UDP 语音通话 (/call / /voiceroom)",
+    ));
+
     let header_drawer_btn = gtk::Button::with_label("📊 传输面板");
     header_drawer_btn.add_css_class("flat");
     header_drawer_btn.set_tooltip_text(Some("展开/收起右侧文件传输面板"));
@@ -498,6 +505,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     header_bar.set_margin_end(16);
     header_bar.append(&chat_avatar);
     header_bar.append(&header_titles);
+    header_bar.append(&header_call_btn);
     header_bar.append(&header_invite_btn);
     header_bar.append(&header_leave_btn);
     header_bar.append(&header_drawer_btn);
@@ -793,6 +801,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
         chat_avatar,
         chat_header,
         chat_subtitle,
+        header_call_btn,
         header_invite_btn,
         header_leave_btn,
         header_drawer_btn,
@@ -1286,6 +1295,37 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             cx.render_transfers();
             let vis = cx.widgets.right_drawer.is_visible();
             cx.widgets.right_drawer.set_visible(!vis);
+        }
+    ));
+
+    // 顶部实时语音通话快捷按钮
+    ctx.widgets.header_call_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |btn| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                cx.toast("请先选择联系人或频道");
+                return;
+            }
+            let cur_label = btn.label().map(|s| s.to_string()).unwrap_or_default();
+            if cur_label.contains("挂断") {
+                btn.set_label("📞 语音通话");
+                let cmd = if target.is_channel() {
+                    "/voiceroom leave"
+                } else {
+                    "/call stop"
+                };
+                send_text_to_target(&cx, &target, cmd);
+            } else {
+                btn.set_label("📵 挂断语音");
+                let cmd = if target.is_channel() {
+                    "/voiceroom join"
+                } else {
+                    "/call start"
+                };
+                send_text_to_target(&cx, &target, cmd);
+            }
         }
     ));
 

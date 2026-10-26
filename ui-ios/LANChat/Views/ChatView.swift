@@ -13,6 +13,7 @@ struct ChatView: View {
     @State private var showSearchBar = false
     @State private var searchQuery = ""
     @State private var e2eeEnabled = false
+    @State private var inVoiceCall = false
     @State private var replyingTo: ChatMessage?
 
     private var thread: [ChatMessage] {
@@ -118,6 +119,23 @@ struct ChatView: View {
                 .foregroundStyle(.secondary)
 
             Spacer()
+
+            Button {
+                if inVoiceCall {
+                    inVoiceCall = false
+                    store.sendText(to: peer.id, text: "/call stop")
+                } else {
+                    inVoiceCall = true
+                    store.sendText(to: peer.id, text: "/call start")
+                }
+            } label: {
+                Text(inVoiceCall ? "📵 挂断" : "📞 语音通话")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(inVoiceCall ? .red : QQTheme.qqBlue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background((inVoiceCall ? Color.red : QQTheme.qqBlue).opacity(0.12), in: Capsule())
+            }
 
             if e2eeEnabled {
                 HStack(spacing: 3) {

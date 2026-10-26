@@ -74,6 +74,12 @@
                             Foreground="White"
                             Visibility="{Binding Chat.CanJoinChannel, Converter={StaticResource BoolToVisibilityConverter}}"
                             Click="JoinChannelButton_Click" />
+                    <Button Content="{Binding Chat.VoiceCallButtonText, FallbackValue=📞 语音通话}"
+                            FontSize="12"
+                            Padding="10,4"
+                            CornerRadius="6"
+                            IsEnabled="{Binding Chat.CanSend}"
+                            Command="{Binding Chat.ToggleVoiceCallCommand}" />
                     <Button Content="📁 发送文件"
                             FontSize="12"
                             Padding="10,4"

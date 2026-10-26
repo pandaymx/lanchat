@@ -96,6 +96,7 @@ struct ChatView: View {
     @State private var showStickerPopover = false
     @State private var showSearchBar = false
     @State private var searchQuery = ""
+    @State private var inVoiceCall = false
     @State private var replyingTo: ChatMessage? = nil
 
     private var thread: [ChatMessage] {
@@ -209,6 +210,29 @@ struct ChatView: View {
 
             // 顶部快捷操作按钮组
             HStack(spacing: 8) {
+                Button {
+                    if inVoiceCall {
+                        inVoiceCall = false
+                        store.sendText(to: peer.id, text: "/call stop")
+                    } else {
+                        inVoiceCall = true
+                        store.sendText(to: peer.id, text: "/call start")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(inVoiceCall ? "📵 挂断语音" : "📞 语音通话")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(inVoiceCall ? Color.red.opacity(0.14) : Color.primary.opacity(0.05))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("发起或挂断局域网实时语音通话 (/call)")
+
                 Button {
                     pickAndOffer()
                 } label: {

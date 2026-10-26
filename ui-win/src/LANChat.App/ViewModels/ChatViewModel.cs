@@ -27,6 +27,9 @@ public sealed partial class ChatViewModel : ViewModelBase
     private bool _isE2eeEnabled;
 
     [ObservableProperty]
+    private bool _isInVoiceCall;
+
+    [ObservableProperty]
     private ChatMessage? _replyingTo;
 
     public ObservableCollection<ChatMessage> Messages { get; } = [];
@@ -96,6 +99,8 @@ public sealed partial class ChatViewModel : ViewModelBase
     public bool IsBroadcastConversation => CurrentChannel?.Id == "*";
 
     public string E2eeButtonText => IsE2eeEnabled ? "🔐 已加密" : "🔐 加密";
+
+    public string VoiceCallButtonText => IsInVoiceCall ? "📵 挂断语音" : "📞 语音通话";
 
     /// <summary>是否正在引用回复某条消息。</summary>
     public bool HasReplyTarget => ReplyingTo is not null;
@@ -970,6 +975,30 @@ public sealed partial class ChatViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(HasReplyTarget));
         OnPropertyChanged(nameof(ReplyTargetSummary));
+    }
+
+    partial void OnIsInVoiceCallChanged(bool value) => OnPropertyChanged(nameof(VoiceCallButtonText));
+
+    [RelayCommand]
+    public async Task ToggleVoiceCallAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        if (IsInVoiceCall)
+        {
+            IsInVoiceCall = false;
+            Draft = CurrentChannel is not null ? "/voiceroom leave" : "/call stop";
+        }
+        else
+        {
+            IsInVoiceCall = true;
+            Draft = CurrentChannel is not null ? "/voiceroom join" : "/call start";
+        }
+        await SendAsync();
+        Draft = prevDraft;
     }
 
     private void NotifyConversationHeaderChanged()

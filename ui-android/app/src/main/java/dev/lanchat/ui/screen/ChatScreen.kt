@@ -277,6 +277,9 @@ private fun ConversationScaffold(
     var showE2eeDialog by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var e2eeActive by remember { mutableStateOf(false) }
+    var inVoiceCall by remember { mutableStateOf(false) }
+    var callMuted by remember { mutableStateOf(false) }
+    var callDurationSec by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -340,6 +343,16 @@ private fun ConversationScaffold(
             while (isRecording) {
                 delay(1000L)
                 recordingSec += 1
+            }
+        }
+    }
+
+    LaunchedEffect(inVoiceCall) {
+        if (inVoiceCall) {
+            callDurationSec = 0
+            while (inVoiceCall) {
+                delay(1000L)
+                callDurationSec += 1
             }
         }
     }
@@ -573,6 +586,29 @@ private fun ConversationScaffold(
                         )
                     }
                 }
+                TextButton(
+                    onClick = {
+                        if (inVoiceCall) {
+                            inVoiceCall = false
+                            callMuted = false
+                            onSend(if (showSender) "/voiceroom leave" else "/call stop")
+                        } else {
+                            inVoiceCall = true
+                            callMuted = false
+                            onSend(if (showSender) "/voiceroom join" else "/call start")
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = if (inVoiceCall) "📵 挂断" else "📞 语音",
+                        color = if (inVoiceCall) Color(0xFFFFD6D6) else Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
                 IconButton(onClick = { filePicker.launch("*/*") }) {
                     Icon(
                         Icons.Filled.Folder,
@@ -591,6 +627,80 @@ private fun ConversationScaffold(
                 .fillMaxSize()
                 .background(qqChatBackgroundColor()),
         ) {
+            if (inVoiceCall) {
+                val mm = (callDurationSec / 60).toString().padStart(2, '0')
+                val ss = (callDurationSec % 60).toString().padStart(2, '0')
+                Surface(
+                    color = QqOnlineGreen.copy(alpha = 0.14f),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(9.dp)
+                                    .clip(CircleShape)
+                                    .background(QqOnlineGreen),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "📞 局域网实时语音中 · $mm:$ss" + if (callMuted) " (已静音)" else "",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF15803D),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedButton(
+                                onClick = { callMuted = !callMuted },
+                                shape = RoundedCornerShape(16.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp),
+                            ) {
+                                Text(
+                                    text = if (callMuted) "🎙️ 开麦" else "🔇 静音",
+                                    fontSize = 11.sp,
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    inVoiceCall = false
+                                    callMuted = false
+                                    onSend(if (showSender) "/voiceroom leave" else "/call stop")
+                                },
+                                shape = RoundedCornerShape(16.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = QqUnreadBadgeRed,
+                                    contentColor = Color.White,
+                                ),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp),
+                            ) {
+                                Text(
+                                    text = "📵 挂断",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // 手机 QQ 消息气泡流列表 (#F2F4F7 背景)
             LazyColumn(
                 state = listState,

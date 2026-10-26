@@ -130,6 +130,61 @@ func (c *Client) ChannelLeave(channelID string) error { return c.core.ChannelLea
 // ChannelListJSON 列出当前可见频道（[]appapi.Channel 的 JSON）。
 func (c *Client) ChannelListJSON() []byte { return mustJSON(c.core.ChannelList()) }
 
+// HistoryPageJSON 按会话游标分页拉取历史消息（[]appapi.ChatMessage 的 JSON）。
+func (c *Client) HistoryPageJSON(convID string, beforeTs int64, limit int) []byte {
+	return mustJSON(c.core.HistoryPage(convID, beforeTs, limit))
+}
+
+// CompactHistory 手动触发本地历史 JSONL 压缩并返回合并后的消息总数。
+func (c *Client) CompactHistory() int {
+	return c.core.CompactHistory()
+}
+
+// StartVoiceCall 发起 1:1 或频道实时 UDP 语音呼叫，返回通话房间状态。
+func (c *Client) StartVoiceCall(target string, group string) (string, error) {
+	return c.core.StartVoiceCall(target, group)
+}
+
+// AcceptVoiceCall 接听并绑定对端 UDP 语音地址。
+func (c *Client) AcceptVoiceCall(to string, group string, peerAddr string) (string, error) {
+	return c.core.AcceptVoiceCall(to, group, peerAddr)
+}
+
+// StopVoiceCall 挂断当前实时语音通话。
+func (c *Client) StopVoiceCall(to string, group string) error {
+	return c.core.StopVoiceCall(to, group)
+}
+
+// SendVoiceFrame 发送一帧实时音频数据（PCM/Opus/AAC）。
+func (c *Client) SendVoiceFrame(pcm []byte) error {
+	return c.core.SendVoiceFrame(pcm)
+}
+
+// VoiceCallStatus 返回当前实时语音通话状态摘要。
+func (c *Client) VoiceCallStatus() string {
+	return c.core.VoiceCallStatus()
+}
+
+// StartScreenShare 开启局域网 P2P 屏幕共享。
+func (c *Client) StartScreenShare(target string, group string, fps int) (string, error) {
+	return c.core.StartScreenShare(target, group, fps)
+}
+
+// SendScreenFrame 推送一帧屏幕共享图像（data:image/jpeg;base64,...）。
+func (c *Client) SendScreenFrame(to string, group string, frameData string) error {
+	return c.core.SendScreenFrame(to, group, frameData)
+}
+
+// StopScreenShare 停止屏幕共享。
+func (c *Client) StopScreenShare(to string, group string) error {
+	return c.core.StopScreenShare(to, group)
+}
+
+// GossipEndpointsJSON 返回跨网段/Tailscale 已知 Gossip 节点列表 JSON。
+func (c *Client) GossipEndpointsJSON() []byte {
+	return mustJSON(c.core.GossipEndpoints())
+}
+
 // mustJSON 序列化；这些 DTO 只含基础类型，序列化不会失败，失败时返回 nil
 // 由宿主按空列表处理。
 func mustJSON(v any) []byte {

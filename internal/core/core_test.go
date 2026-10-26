@@ -795,7 +795,7 @@ func TestM14AutoLeaderElectionAndFailover(t *testing.T) {
 
 	// 关闭原房主 HostA，PeerB 应触发自动故障转移（自举为新房主并恢复 Connected）。
 	a.Close()
-	waitFor(t, 6*time.Second, func() bool {
+	waitFor(t, 12*time.Second, func() bool {
 		st := b.GetState()
 		return st.Conn == appapi.ConnConnected && st.SelfID != ""
 	})

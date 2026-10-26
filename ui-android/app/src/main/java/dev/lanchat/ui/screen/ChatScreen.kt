@@ -10,6 +10,7 @@ import android.media.ToneGenerator
 import android.net.Uri
 import android.os.Build
 import android.util.Base64
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -319,6 +320,17 @@ private fun ConversationScaffold(
         onDispose {
             releaseActiveRecorder(deleteFile = true)
             releaseActivePlayer()
+        }
+    }
+
+    BackHandler {
+        when {
+            isRecording -> releaseActiveRecorder(deleteFile = true)
+            showStickerPanel || showVoicePanel -> {
+                showStickerPanel = false
+                showVoicePanel = false
+            }
+            else -> onBack()
         }
     }
 

@@ -1,5 +1,6 @@
 package dev.lanchat.ui.screen
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -92,6 +93,17 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showCreateChannelDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    BackHandler(
+        enabled = openChat != null || openChannelChat != null || searchQuery.isNotEmpty() || tab != Tab.MESSAGES,
+    ) {
+        when {
+            openChat != null -> openChat = null
+            openChannelChat != null -> openChannelChat = null
+            searchQuery.isNotEmpty() -> searchQuery = ""
+            tab != Tab.MESSAGES -> tab = Tab.MESSAGES
+        }
+    }
 
     LaunchedEffect(state.error) {
         val error = state.error

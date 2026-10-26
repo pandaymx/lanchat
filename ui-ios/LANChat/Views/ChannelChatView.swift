@@ -72,6 +72,12 @@ struct ChannelChatView: View {
                                 },
                                 onPin: {
                                     store.sendGroupText(channel: live, text: "/pin \(msg.id)")
+                                },
+                                onReEdit: { original in
+                                    let clean = QQTheme.extractEditableOriginal(original)
+                                    if !clean.isEmpty {
+                                        draft = clean
+                                    }
                                 }
                             )
                             .id(msg.id)
@@ -174,7 +180,8 @@ struct ChannelChatView: View {
     // MARK: - 引用回复预览条
 
     private func replyBanner(for msg: ChatMessage) -> some View {
-        HStack(spacing: 8) {
+        let cleanReply = QQTheme.splitQuote(QQTheme.splitReactions(msg.text).body).body
+        return HStack(spacing: 8) {
             Rectangle()
                 .fill(QQTheme.qqBlue)
                 .frame(width: 3, height: 28)
@@ -184,7 +191,7 @@ struct ChannelChatView: View {
                 Text("回复 \(msg.inbound ? store.displayName(msg.peerId) : settings.nickname)")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(QQTheme.qqBlue)
-                Text(msg.text)
+                Text(cleanReply)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -442,6 +449,7 @@ private struct ChannelBubble: View {
     var onMarkRead: (() -> Void)? = nil
     var onReact: (() -> Void)? = nil
     var onPin: (() -> Void)? = nil
+    var onReEdit: ((String) -> Void)? = nil
 
     var body: some View {
         BubbleRow(
@@ -452,7 +460,8 @@ private struct ChannelBubble: View {
             onRevoke: onRevoke,
             onMarkRead: onMarkRead,
             onReact: onReact,
-            onPin: onPin
+            onPin: onPin,
+            onReEdit: onReEdit
         )
     }
 }

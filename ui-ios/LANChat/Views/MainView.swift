@@ -124,6 +124,31 @@ enum QQTheme {
         return (body, extracted.reactions)
     }
 
+    /// 拆分引用回复头与实际消息正文（如 `"「原消息」\n回复内容"` -> `("原消息", "回复内容")`）。
+    static func splitQuote(_ cleanBody: String) -> (quote: String?, body: String) {
+        let trimmed = cleanBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("「"), let quoteEnd = trimmed.range(of: "」\n") {
+            let qStart = trimmed.index(after: trimmed.startIndex)
+            let quote = String(trimmed[qStart..<quoteEnd.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let rest = String(trimmed[quoteEnd.upperBound...])
+            if !quote.isEmpty {
+                return (quote, rest)
+            }
+        }
+        return (nil, cleanBody)
+    }
+
+    /// 从可能包含引用前缀与表情回应后缀的消息文本中提取可重新编辑的纯正文。
+    static func extractEditableOriginal(_ raw: String) -> String {
+        let noReacts = splitReactions(raw).body
+        let (_, body) = splitQuote(noReacts)
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "消息已撤回" || trimmed == "[消息已撤回]" || trimmed == "[已撤回]" || trimmed.hasPrefix("data:image/") {
+            return ""
+        }
+        return trimmed
+    }
+
     /// 预设 QQ 表情贴纸（点击可直接触发 sendSticker 或插入表情）
     struct StickerItem: Identifiable {
         let id: String

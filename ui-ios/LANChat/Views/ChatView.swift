@@ -53,6 +53,12 @@ struct ChatView: View {
                                 },
                                 onPin: {
                                     store.sendText(to: peer.id, text: "/pin \(msg.id)")
+                                },
+                                onReEdit: { original in
+                                    let clean = QQTheme.extractEditableOriginal(original)
+                                    if !clean.isEmpty {
+                                        draft = clean
+                                    }
                                 }
                             )
                             .id(msg.id)
@@ -162,7 +168,8 @@ struct ChatView: View {
     // MARK: - 引用回复预览条
 
     private func replyBanner(for msg: ChatMessage) -> some View {
-        HStack(spacing: 8) {
+        let cleanReply = QQTheme.splitQuote(QQTheme.splitReactions(msg.text).body).body
+        return HStack(spacing: 8) {
             Rectangle()
                 .fill(QQTheme.qqBlue)
                 .frame(width: 3, height: 28)
@@ -172,7 +179,7 @@ struct ChatView: View {
                 Text("回复 \(msg.inbound ? peer.nickname : settings.nickname)")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(QQTheme.qqBlue)
-                Text(msg.text)
+                Text(cleanReply)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -386,7 +393,7 @@ struct ChatView: View {
     }
 }
 
-/// 手机 QQ 单条消息行：36x36 圆形头像（左入站 / 右出站）+ 昵称与时间 + 圆角气泡 + ✓ 已读 + 回复/撤回菜单。
+/// 手机 QQ 单条消息行：居中撤回灰条+重新编辑 / 36x36 圆形头像 + 昵称时间 + 气泡内引用卡片 + 长按菜单 + 点赞胶囊。
 struct BubbleRow: View {
     let message: ChatMessage
     var senderName: String = ""
@@ -396,156 +403,188 @@ struct BubbleRow: View {
     var onMarkRead: (() -> Void)? = nil
     var onReact: (() -> Void)? = nil
     var onPin: (() -> Void)? = nil
+    var onReEdit: ((String) -> Void)? = nil
 
     private var parsed: (body: String, reactions: [String]) {
         QQTheme.splitReactions(message.text)
     }
 
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if message.inbound {
-                avatarView
-            } else {
-                Spacer(minLength: 44)
-            }
+    private var splitQuoteBody: (quote: String?, body: String) {
+        QQTheme.splitQuote(parsed.body)
+    }
 
-            VStack(alignment: message.inbound ? .leading : .trailing, spacing: 4) {
-                // 发送者昵称 + 时间戳
-                HStack(spacing: 6) {
-                    if !senderName.isEmpty {
-                        Text(senderName)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
+    var body: some View {
+        if message.revoked {
+            // 手机 QQ 居中灰色系统撤回提示胶囊 + 「重新编辑」蓝色链接
+            HStack(spacing: 6) {
+                Text(message.inbound
+                     ? "\"\(senderName.isEmpty ? message.peerId : senderName)\" 撤回了一条消息"
+                     : "你撤回了一条消息")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if !message.inbound,
+                   !message.originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   let onReEdit {
+                    Button {
+                        onReEdit(message.originalText)
+                    } label: {
+                        Text("重新编辑")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(QQTheme.qqBlue)
                     }
-                    Text(QQTheme.formatTime(message.timestamp))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.vertical, 2)
+        } else {
+            HStack(alignment: .top, spacing: 8) {
+                if message.inbound {
+                    avatarView
+                } else {
+                    Spacer(minLength: 44)
                 }
 
-                // 手机 QQ 圆角聊天气泡（入站白色/次级背景，出站 #0099FF 蓝底白字，支持 M17 内联图片缩略图）
-                Group {
-                    if !message.revoked, let img = inlineUIImage(from: parsed.body) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Image(uiImage: img)
-                                .resizable()
-                                .scaledToFit()
-                                .frame(maxWidth: 210, maxHeight: 150)
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            Text("🖼️ 图片缩略图")
-                                .font(.caption2)
-                                .foregroundStyle(bubbleForeground.opacity(0.85))
+                VStack(alignment: message.inbound ? .leading : .trailing, spacing: 4) {
+                    // 发送者昵称 + 时间戳 + 已读标识
+                    HStack(spacing: 6) {
+                        if message.inbound && !senderName.isEmpty {
+                            Text(senderName)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
                         }
-                        .padding(8)
-                        .background(
-                            bubbleBackground,
-                            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        )
-                    } else {
-                        Text(parsed.body)
-                            .font(.system(size: 15))
-                            .italic(message.revoked)
+                        if !message.inbound && !message.readBy.isEmpty {
+                            Text("✓ 已读")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(QQTheme.onlineGreen)
+                        }
+                        Text(QQTheme.formatTime(message.timestamp))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    // 手机 QQ 圆角聊天气泡（入站白色/次级背景，出站 #0099FF 蓝底白字，支持引用块与内联图片）
+                    Group {
+                        if let img = inlineUIImage(from: parsed.body) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Image(uiImage: img)
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(maxWidth: 210, maxHeight: 150)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                Text("🖼️ 图片缩略图")
+                                    .font(.caption2)
+                                    .foregroundStyle(bubbleForeground.opacity(0.85))
+                            }
+                            .padding(8)
+                            .background(
+                                bubbleBackground,
+                                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            )
+                        } else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                if let quote = splitQuoteBody.quote, !quote.isEmpty {
+                                    HStack(spacing: 6) {
+                                        RoundedRectangle(cornerRadius: 1.5)
+                                            .fill(message.inbound ? QQTheme.qqBlue : Color.white.opacity(0.78))
+                                            .frame(width: 3, height: 14)
+                                        Text(quote)
+                                            .font(.caption)
+                                            .foregroundStyle(message.inbound ? .secondary : Color.white.opacity(0.90))
+                                            .lineLimit(2)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        message.inbound
+                                            ? Color.primary.opacity(0.05)
+                                            : Color.white.opacity(0.16),
+                                        in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    )
+                                }
+
+                                Text(splitQuoteBody.body)
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(bubbleForeground)
+                                    .textSelection(.enabled)
+                            }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                             .background(
                                 bubbleBackground,
                                 in: RoundedRectangle(cornerRadius: 18, style: .continuous)
                             )
-                            .foregroundStyle(bubbleForeground)
-                            .textSelection(.enabled)
-                    }
-                }
-                .contextMenu {
-                        if !message.revoked {
-                            Button {
-                                onReply?()
-                            } label: {
-                                Label("回复", systemImage: "arrowshape.turn.up.left")
-                            }
-
-                            if let onReact {
-                                Button(action: onReact) {
-                                    Label("👍 点赞回应", systemImage: "hand.thumbsup")
-                                }
-                            }
-
-                            if let onPin {
-                                Button(action: onPin) {
-                                    Label("📌 置顶消息", systemImage: "pin")
-                                }
-                            }
-
-                            if message.inbound {
-                                Button {
-                                    onMarkRead?()
-                                } label: {
-                                    Label("标为已读", systemImage: "checkmark.circle")
-                                }
-                            } else {
-                                Button(role: .destructive) {
-                                    onRevoke?()
-                                } label: {
-                                    Label("撤回", systemImage: "arrow.uturn.backward")
-                                }
-                            }
                         }
                     }
-
-                // 气泡下方：已触发的点赞/表情回应胶囊徽章行
-                if !message.revoked && !parsed.reactions.isEmpty {
-                    HStack(spacing: 5) {
-                        ForEach(parsed.reactions, id: \.self) { emoji in
-                            Button {
-                                onReact?()
-                            } label: {
-                                Text("\(emoji) 1")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(QQTheme.qqBlue)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(QQTheme.qqBlue.opacity(0.14), in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-
-                // 气泡下方状态与快捷操作（✓ 已读 / 👍 点赞 / 回复 / 置顶 / 撤回）
-                HStack(spacing: 8) {
-                    if !message.inbound && !message.revoked && !message.readBy.isEmpty {
-                        Text("✓ 已读")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(QQTheme.qqBlue)
-                    }
-
-                    if !message.revoked {
+                    .contextMenu {
                         if let onReact {
-                            Button("👍 点赞", action: onReact)
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(QQTheme.qqBlue)
+                            Button(action: onReact) {
+                                Label("👍 点赞回应", systemImage: "hand.thumbsup")
+                            }
                         }
-                        if let onReply {
-                            Button("回复", action: onReply)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+
+                        Button {
+                            onReply?()
+                        } label: {
+                            Label("💬 引用回复", systemImage: "arrowshape.turn.up.left")
                         }
+
+                        Button {
+                            UIPasteboard.general.string = splitQuoteBody.body
+                        } label: {
+                            Label("📋 复制文本", systemImage: "doc.on.doc")
+                        }
+
                         if let onPin {
-                            Button("📌 置顶", action: onPin)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+                            Button(action: onPin) {
+                                Label("📌 置顶消息", systemImage: "pin")
+                            }
                         }
-                        if !message.inbound, let onRevoke {
-                            Button("撤回", action: onRevoke)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+
+                        if message.inbound {
+                            Button {
+                                onMarkRead?()
+                            } label: {
+                                Label("✓ 标为已读", systemImage: "checkmark.circle")
+                            }
+                        } else {
+                            Button(role: .destructive) {
+                                onRevoke?()
+                            } label: {
+                                Label("↩️ 撤回消息", systemImage: "arrow.uturn.backward")
+                            }
+                        }
+                    }
+
+                    // 气泡下方：仅在存在点赞/表情回应时展示 QQ 胶囊徽章行
+                    if !parsed.reactions.isEmpty {
+                        HStack(spacing: 5) {
+                            ForEach(parsed.reactions, id: \.self) { emoji in
+                                Button {
+                                    onReact?()
+                                } label: {
+                                    Text("\(emoji) 1")
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(QQTheme.qqBlue)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(QQTheme.qqBlue.opacity(0.14), in: Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
-            }
 
-            if message.inbound {
-                Spacer(minLength: 44)
-            } else {
-                avatarView
+                if message.inbound {
+                    Spacer(minLength: 44)
+                } else {
+                    avatarView
+                }
             }
         }
     }
@@ -562,17 +601,11 @@ struct BubbleRow: View {
     }
 
     private var bubbleBackground: Color {
-        if message.revoked {
-            return Color(.tertiarySystemGroupedBackground)
-        }
-        return message.inbound ? Color(.secondarySystemGroupedBackground) : QQTheme.qqBlue
+        message.inbound ? Color(.secondarySystemGroupedBackground) : QQTheme.qqBlue
     }
 
     private var bubbleForeground: Color {
-        if message.revoked {
-            return .secondary
-        }
-        return message.inbound ? .primary : .white
+        message.inbound ? .primary : .white
     }
 
     private func inlineUIImage(from raw: String) -> UIImage? {

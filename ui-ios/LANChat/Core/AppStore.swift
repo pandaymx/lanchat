@@ -372,10 +372,16 @@ final class AppStore: ObservableObject {
         }
         let key = (m.group?.isEmpty == false) ? m.group! : m.peerId
         var list = messagesByPeer[key] ?? []
-        if let idx = list.firstIndex(where: { $0.id == m.id }) {
-            list[idx] = m
+        var incoming = m
+        if incoming.originalText.isEmpty && !incoming.revoked && incoming.text != "消息已撤回" && incoming.text != "[消息已撤回]" {
+            incoming.originalText = QQTheme.extractEditableOriginal(incoming.text)
+        }
+        if let idx = list.firstIndex(where: { $0.id == incoming.id }) {
+            let preserved = list[idx].originalText.isEmpty ? incoming.originalText : list[idx].originalText
+            incoming.originalText = preserved
+            list[idx] = incoming
         } else {
-            list.append(m)
+            list.append(incoming)
         }
         messagesByPeer[key] = list
     }
@@ -384,6 +390,9 @@ final class AppStore: ObservableObject {
         guard !id.isEmpty else { return }
         for (key, var list) in messagesByPeer {
             if let idx = list.firstIndex(where: { $0.id == id }) {
+                if list[idx].originalText.isEmpty && list[idx].text != "消息已撤回" && list[idx].text != "[消息已撤回]" {
+                    list[idx].originalText = QQTheme.extractEditableOriginal(list[idx].text)
+                }
                 list[idx].revoked = true
                 list[idx].text = "消息已撤回"
                 messagesByPeer[key] = list

@@ -524,9 +524,14 @@ public sealed partial class ChatViewModel : ViewModelBase
         var type = parameters.TryGetProperty("type", out var t) ? t.GetString() ?? "text" : "text";
         var text = parameters.TryGetProperty("text", out var x) ? x.GetString() ?? "" : "";
 
-        if (type == "MSG_REVOKE")
+        if (type is "MSG_REVOKE" or "MSG_BURN")
         {
             RevokeMessage(msgId);
+            return;
+        }
+
+        if (type == "CLIP_SYNC")
+        {
             return;
         }
 

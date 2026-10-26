@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/pandaymx/lanchat/compare/v2.1.0...v2.2.0) (2026-10-26)
+
+
+### Features
+
+* **ui-android:** add one-tap embedded LAN hub mode and FileProvider auto-install on silent update (v2.2.0) ([72f2f51](https://github.com/pandaymx/lanchat/commit/72f2f51c7291ffd185aa63de5b3f6cfc7d5ab648))
+
 ## [2.1.0](https://github.com/pandaymx/lanchat/compare/v2.0.1...v2.1.0) (2026-10-26)
 
 

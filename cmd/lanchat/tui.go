@@ -810,8 +810,8 @@ func (m *tuiModel) executeTUICommand(rawLine string) (shouldQuit bool) {
 		}
 		return false
 
-	case strings.HasPrefix(line, "/send "):
-		path := strings.TrimSpace(strings.TrimPrefix(line, "/send "))
+	case strings.HasPrefix(line, "/send ") || strings.HasPrefix(line, "/senddir ") || strings.HasPrefix(line, "/folder "):
+		path := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(line, "/senddir"), "/folder"), "/send"))
 		var err error
 		if target == "*" || isChannelTarget(m.client, target) {
 			_, err = m.client.OfferFileToGroup(target, path)
@@ -819,7 +819,9 @@ func (m *tuiModel) executeTUICommand(rawLine string) (shouldQuit bool) {
 			_, err = m.client.OfferFile(target, path)
 		}
 		if err != nil {
-			m.setStatus("发送文件失败: " + err.Error())
+			m.setStatus("发送失败: " + err.Error())
+		} else if st, statErr := os.Stat(path); statErr == nil && st.IsDir() {
+			m.setStatus("已发起文件夹目录树流式传输: " + filepath.Base(path))
 		} else {
 			m.setStatus("已发起文件传输: " + filepath.Base(path))
 		}

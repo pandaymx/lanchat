@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.11.1](https://github.com/pandaymx/lanchat/compare/v1.11.0...v1.11.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **ci:** keep ELF dynamic symbols and 16KB alignment in Android gomobile AAR ([553dd80](https://github.com/pandaymx/lanchat/commit/553dd808eb3b64980ac10a3fea1e8e8f58d81bc8))
+* **ui-android:** fix startup crash from missing multicast permission and service race ([89a88c3](https://github.com/pandaymx/lanchat/commit/89a88c395d7bc5599470ba024b10366043b43d03))
+
 ## [1.11.0](https://github.com/pandaymx/lanchat/compare/v1.10.4...v1.11.0) (2026-10-26)
 
 

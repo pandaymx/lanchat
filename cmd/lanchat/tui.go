@@ -406,8 +406,21 @@ func (m *tuiModel) renderFrame(width, height int) string {
 		connBadge = "× 未连接"
 	}
 	fp := m.client.Fingerprint()
-	headerPlain := fmt.Sprintf(" LANChat TUI %s │ %s │ 当前会话: %s │ 本机: %s │ 安全码: %s",
-		version, connBadge, activeTitle, orDefault(st.Nickname, st.SelfID), fp)
+	dndTag := ""
+	if m.client.IsDND() {
+		dndTag = " │ 🔕 免打扰"
+	}
+	unread, mentions := m.client.UnreadTotal()
+	unreadTag := ""
+	if unread > 0 {
+		if mentions > 0 {
+			unreadTag = fmt.Sprintf(" │ 📩 未读:%d(@%d)", unread, mentions)
+		} else {
+			unreadTag = fmt.Sprintf(" │ 📩 未读:%d", unread)
+		}
+	}
+	headerPlain := fmt.Sprintf(" LANChat TUI %s │ %s │ 当前会话: %s │ 本机: %s │ 安全码: %s%s%s",
+		version, connBadge, activeTitle, orDefault(st.Nickname, st.SelfID), fp, dndTag, unreadTag)
 	buf.WriteString(ansiBgBlue + padOrTruncateDisplay(headerPlain, width) + ansiReset + "\r\n")
 
 	// 计算活跃传输条占用的底部行数（最多展示 2 条传输）

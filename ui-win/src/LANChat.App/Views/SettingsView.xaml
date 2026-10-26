@@ -108,6 +108,34 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 版本更新与国内加速静默下载卡片 -->
+                <Border Padding="20"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="🚀 版本更新（国内代理静默下载 · 免浏览器）" FontWeight="SemiBold" FontSize="14" />
+                        <TextBlock Text="{Binding Settings.UpdateStatus}"
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                        <TextBox CornerRadius="6"
+                                 Text="{Binding Settings.UpdateProxy, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 PlaceholderText="可选自定义加速代理前缀（留空默认自动轮询 ghfast.top / gh-proxy.com 等国内节点）" />
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Button Content="🔍 检查新版本"
+                                    CornerRadius="6"
+                                    Command="{Binding Settings.CheckUpdateCommand}" />
+                            <Button Content="⬇️ 静默下载更新包"
+                                    CornerRadius="6"
+                                    Background="#0099FF"
+                                    Foreground="White"
+                                    Command="{Binding Settings.SilentDownloadUpdateCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- 状态提示 -->
                 <TextBlock Text="{Binding Settings.StatusMessage}"
                            FontSize="12"

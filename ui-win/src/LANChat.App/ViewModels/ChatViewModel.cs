@@ -210,6 +210,12 @@ public sealed partial class ChatViewModel : ViewModelBase
                     Draft = "";
                     return;
                 }
+                if (msgId.StartsWith("update:", StringComparison.Ordinal))
+                {
+                    AppendSystemMessage($"🚀 版本更新：{msgId[7..]}");
+                    Draft = "";
+                    return;
+                }
                 if (text.StartsWith("/revoke ", StringComparison.Ordinal))
                 {
                     RevokeMessage(text[8..].Trim());

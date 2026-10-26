@@ -74,7 +74,7 @@ Line 0 '<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">'
 Line 1 ('<Package Name="LANChat" Manufacturer="LANChat" Version="' + $Version + '"')
 Line 1 ('           UpgradeCode="' + $UpgradeCode + '" Scope="perMachine" Compressed="yes">')
 Line 2 '<MajorUpgrade DowngradeErrorMessage="A newer version of LANChat is already installed." />'
-Line 2 '<MediaTemplate EmbedCab="yes" />'
+Line 2 '<MediaTemplate EmbedCab="yes" CompressionLevel="high" />'
 
 # Directory tree (no components here).
 Line 2 '<StandardDirectory Id="ProgramFiles64Folder">'

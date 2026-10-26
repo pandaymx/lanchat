@@ -98,7 +98,15 @@ func (c *Client) BrowseServers() []appapi.Server {
 		}
 	}
 
-	for _, s := range probeStaticServers(os.Getenv("LANCHAT_STATIC_SERVERS")) {
+	staticRaw := os.Getenv("LANCHAT_STATIC_SERVERS")
+	if gossipEps := c.GossipEndpoints(); len(gossipEps) > 0 {
+		if staticRaw != "" {
+			staticRaw += "," + strings.Join(gossipEps, ",")
+		} else {
+			staticRaw = strings.Join(gossipEps, ",")
+		}
+	}
+	for _, s := range probeStaticServers(staticRaw) {
 		if !seenAddr[s.Addr] {
 			seenAddr[s.Addr] = true
 			out = append(out, s)

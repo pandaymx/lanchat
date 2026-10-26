@@ -276,6 +276,49 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			}
 		}
 		return true
+
+	case strings.HasPrefix(text, "sys:call:"):
+		rest := strings.TrimPrefix(text, "sys:call:")
+		switch {
+		case strings.HasPrefix(rest, "offer:"):
+			remoteUDP := strings.TrimSpace(strings.TrimPrefix(rest, "offer:"))
+			if remoteUDP != "" {
+				_, _ = c.AcceptVoiceCall(env.From, env.Group, remoteUDP)
+				c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL", "📞 [实时语音通话已接通] "+remoteUDP)
+			}
+		case strings.HasPrefix(rest, "accept:"):
+			remoteUDP := strings.TrimSpace(strings.TrimPrefix(rest, "accept:"))
+			if remoteUDP != "" {
+				c.setVoiceRemoteUDP(remoteUDP)
+				c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL", "📞 [对方已接听实时语音] "+remoteUDP)
+			}
+		case rest == "hangup":
+			c.closeVoiceSession()
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL", "📞 [实时语音通话已结束]")
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:screen:"):
+		rest := strings.TrimPrefix(text, "sys:screen:")
+		switch {
+		case strings.HasPrefix(rest, "start:"):
+			fps := strings.TrimSpace(strings.TrimPrefix(rest, "start:"))
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_SHARE", "🖥️ [屏幕共享已开启 "+fps+"fps]")
+		case strings.HasPrefix(rest, "frame:"):
+			frame := strings.TrimSpace(strings.TrimPrefix(rest, "frame:"))
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_FRAME", frame)
+		case rest == "stop":
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_SHARE", "🖥️ [屏幕共享已结束]")
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:gossip:"):
+		raw := strings.TrimSpace(strings.TrimPrefix(text, "sys:gossip:"))
+		if raw != "" {
+			parts := strings.Split(raw, ",")
+			c.AddGossipEndpoints(parts...)
+		}
+		return true
 	}
 	return false
 }

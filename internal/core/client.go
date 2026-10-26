@@ -71,10 +71,14 @@ type Client struct {
 	history       *historyStore
 	e2eeKey       string
 	casIndex      map[string]string
-	sharedClip    string
-	dnd           bool
-	unreadCounts  map[string]int
-	mentionCounts map[string]int
+	sharedClip     string
+	dnd            bool
+	unreadCounts   map[string]int
+	mentionCounts  map[string]int
+	voice          *voiceSession
+	screenSharing  bool
+	screenShareFPS int
+	gossipBook     *discover.GossipPeerBook
 
 	cb appapi.Listener
 
@@ -182,6 +186,7 @@ func (c *Client) Close() {
 		for _, g := range gtasks {
 			g.teardown()
 		}
+		c.closeVoiceSession()
 		if conn != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 		}

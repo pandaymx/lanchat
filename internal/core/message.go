@@ -1,7 +1,9 @@
 package core
 
 import (
+	"encoding/base64"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -185,6 +187,9 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		items := c.HistoryPage(convID, beforeTS, limit)
 		return fmt.Sprintf("history:%d", len(items)), nil
+	}
+	if res, handled, err := c.handleCollabCommand(trimmed, to, group); handled {
+		return res, err
 	}
 	if group == "" && to == "" {
 		return "", errPeerNotFound
@@ -594,6 +599,25 @@ func formatVoiceMessage(raw string) string {
 	}
 	ext := strings.ToLower(filepath.Ext(first))
 	if ext == ".wav" || ext == ".mp3" || ext == ".ogg" || ext == ".m4a" || ext == ".opus" || ext == ".aac" {
+		if rawBytes, err := os.ReadFile(first); err == nil && len(rawBytes) > 0 && len(rawBytes) <= 512*1024 {
+			mime := "audio/mp4"
+			switch ext {
+			case ".wav":
+				mime = "audio/wav"
+			case ".mp3":
+				mime = "audio/mpeg"
+			case ".ogg", ".opus":
+				mime = "audio/ogg"
+			}
+			sec := len(rawBytes) / 3000
+			if sec < 1 {
+				sec = 1
+			}
+			if sec > 60 {
+				sec = 60
+			}
+			return fmt.Sprintf("🎤 [语音消息 %d\"] data:%s;base64,%s", sec, mime, base64.StdEncoding.EncodeToString(rawBytes))
+		}
 		return `🎤 [语音消息 · ` + filepath.Base(first) + `]`
 	}
 	return `🎤 [语音消息 3"] ` + raw

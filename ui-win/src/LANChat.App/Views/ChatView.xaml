@@ -169,7 +169,7 @@
                                                 MaxWidth="220"
                                                 MaxHeight="160"
                                                 Visibility="{Binding HasInlineImage, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <Image Source="{Binding Text}"
+                                            <Image Source="{Binding CleanText}"
                                                    Stretch="Uniform"
                                                    MaxWidth="220"
                                                    MaxHeight="160" />
@@ -180,7 +180,27 @@
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
+                                <!-- 气泡下方的点赞/表情回应胶囊徽章 -->
+                                <Border CornerRadius="10"
+                                        Padding="8,2"
+                                        HorizontalAlignment="Left"
+                                        Background="#1F0099FF"
+                                        BorderBrush="#470099FF"
+                                        BorderThickness="1"
+                                        Visibility="{Binding HasReactions, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <TextBlock Text="{Binding ReactionsText}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               Foreground="#0088EE" />
+                                </Border>
                                 <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <Button Content="👍 点赞"
+                                            FontSize="11"
+                                            Padding="6,1"
+                                            CornerRadius="4"
+                                            Visibility="{Binding CanReply, Converter={StaticResource BoolToVisibilityConverter}}"
+                                            Tag="{Binding}"
+                                            Click="ReactMessageButton_Click" />
                                     <Button Content="↩ 回复"
                                             FontSize="11"
                                             Padding="6,1"
@@ -233,7 +253,7 @@
                                                 MaxWidth="220"
                                                 MaxHeight="160"
                                                 Visibility="{Binding HasInlineImage, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <Image Source="{Binding Text}"
+                                            <Image Source="{Binding CleanText}"
                                                    Stretch="Uniform"
                                                    MaxWidth="220"
                                                    MaxHeight="160" />
@@ -244,6 +264,19 @@
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
+                                <!-- 气泡下方的点赞/表情回应胶囊徽章 -->
+                                <Border CornerRadius="10"
+                                        Padding="8,2"
+                                        HorizontalAlignment="Right"
+                                        Background="#1F0099FF"
+                                        BorderBrush="#470099FF"
+                                        BorderThickness="1"
+                                        Visibility="{Binding HasReactions, Converter={StaticResource BoolToVisibilityConverter}}">
+                                    <TextBlock Text="{Binding ReactionsText}"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               Foreground="#0088EE" />
+                                </Border>
                                 <StackPanel Orientation="Horizontal"
                                             HorizontalAlignment="Right"
                                             Spacing="8">
@@ -251,6 +284,13 @@
                                                FontSize="11"
                                                VerticalAlignment="Center"
                                                Foreground="#0088EE" />
+                                    <Button Content="👍 点赞"
+                                            FontSize="11"
+                                            Padding="6,1"
+                                            CornerRadius="4"
+                                            Visibility="{Binding CanReply, Converter={StaticResource BoolToVisibilityConverter}}"
+                                            Tag="{Binding}"
+                                            Click="ReactMessageButton_Click" />
                                     <Button Content="↩ 回复"
                                             FontSize="11"
                                             Padding="6,1"

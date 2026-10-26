@@ -62,9 +62,65 @@ public sealed record ChatMessage
     /// <summary>M17: 是否携带 data:image/...;base64,... 内联缩略图。</summary>
     public bool HasInlineImage =>
         !Revoked &&
-        Text.TrimStart().StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) &&
-        Text.Contains(";base64,", StringComparison.Ordinal);
+        CleanText.TrimStart().StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) &&
+        CleanText.Contains(";base64,", StringComparison.Ordinal);
 
-    /// <summary>气泡展示文本（若为内联 base64 图片则显示紧凑摘要，避免渲染长串 base64）。</summary>
-    public string DisplayText => HasInlineImage ? "🖼️ [图片内联预览]" : Text;
+    /// <summary>剥离尾部点赞/表情回应徽章后的消息正文。</summary>
+    public string CleanText => SplitReactions(Text).Body;
+
+    /// <summary>M20: 解析出的尾部表情回应列表（展示在气泡下方）。</summary>
+    public IReadOnlyList<string> Reactions => Revoked ? [] : SplitReactions(Text).Reactions;
+
+    /// <summary>是否存在应在气泡下方展示的点赞/表情回应徽章。</summary>
+    public bool HasReactions => !Revoked && Reactions.Count > 0;
+
+    /// <summary>气泡下方点赞/表情回应胶囊展示文案（如 "👍 1"）。</summary>
+    public string ReactionsText => string.Join("  ", Reactions.Select(r => $"{r} 1"));
+
+    /// <summary>气泡展示文本（若为内联 base64 图片则显示紧凑摘要，且不包含气泡下方的点赞徽章）。</summary>
+    public string DisplayText => HasInlineImage ? "🖼️ [图片内联预览]" : CleanText;
+
+    private static bool IsReactionEmojiToken(string token)
+    {
+        if (string.IsNullOrEmpty(token) || token.Length > 24)
+        {
+            return false;
+        }
+
+        foreach (var ch in token)
+        {
+            if (char.IsAsciiLetterOrDigit(ch) || (ch >= '\u4E00' && ch <= '\u9FFF') || ch is ':' or '"' or ' ')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public static (string Body, IReadOnlyList<string> Reactions) SplitReactions(string raw)
+    {
+        var body = raw ?? "";
+        var reversed = new List<string>();
+        while (body.EndsWith(']'))
+        {
+            var idx = body.LastIndexOf(" [", StringComparison.Ordinal);
+            if (idx < 0)
+            {
+                break;
+            }
+
+            var token = body[(idx + 2)..^1];
+            if (!IsReactionEmojiToken(token))
+            {
+                break;
+            }
+
+            reversed.Add(token);
+            body = body[..idx];
+        }
+
+        reversed.Reverse();
+        return (body, reversed);
+    }
 }

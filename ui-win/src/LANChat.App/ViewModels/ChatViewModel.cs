@@ -198,6 +198,18 @@ public sealed partial class ChatViewModel : ViewModelBase
                     Draft = "";
                     return;
                 }
+                if (msgId.StartsWith("bwlimit:", StringComparison.Ordinal))
+                {
+                    AppendSystemMessage($"⚡ 传输带宽限速已设置为：{msgId[8..]} MB/s");
+                    Draft = "";
+                    return;
+                }
+                if (msgId.StartsWith("status:", StringComparison.Ordinal))
+                {
+                    AppendSystemMessage($"📊 诊断状态：{msgId[7..]}");
+                    Draft = "";
+                    return;
+                }
                 if (text.StartsWith("/revoke ", StringComparison.Ordinal))
                 {
                     RevokeMessage(text[8..].Trim());
@@ -207,6 +219,30 @@ public sealed partial class ChatViewModel : ViewModelBase
                 if (text.StartsWith("/read ", StringComparison.Ordinal))
                 {
                     MarkRead(text[6..].Trim(), SelfId);
+                    Draft = "";
+                    return;
+                }
+                if (text.StartsWith("/react ", StringComparison.Ordinal))
+                {
+                    var parts = text[7..].Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    var emoji = parts.Length >= 2 ? parts[1] : "👍";
+                    UpdateMessageDisplay(msgId, m => m.Text.Contains($"[{emoji}]", StringComparison.Ordinal) ? m.Text : $"{m.Text} [{emoji}]");
+                    Draft = "";
+                    return;
+                }
+                if (text.StartsWith("/edit ", StringComparison.Ordinal))
+                {
+                    var parts = text[6..].Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 2)
+                    {
+                        UpdateMessageDisplay(msgId, _ => $"{parts[1]} (已编辑)");
+                    }
+                    Draft = "";
+                    return;
+                }
+                if (text.StartsWith("/pin ", StringComparison.Ordinal))
+                {
+                    UpdateMessageDisplay(msgId, m => m.Text.StartsWith("📌 ", StringComparison.Ordinal) ? m.Text : $"📌 {m.Text}");
                     Draft = "";
                     return;
                 }
@@ -839,7 +875,7 @@ public sealed partial class ChatViewModel : ViewModelBase
             var orig = list.FirstOrDefault(m => m.MsgId == targetId && !m.Revoked);
             if (orig is not null)
             {
-                return $"「{orig.Text}」\n{body}";
+                return $"「{orig.CleanText}」\n{body}";
             }
         }
         return $"[re:{targetId}] {body}";

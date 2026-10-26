@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/pandaymx/lanchat/compare/v2.0.1...v2.1.0) (2026-10-26)
+
+
+### Features
+
+* **bindings:** expose v2.0 voice/screen/history APIs to mobile and add 5-client voice call UI (v2.1.0) ([9e0728b](https://github.com/pandaymx/lanchat/commit/9e0728bb96da137db9f2dcd9a11f59eadb3b41ae))
+
 ## [2.0.1](https://github.com/pandaymx/lanchat/compare/v2.0.0...v2.0.1) (2026-10-26)
 
 

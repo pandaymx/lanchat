@@ -12,22 +12,29 @@ import (
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/config"
 	"github.com/pandaymx/lanchat/internal/server"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const testPSK = "test-psk"
 
+// testPSKHash 在包初始化阶段以 bcrypt.MinCost 预计算一次测试口令哈希，
+// 避免每个测试用例与客户端握手在 -race 下重复执行 cost=10 的 Blowfish 扩展。
+var testPSKHash = func() string {
+	h, err := bcrypt.GenerateFromPassword([]byte(testPSK), bcrypt.MinCost)
+	if err != nil {
+		panic(err)
+	}
+	return string(h)
+}()
+
 // startServer 在随机端口启动测试服务器，返回 WS URL。
 func startServer(t *testing.T) string {
 	t.Helper()
-	hash, err := config.HashPSK(testPSK)
-	if err != nil {
-		t.Fatal(err)
-	}
 	opts := server.Options{
 		Listen:            "127.0.0.1:0",
 		Path:              "/lctp",
 		AuthMode:          config.AuthModePSK,
-		PSKHash:           hash,
+		PSKHash:           testPSKHash,
 		HeartbeatInterval: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		ShutdownGrace:     time.Second,
@@ -57,15 +64,11 @@ func startServer(t *testing.T) string {
 // startServerWithRelay 启动同时承载中继数据面的测试服务器，返回 WS URL。
 func startServerWithRelay(t *testing.T) string {
 	t.Helper()
-	hash, err := config.HashPSK(testPSK)
-	if err != nil {
-		t.Fatal(err)
-	}
 	opts := server.Options{
 		Listen:            "127.0.0.1:0",
 		Path:              "/lctp",
 		AuthMode:          config.AuthModePSK,
-		PSKHash:           hash,
+		PSKHash:           testPSKHash,
 		HeartbeatInterval: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		ShutdownGrace:     time.Second,

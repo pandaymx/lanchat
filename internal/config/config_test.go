@@ -90,12 +90,19 @@ func TestLoadInvalidAuthMode(t *testing.T) {
 	}
 }
 
+// testPSKHash 在包初始化阶段以 bcrypt.MinCost 预计算一次测试口令哈希，
+// 供配置加载用例复用，避免在 -race 下重复执行 6 次 cost=10 的 HashPSK。
+var testPSKHash = func() string {
+	h, err := bcrypt.GenerateFromPassword([]byte("test-config-secret"), bcrypt.MinCost)
+	if err != nil {
+		panic(err)
+	}
+	return string(h)
+}()
+
 func TestLoadEnvOverridesAndPSKHash(t *testing.T) {
 	clearConfigEnv(t)
-	hash, err := HashPSK("env-secret")
-	if err != nil {
-		t.Fatalf("HashPSK: %v", err)
-	}
+	hash := testPSKHash
 	withEnv(t, "LANCHAT_PSK_HASH", hash)
 	withEnv(t, "LANCHAT_LISTEN", ":20000")
 	withEnv(t, "LANCHAT_HEARTBEAT_SEC", "7")
@@ -121,11 +128,7 @@ func TestLoadEnvOverridesAndPSKHash(t *testing.T) {
 
 func TestLoadFlagBeatsEnv(t *testing.T) {
 	clearConfigEnv(t)
-	hash, err := HashPSK("secret")
-	if err != nil {
-		t.Fatalf("HashPSK: %v", err)
-	}
-	withEnv(t, "LANCHAT_PSK_HASH", hash)
+	withEnv(t, "LANCHAT_PSK_HASH", testPSKHash)
 	withEnv(t, "LANCHAT_LISTEN", ":20000")
 
 	cfg, err := Load("", map[string]string{"listen": ":21000"})
@@ -139,11 +142,7 @@ func TestLoadFlagBeatsEnv(t *testing.T) {
 
 func TestLoadInvalidPositiveInt(t *testing.T) {
 	clearConfigEnv(t)
-	hash, err := HashPSK("secret")
-	if err != nil {
-		t.Fatalf("HashPSK: %v", err)
-	}
-	withEnv(t, "LANCHAT_PSK_HASH", hash)
+	withEnv(t, "LANCHAT_PSK_HASH", testPSKHash)
 	withEnv(t, "LANCHAT_HEARTBEAT_SEC", "0")
 	if _, err := Load("", nil); err == nil {
 		t.Fatal("heartbeatSec=0 应报错，实际通过")
@@ -152,11 +151,7 @@ func TestLoadInvalidPositiveInt(t *testing.T) {
 
 func TestLoadInvalidPath(t *testing.T) {
 	clearConfigEnv(t)
-	hash, err := HashPSK("secret")
-	if err != nil {
-		t.Fatalf("HashPSK: %v", err)
-	}
-	withEnv(t, "LANCHAT_PSK_HASH", hash)
+	withEnv(t, "LANCHAT_PSK_HASH", testPSKHash)
 	withEnv(t, "LANCHAT_PATH", "lctp")
 	if _, err := Load("", nil); err == nil {
 		t.Fatal("path 不以 / 开头应报错，实际通过")
@@ -165,10 +160,7 @@ func TestLoadInvalidPath(t *testing.T) {
 
 func TestLoadFromYAML(t *testing.T) {
 	clearConfigEnv(t)
-	hash, err := HashPSK("yaml-secret")
-	if err != nil {
-		t.Fatalf("HashPSK: %v", err)
-	}
+	hash := testPSKHash
 	content := "server:\n  listen: ':22000'\n  authMode: psk\n  pskHash: '" + hash + "'\n"
 	path := filepath.Join(t.TempDir(), "lanchat.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -188,11 +180,7 @@ func TestLoadFromYAML(t *testing.T) {
 
 func TestLoadMissingFileIgnored(t *testing.T) {
 	clearConfigEnv(t)
-	hash, err := HashPSK("secret")
-	if err != nil {
-		t.Fatalf("HashPSK: %v", err)
-	}
-	withEnv(t, "LANCHAT_PSK_HASH", hash)
+	withEnv(t, "LANCHAT_PSK_HASH", testPSKHash)
 	if _, err := Load(filepath.Join(t.TempDir(), "absent.yaml"), nil); err != nil {
 		t.Fatalf("配置文件不存在时应忽略，得到错误: %v", err)
 	}

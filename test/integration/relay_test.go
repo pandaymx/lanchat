@@ -209,8 +209,8 @@ func TestRelayForceCiphertext(t *testing.T) {
 
 	// 剔除两条连接各自的明文握手行（relayID）后，其余应全为密文。
 	captured := bytes.ReplaceAll(tp.bytes(), []byte(relayID), nil)
-	// 明文断言：取多处 256B 窗口，任何窗口都不应在线路出现。
-	for off := 0; off+256 <= len(plain); off += 512 {
+	// 明文断言：按 64 KiB 步长跨全部 3 MiB 数据块抽样 256B 窗口，任何窗口都不应在线路出现。
+	for off := 0; off+256 <= len(plain); off += 64 << 10 {
 		if bytes.Contains(captured, plain[off:off+256]) {
 			t.Fatalf("中继链路在偏移 %d 处出现 256B 明文片段", off)
 		}

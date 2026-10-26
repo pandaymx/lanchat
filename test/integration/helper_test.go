@@ -10,6 +10,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/pandaymx/lanchat/internal/config"
 	"github.com/pandaymx/lanchat/internal/protocol"
@@ -25,6 +26,16 @@ func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 
 // testPSK 是集成测试统一使用的明文口令。
 const testPSK = "test-psk"
+
+// testPSKHash 在包初始化阶段以 bcrypt.MinCost 预计算一次测试口令哈希，
+// 避免每个集成测试用例与客户端握手在 -race 下重复执行 cost=10 的 Blowfish 扩展。
+var testPSKHash = func() string {
+	h, err := bcrypt.GenerateFromPassword([]byte(testPSK), bcrypt.MinCost)
+	if err != nil {
+		panic(err)
+	}
+	return string(h)
+}()
 
 // testClient 是一个测试侧 WS 客户端。
 type testClient struct {
@@ -45,15 +56,11 @@ func startTestServer(t *testing.T) string {
 // startTestServerOpts 以给定覆盖参数启动服务器（nil 表示全用默认）。
 func startTestServerOpts(t *testing.T, mutate func(*server.Options)) string {
 	t.Helper()
-	hash, err := config.HashPSK(testPSK)
-	if err != nil {
-		t.Fatalf("生成测试 PSK 哈希: %v", err)
-	}
 	opts := server.Options{
 		Listen:            "127.0.0.1:0",
 		Path:              "/lctp",
 		AuthMode:          config.AuthModePSK,
-		PSKHash:           hash,
+		PSKHash:           testPSKHash,
 		HeartbeatInterval: 5 * time.Second,
 		IdleTimeout:       15 * time.Second,
 		ShutdownGrace:     time.Second,

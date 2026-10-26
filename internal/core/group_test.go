@@ -111,11 +111,12 @@ func TestG2ChannelMembersOnly(t *testing.T) {
 		return false
 	})
 
-	// a 在频道内发言：b 应收到，c 不应收到。发言前确认 a、b 均已在频道内。
+	// a 在频道内发言：b 应收到，c 不应收到。发言前确认 a、b 均已在频道内且频道密钥已分发就绪。
 	aID := a.GetState().SelfID
 	waitFor(t, time.Second, func() bool {
 		return memberIn(la.channelSnapshot(), channelID, aID) &&
-			memberIn(lb.channelSnapshot(), channelID, bID)
+			memberIn(lb.channelSnapshot(), channelID, bID) &&
+			b.ensureChannelKey(channelID) != ""
 	})
 	if _, err := a.SendText("", "channel hi", channelID); err != nil {
 		t.Fatal(err)
@@ -192,7 +193,8 @@ func TestG2PrivateInviteAndLeave(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, time.Second, func() bool {
-		return memberIn(lb.channelSnapshot(), channelID, bID)
+		return memberIn(lb.channelSnapshot(), channelID, bID) &&
+			b.ensureChannelKey(channelID) != ""
 	})
 
 	// b 现在能收到频道消息。

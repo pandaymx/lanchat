@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/crypto/bcrypt"
 
-	"github.com/pandaymx/lanchat/internal/config"
 	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
@@ -129,11 +129,17 @@ func TestAuthenticatorNone(t *testing.T) {
 	}
 }
 
-func TestAuthenticatorPSKSuccess(t *testing.T) {
-	hash, err := config.HashPSK("s3cret")
+func testMinCostHash(t *testing.T, plain string) string {
+	t.Helper()
+	h, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.MinCost)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return string(h)
+}
+
+func TestAuthenticatorPSKSuccess(t *testing.T) {
+	hash := testMinCostHash(t, "s3cret")
 	a := newAuthenticator("psk", hash)
 	if _, ok := a.helloOK("10.0.0.1", "s3cret"); !ok {
 		t.Fatal("正确口令应通过")
@@ -143,10 +149,7 @@ func TestAuthenticatorPSKSuccess(t *testing.T) {
 func TestAuthenticatorPSKFailAndCooldown(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	clock := base
-	hash, err := config.HashPSK("s3cret")
-	if err != nil {
-		t.Fatal(err)
-	}
+	hash := testMinCostHash(t, "s3cret")
 	a := newAuthenticator("psk", hash)
 	a.now = func() time.Time { return clock }
 

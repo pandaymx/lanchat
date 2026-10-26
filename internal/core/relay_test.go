@@ -18,15 +18,11 @@ import (
 // startRelayServer 启动带数据面中继的服务器，返回 WS URL。
 func startRelayServer(t *testing.T) string {
 	t.Helper()
-	hash, err := config.HashPSK(testPSK)
-	if err != nil {
-		t.Fatal(err)
-	}
 	opts := server.Options{
 		Listen:            "127.0.0.1:0",
 		Path:              "/lctp",
 		AuthMode:          config.AuthModePSK,
-		PSKHash:           hash,
+		PSKHash:           testPSKHash,
 		HeartbeatInterval: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		ShutdownGrace:     time.Second,

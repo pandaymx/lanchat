@@ -22,6 +22,9 @@ public sealed record ChatMessage
     /// <summary>M11a: 消息是否已撤回。</summary>
     public bool Revoked { get; init; }
 
+    /// <summary>撤回前保存的原始可编辑正文（用于点击「重新编辑」恢复到输入框）。</summary>
+    public string OriginalText { get; init; } = "";
+
     /// <summary>M11a: 已读该消息的对端 ID 列表。</summary>
     public IReadOnlyList<string> ReadBy { get; init; } = [];
 
@@ -31,11 +34,23 @@ public sealed record ChatMessage
     /// <summary>系统提示消息。</summary>
     public bool IsSystem => Type == "system";
 
-    /// <summary>对端发来的消息（左侧气泡）。</summary>
-    public bool IsInbound => !IsSelf && !IsSystem;
+    /// <summary>QQ 风格居中撤回提示条（已撤回消息不显示左右头像与聊天气泡）。</summary>
+    public bool IsRevokedNotice => Revoked && !IsSystem;
 
-    /// <summary>自己发出的消息（右侧 QQ 蓝气泡）。</summary>
-    public bool IsOutbound => IsSelf && !IsSystem;
+    /// <summary>居中撤回提示文案：自己撤回显示「你撤回了一条消息」，对方撤回显示「"昵称" 撤回了一条消息」。</summary>
+    public string RevokeNoticeText =>
+        IsSelf
+            ? "你撤回了一条消息"
+            : $"\"{(string.IsNullOrWhiteSpace(FromName) ? "对方" : FromName)}\" 撤回了一条消息";
+
+    /// <summary>是否显示「重新编辑」蓝色按钮（仅自己撤回且存在原始文本时显示）。</summary>
+    public bool CanReEdit => Revoked && IsSelf && !IsSticker && !string.IsNullOrWhiteSpace(OriginalText);
+
+    /// <summary>对端发来的消息（左侧气泡，不含已撤回消息）。</summary>
+    public bool IsInbound => !IsSelf && !IsSystem && !Revoked;
+
+    /// <summary>自己发出的消息（右侧 QQ 蓝气泡，不含已撤回消息）。</summary>
+    public bool IsOutbound => IsSelf && !IsSystem && !Revoked;
 
     /// <summary>圆形头像首字。</summary>
     public string SenderInitial =>
@@ -44,14 +59,17 @@ public sealed record ChatMessage
     /// <summary>格式化时间戳（HH:mm）。</summary>
     public string FormattedTime => Timestamp.ToLocalTime().ToString("HH:mm");
 
-    /// <summary>消息气泡顶部发送者与时间栏。</summary>
-    public string HeaderText => $"{FromName}  {FormattedTime}";
+    /// <summary>消息气泡顶部发送者与时间栏（自己发送的消息仅展示时间与已读状态，避免重复显示“我”）。</summary>
+    public string HeaderText =>
+        IsSelf
+            ? (IsRead ? $"{FormattedTime} · ✓ 已读" : FormattedTime)
+            : $"{FromName}  {FormattedTime}";
 
     /// <summary>是否已被对端读取。</summary>
     public bool IsRead => IsSelf && !Revoked && ReadBy.Count > 0;
 
     /// <summary>已读回执文案。</summary>
-    public string ReadReceiptText => Revoked ? "已撤回" : (IsRead ? "✓ 已读" : "✓ 已送达");
+    public string ReadReceiptText => Revoked ? "已撤回" : (IsRead ? "✓ 已读" : "");
 
     /// <summary>是否允许撤回（自己发送的非系统未撤回消息）。</summary>
     public bool CanRevoke => IsSelf && !Revoked && !IsSystem && !string.IsNullOrEmpty(MsgId);
@@ -68,6 +86,15 @@ public sealed record ChatMessage
     /// <summary>剥离尾部点赞/表情回应徽章后的消息正文。</summary>
     public string CleanText => SplitReactions(Text).Body;
 
+    /// <summary>是否包含 QQ 引用回复块（「...」\n）。</summary>
+    public bool HasQuote => !Revoked && !HasInlineImage && SplitQuote(CleanText).HasQuote;
+
+    /// <summary>被引用回复的原消息内容。</summary>
+    public string QuotedText => SplitQuote(CleanText).Quoted;
+
+    /// <summary>剥离引用回复块与尾部表情回应后的实际消息正文。</summary>
+    public string BodyText => HasInlineImage ? "🖼️ [图片]" : SplitQuote(CleanText).Body;
+
     /// <summary>M20: 解析出的尾部表情回应列表（展示在气泡下方）。</summary>
     public IReadOnlyList<string> Reactions => Revoked ? [] : SplitReactions(Text).Reactions;
 
@@ -77,8 +104,22 @@ public sealed record ChatMessage
     /// <summary>气泡下方点赞/表情回应胶囊展示文案（如 "👍 1"）。</summary>
     public string ReactionsText => string.Join("  ", Reactions.Select(r => $"{r} 1"));
 
-    /// <summary>气泡展示文本（若为内联 base64 图片则显示紧凑摘要，且不包含气泡下方的点赞徽章）。</summary>
-    public string DisplayText => HasInlineImage ? "🖼️ [图片内联预览]" : CleanText;
+    /// <summary>气泡展示文本（若包含引用块则仅返回正文部分，引用块由独立卡片渲染）。</summary>
+    public string DisplayText => BodyText;
+
+    private static (bool HasQuote, string Quoted, string Body) SplitQuote(string clean)
+    {
+        if (clean.StartsWith('「'))
+        {
+            var closeIdx = clean.IndexOf("」\n", StringComparison.Ordinal);
+            if (closeIdx > 1)
+            {
+                return (true, clean[1..closeIdx], clean[(closeIdx + 2)..]);
+            }
+        }
+
+        return (false, "", clean);
+    }
 
     private static bool IsReactionEmojiToken(string token)
     {

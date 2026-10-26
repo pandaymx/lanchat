@@ -118,7 +118,34 @@
                                        TextWrapping="Wrap" />
                         </Border>
 
-                        <!-- 对端发来的消息（左侧：36x36 圆形头像 + 发送者/时间 + 白色气泡 + 回复按钮） -->
+                        <!-- QQ 风格撤回消息居中提示条（无头像、无气泡；自己撤回时附带蓝色「重新编辑」按钮） -->
+                        <Border HorizontalAlignment="Center"
+                                Background="#E8EBF0"
+                                CornerRadius="12"
+                                Padding="12,4"
+                                Visibility="{Binding IsRevokedNotice, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <StackPanel Orientation="Horizontal"
+                                        Spacing="6"
+                                        VerticalAlignment="Center">
+                                <TextBlock Text="{Binding RevokeNoticeText}"
+                                           FontSize="12"
+                                           Foreground="#86909C"
+                                           VerticalAlignment="Center" />
+                                <Button Content="重新编辑"
+                                        FontSize="12"
+                                        FontWeight="SemiBold"
+                                        Padding="2,0"
+                                        Background="Transparent"
+                                        BorderThickness="0"
+                                        Foreground="#0099FF"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding CanReEdit, Converter={StaticResource BoolToVisibilityConverter}}"
+                                        Tag="{Binding}"
+                                        Click="ReEditMessageButton_Click" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 对端发来的消息（左侧：36x36 圆形头像 + 发送者/时间 + 纯净白色圆角气泡 + 右键 QQ 菜单） -->
                         <Grid HorizontalAlignment="Left"
                               ColumnSpacing="10"
                               MaxWidth="540"
@@ -146,25 +173,52 @@
                                 <TextBlock Text="{Binding HeaderText}"
                                            FontSize="11"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <Border CornerRadius="4,12,12,12"
-                                        Padding="12,9"
+                                <Border CornerRadius="4,14,14,14"
+                                        Padding="13,10"
                                         Background="{Binding IsSelf, Converter={StaticResource BubbleColorConverter}}"
                                         BorderBrush="#E5E6EB"
-                                        BorderThickness="1">
+                                        BorderThickness="1"
+                                        ToolTipService.ToolTip="右键打开消息菜单（点赞 / 回复 / 复制 / 置顶）">
                                     <Border.ContextFlyout>
                                         <MenuFlyout>
-                                            <MenuFlyoutItem Text="↩ 引用回复"
-                                                            Tag="{Binding}"
-                                                            Click="ReplyMenuFlyoutItem_Click" />
                                             <MenuFlyoutItem Text="👍 点赞回应"
                                                             Tag="{Binding}"
                                                             Click="ReactMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="💬 引用回复"
+                                                            Tag="{Binding}"
+                                                            Click="ReplyMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="📋 复制文本"
+                                                            Tag="{Binding}"
+                                                            Click="CopyMenuFlyoutItem_Click" />
                                             <MenuFlyoutItem Text="📌 置顶消息"
                                                             Tag="{Binding}"
                                                             Click="PinMenuFlyoutItem_Click" />
                                         </MenuFlyout>
                                     </Border.ContextFlyout>
                                     <StackPanel Spacing="6">
+                                        <!-- QQ 气泡内嵌引用回复卡片 -->
+                                        <Border Background="#F2F4F7"
+                                                CornerRadius="6"
+                                                Padding="9,6"
+                                                Visibility="{Binding HasQuote, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0"
+                                                        Width="3"
+                                                        CornerRadius="1.5"
+                                                        Background="#0099FF" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding QuotedText}"
+                                                           FontSize="12"
+                                                           Foreground="#646A73"
+                                                           MaxLines="2"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           TextWrapping="Wrap" />
+                                            </Grid>
+                                        </Border>
                                         <Border CornerRadius="8"
                                                 MaxWidth="220"
                                                 MaxHeight="160"
@@ -177,42 +231,29 @@
                                         <TextBlock Text="{Binding DisplayText}"
                                                    FontSize="14"
                                                    Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
+                                                   IsTextSelectionEnabled="True"
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
-                                <!-- 气泡下方的点赞/表情回应胶囊徽章 -->
-                                <Border CornerRadius="10"
-                                        Padding="8,2"
+                                <!-- 气泡下方的点赞/表情回应胶囊徽章（仅当有人点赞时显示） -->
+                                <Button Padding="8,2"
+                                        CornerRadius="11"
                                         HorizontalAlignment="Left"
-                                        Background="#1F0099FF"
-                                        BorderBrush="#470099FF"
+                                        Background="#1A0099FF"
+                                        BorderBrush="#400099FF"
                                         BorderThickness="1"
-                                        Visibility="{Binding HasReactions, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        Visibility="{Binding HasReactions, Converter={StaticResource BoolToVisibilityConverter}}"
+                                        Tag="{Binding}"
+                                        Click="ReactMessageButton_Click">
                                     <TextBlock Text="{Binding ReactionsText}"
                                                FontSize="11"
                                                FontWeight="SemiBold"
                                                Foreground="#0088EE" />
-                                </Border>
-                                <StackPanel Orientation="Horizontal" Spacing="6">
-                                    <Button Content="👍 点赞"
-                                            FontSize="11"
-                                            Padding="6,1"
-                                            CornerRadius="4"
-                                            Visibility="{Binding CanReply, Converter={StaticResource BoolToVisibilityConverter}}"
-                                            Tag="{Binding}"
-                                            Click="ReactMessageButton_Click" />
-                                    <Button Content="↩ 回复"
-                                            FontSize="11"
-                                            Padding="6,1"
-                                            CornerRadius="4"
-                                            Visibility="{Binding CanReply, Converter={StaticResource BoolToVisibilityConverter}}"
-                                            Tag="{Binding}"
-                                            Click="ReplyMessageButton_Click" />
-                                </StackPanel>
+                                </Button>
                             </StackPanel>
                         </Grid>
 
-                        <!-- 自己发送的消息（右侧：发送者/时间 + #0099FF QQ 蓝气泡白字 + ✓ 已读回执 + 回复/撤回 + 36x36 圆形头像） -->
+                        <!-- 自己发送的消息（右侧：时间/已读 + #0099FF QQ 蓝气泡白字 + 右键 QQ 菜单 + 36x36 圆形头像） -->
                         <Grid HorizontalAlignment="Right"
                               ColumnSpacing="10"
                               MaxWidth="540"
@@ -228,27 +269,55 @@
                                            HorizontalAlignment="Right"
                                            TextAlignment="{Binding IsSelf, Converter={StaticResource SelfAlignConverter}}"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                <Border CornerRadius="12,4,12,12"
-                                        Padding="12,9"
+                                <Border CornerRadius="14,4,14,14"
+                                        Padding="13,10"
                                         HorizontalAlignment="Right"
-                                        Background="{Binding IsSelf, Converter={StaticResource BubbleColorConverter}}">
+                                        Background="{Binding IsSelf, Converter={StaticResource BubbleColorConverter}}"
+                                        ToolTipService.ToolTip="右键打开消息菜单（点赞 / 回复 / 复制 / 置顶 / 撤回）">
                                     <Border.ContextFlyout>
                                         <MenuFlyout>
-                                            <MenuFlyoutItem Text="↩ 引用回复"
-                                                            Tag="{Binding}"
-                                                            Click="ReplyMenuFlyoutItem_Click" />
                                             <MenuFlyoutItem Text="👍 点赞回应"
                                                             Tag="{Binding}"
                                                             Click="ReactMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="💬 引用回复"
+                                                            Tag="{Binding}"
+                                                            Click="ReplyMenuFlyoutItem_Click" />
+                                            <MenuFlyoutItem Text="📋 复制文本"
+                                                            Tag="{Binding}"
+                                                            Click="CopyMenuFlyoutItem_Click" />
                                             <MenuFlyoutItem Text="📌 置顶消息"
                                                             Tag="{Binding}"
                                                             Click="PinMenuFlyoutItem_Click" />
-                                            <MenuFlyoutItem Text="撤回消息"
+                                            <MenuFlyoutSeparator />
+                                            <MenuFlyoutItem Text="↩️ 撤回消息"
                                                             Tag="{Binding}"
                                                             Click="RevokeMenuFlyoutItem_Click" />
                                         </MenuFlyout>
                                     </Border.ContextFlyout>
                                     <StackPanel Spacing="6">
+                                        <!-- QQ 蓝色气泡内嵌半透明引用回复卡片 -->
+                                        <Border Background="#29FFFFFF"
+                                                CornerRadius="6"
+                                                Padding="9,6"
+                                                Visibility="{Binding HasQuote, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <Grid ColumnSpacing="8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Border Grid.Column="0"
+                                                        Width="3"
+                                                        CornerRadius="1.5"
+                                                        Background="White" />
+                                                <TextBlock Grid.Column="1"
+                                                           Text="{Binding QuotedText}"
+                                                           FontSize="12"
+                                                           Foreground="#F0FFFFFF"
+                                                           MaxLines="2"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           TextWrapping="Wrap" />
+                                            </Grid>
+                                        </Border>
                                         <Border CornerRadius="8"
                                                 MaxWidth="220"
                                                 MaxHeight="160"
@@ -261,51 +330,25 @@
                                         <TextBlock Text="{Binding DisplayText}"
                                                    FontSize="14"
                                                    Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
+                                                   IsTextSelectionEnabled="True"
                                                    TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Border>
-                                <!-- 气泡下方的点赞/表情回应胶囊徽章 -->
-                                <Border CornerRadius="10"
-                                        Padding="8,2"
+                                <!-- 气泡下方的点赞/表情回应胶囊徽章（仅当有人点赞时显示） -->
+                                <Button Padding="8,2"
+                                        CornerRadius="11"
                                         HorizontalAlignment="Right"
-                                        Background="#1F0099FF"
-                                        BorderBrush="#470099FF"
+                                        Background="#1A0099FF"
+                                        BorderBrush="#400099FF"
                                         BorderThickness="1"
-                                        Visibility="{Binding HasReactions, Converter={StaticResource BoolToVisibilityConverter}}">
+                                        Visibility="{Binding HasReactions, Converter={StaticResource BoolToVisibilityConverter}}"
+                                        Tag="{Binding}"
+                                        Click="ReactMessageButton_Click">
                                     <TextBlock Text="{Binding ReactionsText}"
                                                FontSize="11"
                                                FontWeight="SemiBold"
                                                Foreground="#0088EE" />
-                                </Border>
-                                <StackPanel Orientation="Horizontal"
-                                            HorizontalAlignment="Right"
-                                            Spacing="8">
-                                    <TextBlock Text="{Binding ReadReceiptText}"
-                                               FontSize="11"
-                                               VerticalAlignment="Center"
-                                               Foreground="#0088EE" />
-                                    <Button Content="👍 点赞"
-                                            FontSize="11"
-                                            Padding="6,1"
-                                            CornerRadius="4"
-                                            Visibility="{Binding CanReply, Converter={StaticResource BoolToVisibilityConverter}}"
-                                            Tag="{Binding}"
-                                            Click="ReactMessageButton_Click" />
-                                    <Button Content="↩ 回复"
-                                            FontSize="11"
-                                            Padding="6,1"
-                                            CornerRadius="4"
-                                            Visibility="{Binding CanReply, Converter={StaticResource BoolToVisibilityConverter}}"
-                                            Tag="{Binding}"
-                                            Click="ReplyMessageButton_Click" />
-                                    <Button Content="撤回"
-                                            FontSize="11"
-                                            Padding="6,1"
-                                            CornerRadius="4"
-                                            Visibility="{Binding CanRevoke, Converter={StaticResource BoolToVisibilityConverter}}"
-                                            Tag="{Binding}"
-                                            Click="RevokeMessageButton_Click" />
-                                </StackPanel>
+                                </Button>
                             </StackPanel>
 
                             <Border Grid.Column="1"
@@ -327,129 +370,196 @@
             </ListView.ItemTemplate>
         </ListView>
 
-        <!-- 底部：NTQQ 风格消息编辑器（工具栏 + 多行输入框 + 右下角 QQ 蓝「发送 (S)」按钮） -->
+        <!-- 底部：NTQQ 一体化消息编辑器（顶部引用条 + 无边框图标工具栏 + 多行输入区 + 右下角 QQ 蓝「发送」按钮） -->
         <Border Grid.Row="2"
-                Padding="14,10,14,12"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="0,1,0,0">
-            <StackPanel Spacing="8">
-                <!-- 工具栏行：😊 表情贴纸 | 📁 发送文件 | 🔐 端到端加密 (/e2ee) | 🔍 搜索记录 -->
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <Button Content="😊 表情贴纸"
-                            FontSize="12"
-                            Padding="10,4"
-                            CornerRadius="6"
-                            IsEnabled="{Binding Chat.CanSend}">
-                        <Button.Flyout>
-                            <Flyout x:Name="EmojiFlyout" Placement="TopEdgeAlignedLeft">
-                                <StackPanel Spacing="10" Width="260">
-                                    <TextBlock Text="快捷表情与自定义贴纸"
-                                               FontSize="12"
-                                               FontWeight="SemiBold" />
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Button Content="😀" Tag="😀" Click="EmojiItem_Click" />
-                                        <Button Content="😂" Tag="😂" Click="EmojiItem_Click" />
-                                        <Button Content="😍" Tag="😍" Click="EmojiItem_Click" />
-                                        <Button Content="😎" Tag="😎" Click="EmojiItem_Click" />
-                                        <Button Content="👍" Tag="👍" Click="EmojiItem_Click" />
-                                        <Button Content="🎉" Tag="🎉" Click="EmojiItem_Click" />
+            <StackPanel>
+                <!-- QQ 引用回复预览条（仅在点击「引用回复」时展示） -->
+                <Border Background="#F0F7FF"
+                        BorderBrush="#D6EBFF"
+                        BorderThickness="0,0,0,1"
+                        Padding="14,6"
+                        Visibility="{Binding Chat.HasReplyTarget, Converter={StaticResource BoolToVisibilityConverter}}">
+                    <Grid ColumnSpacing="8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0"
+                                Width="3"
+                                Height="18"
+                                CornerRadius="1.5"
+                                Background="#0099FF"
+                                VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding Chat.ReplyTargetSummary}"
+                                   FontSize="12"
+                                   Foreground="#0066CC"
+                                   VerticalAlignment="Center"
+                                   MaxLines="1"
+                                   TextTrimming="CharacterEllipsis" />
+                        <Button Grid.Column="2"
+                                Content="✕"
+                                FontSize="11"
+                                Padding="6,2"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Foreground="#646A73"
+                                ToolTipService.ToolTip="取消引用回复"
+                                Click="CancelReplyButton_Click" />
+                    </Grid>
+                </Border>
+
+                <!-- 顶部无边框轻量图标工具栏 -->
+                <Grid Padding="10,6,14,2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="2">
+                        <Button Content="😊 表情"
+                                FontSize="12"
+                                Padding="8,4"
+                                CornerRadius="6"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="插入 Emoji 表情或发送贴纸"
+                                IsEnabled="{Binding Chat.CanSend}">
+                            <Button.Flyout>
+                                <Flyout x:Name="EmojiFlyout" Placement="TopEdgeAlignedLeft">
+                                    <StackPanel Spacing="10" Width="260">
+                                        <TextBlock Text="点击表情插入到输入框"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold" />
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Button Content="😀" Tag="😀" Click="EmojiItem_Click" />
+                                            <Button Content="😂" Tag="😂" Click="EmojiItem_Click" />
+                                            <Button Content="😍" Tag="😍" Click="EmojiItem_Click" />
+                                            <Button Content="😎" Tag="😎" Click="EmojiItem_Click" />
+                                            <Button Content="👍" Tag="👍" Click="EmojiItem_Click" />
+                                            <Button Content="🎉" Tag="🎉" Click="EmojiItem_Click" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <Button Content="❤️" Tag="❤️" Click="EmojiItem_Click" />
+                                            <Button Content="🔥" Tag="🔥" Click="EmojiItem_Click" />
+                                            <Button Content="🚀" Tag="🚀" Click="EmojiItem_Click" />
+                                            <Button Content="✨" Tag="✨" Click="EmojiItem_Click" />
+                                            <Button Content="🤝" Tag="🤝" Click="EmojiItem_Click" />
+                                            <Button Content="🙏" Tag="🙏" Click="EmojiItem_Click" />
+                                        </StackPanel>
+                                        <Button Content="🖼️ 选择本地贴纸图片发送…"
+                                                HorizontalAlignment="Stretch"
+                                                CornerRadius="6"
+                                                Background="#0099FF"
+                                                Foreground="White"
+                                                Command="{Binding Chat.PickStickerCommand}" />
                                     </StackPanel>
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Button Content="❤️" Tag="❤️" Click="EmojiItem_Click" />
-                                        <Button Content="🔥" Tag="🔥" Click="EmojiItem_Click" />
-                                        <Button Content="🚀" Tag="🚀" Click="EmojiItem_Click" />
-                                        <Button Content="✨" Tag="✨" Click="EmojiItem_Click" />
-                                        <Button Content="🤝" Tag="🤝" Click="EmojiItem_Click" />
-                                        <Button Content="🙏" Tag="🙏" Click="EmojiItem_Click" />
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+
+                        <Button Content="📁 文件"
+                                FontSize="12"
+                                Padding="8,4"
+                                CornerRadius="6"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="通过 P2P 高速直连发送文件"
+                                IsEnabled="{Binding Chat.CanSend}"
+                                Command="{Binding Chat.PickFileCommand}" />
+
+                        <Button Content="🎤 语音"
+                                FontSize="12"
+                                Padding="8,4"
+                                CornerRadius="6"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="发送语音消息"
+                                IsEnabled="{Binding Chat.CanSend}"
+                                Click="VoiceButton_Click" />
+
+                        <Button Content="{Binding Chat.E2eeButtonText, FallbackValue=🔐 加密}"
+                                FontSize="12"
+                                Padding="8,4"
+                                CornerRadius="6"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="切换端到端加密聊天"
+                                IsEnabled="{Binding Chat.CanSend}"
+                                Click="ToggleE2eeButton_Click" />
+
+                        <Button Content="🛡️ 安全码"
+                                FontSize="12"
+                                Padding="8,4"
+                                CornerRadius="6"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="查看并核验本机与对端安全码指纹"
+                                IsEnabled="{Binding Chat.CanSend}"
+                                Click="FingerprintButton_Click" />
+
+                        <Button Content="🔍 记录"
+                                FontSize="12"
+                                Padding="8,4"
+                                CornerRadius="6"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="搜索当前会话历史消息"
+                                IsEnabled="{Binding Chat.HasActiveConversation}">
+                            <Button.Flyout>
+                                <Flyout Placement="TopEdgeAlignedLeft">
+                                    <StackPanel Spacing="8" Width="240">
+                                        <TextBlock Text="搜索当前会话历史消息"
+                                                   FontSize="12"
+                                                   FontWeight="SemiBold" />
+                                        <TextBox x:Name="SearchHistoryBox"
+                                                 PlaceholderText="输入要查找的关键词…"
+                                                 CornerRadius="6" />
+                                        <Button Content="立即搜索"
+                                                HorizontalAlignment="Stretch"
+                                                CornerRadius="6"
+                                                Background="#0099FF"
+                                                Foreground="White"
+                                                Click="SearchMessagesButton_Click" />
                                     </StackPanel>
-                                    <Button Content="🖼️ 选择本地贴纸图片发送…"
-                                            HorizontalAlignment="Stretch"
-                                            CornerRadius="6"
-                                            Background="#0099FF"
-                                            Foreground="White"
-                                            Command="{Binding Chat.PickStickerCommand}" />
-                                </StackPanel>
-                            </Flyout>
-                        </Button.Flyout>
-                    </Button>
+                                </Flyout>
+                            </Button.Flyout>
+                        </Button>
+                    </StackPanel>
 
-                    <Button Content="📁 发送文件"
-                            FontSize="12"
-                            Padding="10,4"
-                            CornerRadius="6"
-                            IsEnabled="{Binding Chat.CanSend}"
-                            Command="{Binding Chat.PickFileCommand}" />
+                    <TextBlock Grid.Column="1"
+                               Text="右键消息气泡可点赞 / 回复 / 撤回"
+                               FontSize="11"
+                               VerticalAlignment="Center"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
 
-                    <Button Content="🎤 语音"
-                            FontSize="12"
-                            Padding="10,4"
-                            CornerRadius="6"
-                            IsEnabled="{Binding Chat.CanSend}"
-                            Click="VoiceButton_Click" />
-
-                    <Button Content="{Binding Chat.E2eeButtonText, FallbackValue=🔐 端到端加密 (/e2ee)}"
-                            FontSize="12"
-                            Padding="10,4"
-                            CornerRadius="6"
-                            IsEnabled="{Binding Chat.CanSend}"
-                            Click="ToggleE2eeButton_Click" />
-
-                    <Button Content="🛡️ 安全码"
-                            FontSize="12"
-                            Padding="10,4"
-                            CornerRadius="6"
-                            IsEnabled="{Binding Chat.CanSend}"
-                            Click="FingerprintButton_Click" />
-
-                    <Button Content="🔍 搜索记录"
-                            FontSize="12"
-                            Padding="10,4"
-                            CornerRadius="6"
-                            IsEnabled="{Binding Chat.HasActiveConversation}">
-                        <Button.Flyout>
-                            <Flyout Placement="TopEdgeAlignedLeft">
-                                <StackPanel Spacing="8" Width="240">
-                                    <TextBlock Text="搜索当前会话历史消息"
-                                               FontSize="12"
-                                               FontWeight="SemiBold" />
-                                    <TextBox x:Name="SearchHistoryBox"
-                                             PlaceholderText="输入要查找的关键词…"
-                                             CornerRadius="6" />
-                                    <Button Content="立即搜索"
-                                            HorizontalAlignment="Stretch"
-                                            CornerRadius="6"
-                                            Background="#0099FF"
-                                            Foreground="White"
-                                            Click="SearchMessagesButton_Click" />
-                                </StackPanel>
-                            </Flyout>
-                        </Button.Flyout>
-                    </Button>
-                </StackPanel>
-
-                <!-- 输入框 + 右下角 QQ 蓝「发送 (S)」按钮 -->
-                <Grid ColumnSpacing="10">
+                <!-- 中部无边框输入区 + 右下角 QQ 蓝「发送」按钮 -->
+                <Grid Padding="12,2,14,10" ColumnSpacing="10">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBox x:Name="DraftBox"
                              Grid.Column="0"
-                             MinHeight="64"
-                             MaxHeight="110"
+                             MinHeight="68"
+                             MaxHeight="116"
                              TextWrapping="Wrap"
-                             CornerRadius="8"
-                             PlaceholderText="输入消息，按 Enter 发送（支持表情贴纸、文件直传、/reply 引用、/revoke 撤回、/e2ee 加密）…"
+                             BorderThickness="0"
+                             Background="Transparent"
+                             PlaceholderText="输入消息，按 Enter 发送…"
                              IsEnabled="{Binding Chat.CanSend}"
                              Text="{Binding Chat.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              KeyDown="DraftBox_KeyDown" />
                     <Button Grid.Column="1"
-                            Content="发送 (S)"
-                            Width="96"
-                            Height="38"
+                            Content="发送"
+                            Width="82"
+                            Height="34"
                             VerticalAlignment="Bottom"
-                            CornerRadius="8"
+                            CornerRadius="6"
                             FontWeight="SemiBold"
                             Background="#0099FF"
                             Foreground="White"

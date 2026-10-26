@@ -86,7 +86,7 @@
                                     Height="44"
                                     HorizontalAlignment="Right"
                                     CornerRadius="10"
-                                    Background="#2A3040"
+                                    Background="Transparent"
                                     BorderThickness="0"
                                     ToolTipService.ToolTip="💬 消息与会话"
                                     Click="NavMessages_Click">

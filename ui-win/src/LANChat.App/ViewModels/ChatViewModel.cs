@@ -26,6 +26,9 @@ public sealed partial class ChatViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isE2eeEnabled;
 
+    [ObservableProperty]
+    private ChatMessage? _replyingTo;
+
     public ObservableCollection<ChatMessage> Messages { get; } = [];
 
     public ObservableCollection<string> CurrentMembers { get; } = [];
@@ -92,7 +95,16 @@ public sealed partial class ChatViewModel : ViewModelBase
     /// <summary>是否为 G1 局域网全员广播群会话。</summary>
     public bool IsBroadcastConversation => CurrentChannel?.Id == "*";
 
-    public string E2eeButtonText => IsE2eeEnabled ? "🔐 E2EE 已启用" : "🔐 端到端加密 (/e2ee)";
+    public string E2eeButtonText => IsE2eeEnabled ? "🔐 已加密" : "🔐 加密";
+
+    /// <summary>是否正在引用回复某条消息。</summary>
+    public bool HasReplyTarget => ReplyingTo is not null;
+
+    /// <summary>输入框上方的 QQ 引用回复预览条文案。</summary>
+    public string ReplyTargetSummary =>
+        ReplyingTo is null
+            ? ""
+            : $"回复 {(string.IsNullOrWhiteSpace(ReplyingTo.FromName) ? "对方" : ReplyingTo.FromName)}：{ReplyingTo.BodyText}";
 
     /// <summary>是否处于频道会话且当前用户已加入（可发消息/文件）。</summary>
     public bool CanSend =>
@@ -121,6 +133,7 @@ public sealed partial class ChatViewModel : ViewModelBase
     {
         CurrentPeer = peer;
         CurrentChannel = null;
+        ReplyingTo = null;
         ShowConversation(peer?.Id);
     }
 
@@ -129,6 +142,7 @@ public sealed partial class ChatViewModel : ViewModelBase
     {
         CurrentChannel = channel;
         CurrentPeer = null;
+        ReplyingTo = null;
         ShowConversation(channel?.Id);
         RefreshMembers(channel);
     }
@@ -157,6 +171,12 @@ public sealed partial class ChatViewModel : ViewModelBase
         if (string.IsNullOrEmpty(text))
         {
             return;
+        }
+
+        if (ReplyingTo is not null && !text.StartsWith("/", StringComparison.Ordinal))
+        {
+            text = $"/reply {ReplyingTo.MsgId} {text}";
+            ReplyingTo = null;
         }
 
         if (text.StartsWith("/search ", StringComparison.Ordinal))
@@ -580,14 +600,27 @@ public sealed partial class ChatViewModel : ViewModelBase
     private bool IsMember(Channel channel) =>
         channel.Id == "*" || channel.Members.Contains(SelfId);
 
-    /// <summary>快捷引用回复某条消息。</summary>
+    /// <summary>快捷引用回复某条消息（展示在输入框上方 QQ 引用预览条）。</summary>
     public void PrepareReply(ChatMessage? message)
     {
-        if (message is null || string.IsNullOrEmpty(message.MsgId))
+        if (message is null || string.IsNullOrEmpty(message.MsgId) || message.Revoked)
         {
             return;
         }
-        Draft = $"/reply {message.MsgId} ";
+        ReplyingTo = message;
+    }
+
+    /// <summary>取消当前引用回复。</summary>
+    public void CancelReply() => ReplyingTo = null;
+
+    /// <summary>点击已撤回消息旁边的「重新编辑」：将撤回前的原文放回输入框。</summary>
+    public void ReEditMessage(ChatMessage? message)
+    {
+        if (message is null || string.IsNullOrWhiteSpace(message.OriginalText))
+        {
+            return;
+        }
+        Draft = message.OriginalText;
     }
 
     /// <summary>快捷撤回自己发送的消息。</summary>
@@ -737,11 +770,15 @@ public sealed partial class ChatViewModel : ViewModelBase
             var existingIdx = list.FindIndex(m => m.MsgId == message.MsgId);
             if (existingIdx >= 0)
             {
-                list[existingIdx] = message;
+                var prev = list[existingIdx];
+                var merged = message.Revoked && string.IsNullOrWhiteSpace(message.OriginalText)
+                    ? message with { OriginalText = !string.IsNullOrWhiteSpace(prev.OriginalText) ? prev.OriginalText : prev.BodyText }
+                    : message;
+                list[existingIdx] = merged;
                 if ((CurrentChannel?.Id ?? CurrentPeer?.Id) is string activeKey && activeKey == key &&
                     existingIdx < Messages.Count)
                 {
-                    Messages[existingIdx] = message;
+                    Messages[existingIdx] = merged;
                 }
                 return;
             }
@@ -767,9 +804,13 @@ public sealed partial class ChatViewModel : ViewModelBase
             {
                 if (list[i].MsgId == msgId)
                 {
+                    var orig = !string.IsNullOrWhiteSpace(list[i].OriginalText)
+                        ? list[i].OriginalText
+                        : (list[i].Revoked ? "" : list[i].BodyText);
                     var updated = list[i] with
                     {
                         Revoked = true,
+                        OriginalText = orig,
                         Text = "消息已撤回",
                         FromName = list[i].IsSelf ? "我" : list[i].FromName,
                     };
@@ -898,6 +939,12 @@ public sealed partial class ChatViewModel : ViewModelBase
     partial void OnCurrentPeerChanged(Peer? value) => NotifyConversationHeaderChanged();
 
     partial void OnCurrentChannelChanged(Channel? value) => NotifyConversationHeaderChanged();
+
+    partial void OnReplyingToChanged(ChatMessage? value)
+    {
+        OnPropertyChanged(nameof(HasReplyTarget));
+        OnPropertyChanged(nameof(ReplyTargetSummary));
+    }
 
     private void NotifyConversationHeaderChanged()
     {

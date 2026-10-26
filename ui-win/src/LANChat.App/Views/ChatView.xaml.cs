@@ -61,6 +61,7 @@ public sealed partial class ChatView : UserControl
         if (sender is Button { Tag: ChatMessage msg })
         {
             _shell?.Chat.PrepareReply(msg);
+            DraftBox.Focus(FocusState.Programmatic);
         }
     }
 
@@ -69,6 +70,33 @@ public sealed partial class ChatView : UserControl
         if (sender is MenuFlyoutItem { Tag: ChatMessage msg })
         {
             _shell?.Chat.PrepareReply(msg);
+            DraftBox.Focus(FocusState.Programmatic);
+        }
+    }
+
+    private void CancelReplyButton_Click(object sender, RoutedEventArgs e)
+    {
+        _shell?.Chat.CancelReply();
+        DraftBox.Focus(FocusState.Programmatic);
+    }
+
+    private void ReEditMessageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: ChatMessage msg })
+        {
+            _shell?.Chat.ReEditMessage(msg);
+            DraftBox.Focus(FocusState.Programmatic);
+            DraftBox.SelectionStart = DraftBox.Text.Length;
+        }
+    }
+
+    private void CopyMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is MenuFlyoutItem { Tag: ChatMessage msg } && !string.IsNullOrEmpty(msg.BodyText))
+        {
+            var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            pkg.SetText(msg.BodyText);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
         }
     }
 

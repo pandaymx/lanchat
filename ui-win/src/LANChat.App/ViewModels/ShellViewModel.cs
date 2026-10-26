@@ -54,6 +54,8 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
     public bool IsNavContacts => !ShowSettings && ActiveNavTab == "contacts";
     public bool IsNavChannels => !ShowSettings && ActiveNavTab == "channels";
     public bool IsNavTransfers => ShowTransfersDrawer;
+    public bool ShowPeersSection => ActiveNavTab is "messages" or "contacts";
+    public bool ShowChannelsSection => ActiveNavTab is "messages" or "channels";
 
     public ShellViewModel(AppServices services, UiThread ui)
     {
@@ -109,6 +111,8 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(IsNavContacts));
         OnPropertyChanged(nameof(IsNavChannels));
         OnPropertyChanged(nameof(IsNavTransfers));
+        OnPropertyChanged(nameof(ShowPeersSection));
+        OnPropertyChanged(nameof(ShowChannelsSection));
     }
 
     /// <summary>启动后先全量同步一次状态。</summary>

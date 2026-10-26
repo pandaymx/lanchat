@@ -270,14 +270,48 @@ impl AppState {
         let body = parts.next().unwrap_or("").trim();
         if target_id.is_empty() || body.is_empty() {
             return raw.to_string();
-        }
+        };
         for list in self.messages.values() {
             if let Some(orig) = list.iter().find(|m| m.msg_id == target_id && !m.revoked) {
-                return format!("「{}」\n{}", orig.text, body);
+                let (clean_orig, _) = split_reactions(&orig.text);
+                return format!("「{}」\n{}", clean_orig, body);
             }
         }
         format!("[re:{target_id}] {body}")
     }
+}
+
+fn is_reaction_emoji_token(token: &str) -> bool {
+    if token.is_empty() || token.len() > 24 {
+        return false;
+    }
+    !token.chars().any(|c| {
+        c.is_ascii_alphanumeric()
+            || ('\u{4E00}'..='\u{9FFF}').contains(&c)
+            || c == ':'
+            || c == '"'
+            || c == ' '
+    })
+}
+
+/// 拆分消息正文与尾部表情回应徽章（如 `"你好 [👍] [❤️]"` -> `("你好", vec!["👍", "❤️"])`），
+/// 供 UI 将点赞/表情回应渲染在聊天气泡下方而非气泡内部。
+pub fn split_reactions(raw: &str) -> (String, Vec<String>) {
+    let mut body = raw;
+    let mut rev_reactions = Vec::new();
+    while let Some(idx) = body.rfind(" [") {
+        if !body.ends_with(']') {
+            break;
+        }
+        let token = &body[idx + 2..body.len() - 1];
+        if !is_reaction_emoji_token(token) {
+            break;
+        }
+        rev_reactions.push(token.to_string());
+        body = &body[..idx];
+    }
+    rev_reactions.reverse();
+    (body.to_string(), rev_reactions)
 }
 
 #[cfg(test)]
@@ -362,5 +396,20 @@ mod tests {
         assert_eq!(ch.topic, "内核讨论");
         assert!(st.is_channel_owner("c2"));
         assert!(!st.is_channel_owner("missing"));
+    }
+
+    #[test]
+    fn split_reactions_extracts_emoji_badges() {
+        let (body, reactions) = split_reactions("初版发版说明 [👍] [❤️]");
+        assert_eq!(body, "初版发版说明");
+        assert_eq!(reactions, vec!["👍", "❤️"]);
+
+        let (pinned_body, r2) = split_reactions("📌 [置顶] 重要通知 [👍]");
+        assert_eq!(pinned_body, "📌 [置顶] 重要通知");
+        assert_eq!(r2, vec!["👍"]);
+
+        let (voice_body, r3) = split_reactions("🎤 [语音消息 3\"]");
+        assert_eq!(voice_body, "🎤 [语音消息 3\"]");
+        assert!(r3.is_empty());
     }
 }

@@ -790,6 +790,25 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             ctx,
             move |_| {
                 cx.widgets.sticker_popover.popdown();
+                if e_str == "👍" {
+                    let target = cx.state.borrow().current_chat.clone();
+                    let last_mid = target.key().and_then(|k| {
+                        cx.state
+                            .borrow()
+                            .messages
+                            .get(k)
+                            .and_then(|list| {
+                                list.iter()
+                                    .rev()
+                                    .find(|m| !m.revoked && !m.msg_id.is_empty())
+                            })
+                            .map(|m| m.msg_id.clone())
+                    });
+                    if let Some(mid) = last_mid {
+                        send_text_to_target(&cx, &target, &format!("/react {mid} 👍"));
+                        return;
+                    }
+                }
                 send_sticker_code(&cx, &e_str);
             }
         ));
@@ -2626,8 +2645,10 @@ impl AppCtx {
             let bubble_card = gtk::Box::new(Orientation::Vertical, 6);
             bubble_card.add_css_class(if m.inbound { "bubble-in" } else { "bubble-out" });
 
+            let (clean_body, reactions) = crate::state::split_reactions(&m.text);
+
             if !m.revoked {
-                if let Some(b64) = extract_inline_image_b64(&m.text) {
+                if let Some(b64) = extract_inline_image_b64(&clean_body) {
                     let bytes = glib::base64_decode(b64);
                     if !bytes.is_empty() {
                         let gbytes = glib::Bytes::from_owned(bytes);
@@ -2642,10 +2663,10 @@ impl AppCtx {
                 }
             }
 
-            let display_body = if !m.revoked && extract_inline_image_b64(&m.text).is_some() {
+            let display_body = if !m.revoked && extract_inline_image_b64(&clean_body).is_some() {
                 "🖼️ [图片缩略图]".to_string()
             } else {
-                m.text.clone()
+                clean_body
             };
             let escaped = glib::markup_escape_text(&display_body).to_string();
             let bubble = gtk::Label::new(None);
@@ -2659,6 +2680,7 @@ impl AppCtx {
                 bubble.add_css_class("dim-label");
             }
             bubble_card.append(&bubble);
+            bubble_card.set_halign(if m.inbound { Align::Start } else { Align::End });
 
             // 右键点击气泡快捷触发引用回复
             if !m.revoked && !m.msg_id.is_empty() {
@@ -2679,18 +2701,61 @@ impl AppCtx {
                 bubble_card.add_controller(rclick);
             }
 
-            let bubble_wrap = gtk::Box::new(Orientation::Horizontal, 6);
-            if !m.inbound {
-                bubble_wrap.set_halign(Align::End);
-            } else {
-                bubble_wrap.set_halign(Align::Start);
+            let col = gtk::Box::new(Orientation::Vertical, 4);
+            col.append(&meta_line);
+            col.append(&bubble_card);
+
+            // 气泡下方：已触发的点赞/表情回应胶囊徽章行
+            if !m.revoked && !reactions.is_empty() {
+                let reactions_box = gtk::Box::new(Orientation::Horizontal, 4);
+                reactions_box.set_halign(if m.inbound { Align::Start } else { Align::End });
+                for emoji in &reactions {
+                    let pill = gtk::Button::with_label(&format!("{emoji} 1"));
+                    pill.add_css_class("flat");
+                    pill.add_css_class("qq-reaction-pill");
+                    pill.set_tooltip_text(Some("已获点赞/表情回应"));
+                    if !m.msg_id.is_empty() {
+                        let mid_pill = m.msg_id.clone();
+                        let tgt_pill = target.clone();
+                        let emoji_pill = emoji.clone();
+                        pill.connect_clicked(clone!(
+                            #[strong(rename_to = cx)]
+                            self,
+                            move |_| {
+                                send_text_to_target(
+                                    &cx,
+                                    &tgt_pill,
+                                    &format!("/react {mid_pill} {emoji_pill}"),
+                                );
+                            }
+                        ));
+                    }
+                    reactions_box.append(&pill);
+                }
+                col.append(&reactions_box);
             }
 
-            // 快捷操作按钮：引用回复 & 撤回
-            let actions_box = gtk::Box::new(Orientation::Horizontal, 2);
-            actions_box.set_valign(Align::Center);
+            // 气泡下方快捷操作栏：👍 点赞 / ↩ 回复 / 📌 置顶 / 撤回
             if !m.revoked && !m.msg_id.is_empty() {
-                let reply_btn = gtk::Button::with_label("↩");
+                let actions_box = gtk::Box::new(Orientation::Horizontal, 4);
+                actions_box.set_halign(if m.inbound { Align::Start } else { Align::End });
+
+                let react_btn = gtk::Button::with_label("👍 点赞");
+                react_btn.add_css_class("flat");
+                react_btn.add_css_class("qq-msg-action");
+                react_btn.set_tooltip_text(Some("在气泡下方添加点赞回应 (/react)"));
+                let mid_react = m.msg_id.clone();
+                let tgt_react = target.clone();
+                react_btn.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |_| {
+                        send_text_to_target(&cx, &tgt_react, &format!("/react {mid_react} 👍"));
+                    }
+                ));
+                actions_box.append(&react_btn);
+
+                let reply_btn = gtk::Button::with_label("↩ 回复");
                 reply_btn.add_css_class("flat");
                 reply_btn.add_css_class("qq-msg-action");
                 reply_btn.set_tooltip_text(Some("引用回复此消息"));
@@ -2708,22 +2773,7 @@ impl AppCtx {
                 ));
                 actions_box.append(&reply_btn);
 
-                let react_btn = gtk::Button::with_label("👍");
-                react_btn.add_css_class("flat");
-                react_btn.add_css_class("qq-msg-action");
-                react_btn.set_tooltip_text(Some("点赞回应 (/react)"));
-                let mid_react = m.msg_id.clone();
-                let tgt_react = target.clone();
-                react_btn.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    move |_| {
-                        send_text_to_target(&cx, &tgt_react, &format!("/react {mid_react} 👍"));
-                    }
-                ));
-                actions_box.append(&react_btn);
-
-                let pin_btn = gtk::Button::with_label("📌");
+                let pin_btn = gtk::Button::with_label("📌 置顶");
                 pin_btn.add_css_class("flat");
                 pin_btn.add_css_class("qq-msg-action");
                 pin_btn.set_tooltip_text(Some("置顶此消息 (/pin)"));
@@ -2754,19 +2804,9 @@ impl AppCtx {
                     ));
                     actions_box.append(&revoke_btn);
                 }
-            }
 
-            if m.inbound {
-                bubble_wrap.append(&bubble_card);
-                bubble_wrap.append(&actions_box);
-            } else {
-                bubble_wrap.append(&actions_box);
-                bubble_wrap.append(&bubble_card);
+                col.append(&actions_box);
             }
-
-            let col = gtk::Box::new(Orientation::Vertical, 3);
-            col.append(&meta_line);
-            col.append(&bubble_wrap);
 
             let avatar = adw::Avatar::new(36, Some(&sender_name), true);
             avatar.set_valign(Align::Start);
@@ -3201,6 +3241,18 @@ fn load_css() {
     }
     .qq-msg-action:hover {
         opacity: 1.0;
+    }
+    .qq-reaction-pill {
+        font-size: 0.78em;
+        font-weight: 600;
+        padding: 1px 8px;
+        border-radius: 999px;
+        background: alpha(#0099ff, 0.14);
+        border: 1px solid alpha(#0099ff, 0.28);
+        color: #0099ff;
+    }
+    .qq-reaction-pill:hover {
+        background: alpha(#0099ff, 0.24);
     }
     .qq-input-card {
         background: @card_bg_color;

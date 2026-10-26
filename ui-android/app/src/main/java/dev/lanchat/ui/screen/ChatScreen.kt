@@ -1,7 +1,14 @@
 package dev.lanchat.ui.screen
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.media.MediaRecorder
+import android.media.ToneGenerator
 import android.net.Uri
+import android.os.Build
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +40,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -40,6 +48,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -59,8 +68,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -82,6 +94,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import dev.lanchat.R
 import dev.lanchat.model.Channel
 import dev.lanchat.model.ChatMessage
@@ -94,6 +107,7 @@ import dev.lanchat.ui.theme.QqOnlineGreen
 import dev.lanchat.ui.theme.QqOutboundBubble
 import dev.lanchat.ui.theme.QqOutboundText
 import dev.lanchat.ui.theme.QqPrimaryBlue
+import dev.lanchat.ui.theme.QqUnreadBadgeRed
 import dev.lanchat.ui.theme.qqChatBackgroundColor
 import dev.lanchat.ui.theme.qqHeaderBrush
 import dev.lanchat.ui.theme.qqInboundBubbleColor
@@ -101,6 +115,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private data class PresetSticker(val emoji: String, val label: String, val code: String)
@@ -250,12 +265,196 @@ private fun ConversationScaffold(
     var input by remember { mutableStateOf("") }
     var replyTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var showStickerPanel by remember { mutableStateOf(false) }
+    var showVoicePanel by remember { mutableStateOf(false) }
+    var isRecording by remember { mutableStateOf(false) }
+    var recordingSec by remember { mutableIntStateOf(0) }
+    var recorderRef by remember { mutableStateOf<MediaRecorder?>(null) }
+    var recordFileRef by remember { mutableStateOf<File?>(null) }
+    var recordStartMs by remember { mutableLongStateOf(0L) }
+    var playingMsgId by remember { mutableStateOf<String?>(null) }
+    var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
     var showE2eeDialog by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var e2eeActive by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    fun releaseActiveRecorder(deleteFile: Boolean) {
+        val rec = recorderRef
+        val f = recordFileRef
+        recorderRef = null
+        recordFileRef = null
+        isRecording = false
+        try {
+            rec?.stop()
+        } catch (_: Exception) {
+        } finally {
+            try {
+                rec?.release()
+            } catch (_: Exception) {
+            }
+        }
+        if (deleteFile) {
+            f?.delete()
+        }
+    }
+
+    fun releaseActivePlayer() {
+        val mp = mediaPlayerRef
+        mediaPlayerRef = null
+        playingMsgId = null
+        try {
+            mp?.stop()
+        } catch (_: Exception) {
+        } finally {
+            try {
+                mp?.release()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            releaseActiveRecorder(deleteFile = true)
+            releaseActivePlayer()
+        }
+    }
+
+    LaunchedEffect(isRecording) {
+        if (isRecording) {
+            recordingSec = 0
+            while (isRecording) {
+                delay(1000L)
+                recordingSec += 1
+            }
+        }
+    }
+
+    fun startVoiceRecording() {
+        releaseActivePlayer()
+        releaseActiveRecorder(deleteFile = true)
+        try {
+            val outDir = File(context.cacheDir, "voice_rec").apply { mkdirs() }
+            val outFile = File(outDir, "rec_${System.currentTimeMillis()}.m4a")
+            val rec = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(context)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+            rec.setAudioSource(MediaRecorder.AudioSource.MIC)
+            rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            rec.setAudioSamplingRate(16000)
+            rec.setAudioEncodingBitRate(24000)
+            rec.setAudioChannels(1)
+            rec.setOutputFile(outFile.absolutePath)
+            rec.prepare()
+            rec.start()
+            recorderRef = rec
+            recordFileRef = outFile
+            recordStartMs = System.currentTimeMillis()
+            isRecording = true
+        } catch (e: Exception) {
+            isRecording = false
+            scope.launch {
+                snackbarHostState.showSnackbar("无法启动麦克风录音：${e.message ?: "请检查麦克风权限"}")
+            }
+        }
+    }
+
+    fun finishVoiceRecording(send: Boolean) {
+        val rec = recorderRef
+        val outFile = recordFileRef
+        val elapsedSec = ((System.currentTimeMillis() - recordStartMs) / 1000L).toInt().coerceAtLeast(1)
+        recorderRef = null
+        recordFileRef = null
+        isRecording = false
+        try {
+            rec?.stop()
+        } catch (_: Exception) {
+        } finally {
+            try {
+                rec?.release()
+            } catch (_: Exception) {
+            }
+        }
+        if (send && outFile != null && outFile.exists() && outFile.length() > 0L) {
+            val bytes = runCatching { outFile.readBytes() }.getOrNull()
+            outFile.delete()
+            if (bytes != null && bytes.isNotEmpty() && bytes.size <= 512 * 1024) {
+                val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                onSend("🎤 [语音消息 ${elapsedSec}\"] data:audio/mp4;base64,$b64")
+            } else {
+                onSend("/voice $elapsedSec")
+            }
+            showVoicePanel = false
+        } else {
+            outFile?.delete()
+        }
+    }
+
+    fun playVoiceClip(msgId: String, clip: VoiceClip) {
+        if (playingMsgId == msgId) {
+            releaseActivePlayer()
+            return
+        }
+        releaseActivePlayer()
+        val audioBytes = clip.audioBytes
+        if (audioBytes != null && audioBytes.isNotEmpty()) {
+            try {
+                val playDir = File(context.cacheDir, "voice_play").apply { mkdirs() }
+                val playFile = File(playDir, "play_${msgId.hashCode()}.m4a")
+                playFile.writeBytes(audioBytes)
+                val mp = MediaPlayer()
+                mp.setDataSource(playFile.absolutePath)
+                mp.setOnCompletionListener {
+                    releaseActivePlayer()
+                    playFile.delete()
+                }
+                mp.setOnErrorListener { _, _, _ ->
+                    releaseActivePlayer()
+                    playFile.delete()
+                    true
+                }
+                mp.prepare()
+                mp.start()
+                mediaPlayerRef = mp
+                playingMsgId = msgId
+            } catch (e: Exception) {
+                releaseActivePlayer()
+                scope.launch {
+                    snackbarHostState.showSnackbar("语音播放失败：${e.message ?: "音频格式不支持"}")
+                }
+            }
+        } else {
+            playingMsgId = msgId
+            scope.launch {
+                runCatching {
+                    val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 80)
+                    tg.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
+                    delay(220L)
+                    tg.release()
+                }
+                snackbarHostState.showSnackbar("🔊 已播放语音消息 (${clip.durationSec}\")")
+                playingMsgId = null
+            }
+        }
+    }
+
+    val audioPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            startVoiceRecording()
+        } else {
+            scope.launch {
+                snackbarHostState.showSnackbar("需要授予麦克风权限才能录制语音消息")
+            }
+        }
+    }
 
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
@@ -296,6 +495,9 @@ private fun ConversationScaffold(
     LaunchedEffect(imeVisible) {
         if (imeVisible) {
             showStickerPanel = false
+            if (!isRecording) {
+                showVoicePanel = false
+            }
         }
     }
 
@@ -395,6 +597,8 @@ private fun ConversationScaffold(
                         selfSeed = selfSeed,
                         showSender = showSender,
                         peerNameOf = peerNameOf,
+                        isPlayingVoice = playingMsgId == message.msgId,
+                        onPlayVoice = { clip -> playVoiceClip(message.msgId, clip) },
                         onReply = { replyTarget = message },
                         onRevoke = { onSend("/revoke ${message.msgId}") },
                         onMarkRead = { onSend("/read ${message.msgId}") },
@@ -420,7 +624,9 @@ private fun ConversationScaffold(
             val activeReply = replyTarget
             if (activeReply != null) {
                 val replyClean = remember(activeReply.text) {
-                    Conversations.splitQuote(Conversations.splitReactions(activeReply.text).first).second
+                    Conversations.stripInlineMediaPayload(
+                        Conversations.splitQuote(Conversations.splitReactions(activeReply.text).first).second,
+                    )
                 }
                 Surface(
                     color = QqPrimaryBlue.copy(alpha = 0.10f),
@@ -571,7 +777,12 @@ private fun ConversationScaffold(
                         ComposerToolItem(
                             label = "😊 表情",
                             active = showStickerPanel,
-                            onClick = { showStickerPanel = !showStickerPanel },
+                            onClick = {
+                                showStickerPanel = !showStickerPanel
+                                if (showStickerPanel && !isRecording) {
+                                    showVoicePanel = false
+                                }
+                            },
                         )
                         ComposerToolItem(
                             label = "📁 文件",
@@ -579,9 +790,16 @@ private fun ConversationScaffold(
                             onClick = { filePicker.launch("*/*") },
                         )
                         ComposerToolItem(
-                            label = "🎤 语音",
-                            active = false,
-                            onClick = { onSend("/voice 3") },
+                            label = if (isRecording) "🔴 ${recordingSec}\"" else "🎤 语音",
+                            active = showVoicePanel || isRecording,
+                            onClick = {
+                                showVoicePanel = !showVoicePanel
+                                if (showVoicePanel) {
+                                    showStickerPanel = false
+                                } else if (isRecording) {
+                                    finishVoiceRecording(send = false)
+                                }
+                            },
                         )
                         ComposerToolItem(
                             label = if (e2eeActive) "🔐 已开" else "🔐 加密",
@@ -598,6 +816,96 @@ private fun ConversationScaffold(
                             active = false,
                             onClick = { showSearchDialog = true },
                         )
+                    }
+
+                    // 可展开的手机 QQ 语音录制面板（支持麦克风真实 AAC 录音、实时计时与一键发送/取消）
+                    if (showVoicePanel) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(1.dp, QqPrimaryBlue.copy(alpha = 0.22f)),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text(
+                                    text = if (isRecording) {
+                                        "🔴 正在录音 ${recordingSec}\" · ▂ ▄ ▆ █ ▆ ▄ ▂"
+                                    } else {
+                                        "🎤 点击下方按钮录制真实语音消息"
+                                    },
+                                    color = if (isRecording) QqUnreadBadgeRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                ) {
+                                    if (isRecording) {
+                                        OutlinedButton(
+                                            onClick = { finishVoiceRecording(send = false) },
+                                            shape = RoundedCornerShape(50),
+                                        ) {
+                                            Text("取消录音", fontSize = 13.sp)
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .size(68.dp)
+                                                .clip(CircleShape)
+                                                .background(QqUnreadBadgeRed)
+                                                .clickable { finishVoiceRecording(send = true) },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text("⏹️", fontSize = 20.sp)
+                                                Text(
+                                                    text = "发送",
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(68.dp)
+                                                .clip(CircleShape)
+                                                .background(QqPrimaryBlue)
+                                                .clickable {
+                                                    val hasPerm = ContextCompat.checkSelfPermission(
+                                                        context,
+                                                        Manifest.permission.RECORD_AUDIO,
+                                                    ) == PackageManager.PERMISSION_GRANTED
+                                                    if (hasPerm) {
+                                                        startVoiceRecording()
+                                                    } else {
+                                                        audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                                    }
+                                                },
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Text("🎤", fontSize = 22.sp)
+                                                Text(
+                                                    text = "开始录音",
+                                                    color = Color.White,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // 可展开的表情贴纸网格面板
@@ -723,6 +1031,8 @@ private fun MessageBubbleRow(
     onPin: () -> Unit = {},
     onReEdit: (String) -> Unit = {},
     onCopy: (String) -> Unit = {},
+    isPlayingVoice: Boolean = false,
+    onPlayVoice: (VoiceClip) -> Unit = {},
 ) {
     val senderDisplay = if (message.inbound) {
         if (showSender && message.senderId.isNotEmpty()) peerNameOf(message.senderId) else targetTitle
@@ -823,6 +1133,8 @@ private fun MessageBubbleRow(
             val (cleanBody, reactions) = remember(message.text) { Conversations.splitReactions(message.text) }
             val (quotedText, bodyText) = remember(cleanBody) { Conversations.splitQuote(cleanBody) }
             val inlineBitmap = remember(cleanBody) { decodeInlineBitmap(cleanBody) }
+            val voiceClip = remember(bodyText) { parseVoiceClip(bodyText) }
+            val displayBodyText = remember(bodyText) { Conversations.stripInlineMediaPayload(bodyText) }
             val canAct = message.msgId.isNotEmpty() &&
                 !message.msgId.startsWith("search-") &&
                 !message.msgId.startsWith("e2ee-")
@@ -870,10 +1182,10 @@ private fun MessageBubbleRow(
                         modifier = Modifier
                             .heightIn(min = 40.dp)
                             .then(
-                                if (canAct) {
-                                    Modifier.clickable { showMenu = true }
-                                } else {
-                                    Modifier
+                                when {
+                                    voiceClip != null -> Modifier.clickable { onPlayVoice(voiceClip) }
+                                    canAct -> Modifier.clickable { showMenu = true }
+                                    else -> Modifier
                                 },
                             ),
                     ) {
@@ -940,9 +1252,50 @@ private fun MessageBubbleRow(
                                     color = bubbleText,
                                     fontSize = 12.sp,
                                 )
+                            } else if (voiceClip != null) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Text(
+                                        text = if (isPlayingVoice) "🔊" else "▶️",
+                                        fontSize = 15.sp,
+                                        color = bubbleText,
+                                    )
+                                    Text(
+                                        text = if (isPlayingVoice) {
+                                            "播放中 ılılılı ${voiceClip.durationSec}\""
+                                        } else {
+                                            "🎤 语音 ılılılı ${voiceClip.durationSec}\""
+                                        },
+                                        color = bubbleText,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        lineHeight = 18.sp,
+                                    )
+                                    if (canAct) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = if (message.inbound) {
+                                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                            } else {
+                                                Color.White.copy(alpha = 0.18f)
+                                            },
+                                            modifier = Modifier.clickable { showMenu = true },
+                                        ) {
+                                            Text(
+                                                text = "⋯",
+                                                color = bubbleText,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                            )
+                                        }
+                                    }
+                                }
                             } else {
                                 Text(
-                                    text = bodyText,
+                                    text = displayBodyText,
                                     color = bubbleText,
                                     fontSize = 15.sp,
                                     lineHeight = 20.sp,
@@ -951,11 +1304,20 @@ private fun MessageBubbleRow(
                         }
                     }
 
-                    // 手机 QQ 点击气泡弹出菜单（点赞回应 / 引用回复 / 复制文本 / 置顶消息 / 撤回或已读）
+                    // 手机 QQ 点击气泡弹出菜单（播放语音 / 点赞回应 / 引用回复 / 复制文本 / 置顶消息 / 撤回或已读）
                     DropdownMenu(
                         expanded = showMenu,
                         onDismissRequest = { showMenu = false },
                     ) {
+                        if (voiceClip != null) {
+                            DropdownMenuItem(
+                                text = { Text(if (isPlayingVoice) "⏹️ 停止播放" else "🔊 播放语音") },
+                                onClick = {
+                                    showMenu = false
+                                    onPlayVoice(voiceClip)
+                                },
+                            )
+                        }
                         DropdownMenuItem(
                             text = { Text("👍 点赞回应") },
                             onClick = {
@@ -974,7 +1336,7 @@ private fun MessageBubbleRow(
                             text = { Text("📋 复制文本") },
                             onClick = {
                                 showMenu = false
-                                onCopy(bodyText)
+                                onCopy(displayBodyText)
                             },
                         )
                         DropdownMenuItem(
@@ -1185,4 +1547,46 @@ private fun queryDisplayName(
         }
     }
     return result
+}
+
+private data class VoiceClip(
+    val displayLabel: String,
+    val durationSec: Int,
+    val audioBytes: ByteArray?,
+)
+
+private val VOICE_DURATION_REGEX = Regex("""(\d+)\s*["s秒]""")
+
+private fun parseVoiceClip(text: String): VoiceClip? {
+    val trimmed = text.trim()
+    if (!trimmed.startsWith("🎤 [语音消息")) return null
+    val cleanLabel = Conversations.stripInlineMediaPayload(trimmed)
+    val durationSec = VOICE_DURATION_REGEX.find(cleanLabel)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+        ?.coerceIn(1, 300)
+        ?: 3
+    val audioIdx = trimmed.indexOf("data:audio/", ignoreCase = true)
+    val audioBytes = if (audioIdx >= 0) {
+        val marker = ";base64,"
+        val b64Idx = trimmed.indexOf(marker, startIndex = audioIdx)
+        if (b64Idx >= 0) {
+            val b64 = trimmed.substring(b64Idx + marker.length).trim()
+            try {
+                if (b64.isNotEmpty()) Base64.decode(b64, Base64.DEFAULT) else null
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+    } else {
+        null
+    }
+    return VoiceClip(
+        displayLabel = cleanLabel,
+        durationSec = durationSec,
+        audioBytes = audioBytes,
+    )
 }

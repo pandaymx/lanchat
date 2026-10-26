@@ -158,7 +158,8 @@ object Conversations {
             val orig = list.firstOrNull { it.msgId == targetId && !it.revoked }
             if (orig != null) {
                 val (cleanOrig, _) = splitReactions(orig.text)
-                return "「$cleanOrig」\n$body"
+                val shortOrig = stripInlineMediaPayload(cleanOrig)
+                return "「$shortOrig」\n$body"
             }
         }
         return "[re:$targetId] $body"
@@ -242,6 +243,27 @@ object Conversations {
         return null to clean
     }
 
+    /** 剥离语音/图片消息中内联的 `data:audio/...;base64,...` 或 `data:image/...;base64,...` 载荷，仅保留人类可读摘要。 */
+    fun stripInlineMediaPayload(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.startsWith("data:image/", ignoreCase = true)) {
+            return "🖼️ [图片]"
+        }
+        val audioIdx = trimmed.indexOf(" data:audio/")
+        if (audioIdx > 0) {
+            return trimmed.substring(0, audioIdx).trim()
+        }
+        return trimmed
+    }
+
+    /** 生成会话列表副标题预览文本（自动隐藏内联音视频/图片 Base64 数据与尾部回应徽章）。 */
+    fun previewText(raw: String?): String? {
+        if (raw == null) return null
+        val (clean, _) = splitReactions(raw)
+        val (_, body) = splitQuote(clean)
+        return stripInlineMediaPayload(body)
+    }
+
     fun extractEditableOriginal(raw: String): String {
         val (clean, _) = splitReactions(raw)
         val (_, body) = splitQuote(clean)
@@ -249,7 +271,8 @@ object Conversations {
         if (trimmed.isEmpty() ||
             trimmed == "消息已撤回" ||
             trimmed == "[消息已撤回]" ||
-            trimmed.startsWith("data:image/", ignoreCase = true)
+            trimmed.startsWith("data:image/", ignoreCase = true) ||
+            trimmed.startsWith("🎤 [语音消息")
         ) {
             return ""
         }

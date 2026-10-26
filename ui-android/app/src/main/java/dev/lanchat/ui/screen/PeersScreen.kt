@@ -93,8 +93,9 @@ fun PeersScreen(
                 title = "📢 局域网全员广播群",
                 badgeText = "置顶 · ${state.peers.size + 1} 人在线",
                 badgeColor = QqPrimaryBlue,
-                subtitle = broadcastLast?.text
-                    ?: "全员在线广播 · 支持 P2P Swarm 群文件分发",
+                subtitle = broadcastLast?.let {
+                    if (it.revoked) "一条消息被撤回" else Conversations.previewText(it.text)
+                } ?: "全员在线广播 · 支持 P2P Swarm 群文件分发",
                 timeText = broadcastLast?.timestamp?.let { formatShortTime(it) } ?: "刚刚",
                 unreadCount = broadcastUnread,
                 pinned = true,
@@ -150,7 +151,9 @@ fun PeersScreen(
                     title = peer.nickname.ifEmpty { peer.id },
                     badgeText = tag,
                     badgeColor = QqOnlineGreen,
-                    subtitle = lastMsg?.text ?: "[在线] 点击发起 P2P 直连聊天",
+                    subtitle = lastMsg?.let {
+                        if (it.revoked) "一条消息被撤回" else Conversations.previewText(it.text)
+                    } ?: "[在线] 点击发起 P2P 直连聊天",
                     timeText = lastMsg?.timestamp?.let { formatShortTime(it) } ?: "",
                     unreadCount = unread,
                     pinned = false,
@@ -222,6 +225,7 @@ private fun SessionRowCard(
             ) {
                 Text(
                     text = title,
+                    modifier = Modifier.weight(1f, fill = false),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -236,6 +240,8 @@ private fun SessionRowCard(
                         color = badgeColor,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }

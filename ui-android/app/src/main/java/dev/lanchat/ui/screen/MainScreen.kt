@@ -183,7 +183,7 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = "● 在线 · 点击修改昵称",
+                                    text = "在线 · 点击修改昵称",
                                     color = Color.White.copy(alpha = 0.88f),
                                     fontSize = 11.sp,
                                     maxLines = 1,
@@ -261,7 +261,7 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                         ) {
                             if (searchQuery.isEmpty()) {
                                 Text(
-                                    text = "🔍 搜索联系人、频道或聊天记录",
+                                    text = "搜索联系人、频道或聊天记录",
                                     color = Color(0xFF9CA3AF),
                                     fontSize = 13.sp,
                                 )
@@ -319,7 +319,7 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                             Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null)
                         }
                     },
-                    label = { Text("💬 消息") },
+                    label = { Text("消息") },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = QqPrimaryBlue,
                         selectedTextColor = QqPrimaryBlue,
@@ -341,7 +341,7 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                     selected = tab == Tab.CHANNELS,
                     onClick = { tab = Tab.CHANNELS },
                     icon = { Icon(Icons.Filled.Tag, contentDescription = null) },
-                    label = { Text("#️⃣ " + stringResource(R.string.tab_channels)) },
+                    label = { Text(stringResource(R.string.tab_channels)) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = QqPrimaryBlue,
                         selectedTextColor = QqPrimaryBlue,
@@ -352,7 +352,7 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                     selected = tab == Tab.TRANSFERS,
                     onClick = { tab = Tab.TRANSFERS },
                     icon = { Icon(Icons.Filled.SwapVert, contentDescription = null) },
-                    label = { Text("⚡ " + stringResource(R.string.tab_transfers)) },
+                    label = { Text(stringResource(R.string.tab_transfers)) },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = QqPrimaryBlue,
                         selectedTextColor = QqPrimaryBlue,

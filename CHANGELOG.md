@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.17.2](https://github.com/pandaymx/lanchat/compare/v1.17.1...v1.17.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **server:** synchronize tuiEventListener model pointer access under race detector ([7eb58a4](https://github.com/pandaymx/lanchat/commit/7eb58a4ca414c517f2dcde8b44f983a98e6e2e70))
+* **ui-android:** fix chat composer IME padding and dark mode cursor visibility ([45df902](https://github.com/pandaymx/lanchat/commit/45df9027a2563b79108b1931cc9d98de595a4f74))
+
 ## [1.17.1](https://github.com/pandaymx/lanchat/compare/v1.17.0...v1.17.1) (2026-10-26)
 
 

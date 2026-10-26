@@ -1551,3 +1551,64 @@ func TestM30BurnAfterReadingAutoPurge(t *testing.T) {
 		t.Fatalf("burned message leaked in persisted history: %+v", b2.GetState().Messages)
 	}
 }
+
+// TestM31ServerlessMeshSplitBrainConvergence 验证 M31 零配置 mDNS Mesh 脑裂收敛与 /mesh 指令：
+// 当两个节点因并发自举或网络分区恢复而各自启动内嵌服务器时，ID 较大的房主会自动让位、
+// 关停本机内嵌服务器并透明重连至 ID 字典序最小的主节点，实现房间自动合流。
+func TestM31ServerlessMeshSplitBrainConvergence(t *testing.T) {
+	a := New(Options{Nickname: "NodeA", DownloadDir: t.TempDir()})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "NodeB", DownloadDir: t.TempDir()})
+	t.Cleanup(b.Close)
+
+	// 固定 deviceID 以确定字典序：NodeA ("0001-node-a") < NodeB ("ffff-node-b")
+	a.mu.Lock()
+	a.deviceID = "0001-node-a"
+	a.mu.Unlock()
+	b.mu.Lock()
+	b.deviceID = "ffff-node-b"
+	b.mu.Unlock()
+
+	// 模拟脑裂：NodeB 先以 local 自举内嵌服务器，随后 NodeA 也以 local 自举内嵌服务器（两者处于不同房间）
+	if err := b.Connect("local", testPSK); err != nil {
+		t.Fatalf("NodeB Connect(local) failed: %v", err)
+	}
+	if err := a.Connect("local", testPSK); err != nil {
+		t.Fatalf("NodeA Connect(local) failed: %v", err)
+	}
+	if !a.IsEmbeddedLeader() || !b.IsEmbeddedLeader() {
+		t.Fatalf("expected both nodes initially running embedded leader before convergence")
+	}
+
+	// 触发或等待 M31 Mesh 脑裂收敛：NodeB (ffff-node-b) 应发现 NodeA (0001-node-a) 并自动让位合流
+	res, err := b.SendText("", "/mesh", "*")
+	if err != nil {
+		t.Fatalf("NodeB /mesh command failed: %v", err)
+	}
+	if !strings.Contains(res, "leader=auto-0001-node-a") {
+		t.Fatalf("expected NodeB to converge to auto-0001-node-a, got %q", res)
+	}
+	if b.IsEmbeddedLeader() {
+		t.Fatalf("expected NodeB to shut down its embedded server after converging to NodeA")
+	}
+	if !a.IsEmbeddedLeader() || a.LeaderID() != "auto-0001-node-a" {
+		t.Fatalf("expected NodeA to remain canonical embedded leader, got leader=%q", a.LeaderID())
+	}
+
+	// 验证收敛后双方已处于同一信令房间并能互发消息
+	waitFor(t, 3*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+	bID := b.GetState().SelfID
+	if _, err := a.SendText(bID, "Mesh 脑裂合流成功", ""); err != nil {
+		t.Fatalf("post-convergence SendText failed: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, m := range b.GetState().Messages {
+			if m.Text == "Mesh 脑裂合流成功" {
+				return true
+			}
+		}
+		return false
+	})
+}

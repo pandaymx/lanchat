@@ -53,7 +53,9 @@ type Client struct {
 	identityPub  string
 	peerPubs     map[string]string
 	autoMode     bool
+	leaderID     string
 	embeddedStop context.CancelFunc
+	convergeMu   sync.Mutex
 
 	peers           map[string]appapi.Peer
 	transfers       map[string]*transferTask

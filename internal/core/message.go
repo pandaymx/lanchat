@@ -30,6 +30,19 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		diag := c.diagnosticSummary()
 		return "status:" + diag, nil
 	}
+	if trimmed == "/mesh" || strings.HasPrefix(trimmed, "/mesh ") || trimmed == "/leader" || strings.HasPrefix(trimmed, "/leader ") {
+		converged, leaderID := c.ConvergeAutoLeader()
+		c.mu.Lock()
+		addr := c.addr
+		embedded := c.embeddedStop != nil
+		peerCount := len(c.peers)
+		c.mu.Unlock()
+		if leaderID == "" {
+			leaderID = "manual"
+		}
+		summary := fmt.Sprintf("mesh:leader=%s addr=%s embedded=%t converged=%t peers=%d", leaderID, addr, embedded, converged, peerCount)
+		return summary, nil
+	}
 	if trimmed == "/update" || strings.HasPrefix(trimmed, "/update ") {
 		arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/update"))
 		return c.handleUpdateCommand(arg, to, group)

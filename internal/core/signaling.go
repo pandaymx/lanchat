@@ -58,6 +58,7 @@ func (c *Client) Connect(addr, psk string) error {
 		if err == nil {
 			c.mu.Lock()
 			c.addr = normalizeAddr(bootAddr)
+			c.leaderID = "auto-" + c.deviceID
 			c.mu.Unlock()
 			s, err = c.establish(c.runCtx)
 		}
@@ -111,6 +112,7 @@ func (c *Client) establishAuto(ctx context.Context, psk string) (*session, error
 		c.mu.Lock()
 		c.addr = candAddr
 		c.psk = psk
+		c.leaderID = srv.ID
 		c.mu.Unlock()
 		if s, err := c.establish(ctx); err == nil {
 			return s, nil
@@ -124,14 +126,23 @@ func (c *Client) establishAuto(ctx context.Context, psk string) (*session, error
 	c.mu.Lock()
 	c.addr = normalizeAddr(bootAddr)
 	c.psk = psk
+	c.leaderID = "auto-" + c.deviceID
 	c.mu.Unlock()
 	return c.establish(ctx)
 }
 
 // establish 拨号 + HELLO/WELCOME + 同步消化首帧 USER_LIST，返回会话。
 func (c *Client) establish(ctx context.Context) (*session, error) {
+	c.mu.Lock()
+	targetAddr := c.addr
+	c.mu.Unlock()
+	return c.establishAddr(ctx, targetAddr)
+}
+
+// establishAddr 向指定 targetAddr 拨号并完成 HELLO/WELCOME/USER_LIST 握手。
+func (c *Client) establishAddr(ctx context.Context, targetAddr string) (*session, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, dialTimeout)
-	conn, _, err := websocket.Dial(dialCtx, c.addr, nil)
+	conn, _, err := websocket.Dial(dialCtx, targetAddr, nil)
 	cancel()
 	if err != nil {
 		return nil, err
@@ -232,10 +243,12 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 
 	c.mu.Lock()
 	curGen := c.gen
-	c.conn = nil
+	if curGen == gen {
+		c.conn = nil
+	}
 	c.mu.Unlock()
 
-	// Close 触发：停止重连。
+	// Close 触发或已收敛至新会话：停止当前旧 watcher 重连。
 	if c.runCtx.Err() != nil || curGen != gen {
 		return
 	}
@@ -268,7 +281,7 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 		case <-time.After(waitDur):
 		}
 
-		if autoMode && failCount >= 2 {
+		if autoMode && failCount >= 1 {
 			ns, estErr = c.establishAuto(c.runCtx, psk)
 		} else {
 			ns, estErr = c.establish(c.runCtx)
@@ -318,15 +331,29 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 	c.watch(newGen, ns, next)
 }
 
-// heartbeatLoop 周期发送 HEARTBEAT；发送失败或连接断开时立即退出。
+// heartbeatLoop 周期发送 HEARTBEAT，并在 autoMode 下周期检测脑裂收敛（M31）；发送失败或连接断开时立即退出。
 func (c *Client) heartbeatLoop(ctx context.Context, gen uint64, conn *websocket.Conn, interval time.Duration) {
 	t := time.NewTicker(interval)
 	defer t.Stop()
+	convTicker := time.NewTicker(1200 * time.Millisecond)
+	defer convTicker.Stop()
 	_ = c.sendHeartbeat(conn)
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-convTicker.C:
+			c.mu.Lock()
+			curGen := c.gen
+			curConn := c.conn
+			auto := c.autoMode
+			c.mu.Unlock()
+			if curGen != gen || curConn != conn {
+				return
+			}
+			if auto {
+				go func() { _, _ = c.ConvergeAutoLeader() }()
+			}
 		case <-t.C:
 			c.mu.Lock()
 			curGen := c.gen
@@ -340,6 +367,112 @@ func (c *Client) heartbeatLoop(ctx context.Context, gen uint64, conn *websocket.
 			}
 		}
 	}
+}
+
+// LeaderID 返回当前自动选主会话所关联的中心节点 ID（如 "auto-<deviceID>"）。
+func (c *Client) LeaderID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.leaderID != "" {
+		return c.leaderID
+	}
+	if c.embeddedStop != nil {
+		return "auto-" + c.deviceID
+	}
+	return ""
+}
+
+// IsEmbeddedLeader 返回当前客户端是否正在运行本机内嵌信令服务器并担任房主。
+func (c *Client) IsEmbeddedLeader() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.embeddedStop != nil
+}
+
+// ConvergeAutoLeader 执行 M31 零配置 mDNS Mesh 脑裂收敛：
+// 当客户端处于 autoMode 且发现局域网内存在存活且字典序更小（srv.ID < currentLeaderID）的中心节点时，
+// 先向该候选节点完成握手建连，成功后平滑关停本机内嵌服务器并切换主会话，消除多房主脑裂。
+func (c *Client) ConvergeAutoLeader() (bool, string) {
+	c.convergeMu.Lock()
+	defer c.convergeMu.Unlock()
+
+	c.mu.Lock()
+	if !c.autoMode || c.connState != appapi.ConnConnected || c.runCtx.Err() != nil {
+		lid := c.leaderID
+		c.mu.Unlock()
+		return false, lid
+	}
+	curLeaderID := c.leaderID
+	if curLeaderID == "" && c.embeddedStop != nil {
+		curLeaderID = "auto-" + c.deviceID
+	}
+	curAddr := c.addr
+	psk := c.psk
+	c.mu.Unlock()
+
+	expectedAuth := "none"
+	if psk != "" {
+		expectedAuth = "psk"
+	}
+
+	servers := c.BrowseServers()
+	for _, srv := range servers {
+		if strings.TrimSpace(srv.Addr) == "" || srv.ID == "" {
+			continue
+		}
+		if srv.AuthMode != "" && srv.AuthMode != expectedAuth {
+			continue
+		}
+		if curLeaderID != "" && srv.ID >= curLeaderID {
+			continue
+		}
+		candAddr := normalizeAddr(srv.Addr)
+		if candAddr == curAddr {
+			c.mu.Lock()
+			c.leaderID = srv.ID
+			c.mu.Unlock()
+			return false, srv.ID
+		}
+		ns, err := c.establishAddr(c.runCtx, candAddr)
+		if err != nil {
+			continue
+		}
+
+		c.mu.Lock()
+		if c.runCtx.Err() != nil {
+			c.mu.Unlock()
+			_ = ns.conn.CloseNow()
+			return false, curLeaderID
+		}
+		stopEmbedded := c.embeddedStop
+		c.embeddedStop = nil
+		oldConn := c.conn
+		c.addr = candAddr
+		c.leaderID = srv.ID
+		c.connState = appapi.ConnConnected
+		c.conn = ns.conn
+		c.gen++
+		newGen := c.gen
+		c.heartbeat = int(ns.heartbeat / time.Second)
+		c.channelKeySent = map[string]map[string]bool{}
+		hasDesiredChannels := len(c.desiredChannels) > 0
+		c.mu.Unlock()
+
+		if oldConn != nil {
+			_ = oldConn.CloseNow()
+		}
+		if stopEmbedded != nil {
+			stopEmbedded()
+		}
+
+		c.listener().OnConnChanged(appapi.ConnConnected, "mesh:converged:"+srv.ID)
+		go c.watch(newGen, ns, time.Second)
+		if hasDesiredChannels {
+			_, _ = c.sendTo(ns.conn, protocol.ChannelList, "", nil)
+		}
+		return true, srv.ID
+	}
+	return false, curLeaderID
 }
 
 func (c *Client) sendHeartbeat(conn *websocket.Conn) error {

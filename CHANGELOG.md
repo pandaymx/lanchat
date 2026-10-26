@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.4](https://github.com/pandaymx/lanchat/compare/v1.10.3...v1.10.4) (2026-10-26)
+
+
+### Bug Fixes
+
+* **core:** bump client version to 1.10.4 for Windows MSIX payload slimming ([f6c914a](https://github.com/pandaymx/lanchat/commit/f6c914a5c037f51704e62ad0c9e255c61cd8faf0))
+
+
+### Performance Improvements
+
+* **ui-win:** batch MSBuild payload pruning on ReferenceCopyLocalPaths and AppxPackagePayload ([4d67675](https://github.com/pandaymx/lanchat/commit/4d67675e1c6c963dcfb0ab3ee9326fff5bad3a34))
+
 ## [1.10.3](https://github.com/pandaymx/lanchat/compare/v1.10.2...v1.10.3) (2026-10-26)
 
 

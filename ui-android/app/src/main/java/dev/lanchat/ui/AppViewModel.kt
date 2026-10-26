@@ -160,6 +160,19 @@ class AppViewModel : ViewModel() {
                 )
                 return@launchOp
             }
+            if (msgId.startsWith("update:")) {
+                val up = msgId.removePrefix("update:")
+                appendMessage(
+                    ChatMessage(
+                        peerId = to,
+                        msgId = "update-${System.currentTimeMillis()}",
+                        text = "🚀 [版本更新] $up",
+                        inbound = false,
+                        timestamp = System.currentTimeMillis(),
+                    ),
+                )
+                return@launchOp
+            }
             if (content.startsWith("/revoke ")) {
                 val targetId = content.removePrefix("/revoke ").trim()
                 _ui.update {
@@ -386,6 +399,21 @@ class AppViewModel : ViewModel() {
         launchOp {
             engine.pickDownloadDir(trimmed)
             _ui.update { it.copy(downloadDir = trimmed) }
+        }
+    }
+
+    fun silentUpdate(customProxy: String = "", checkOnly: Boolean = false) {
+        val proxyArg = customProxy.trim()
+        val cmd = when {
+            checkOnly -> "/update check"
+            proxyArg.isEmpty() -> "/update"
+            else -> "/update $proxyArg"
+        }
+        launchOp {
+            val res = engine.sendText(to = "", text = cmd, group = "")
+            val summary = res.removePrefix("update:")
+            _ui.update { it.copy(error = "🚀 $summary") }
+            refresh()
         }
     }
 

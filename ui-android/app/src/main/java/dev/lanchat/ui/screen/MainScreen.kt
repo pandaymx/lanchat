@@ -86,6 +86,7 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
     var searchQuery by remember { mutableStateOf("") }
     var showNicknameDialog by remember { mutableStateOf(false) }
     var showDownloadDirDialog by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
     var showCreateChannelDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -183,6 +184,14 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { showUpdateDialog = true }) {
+                            Text(
+                                text = "🚀 更新",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
                         IconButton(onClick = { showDownloadDirDialog = true }) {
                             Icon(
                                 Icons.Filled.FolderOpen,
@@ -383,6 +392,20 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
         )
     }
 
+    if (showUpdateDialog) {
+        SilentUpdateDialog(
+            onDismiss = { showUpdateDialog = false },
+            onCheckOnly = {
+                vm.silentUpdate(checkOnly = true)
+                showUpdateDialog = false
+            },
+            onSilentDownload = { proxy ->
+                vm.silentUpdate(customProxy = proxy, checkOnly = false)
+                showUpdateDialog = false
+            },
+        )
+    }
+
     if (showCreateChannelDialog) {
         CreateChannelDialog(
             busy = state.busy,
@@ -450,6 +473,43 @@ private fun PickDownloadDirDialog(
                 enabled = path.isNotBlank(),
                 onClick = { onConfirm(path) },
             ) { Text("确定") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun SilentUpdateDialog(
+    onDismiss: () -> Unit,
+    onCheckOnly: () -> Unit,
+    onSilentDownload: (String) -> Unit,
+) {
+    var proxy by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("🚀 版本更新（国内加速静默下载）") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "自动按优先级轮询国内加速节点（ghfast.top / gh-proxy.com / ghproxy.net / mirror.ghproxy.com / ghps.cc），免浏览器后台静默下载 APK 安装包并校验 SHA-256。",
+                    fontSize = 12.sp,
+                )
+                OutlinedTextField(
+                    value = proxy,
+                    onValueChange = { proxy = it },
+                    singleLine = true,
+                    label = { Text("自定义加速代理前缀（可选）") },
+                    placeholder = { Text("留空默认自动轮询国内节点") },
+                )
+            }
+        },
+        confirmButton = {
+            Row {
+                TextButton(onClick = onCheckOnly) { Text("🔍 检查版本") }
+                TextButton(onClick = { onSilentDownload(proxy) }) { Text("⬇️ 静默下载") }
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_cancel)) }

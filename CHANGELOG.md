@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.15.0](https://github.com/pandaymx/lanchat/compare/v1.14.0...v1.15.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add M30 burn-after-reading self-destruct messages and history purge ([7059312](https://github.com/pandaymx/lanchat/commit/7059312f486f4a0b394486823302a9ac50c37a83))
+* **server:** support M30 MSG_BURN and CLIP_SYNC events in interactive TUI ([633d65c](https://github.com/pandaymx/lanchat/commit/633d65c29d6fcfa727e503c02362790e26ed21d4))
+* **ui-android:** handle M30 MSG_BURN self-destruct purge and CLIP_SYNC notifications ([72c08e4](https://github.com/pandaymx/lanchat/commit/72c08e4132f2c1506b69b4baae8de27744ae03e9))
+* **ui-ios:** handle M30 MSG_BURN self-destruct purge and CLIP_SYNC notifications ([5690f67](https://github.com/pandaymx/lanchat/commit/5690f67689857153890ec5005d3685f1addc8e05))
+* **ui-linux:** handle M30 MSG_BURN self-destruct purge and CLIP_SYNC notifications ([7a7e09c](https://github.com/pandaymx/lanchat/commit/7a7e09c7418e1a17164d88febef21cbf982d00e4))
+* **ui-macos:** handle M30 MSG_BURN self-destruct purge and CLIP_SYNC notifications ([d8758f6](https://github.com/pandaymx/lanchat/commit/d8758f6d8c1d718357da7ca23e51930a6ef205b0))
+* **ui-win:** handle M30 MSG_BURN self-destruct purge and CLIP_SYNC notifications ([8593ce4](https://github.com/pandaymx/lanchat/commit/8593ce4fbf1d88f16057c291b010ca341fd8f708))
+
 ## [1.14.0](https://github.com/pandaymx/lanchat/compare/v1.13.0...v1.14.0) (2026-10-26)
 
 

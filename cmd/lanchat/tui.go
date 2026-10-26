@@ -913,6 +913,10 @@ func (l *tuiEventListener) OnMessageReceived(_, _, _, typ, text string) {
 		l.model.setStatus(text)
 		return
 	}
+	if typ == "MSG_BURN" {
+		l.model.setStatus("🔥 一条阅后即焚消息已到期自动销毁")
+		return
+	}
 	l.model.triggerRedraw()
 }
 

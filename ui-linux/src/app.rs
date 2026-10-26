@@ -507,10 +507,10 @@ fn build_ui(app: &adw::Application) -> Widgets {
     msg_scroll.add_css_class("qq-msg-scroll");
 
     // 底部 QQ 风格工具栏 + 输入框
-    let sticker_btn = gtk::Button::with_label("🎉 贴纸");
+    let sticker_btn = gtk::Button::with_label("🖼️ 贴纸");
     sticker_btn.add_css_class("flat");
     sticker_btn.add_css_class("qq-tool-btn");
-    sticker_btn.set_tooltip_text(Some("快捷发送庆祝贴纸"));
+    sticker_btn.set_tooltip_text(Some("选择本地贴纸图片发送"));
 
     let sticker_popover = gtk::Popover::new();
     let sticker_menu_btn = gtk::MenuButton::builder()
@@ -519,7 +519,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
         .build();
     sticker_menu_btn.add_css_class("flat");
     sticker_menu_btn.add_css_class("qq-tool-btn");
-    sticker_menu_btn.set_tooltip_text(Some("选择 QQ 表情贴纸发送"));
+    sticker_menu_btn.set_tooltip_text(Some("选择表情插入到输入框"));
 
     let file_btn = gtk::Button::with_label("📁 发送文件");
     file_btn.add_css_class("flat");
@@ -798,26 +798,9 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             ctx,
             move |_| {
                 cx.widgets.sticker_popover.popdown();
-                if e_str == "👍" {
-                    let target = cx.state.borrow().current_chat.clone();
-                    let last_mid = target.key().and_then(|k| {
-                        cx.state
-                            .borrow()
-                            .messages
-                            .get(k)
-                            .and_then(|list| {
-                                list.iter()
-                                    .rev()
-                                    .find(|m| !m.revoked && !m.msg_id.is_empty())
-                            })
-                            .map(|m| m.msg_id.clone())
-                    });
-                    if let Some(mid) = last_mid {
-                        send_text_to_target(&cx, &target, &format!("/react {mid} 👍"));
-                        return;
-                    }
-                }
-                send_sticker_code(&cx, &e_str);
+                let buffer = cx.widgets.input.buffer();
+                buffer.insert_at_cursor(&e_str);
+                cx.widgets.input.grab_focus();
             }
         ));
         grid.attach(&btn, (idx % 6) as i32, (idx / 6) as i32, 1, 1);
@@ -996,12 +979,28 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 发送表情贴纸（SendSticker）
+    // 选择本地图片贴纸发送（SendSticker）
     ctx.widgets.sticker_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
-            send_sticker_code(&cx, "🎉");
+            let dialog = gtk::FileDialog::new();
+            dialog.open(
+                Some(&cx.widgets.window),
+                None::<&gio::Cancellable>,
+                clone!(
+                    #[strong]
+                    cx,
+                    move |res| {
+                        if let Ok(file) = res {
+                            if let Some(path) = file.path() {
+                                let path = path.to_string_lossy().to_string();
+                                send_sticker_code(&cx, &path);
+                            }
+                        }
+                    }
+                ),
+            );
         }
     ));
 

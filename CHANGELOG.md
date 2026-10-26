@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.2](https://github.com/pandaymx/lanchat/compare/v1.9.1...v1.9.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **core:** terminate readPump on ServerShutdown to trigger failover ([20e80f2](https://github.com/pandaymx/lanchat/commit/20e80f252ed7f3de0aebc72e763ffa1e0cf0e2a1))
+
 ## [1.9.1](https://github.com/pandaymx/lanchat/compare/v1.9.0...v1.9.1) (2026-10-26)
 
 

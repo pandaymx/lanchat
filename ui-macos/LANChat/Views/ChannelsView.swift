@@ -406,16 +406,13 @@ struct BroadcastChatView: View {
                 .buttonStyle(.plain)
                 .popover(isPresented: $showStickerPopover, arrowEdge: .top) {
                     StickerPickerPopover(
-                        onSendSticker: { sticker in
+                        onSendSticker: { stickerPath in
                             showStickerPopover = false
-                            if sticker == "👍 点赞", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
-                                Task { await store.sendChannelText(channelID: broadcastKey, text: "/react \(last.id) 👍") }
-                            } else {
-                                Task { await store.sendSticker(to: broadcastKey, path: sticker, threadKey: broadcastKey) }
-                            }
+                            Task { await store.sendSticker(to: broadcastKey, path: stickerPath, threadKey: broadcastKey) }
                         },
                         onInsertEmoji: { emoji in
                             draft += emoji
+                            showStickerPopover = false
                         }
                     )
                 }
@@ -1011,16 +1008,13 @@ struct ChannelChatView: View {
                 .help("向频道发送表情贴纸")
                 .popover(isPresented: $showStickerPopover, arrowEdge: .top) {
                     StickerPickerPopover(
-                        onSendSticker: { sticker in
+                        onSendSticker: { stickerPath in
                             showStickerPopover = false
-                            if sticker == "👍 点赞", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
-                                Task { await store.sendChannelText(channelID: channel.id, text: "/react \(last.id) 👍") }
-                            } else {
-                                Task { await store.sendSticker(to: channel.id, path: sticker, threadKey: channel.id) }
-                            }
+                            Task { await store.sendSticker(to: channel.id, path: stickerPath, threadKey: channel.id) }
                         },
                         onInsertEmoji: { emoji in
                             draft += emoji
+                            showStickerPopover = false
                         }
                     )
                 }

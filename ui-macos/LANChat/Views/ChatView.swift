@@ -394,16 +394,13 @@ struct ChatView: View {
                 .help("发送贴纸或插入表情")
                 .popover(isPresented: $showStickerPopover, arrowEdge: .top) {
                     StickerPickerPopover(
-                        onSendSticker: { sticker in
+                        onSendSticker: { stickerPath in
                             showStickerPopover = false
-                            if sticker == "👍 点赞", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
-                                Task { await store.sendText(to: peer.id, text: "/react \(last.id) 👍") }
-                            } else {
-                                Task { await store.sendSticker(to: peer.id, path: sticker) }
-                            }
+                            Task { await store.sendSticker(to: peer.id, path: stickerPath) }
                         },
                         onInsertEmoji: { emoji in
                             draft += emoji
+                            showStickerPopover = false
                         }
                     )
                 }
@@ -933,14 +930,14 @@ struct StickerPickerPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("发送大表情贴纸 (SendSticker)")
+            Text("点击表情插入到输入框")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundColor(.secondary)
 
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(stickers, id: \.code) { item in
                     Button {
-                        onSendSticker(item.code)
+                        onInsertEmoji(item.icon)
                     } label: {
                         VStack(spacing: 3) {
                             Text(item.icon)
@@ -962,7 +959,7 @@ struct StickerPickerPopover: View {
 
             Divider()
 
-            Text("插入常用 Emoji")
+            Text("更多常用 Emoji")
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundColor(.secondary)
 
@@ -982,6 +979,29 @@ struct StickerPickerPopover: View {
                     .buttonStyle(.plain)
                 }
             }
+
+            Divider()
+
+            Button {
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = true
+                panel.canChooseDirectories = false
+                panel.allowsMultipleSelection = false
+                if panel.runModal() == .OK, let url = panel.url {
+                    onSendSticker(url.path)
+                }
+            } label: {
+                Text("🖼️ 选择本地贴纸图片发送…")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(QQPalette.qqBlue)
+                    )
+            }
+            .buttonStyle(.plain)
         }
         .padding(14)
         .frame(width: 280)

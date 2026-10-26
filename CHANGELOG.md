@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.1](https://github.com/pandaymx/lanchat/compare/v1.9.0...v1.9.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **ci:** stop stale lanchat-daemon during Linux package upgrade ([216e88c](https://github.com/pandaymx/lanchat/commit/216e88c5e828b3a312551021a7dcb93711481104))
+* **ipc:** close listener on shutdown and allow idempotent Connect ([7776427](https://github.com/pandaymx/lanchat/commit/7776427e3261f8071dd953dcef8be3982e51236c))
+* **ui-linux:** make login error copyable and reap stale daemon on start ([0f4cc20](https://github.com/pandaymx/lanchat/commit/0f4cc20e0ae5abcc9a160afb053ca0b1822ab738))
+
 ## [1.9.0](https://github.com/pandaymx/lanchat/compare/v1.8.0...v1.9.0) (2026-10-26)
 
 

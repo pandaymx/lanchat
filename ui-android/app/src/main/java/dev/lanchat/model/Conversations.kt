@@ -136,9 +136,40 @@ object Conversations {
         for (list in messagesByConversation.values) {
             val orig = list.firstOrNull { it.msgId == targetId && !it.revoked }
             if (orig != null) {
-                return "「${orig.text}」\n$body"
+                val (cleanOrig, _) = splitReactions(orig.text)
+                return "「$cleanOrig」\n$body"
             }
         }
         return "[re:$targetId] $body"
+    }
+
+    private fun isReactionEmojiToken(token: String): Boolean {
+        if (token.isEmpty() || token.length > 24) return false
+        for (ch in token) {
+            if (ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9' ||
+                ch in '\u4E00'..'\u9FFF' || ch == ':' || ch == '"' || ch == ' '
+            ) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * 拆分消息正文与尾部表情回应徽章（如 `"你好 [👍] [❤️]"` -> `"你好"` 与 `listOf("👍", "❤️")`），
+     * 供 UI 将点赞/表情回应渲染在聊天气泡下方而非气泡内部。
+     */
+    fun splitReactions(raw: String): Pair<String, List<String>> {
+        var body = raw
+        val reversed = mutableListOf<String>()
+        while (body.endsWith("]")) {
+            val idx = body.lastIndexOf(" [")
+            if (idx < 0) break
+            val token = body.substring(idx + 2, body.length - 1)
+            if (!isReactionEmojiToken(token)) break
+            reversed.add(token)
+            body = body.substring(0, idx)
+        }
+        return body to reversed.asReversed()
     }
 }

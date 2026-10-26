@@ -92,4 +92,19 @@ class ConversationsTest {
         assertEquals(1, Conversations.messagesOf(map, Conversations.peerKey("c1")).size)
         assertEquals(1, Conversations.messagesOf(map, Conversations.groupKey("c1")).size)
     }
+
+    @Test
+    fun splitReactions_extractsTrailingEmojiBadges() {
+        val (body, reactions) = Conversations.splitReactions("初版发版说明 [👍] [❤️]")
+        assertEquals("初版发版说明", body)
+        assertEquals(listOf("👍", "❤️"), reactions)
+
+        val (pinned, r2) = Conversations.splitReactions("📌 [置顶] 重要通知 [👍]")
+        assertEquals("📌 [置顶] 重要通知", pinned)
+        assertEquals(listOf("👍"), r2)
+
+        val (voice, r3) = Conversations.splitReactions("🎤 [语音消息 3\"]")
+        assertEquals("🎤 [语音消息 3\"]", voice)
+        assertTrue(r3.isEmpty())
+    }
 }

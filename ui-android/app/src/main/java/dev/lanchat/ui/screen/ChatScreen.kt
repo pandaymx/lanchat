@@ -579,7 +579,16 @@ private fun ConversationScaffold(
                                             shape = RoundedCornerShape(12.dp),
                                             color = QqPrimaryBlue.copy(alpha = 0.08f),
                                             modifier = Modifier.clickable {
-                                                onSendSticker(sticker.code)
+                                                val lastMsg = messages.lastOrNull {
+                                                    !it.revoked && it.msgId.isNotEmpty() &&
+                                                        !it.msgId.startsWith("search-") &&
+                                                        !it.msgId.startsWith("e2ee-")
+                                                }
+                                                if (sticker.emoji == "👍" && lastMsg != null) {
+                                                    onSend("/react ${lastMsg.msgId} 👍")
+                                                } else {
+                                                    onSendSticker(sticker.code)
+                                                }
                                                 showStickerPanel = false
                                             },
                                         ) {
@@ -761,7 +770,8 @@ private fun MessageBubbleRow(
             val bubbleBg = if (message.inbound) qqInboundBubbleColor() else QqOutboundBubble
             val bubbleText = if (message.inbound) MaterialTheme.colorScheme.onSurface else QqOutboundText
 
-            val inlineBitmap = remember(message.text) { decodeInlineBitmap(message.text) }
+            val (cleanBody, reactions) = remember(message.text) { Conversations.splitReactions(message.text) }
+            val inlineBitmap = remember(cleanBody) { decodeInlineBitmap(cleanBody) }
 
             Surface(
                 shape = bubbleShape,
@@ -786,7 +796,7 @@ private fun MessageBubbleRow(
                         )
                     } else {
                         Text(
-                            text = message.text,
+                            text = cleanBody,
                             color = bubbleText,
                             fontSize = 15.sp,
                         )
@@ -794,23 +804,49 @@ private fun MessageBubbleRow(
                 }
             }
 
-            // 快捷操作微标签：↩ 回复 / 撤回 / 已读
+            // 气泡下方：已触发的点赞/表情回应胶囊徽章行
+            if (reactions.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    reactions.forEach { emoji ->
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = QqPrimaryBlue.copy(alpha = 0.14f),
+                            modifier = Modifier.clickable(onClick = onReact),
+                        ) {
+                            Text(
+                                text = "$emoji 1",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = QqPrimaryBlue,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 气泡下方快捷操作微标签：👍 点赞 / ↩ 回复 / 📌 置顶 / 撤回 / 已读
             if (message.msgId.isNotEmpty() && !message.msgId.startsWith("search-") && !message.msgId.startsWith("e2ee-")) {
                 Row(
                     modifier = Modifier.padding(top = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     Text(
-                        text = "↩ 回复",
-                        fontSize = 10.sp,
-                        color = QqPrimaryBlue,
-                        modifier = Modifier.clickable(onClick = onReply),
-                    )
-                    Text(
                         text = "👍 点赞",
                         fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = QqPrimaryBlue,
+                        fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.clickable(onClick = onReact),
+                    )
+                    Text(
+                        text = "↩ 回复",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable(onClick = onReply),
                     )
                     Text(
                         text = "📌 置顶",

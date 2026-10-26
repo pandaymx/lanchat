@@ -3,6 +3,7 @@ package transfer
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -179,5 +180,18 @@ func TestChannelKeyAndBandwidthLimiter(t *testing.T) {
 	SetBandwidthLimitBps(0)
 	if BandwidthLimitBps() != 0 {
 		t.Fatalf("expected 0 limit, got %d", BandwidthLimitBps())
+	}
+
+	histKey, err := DeriveHistoryKey(ownerPriv)
+	if err != nil || histKey == "" {
+		t.Fatalf("DeriveHistoryKey: %v", err)
+	}
+	sealedLine, err := SealHistoryLine(histKey, []byte(`{"id":"m1","text":"secret"}`))
+	if err != nil || !strings.HasPrefix(sealedLine, TextHistoryPrefix) {
+		t.Fatalf("SealHistoryLine got %q, err %v", sealedLine, err)
+	}
+	openedLine, err := OpenHistoryLine(histKey, sealedLine)
+	if err != nil || string(openedLine) != `{"id":"m1","text":"secret"}` {
+		t.Fatalf("OpenHistoryLine got %q, err %v", string(openedLine), err)
 	}
 }

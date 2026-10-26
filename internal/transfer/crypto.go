@@ -34,6 +34,9 @@ const textECDHInfo = "lanchat/ecdh-text/v1"
 // channelKeySeedInfo 是频道 Owner 派生频道对称密钥的上下文绑定信息（M19）。
 const channelKeySeedInfo = "lanchat/channel-e2ee-seed/v1"
 
+// historyAtRestInfo 是本地聊天历史静态落盘加密密钥派生的上下文绑定信息（M23）。
+const historyAtRestInfo = "lanchat/history-at-rest/v1"
+
 // TextE2EEPrefix 是端到端加密文本负载的线格式前缀。
 const TextE2EEPrefix = "enc:v1:"
 
@@ -42,6 +45,9 @@ const TextECDHPrefix = "enc:ecdh:"
 
 // TextChannelPrefix 是 G2 频道端到端加密文本负载的线格式前缀（M19）。
 const TextChannelPrefix = "enc:ch1:"
+
+// TextHistoryPrefix 是本地聊天历史静态加密落盘行的前缀（M23）。
+const TextHistoryPrefix = "enc:hist1:"
 
 // generateX25519 生成一对一次性 X25519 密钥。
 func generateX25519() (*ecdh.PrivateKey, error) {
@@ -297,6 +303,46 @@ func OpenChannelText(channelKeyB64, wire string) (string, error) {
 		return "", err
 	}
 	return string(plain), nil
+}
+
+// DeriveHistoryKey 根据客户端静态身份私钥经 HKDF-SHA256 派生本地聊天历史落盘密钥（M23）。
+func DeriveHistoryKey(identityPriv *ecdh.PrivateKey) (string, error) {
+	if identityPriv == nil {
+		return "", errors.New("transfer: missing identity private key")
+	}
+	key, err := hkdf.Key(sha256.New, identityPriv.Bytes(), nil, historyAtRestInfo, 32)
+	if err != nil {
+		return "", fmt.Errorf("transfer: history key hkdf: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(key), nil
+}
+
+// SealHistoryLine 使用本地历史密钥将单行 JSON 封装为 AES-256-GCM 密文行（M23）。
+func SealHistoryLine(keyB64 string, plain []byte) (string, error) {
+	if keyB64 == "" {
+		return string(plain), nil
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(keyB64))
+	if err != nil || len(key) != 32 {
+		return "", errors.New("transfer: invalid 32-byte history key")
+	}
+	sealed, err := wrapKey(key, plain)
+	if err != nil {
+		return "", err
+	}
+	return TextHistoryPrefix + sealed, nil
+}
+
+// OpenHistoryLine 解密带 TextHistoryPrefix 前缀的本地聊天历史落盘行；未加密行原样返回以兼容旧文件（M23）。
+func OpenHistoryLine(keyB64, line string) ([]byte, error) {
+	if !strings.HasPrefix(line, TextHistoryPrefix) {
+		return []byte(line), nil
+	}
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(keyB64))
+	if err != nil || len(key) != 32 {
+		return nil, errors.New("transfer: missing or invalid history key")
+	}
+	return unwrapKey(key, strings.TrimPrefix(line, TextHistoryPrefix))
 }
 
 // newGCM 以 32 字节密钥构造 AES-256-GCM。

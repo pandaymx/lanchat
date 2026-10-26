@@ -5,6 +5,7 @@ struct SettingsView: View {
     @EnvironmentObject private var store: AppStore
     @EnvironmentObject private var settings: SettingsStore
     @State private var searchText = ""
+    @State private var customUpdateProxy = ""
 
     var body: some View {
         NavigationStack {
@@ -23,7 +24,10 @@ struct SettingsView: View {
                         // 3. 沙盒下载目录卡片
                         downloadDirCard
 
-                        // 4. iOS 诚实能力边界说明卡片
+                        // 4. 版本更新与国内代理静默下载卡片
+                        updateCard
+
+                        // 5. iOS 诚实能力边界说明卡片
                         boundaryCard
                     }
                     .padding(.horizontal, 14)
@@ -150,6 +154,54 @@ struct SettingsView: View {
             Text("iOS 版接收的文件统一保存在 App 沙盒 Documents/LANChat 内，可在系统「文件」App 中直接查看与分享。")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+    }
+
+    private var updateCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("版本更新（国内代理静默下载 · 免浏览器）", systemImage: "arrow.down.circle.fill")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+
+            Text(store.updateStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            TextField("可选自定义加速代理前缀（留空默认轮询国内节点）", text: $customUpdateProxy)
+                .font(.caption)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(8)
+                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+
+            HStack(spacing: 10) {
+                Button {
+                    store.checkAndSilentUpdate(customProxy: customUpdateProxy, checkOnly: true)
+                } label: {
+                    Text("🔍 检查新版本")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(QQTheme.qqBlue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
+                }
+
+                Button {
+                    store.checkAndSilentUpdate(customProxy: customUpdateProxy, checkOnly: false)
+                } label: {
+                    Text("⬇️ 静默下载更新包")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(QQTheme.qqBlue, in: Capsule())
+                }
+            }
         }
         .padding(16)
         .background(

@@ -12,6 +12,7 @@ final class AppStore: ObservableObject {
     @Published var messagesByPeer: [String: [ChatMessage]] = [:]
     @Published var matrixSummary: [String: String] = [:]
     @Published var channels: [Channel] = []
+    @Published var updateStatus: String = "内置国内加速节点：ghfast.top · gh-proxy.com · ghproxy.net · mirror.ghproxy.com · ghps.cc"
     @Published var busy = false
     @Published var error: String?
 
@@ -60,6 +61,30 @@ final class AppStore: ObservableObject {
         run { try await self.engine.setNickname(self.settings.nickname) }
     }
 
+    func checkAndSilentUpdate(customProxy: String = "", checkOnly: Bool = false) {
+        let proxyArg = customProxy.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cmd: String
+        if checkOnly {
+            cmd = "/update check"
+            updateStatus = "正在通过国内加速节点检查最新版本…"
+        } else if proxyArg.isEmpty {
+            cmd = "/update"
+            updateStatus = "正在通过国内加速代理静默下载更新包（免浏览器）…"
+        } else {
+            cmd = "/update \(proxyArg)"
+            updateStatus = "正在通过 \(proxyArg) 静默下载更新包…"
+        }
+        run {
+            let msgId = try await self.engine.sendText(to: "", text: cmd)
+            if msgId.hasPrefix("update:") {
+                self.updateStatus = String(msgId.dropFirst(7))
+            } else {
+                self.updateStatus = msgId
+            }
+            await self.refresh()
+        }
+    }
+
     func sendText(to: String, text: String) {
         let content = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else { return }
@@ -93,6 +118,13 @@ final class AppStore: ObservableObject {
             if msgId.hasPrefix("status:") {
                 let st = String(msgId.dropFirst(7))
                 self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "📊 [诊断状态] \(st)",
+                                               inbound: false, timestamp: Date()))
+                return
+            }
+            if msgId.hasPrefix("update:") {
+                let up = String(msgId.dropFirst(7))
+                self.updateStatus = up
+                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "🚀 [版本更新] \(up)",
                                                inbound: false, timestamp: Date()))
                 return
             }

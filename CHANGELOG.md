@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.4](https://github.com/pandaymx/lanchat/compare/v1.17.3...v1.17.4) (2026-10-26)
+
+
+### Bug Fixes
+
+* **ui-android:** support real voice recording, playback, and home UI polish ([b2e76fc](https://github.com/pandaymx/lanchat/commit/b2e76fce85b4def3effd04651777f6e9cd7c1a56))
+
 ## [1.17.3](https://github.com/pandaymx/lanchat/compare/v1.17.2...v1.17.3) (2026-10-26)
 
 

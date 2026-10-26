@@ -19,6 +19,7 @@ type Server struct {
 	api appapi.API
 
 	mu     sync.Mutex
+	ln     net.Listener
 	conns  map[*conn]struct{}
 	closed bool
 
@@ -38,6 +39,15 @@ func (s *Server) Listener() appapi.Listener { return eventBridge{srv: s} }
 
 // serve 在已就绪的 listener 上接受连接并处理直到 listener 关闭。
 func (s *Server) serve(l net.Listener) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		_ = l.Close()
+		return nil
+	}
+	s.ln = l
+	s.mu.Unlock()
+
 	for {
 		c, err := l.Accept()
 		if err != nil {
@@ -62,12 +72,17 @@ func (s *Server) Close() {
 		return
 	}
 	s.closed = true
+	ln := s.ln
+	s.ln = nil
 	conns := make([]*conn, 0, len(s.conns))
 	for c := range s.conns {
 		conns = append(conns, c)
 	}
 	s.mu.Unlock()
 
+	if ln != nil {
+		_ = ln.Close()
+	}
 	for _, c := range conns {
 		c.close()
 	}

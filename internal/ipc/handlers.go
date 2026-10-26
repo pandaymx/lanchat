@@ -2,6 +2,7 @@ package ipc
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 )
@@ -71,6 +72,9 @@ func hConnect(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
 		return nil, rerr
 	}
 	if err := api.Connect(p.Addr, p.PSK); err != nil {
+		if strings.Contains(err.Error(), "operation not allowed in current state") && api.GetState().Conn == appapi.ConnConnected {
+			return struct{}{}, nil
+		}
 		return nil, apiErr(err)
 	}
 	return struct{}{}, nil

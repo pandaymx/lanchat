@@ -30,5 +30,6 @@ func (s *Server) ListenAndServe(path string) error {
 	if err != nil {
 		return err
 	}
+	defer func() { _ = os.Remove(path) }()
 	return s.serve(l)
 }

@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -56,6 +57,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.lanchat.R
@@ -146,7 +148,10 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable { showNicknameDialog = true },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp)
+                            .clickable { showNicknameDialog = true },
                     ) {
                         QqAvatar(
                             name = state.nickname.ifEmpty { stringResource(R.string.app_name) },
@@ -159,12 +164,14 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                             onClick = { showNicknameDialog = true },
                         )
                         Spacer(Modifier.width(10.dp))
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = state.nickname.ifEmpty { stringResource(R.string.app_name) },
                                 color = Color.White,
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
@@ -178,32 +185,47 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                                     text = "● 在线 · 点击修改昵称",
                                     color = Color.White.copy(alpha = 0.88f),
                                     fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = { showUpdateDialog = true }) {
+                        TextButton(
+                            onClick = { showUpdateDialog = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
                             Text(
                                 text = "🚀 更新",
                                 color = Color.White,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false,
                             )
                         }
-                        IconButton(onClick = { showDownloadDirDialog = true }) {
+                        IconButton(
+                            onClick = { showDownloadDirDialog = true },
+                            modifier = Modifier.size(36.dp),
+                        ) {
                             Icon(
                                 Icons.Filled.FolderOpen,
                                 contentDescription = "设置下载目录 📂",
                                 tint = Color.White,
+                                modifier = Modifier.size(20.dp),
                             )
                         }
-                        IconButton(onClick = { showCreateChannelDialog = true }) {
+                        IconButton(
+                            onClick = { showCreateChannelDialog = true },
+                            modifier = Modifier.size(36.dp),
+                        ) {
                             Icon(
                                 Icons.Filled.Add,
                                 contentDescription = stringResource(R.string.channel_create),
                                 tint = Color.White,
+                                modifier = Modifier.size(22.dp),
                             )
                         }
                     }

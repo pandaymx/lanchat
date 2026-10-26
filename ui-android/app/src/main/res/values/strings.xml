@@ -22,7 +22,7 @@
     <string name="chat_input_placeholder">输入消息</string>
 
     <!-- 频道 -->
-    <string name="channels_empty">还没有频道，点击右下角创建一个吧</string>
+    <string name="channels_empty">还没有自定义频道，点击下方或右上角「新建频道」创建一个吧</string>
     <string name="channels_refresh">刷新频道</string>
     <string name="channel_create">新建频道</string>
     <string name="channel_name_label">频道名称</string>

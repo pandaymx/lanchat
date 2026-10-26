@@ -243,26 +243,39 @@ class AppViewModel : ViewModel() {
         }
         launchOp {
             engine.channelCreate(channelName, topic.trim(), private)
+            val channels = engine.channelList()
+            _ui.update {
+                it.copy(
+                    channels = channels,
+                    error = "✅ 已创建频道「$channelName」",
+                )
+            }
         }
     }
 
     fun joinChannel(channelId: String) {
         launchOp {
             engine.channelJoin(channelId)
+            val channels = engine.channelList()
+            _ui.update { it.copy(channels = channels) }
         }
     }
 
     fun inviteMember(channelId: String, memberId: String) {
         launchOp {
             engine.channelInvite(channelId, memberId)
+            val channels = engine.channelList()
+            _ui.update { it.copy(channels = channels) }
         }
     }
 
     fun leaveChannel(channelId: String) {
         launchOp {
             engine.channelLeave(channelId)
+            val channels = engine.channelList()
             _ui.update {
                 it.copy(
+                    channels = channels,
                     messagesByConversation = Conversations.removeGroup(
                         it.messagesByConversation,
                         channelId,
@@ -275,7 +288,14 @@ class AppViewModel : ViewModel() {
     fun refreshChannels() {
         launchOp {
             val channels = engine.channelList()
-            _ui.update { it.copy(channels = channels) }
+            val state = engine.getState()
+            val merged = if (state.channels.size >= channels.size) state.channels else channels
+            _ui.update {
+                it.copy(
+                    channels = merged,
+                    error = "🔄 频道列表已刷新（共 ${merged.size} 个频道）",
+                )
+            }
         }
     }
 
@@ -469,7 +489,10 @@ class AppViewModel : ViewModel() {
                 else state.copy(matrixSummary = state.matrixSummary + (event.transferId to summary))
             }
 
-            is CoreEvent.ChannelsUpdated -> refresh()
+            is CoreEvent.ChannelsUpdated -> {
+                _ui.update { it.copy(channels = event.channels) }
+                refresh()
+            }
         }
     }
 

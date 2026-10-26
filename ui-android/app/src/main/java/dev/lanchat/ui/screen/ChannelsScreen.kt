@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,7 +31,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.lanchat.R
@@ -91,7 +92,7 @@ fun ChannelsScreen(
     Column(
         modifier = modifier.background(qqChatBackgroundColor()),
     ) {
-        // 顶部频道操作栏
+        // 顶部频道操作栏：左侧标题自适应权重，右侧等高紧凑胶囊按钮（适配 360dp 窄屏，防止按钮被挤压竖排折行）
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -101,32 +102,61 @@ fun ChannelsScreen(
         ) {
             Text(
                 text = "#️⃣ G2 自定义频道 (${filteredChannels.size})",
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 OutlinedButton(
                     onClick = { vm.refreshChannels() },
+                    modifier = Modifier.height(34.dp),
                     shape = RoundedCornerShape(50),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                 ) {
                     Icon(
                         Icons.Filled.Refresh,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
+                        contentDescription = stringResource(R.string.channels_refresh),
+                        modifier = Modifier.size(15.dp),
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.channels_refresh), fontSize = 12.sp)
+                    Text(
+                        text = stringResource(R.string.channels_refresh),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
-                ExtendedFloatingActionButton(
+                Button(
                     onClick = { showCreate = true },
-                    containerColor = QqPrimaryBlue,
-                    contentColor = Color.White,
+                    modifier = Modifier.height(34.dp),
                     shape = RoundedCornerShape(50),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = QqPrimaryBlue,
+                        contentColor = Color.White,
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                 ) {
-                    Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.channel_create))
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = stringResource(R.string.channel_create),
+                        modifier = Modifier.size(15.dp),
+                    )
                     Spacer(Modifier.width(4.dp))
-                    Text("+ " + stringResource(R.string.channel_create), fontWeight = FontWeight.Bold)
+                    Text(
+                        text = stringResource(R.string.channel_create),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false,
+                    )
                 }
             }
         }
@@ -156,13 +186,24 @@ fun ChannelsScreen(
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontWeight = FontWeight.Medium,
                             )
-                            Spacer(Modifier.height(10.dp))
+                            Spacer(Modifier.height(12.dp))
                             Button(
                                 onClick = { showCreate = true },
                                 shape = RoundedCornerShape(50),
                                 colors = ButtonDefaults.buttonColors(containerColor = QqPrimaryBlue),
+                                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
                             ) {
-                                Text("+ " + stringResource(R.string.channel_create))
+                                Icon(
+                                    Icons.Filled.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.channel_create),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
                             }
                         }
                     }
@@ -270,6 +311,8 @@ private fun ChannelCard(
                                 modifier = Modifier.padding(start = 4.dp),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         Text(
@@ -297,6 +340,8 @@ private fun ChannelCard(
                             color = if (channel.private) QqRelayWarningOrange else QqOnlineGreen,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                         )
                     }
@@ -334,33 +379,39 @@ private fun ChannelCard(
                 if (joined) {
                     Button(
                         onClick = onOpen,
+                        modifier = Modifier.height(34.dp),
                         shape = RoundedCornerShape(50),
                         colors = ButtonDefaults.buttonColors(containerColor = QqPrimaryBlue),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                     ) {
-                        Text(stringResource(R.string.channel_open))
+                        Text(stringResource(R.string.channel_open), fontSize = 12.sp, maxLines = 1, softWrap = false)
                     }
                     if (isOwner) {
                         AssistChip(
                             onClick = onInvite,
-                            label = { Text(stringResource(R.string.channel_invite)) },
+                            label = { Text(stringResource(R.string.channel_invite), fontSize = 12.sp, maxLines = 1, softWrap = false) },
                             leadingIcon = {
-                                Icon(Icons.Filled.PersonAdd, contentDescription = null)
+                                Icon(Icons.Filled.PersonAdd, contentDescription = null, modifier = Modifier.size(15.dp))
                             },
                         )
                     }
                     OutlinedButton(
                         onClick = onLeave,
+                        modifier = Modifier.height(34.dp),
                         shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp),
                     ) {
-                        Text(stringResource(R.string.channel_leave))
+                        Text(stringResource(R.string.channel_leave), fontSize = 12.sp, maxLines = 1, softWrap = false)
                     }
                 } else {
                     Button(
                         onClick = onJoin,
+                        modifier = Modifier.height(34.dp),
                         shape = RoundedCornerShape(50),
                         colors = ButtonDefaults.buttonColors(containerColor = QqPrimaryBlue),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
                     ) {
-                        Text(stringResource(R.string.channel_join))
+                        Text(stringResource(R.string.channel_join), fontSize = 12.sp, maxLines = 1, softWrap = false)
                     }
                 }
             }

@@ -219,8 +219,12 @@ struct ChatView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
                 ForEach(QQTheme.presetStickers) { item in
                     Button {
-                        let path = QQTheme.materializeStickerFile(item: item)
-                        store.sendSticker(to: peer.id, path: path)
+                        if item.id == "qq_zan", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
+                            store.sendText(to: peer.id, text: "/react \(last.id) 👍")
+                        } else {
+                            let path = QQTheme.materializeStickerFile(item: item)
+                            store.sendSticker(to: peer.id, path: path)
+                        }
                         showStickerDrawer = false
                     } label: {
                         VStack(spacing: 4) {
@@ -398,6 +402,10 @@ struct BubbleRow: View {
     var onReact: (() -> Void)? = nil
     var onPin: (() -> Void)? = nil
 
+    private var parsed: (body: String, reactions: [String]) {
+        QQTheme.splitReactions(message.text)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             if message.inbound {
@@ -421,7 +429,7 @@ struct BubbleRow: View {
 
                 // 手机 QQ 圆角聊天气泡（入站白色/次级背景，出站 #0099FF 蓝底白字，支持 M17 内联图片缩略图）
                 Group {
-                    if !message.revoked, let img = inlineUIImage(from: message.text) {
+                    if !message.revoked, let img = inlineUIImage(from: parsed.body) {
                         VStack(alignment: .leading, spacing: 4) {
                             Image(uiImage: img)
                                 .resizable()
@@ -438,7 +446,7 @@ struct BubbleRow: View {
                             in: RoundedRectangle(cornerRadius: 18, style: .continuous)
                         )
                     } else {
-                        Text(message.text)
+                        Text(parsed.body)
                             .font(.system(size: 15))
                             .italic(message.revoked)
                             .padding(.horizontal, 14)
@@ -487,7 +495,26 @@ struct BubbleRow: View {
                         }
                     }
 
-                // 底部状态与快捷操作（✓ 已读 / 回复 / 撤回）
+                // 气泡下方：已触发的点赞/表情回应胶囊徽章行
+                if !message.revoked && !parsed.reactions.isEmpty {
+                    HStack(spacing: 5) {
+                        ForEach(parsed.reactions, id: \.self) { emoji in
+                            Button {
+                                onReact?()
+                            } label: {
+                                Text("\(emoji) 1")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(QQTheme.qqBlue)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(QQTheme.qqBlue.opacity(0.14), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                // 气泡下方状态与快捷操作（✓ 已读 / 👍 点赞 / 回复 / 置顶 / 撤回）
                 HStack(spacing: 8) {
                     if !message.inbound && !message.revoked && !message.readBy.isEmpty {
                         Text("✓ 已读")
@@ -496,8 +523,18 @@ struct BubbleRow: View {
                     }
 
                     if !message.revoked {
+                        if let onReact {
+                            Button("👍 点赞", action: onReact)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(QQTheme.qqBlue)
+                        }
                         if let onReply {
                             Button("回复", action: onReply)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let onPin {
+                            Button("📌 置顶", action: onPin)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }

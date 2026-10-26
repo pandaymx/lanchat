@@ -66,6 +66,12 @@ struct ChannelChatView: View {
                                 },
                                 onMarkRead: {
                                     store.sendGroupText(channel: live, text: "/read \(msg.id)")
+                                },
+                                onReact: {
+                                    store.sendGroupText(channel: live, text: "/react \(msg.id) 👍")
+                                },
+                                onPin: {
+                                    store.sendGroupText(channel: live, text: "/pin \(msg.id)")
                                 }
                             )
                             .id(msg.id)
@@ -225,8 +231,12 @@ struct ChannelChatView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
                 ForEach(QQTheme.presetStickers) { item in
                     Button {
-                        let path = QQTheme.materializeStickerFile(item: item)
-                        store.sendSticker(to: live.id, path: path, group: live.id)
+                        if item.id == "qq_zan", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
+                            store.sendGroupText(channel: live, text: "/react \(last.id) 👍")
+                        } else {
+                            let path = QQTheme.materializeStickerFile(item: item)
+                            store.sendSticker(to: live.id, path: path, group: live.id)
+                        }
                         showStickerDrawer = false
                     } label: {
                         VStack(spacing: 4) {
@@ -435,6 +445,8 @@ private struct ChannelBubble: View {
     var onReply: (() -> Void)? = nil
     var onRevoke: (() -> Void)? = nil
     var onMarkRead: (() -> Void)? = nil
+    var onReact: (() -> Void)? = nil
+    var onPin: (() -> Void)? = nil
 
     var body: some View {
         BubbleRow(
@@ -443,7 +455,9 @@ private struct ChannelBubble: View {
             senderAvatarKey: message.inbound ? message.peerId : store.selfId,
             onReply: onReply,
             onRevoke: onRevoke,
-            onMarkRead: onMarkRead
+            onMarkRead: onMarkRead,
+            onReact: onReact,
+            onPin: onPin
         )
     }
 }

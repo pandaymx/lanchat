@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - macOS NTQQ 视觉调色盘与共享头像组件
 
@@ -137,6 +138,18 @@ struct ChatView: View {
             store.markThreadActive(newId)
             replyingTo = nil
             searchQuery = ""
+        }
+        .onDrop(of: [UTType.fileURL], isTargeted: nil) { providers in
+            guard !providers.isEmpty else { return false }
+            for provider in providers {
+                _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                    guard let fileURL = url, fileURL.isFileURL else { return }
+                    Task { @MainActor in
+                        await store.offerFile(to: peer.id, path: fileURL.path)
+                    }
+                }
+            }
+            return true
         }
     }
 

@@ -92,10 +92,6 @@ impl AppState {
             }
             let text = if m.revoked {
                 "[消息已撤回]".to_string()
-            } else if m.text.starts_with("data:image/") {
-                m.text
-            } else if m.msg_type == "STICKER_MSG" || m.msg_type == "sticker" {
-                format!("[表情] {}", m.text)
             } else {
                 m.text
             };
@@ -151,6 +147,9 @@ impl AppState {
     }
 
     pub fn push_message(&mut self, msg: ChatMessage) {
+        if is_system_diagnostic_message(&msg.msg_id, &msg.text) {
+            return;
+        }
         let list = self.messages.entry(msg.peer_id.clone()).or_default();
         if !msg.msg_id.is_empty() {
             if let Some(existing) = list.iter_mut().find(|x| x.msg_id == msg.msg_id) {
@@ -294,9 +293,25 @@ fn is_reaction_emoji_token(token: &str) -> bool {
     })
 }
 
-/// 拆分消息正文与尾部表情回应徽章（如 `"你好 [👍] [❤️]"` -> `("你好", vec!["👍", "❤️"])`），
-/// 供 UI 将点赞/表情回应渲染在聊天气泡下方而非气泡内部。
-pub fn split_reactions(raw: &str) -> (String, Vec<String>) {
+fn is_system_diagnostic_text(text: &str) -> bool {
+    let t = text.trim();
+    t.starts_with("[安全码指纹]")
+        || t.starts_with("🛡️ [安全码指纹")
+        || t.starts_with("📊 [诊断状态]")
+        || t.starts_with("🚀 [版本更新]")
+        || t.starts_with("⚡ [带宽限速")
+}
+
+fn is_system_diagnostic_message(msg_id: &str, text: &str) -> bool {
+    for prefix in ["fp-", "status-", "update-", "search-", "e2ee-", "bwlimit-"] {
+        if msg_id.starts_with(prefix) {
+            return true;
+        }
+    }
+    is_system_diagnostic_text(text)
+}
+
+fn strip_trailing_reactions(raw: &str) -> (&str, Vec<String>) {
     let mut body = raw;
     let mut rev_reactions = Vec::new();
     while let Some(idx) = body.rfind(" [") {
@@ -311,7 +326,27 @@ pub fn split_reactions(raw: &str) -> (String, Vec<String>) {
         body = &body[..idx];
     }
     rev_reactions.reverse();
-    (body.to_string(), rev_reactions)
+    (body, rev_reactions)
+}
+
+/// 拆分消息正文与尾部表情回应徽章（如 `"你好 [👍] [❤️]"` -> `("你好", vec!["👍", "❤️"])`），
+/// 同时剥离引用块 `「...」\n` 内遗留的 `[👍]` 或 `[安全码指纹]`，供 UI 将点赞渲染在聊天气泡下方。
+pub fn split_reactions(raw: &str) -> (String, Vec<String>) {
+    let (body_slice, reactions) = strip_trailing_reactions(raw);
+    let body_slice = body_slice.strip_prefix("[表情] ").unwrap_or(body_slice);
+    if let Some(after_open) = body_slice.strip_prefix('「') {
+        if let Some(close_idx) = after_open.find("」\n") {
+            let quoted = &after_open[..close_idx];
+            let rest = &after_open[close_idx + "」\n".len()..];
+            let (clean_quoted, _) = strip_trailing_reactions(quoted);
+            let clean_quoted = clean_quoted.strip_prefix("[表情] ").unwrap_or(clean_quoted);
+            if is_system_diagnostic_text(clean_quoted) {
+                return (rest.to_string(), reactions);
+            }
+            return (format!("「{clean_quoted}」\n{rest}"), reactions);
+        }
+    }
+    (body_slice.to_string(), reactions)
 }
 
 #[cfg(test)]
@@ -411,5 +446,13 @@ mod tests {
         let (voice_body, r3) = split_reactions("🎤 [语音消息 3\"]");
         assert_eq!(voice_body, "🎤 [语音消息 3\"]");
         assert!(r3.is_empty());
+
+        let (clean_reply, r4) = split_reactions("「[安全码指纹] 本机: F3A8-8288-9F58 [👍]」\n你好");
+        assert_eq!(clean_reply, "你好");
+        assert!(r4.is_empty());
+
+        let (quoted_reply, r5) = split_reactions("「初版发版说明 [👍]」\n收到 [🎉]");
+        assert_eq!(quoted_reply, "「初版发版说明」\n收到");
+        assert_eq!(r5, vec!["🎉"]);
     }
 }

@@ -1335,12 +1335,7 @@ fn send_sticker_code(ctx: &Rc<AppCtx>, sticker: &str) {
                         .map(|s| s.to_string())
                         .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
                 });
-            let _ = tx.try_send(UiEvent::TextSent(
-                key,
-                group,
-                format!("[表情] {sticker_owned}"),
-                res,
-            ));
+            let _ = tx.try_send(UiEvent::TextSent(key, group, sticker_owned, res));
         });
     }
 }
@@ -1898,18 +1893,11 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 }
                 return;
             }
-            let raw_text = p
+            let text = p
                 .get("text")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let text = if raw_text.starts_with("data:image/") {
-                raw_text
-            } else if msg_type == "STICKER_MSG" || msg_type == "sticker" {
-                format!("[表情] {raw_text}")
-            } else {
-                raw_text
-            };
             let (conv_key, sender_id) = if group.is_empty() {
                 (from.clone(), String::new())
             } else {

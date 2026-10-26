@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.17.1](https://github.com/pandaymx/lanchat/compare/v1.17.0...v1.17.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **core:** fetch channel list immediately on connect and bump version to 1.17.1 ([98b3e69](https://github.com/pandaymx/lanchat/commit/98b3e69702974b26f0496629fe722d7689f23784))
+* **ui-android:** fix channel header button wrapping and state sync on 360dp screens ([9ab4176](https://github.com/pandaymx/lanchat/commit/9ab41768e5d493e9423488a0cda9a11712189e7f))
+
 ## [1.17.0](https://github.com/pandaymx/lanchat/compare/v1.16.0...v1.17.0) (2026-10-26)
 
 

@@ -463,6 +463,14 @@ public sealed partial class ChatViewModel : ViewModelBase
     {
         foreach (var hm in messages)
         {
+            if (hm.Id.StartsWith("fp-", StringComparison.Ordinal) ||
+                hm.Id.StartsWith("status-", StringComparison.Ordinal) ||
+                hm.Id.StartsWith("update-", StringComparison.Ordinal) ||
+                ChatMessage.IsSystemDiagnosticText(hm.Text))
+            {
+                continue;
+            }
+
             var isSelf = !string.IsNullOrEmpty(SelfId) && hm.From == SelfId;
             var peerOrFrom = isSelf ? (!string.IsNullOrEmpty(hm.To) ? hm.To! : hm.From) : hm.From;
             var baseName = isSelf ? "我" : (ResolvePeer(hm.From)?.Nickname ?? hm.From);

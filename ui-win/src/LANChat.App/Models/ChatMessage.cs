@@ -98,7 +98,17 @@ public sealed record ChatMessage
         return true;
     }
 
-    public static (string Body, IReadOnlyList<string> Reactions) SplitReactions(string raw)
+    public static bool IsSystemDiagnosticText(string? raw)
+    {
+        var t = (raw ?? "").Trim();
+        return t.StartsWith("[安全码指纹]", StringComparison.Ordinal) ||
+               t.StartsWith("🛡️ [安全码指纹", StringComparison.Ordinal) ||
+               t.StartsWith("📊 [诊断状态]", StringComparison.Ordinal) ||
+               t.StartsWith("🚀 [版本更新]", StringComparison.Ordinal) ||
+               t.StartsWith("⚡ [带宽限速", StringComparison.Ordinal);
+    }
+
+    private static (string Body, IReadOnlyList<string> Reactions) StripTrailingReactions(string raw)
     {
         var body = raw ?? "";
         var reversed = new List<string>();
@@ -122,5 +132,35 @@ public sealed record ChatMessage
 
         reversed.Reverse();
         return (body, reversed);
+    }
+
+    public static (string Body, IReadOnlyList<string> Reactions) SplitReactions(string raw)
+    {
+        var (body, reactions) = StripTrailingReactions(raw ?? "");
+        if (body.StartsWith("[表情] ", StringComparison.Ordinal))
+        {
+            body = body[5..];
+        }
+
+        if (body.StartsWith('「'))
+        {
+            var closeIdx = body.IndexOf("」\n", StringComparison.Ordinal);
+            if (closeIdx > 1)
+            {
+                var quoted = body[1..closeIdx];
+                var rest = body[(closeIdx + 2)..];
+                var (cleanQuoted, _) = StripTrailingReactions(quoted);
+                if (cleanQuoted.StartsWith("[表情] ", StringComparison.Ordinal))
+                {
+                    cleanQuoted = cleanQuoted[5..];
+                }
+
+                body = IsSystemDiagnosticText(cleanQuoted)
+                    ? rest
+                    : $"「{cleanQuoted}」\n{rest}";
+            }
+        }
+
+        return (body, reactions);
     }
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.0](https://github.com/pandaymx/lanchat/compare/v1.19.0...v2.0.0) (2026-10-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** promote LANChat to v2.0.0 with IPC v1.1 structured messages, CAS media storage, and real-time LAN voice/screen/overlay collaboration
+
+### Features
+
+* **core:** add LAN UDP voice calls, P2P screen share, and overlay gossip (v2.0.0) ([7d39124](https://github.com/pandaymx/lanchat/commit/7d391246c2571550e6890990be30fc84442b2e22))
+* **discover:** add cross-VLAN/Tailscale overlay probing and GossipPeerBook ([61ea9b4](https://github.com/pandaymx/lanchat/commit/61ea9b4ab089c51b8381205dd84c9a1fe9e2b727))
+
 ## [1.19.0](https://github.com/pandaymx/lanchat/compare/v1.18.0...v1.19.0) (2026-10-26)
 
 

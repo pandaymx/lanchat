@@ -2009,10 +2009,17 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .unwrap_or("")
                 .to_string();
             let msg_type = p.get("type").and_then(|v| v.as_str()).unwrap_or("text");
-            if msg_type == "MSG_REVOKE" {
+            if msg_type == "MSG_REVOKE" || msg_type == "MSG_BURN" {
                 if ctx.state.borrow_mut().revoke_message(&msg_id) {
                     ctx.render_roster();
                     ctx.render_messages();
+                }
+                return;
+            }
+            if msg_type == "CLIP_SYNC" {
+                let clip_text = p.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if !clip_text.is_empty() {
+                    ctx.toast(clip_text);
                 }
                 return;
             }

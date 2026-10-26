@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.17.0](https://github.com/pandaymx/lanchat/compare/v1.16.0...v1.17.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add M32 DND mode, unread/mention tracking, and M33 /update apply ([43055a1](https://github.com/pandaymx/lanchat/commit/43055a1e552d091fab8d1ef09ebaa0f9a5769339))
+* **server:** display DND and unread/mention badges in interactive TUI header ([f59cb0d](https://github.com/pandaymx/lanchat/commit/f59cb0d3f2a98e708696af691d505027a6184535))
+
 ## [1.16.0](https://github.com/pandaymx/lanchat/compare/v1.15.0...v1.16.0) (2026-10-26)
 
 

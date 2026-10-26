@@ -261,6 +261,12 @@ public sealed partial class ChatViewModel : ViewModelBase
                 Draft = "";
                 return;
             }
+            if (msgId.StartsWith("status:", StringComparison.Ordinal))
+            {
+                AppendSystemMessage($"📊 诊断状态：{msgId[7..]}");
+                Draft = "";
+                return;
+            }
             if (text.StartsWith("/revoke ", StringComparison.Ordinal))
             {
                 RevokeMessage(text[8..].Trim());

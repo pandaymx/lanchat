@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.10.3](https://github.com/pandaymx/lanchat/compare/v1.10.2...v1.10.3) (2026-10-26)
+
+
+### Bug Fixes
+
+* **core:** bump client version to 1.10.3 for slimmed Windows and Android packages ([7941716](https://github.com/pandaymx/lanchat/commit/7941716376937f1095739d4aafccffc4d0deaee9))
+
+
+### Performance Improvements
+
+* **ci:** strip gomobile AAR symbols and enable high-compression MSI/ZIP packaging ([815e296](https://github.com/pandaymx/lanchat/commit/815e296de3c42e003fbe3ef02b0830411e58710a))
+* **ui-android:** enable R8 resource shrinking, Deflate JNI packaging and arm64 ABI filter ([946e94f](https://github.com/pandaymx/lanchat/commit/946e94f445457f8ad570511ae41ca3d55473befb))
+* **ui-win:** prune unreferenced BCL/debugger payloads and satellite locales from MSIX/MSI ([ac866b1](https://github.com/pandaymx/lanchat/commit/ac866b111eb533ddd245d9ef5704bb83d150174a))
+
 ## [1.10.2](https://github.com/pandaymx/lanchat/compare/v1.10.1...v1.10.2) (2026-10-26)
 
 

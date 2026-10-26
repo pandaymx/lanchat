@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.14.0](https://github.com/pandaymx/lanchat/compare/v1.13.0...v1.14.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add LAN clipboard sync (/clip) and screenshot paste-to-send (/paste) (M29) ([edfa60e](https://github.com/pandaymx/lanchat/commit/edfa60e4f640410b5397abfc05df9467b0e876bf))
+* **server:** display /clip sync notifications in TUI and CLI ([8be3d78](https://github.com/pandaymx/lanchat/commit/8be3d78dd1bd80da7acdc6dd82599069a7bb0e05))
+* **ui-linux:** add clipboard toolbar button for /clip sync and image paste ([a9c4cdf](https://github.com/pandaymx/lanchat/commit/a9c4cdf9d0efdfec8bc8e3dae9c51d8fd0da7f54))
+* **ui-macos:** add clipboard paste-to-send and /clip sync toolbar button ([ac7082a](https://github.com/pandaymx/lanchat/commit/ac7082a4beee9e774ea8b329be11c3d3205a183a))
+* **ui-win:** add clipboard screenshot paste-to-send and /clip sync button ([c8730db](https://github.com/pandaymx/lanchat/commit/c8730dbedfb222c73a446850aff7a943b13be351))
+
 ## [1.13.0](https://github.com/pandaymx/lanchat/compare/v1.12.0...v1.13.0) (2026-10-26)
 
 

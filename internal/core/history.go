@@ -170,6 +170,56 @@ func (h *historyStore) revoke(msgID, actorID string, maxAge time.Duration) (appa
 	return appapi.ChatMessage{}, false
 }
 
+// purgeByID 从内存与本地加密历史文件中彻底物理抹除指定消息（M30 阅后即焚自毁）。
+func (h *historyStore) purgeByID(msgID string) bool {
+	if msgID == "" {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	found := false
+	filtered := h.msgs[:0]
+	for _, m := range h.msgs {
+		if m.ID == msgID {
+			found = true
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+	if !found {
+		return false
+	}
+	h.msgs = append([]appapi.ChatMessage(nil), filtered...)
+	delete(h.rawCipher, msgID)
+	h.rewriteAllLocked()
+	return true
+}
+
+func (h *historyStore) rewriteAllLocked() {
+	if h.dir == "" {
+		return
+	}
+	histPath := filepath.Join(h.dir, historyFileName)
+	tmpPath := histPath + ".rewrite.tmp"
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return
+	}
+	for _, m := range h.msgs {
+		if raw, err := json.Marshal(m); err == nil {
+			line := string(raw)
+			if h.atRestKey != "" {
+				if sealed, sErr := transfer.SealHistoryLine(h.atRestKey, raw); sErr == nil {
+					line = sealed
+				}
+			}
+			_, _ = f.WriteString(line + "\n")
+		}
+	}
+	_ = f.Close()
+	_ = os.Rename(tmpPath, histPath)
+}
+
 // markRead 记录指定消息的已读回执（幂等去重）。
 func (h *historyStore) markRead(msgID, readerID string) (appapi.ChatMessage, bool) {
 	if msgID == "" || readerID == "" {

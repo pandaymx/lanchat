@@ -204,6 +204,16 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/voice"))
 		text = formatVoiceMessage(rest)
 	}
+	var burnDur time.Duration
+	if strings.HasPrefix(trimmed, "/burn ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/burn "))
+		dur, body := parseBurnCommand(rest)
+		if body == "" {
+			return "", errEmptyText
+		}
+		burnDur = dur
+		text = fmt.Sprintf("🔥 [阅后即焚 %s] %s", formatBurnDuration(dur), body)
+	}
 	var explicitReplyTo string
 	if strings.HasPrefix(trimmed, "/reply ") {
 		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/reply "))
@@ -258,6 +268,9 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		Mentions: mentions,
 		TS:       env.TS,
 	})
+	if burnDur > 0 {
+		c.scheduleBurnPurge(env.ID, to, group, burnDur)
+	}
 	return env.ID, nil
 }
 
@@ -494,4 +507,78 @@ func formatVoiceMessage(raw string) string {
 		return `🎤 [语音消息 · ` + filepath.Base(first) + `]`
 	}
 	return `🎤 [语音消息 3"] ` + raw
+}
+
+// parseBurnCommand 解析 /burn [时长] <正文> 指令，默认自毁倒计时为 10 秒（M30）。
+func parseBurnCommand(raw string) (time.Duration, string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, ""
+	}
+	parts := strings.SplitN(raw, " ", 2)
+	if len(parts) == 2 {
+		first := strings.TrimSpace(parts[0])
+		body := strings.TrimSpace(parts[1])
+		if d, err := time.ParseDuration(first); err == nil && d > 0 {
+			return clampBurnDuration(d), body
+		}
+		if sec, err := strconv.Atoi(strings.TrimSuffix(first, "s")); err == nil && sec > 0 {
+			return clampBurnDuration(time.Duration(sec) * time.Second), body
+		}
+	}
+	return 10 * time.Second, raw
+}
+
+func clampBurnDuration(d time.Duration) time.Duration {
+	if d < 50*time.Millisecond {
+		return 50 * time.Millisecond
+	}
+	if d > 24*time.Hour {
+		return 24 * time.Hour
+	}
+	return d
+}
+
+func formatBurnDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%ds", int(d.Seconds()))
+}
+
+func extractBurnDurationFromText(text string) (time.Duration, bool) {
+	const prefix = "🔥 [阅后即焚 "
+	if !strings.HasPrefix(text, prefix) {
+		return 0, false
+	}
+	rest := text[len(prefix):]
+	closeIdx := strings.IndexByte(rest, ']')
+	if closeIdx <= 0 {
+		return 0, false
+	}
+	durToken := strings.TrimSpace(rest[:closeIdx])
+	if d, err := time.ParseDuration(durToken); err == nil && d > 0 {
+		return clampBurnDuration(d), true
+	}
+	return 10 * time.Second, true
+}
+
+// scheduleBurnPurge 启动阅后即焚倒计时，到期后从本机内存与加密历史彻底抹除并同步通知对端销毁（M30）。
+func (c *Client) scheduleBurnPurge(msgID, to, group string, dur time.Duration) {
+	if msgID == "" || dur <= 0 {
+		return
+	}
+	go func() {
+		timer := time.NewTimer(dur)
+		defer timer.Stop()
+		select {
+		case <-c.runCtx.Done():
+			return
+		case <-timer.C:
+			if c.history.purgeByID(msgID) {
+				_ = c.sendControlText(to, group, "sys:burn:"+msgID)
+				c.listener().OnMessageReceived(c.selfIDValue(), group, msgID, "MSG_BURN", "🔥 [阅后即焚已销毁]")
+			}
+		}
+	}()
 }

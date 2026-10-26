@@ -102,6 +102,9 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			TS:       env.TS,
 		}) {
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.TextMsg, text)
+			if burnDur, ok := extractBurnDurationFromText(text); ok {
+				c.scheduleBurnPurge(env.ID, env.From, env.Group, burnDur)
+			}
 		}
 
 	case protocol.StickerMsg:
@@ -255,6 +258,15 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			c.sharedClip = clipBody
 			c.mu.Unlock()
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "CLIP_SYNC", "📋 [剪贴板已同步] "+clipBody)
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:burn:"):
+		targetID := strings.TrimSpace(strings.TrimPrefix(text, "sys:burn:"))
+		if targetID != "" {
+			if c.history.purgeByID(targetID) {
+				c.listener().OnMessageReceived(env.From, env.Group, targetID, "MSG_BURN", "🔥 [阅后即焚已销毁]")
+			}
 		}
 		return true
 	}

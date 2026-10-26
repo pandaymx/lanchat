@@ -1499,3 +1499,55 @@ func TestM29ClipboardSyncAndPasteToSend(t *testing.T) {
 		return len(b.GetState().Transfers) == 1 && len(b.GetState().Messages) == 1
 	})
 }
+
+// TestM30BurnAfterReadingAutoPurge 验证 M30 阅后即焚限时自毁消息 (/burn) 在倒计时结束后从双端内存与本地加密历史文件中彻底物理抹除。
+func TestM30BurnAfterReadingAutoPurge(t *testing.T) {
+	wsURL := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	a := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	// 1. 先发一条永久保留消息，再发一条 150ms 阅后即焚消息
+	if _, err := a.SendText(bID, "普通公开通知", ""); err != nil {
+		t.Fatal(err)
+	}
+	burnID, err := a.SendText(bID, "/burn 150ms 绝密一次性令牌-9981", "")
+	if err != nil || burnID == "" {
+		t.Fatalf("/burn send failed: id=%q err=%v", burnID, err)
+	}
+
+	// 倒计时前，双方均可见该阅后即焚消息
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Messages) == 2 && len(b.GetState().Messages) == 2
+	})
+
+	// 倒计时结束后，该阅后即焚消息应从 Alice 与 Bob 的内存及加密 JSONL 磁盘文件中彻底物理抹除，仅剩普通消息
+	waitFor(t, 3*time.Second, func() bool {
+		return len(a.GetState().Messages) == 1 && len(b.GetState().Messages) == 1
+	})
+	if a.GetState().Messages[0].Text != "普通公开通知" || b.GetState().Messages[0].Text != "普通公开通知" {
+		t.Fatalf("expected only normal message remaining, got A=%+v B=%+v", a.GetState().Messages, b.GetState().Messages)
+	}
+
+	// 重启客户端验证加密磁盘历史中同样不残留任何已销毁消息
+	b.Close()
+	b2 := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	t.Cleanup(b2.Close)
+	if len(b2.GetState().Messages) != 1 || b2.GetState().Messages[0].Text != "普通公开通知" {
+		t.Fatalf("burned message leaked in persisted history: %+v", b2.GetState().Messages)
+	}
+}

@@ -91,41 +91,32 @@ final class AppStore: ObservableObject {
         if content.hasPrefix("/search ") {
             let q = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
             let hits = searchMessages(in: to, query: q)
-            appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "[搜索“\(q)”：共 \(hits.count) 条匹配]",
-                                      inbound: false, timestamp: Date()))
+            self.updateStatus = "搜索“\(q)”：共 \(hits.count) 条匹配"
             return
         }
         run {
             let msgId = try await self.engine.sendText(to: to, text: content)
             if msgId == "e2ee:on" || msgId == "e2ee:off" {
-                let notice = (msgId == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
-                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: notice,
-                                               inbound: false, timestamp: Date()))
                 return
             }
             if msgId.hasPrefix("fp:") {
                 let fp = String(msgId.dropFirst(3))
-                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "🛡️ [安全码指纹核验] \(fp)",
-                                               inbound: false, timestamp: Date()))
+                self.error = "🛡️ 安全码指纹核验：\(fp)"
                 return
             }
             if msgId.hasPrefix("bwlimit:") {
                 let lim = String(msgId.dropFirst(8))
-                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "⚡ [带宽限速已设置为 \(lim) MB/s]",
-                                               inbound: false, timestamp: Date()))
+                self.updateStatus = "⚡ 带宽限速已设置为 \(lim) MB/s"
                 return
             }
             if msgId.hasPrefix("status:") {
                 let st = String(msgId.dropFirst(7))
-                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "📊 [诊断状态] \(st)",
-                                               inbound: false, timestamp: Date()))
+                self.updateStatus = "📊 诊断状态：\(st)"
                 return
             }
             if msgId.hasPrefix("update:") {
                 let up = String(msgId.dropFirst(7))
                 self.updateStatus = up
-                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: to, text: "🚀 [版本更新] \(up)",
-                                               inbound: false, timestamp: Date()))
                 return
             }
             if content.hasPrefix("/revoke ") {
@@ -211,16 +202,12 @@ final class AppStore: ObservableObject {
         if content.hasPrefix("/search ") {
             let q = String(content.dropFirst(8)).trimmingCharacters(in: .whitespaces)
             let hits = searchMessages(in: channel.id, query: q)
-            appendMessage(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "[搜索“\(q)”：共 \(hits.count) 条匹配]",
-                                      inbound: false, timestamp: Date(), group: channel.id))
+            self.updateStatus = "搜索“\(q)”：共 \(hits.count) 条匹配"
             return
         }
         run {
             let msgId = try await self.engine.sendGroupText(group: channel.id, text: content)
             if msgId == "e2ee:on" || msgId == "e2ee:off" {
-                let notice = (msgId == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
-                self.appendMessage(ChatMessage(id: UUID().uuidString, peerId: self.selfId, text: notice,
-                                               inbound: false, timestamp: Date(), group: channel.id))
                 return
             }
             if content.hasPrefix("/revoke ") {
@@ -380,6 +367,9 @@ final class AppStore: ObservableObject {
     }
 
     private func appendMessage(_ m: ChatMessage) {
+        if QQTheme.isSystemDiagnosticMessage(id: m.id, text: m.text) {
+            return
+        }
         let key = (m.group?.isEmpty == false) ? m.group! : m.peerId
         var list = messagesByPeer[key] ?? []
         if let idx = list.firstIndex(where: { $0.id == m.id }) {
@@ -443,7 +433,8 @@ final class AppStore: ObservableObject {
         let body = String(parts[1])
         for list in messagesByPeer.values {
             if let orig = list.first(where: { $0.id == targetId && !$0.revoked }) {
-                return "「\(orig.text)」\n\(body)"
+                let cleanOrig = QQTheme.splitReactions(orig.text).body
+                return "「\(cleanOrig)」\n\(body)"
             }
         }
         return "[re:\(targetId)] \(body)"

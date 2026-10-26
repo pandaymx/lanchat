@@ -57,6 +57,23 @@ enum QQTheme {
         timeFormatter.string(from: date)
     }
 
+    static func isSystemDiagnosticText(_ raw: String) -> Bool {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.hasPrefix("[安全码指纹]") ||
+            t.hasPrefix("🛡️ [安全码指纹核验]") ||
+            t.hasPrefix("📊 [诊断状态]") ||
+            t.hasPrefix("🚀 [版本更新]") ||
+            t.hasPrefix("⚡ [带宽限速已设置为") ||
+            t.hasPrefix("[已开启端到端加密]") ||
+            t.hasPrefix("[已关闭端到端加密]") ||
+            t.hasPrefix("[搜索“")
+    }
+
+    static func isSystemDiagnosticMessage(id: String, text: String) -> Bool {
+        id.hasPrefix("fp-") || id.hasPrefix("status-") || id.hasPrefix("update-") ||
+            isSystemDiagnosticText(text)
+    }
+
     private static func isReactionEmojiToken(_ token: String) -> Bool {
         if token.isEmpty || token.utf8.count > 24 { return false }
         for scalar in token.unicodeScalars {
@@ -69,10 +86,11 @@ enum QQTheme {
         return true
     }
 
-    /// 拆分消息正文与尾部表情回应徽章（如 `"你好 [👍]"` -> `("你好", ["👍"])`），
-    /// 供 UI 将点赞/表情回应渲染在聊天气泡下方而非气泡内部。
-    static func splitReactions(_ raw: String) -> (body: String, reactions: [String]) {
+    private static func extractTrailingReactions(_ raw: String) -> (body: String, reactions: [String]) {
         var body = raw
+        if body.hasPrefix("[表情] ") {
+            body = String(body.dropFirst("[表情] ".count))
+        }
         var reversed: [String] = []
         while body.hasSuffix("]"), let range = body.range(of: " [", options: .backwards) {
             let start = range.upperBound
@@ -85,6 +103,25 @@ enum QQTheme {
             body = String(body[..<range.lowerBound])
         }
         return (body, reversed.reversed())
+    }
+
+    /// 拆分消息正文与尾部表情回应徽章（如 `"你好 [👍]"` -> `("你好", ["👍"])`），
+    /// 供 UI 将点赞/表情回应渲染在聊天气泡下方而非气泡内部，并自动剥离旧版引用块中的诊断与回应尾巴。
+    static func splitReactions(_ raw: String) -> (body: String, reactions: [String]) {
+        let extracted = extractTrailingReactions(raw)
+        var body = extracted.body
+        if body.hasPrefix("「"), let quoteEnd = body.range(of: "」\n") {
+            let qStart = body.index(after: body.startIndex)
+            let quotedRaw = String(body[qStart..<quoteEnd.lowerBound])
+            let replyBody = String(body[quoteEnd.upperBound...])
+            let cleanQuoted = extractTrailingReactions(quotedRaw).body.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cleanQuoted.isEmpty || isSystemDiagnosticText(cleanQuoted) {
+                body = replyBody
+            } else {
+                body = "「\(cleanQuoted)」\n\(replyBody)"
+            }
+        }
+        return (body, extracted.reactions)
     }
 
     /// 预设 QQ 表情贴纸（点击可直接触发 sendSticker 或插入表情）

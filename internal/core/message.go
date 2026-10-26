@@ -160,6 +160,32 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		unread, mentions := c.UnreadTotal()
 		return fmt.Sprintf("unread:%d mentions:%d dnd:%t", unread, mentions, c.IsDND()), nil
 	}
+	if trimmed == "/compact" {
+		removed := c.CompactHistory()
+		return fmt.Sprintf("status:compacted:%d", removed), nil
+	}
+	if trimmed == "/history" || strings.HasPrefix(trimmed, "/history ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "/history"))
+		fields := strings.Fields(rest)
+		limit := 50
+		var beforeTS int64
+		if len(fields) >= 1 {
+			if n, err := strconv.Atoi(fields[0]); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		if len(fields) >= 2 {
+			if ts, err := strconv.ParseInt(fields[1], 10, 64); err == nil && ts > 0 {
+				beforeTS = ts
+			}
+		}
+		convID := group
+		if convID == "" {
+			convID = to
+		}
+		items := c.HistoryPage(convID, beforeTS, limit)
+		return fmt.Sprintf("history:%d", len(items)), nil
+	}
 	if group == "" && to == "" {
 		return "", errPeerNotFound
 	}
@@ -373,6 +399,16 @@ func (c *Client) MarkRead(to, group, msgID string) error {
 // SearchHistory 在本地历史消息中按关键字（与可选会话 ID）检索未撤回消息。
 func (c *Client) SearchHistory(query, convID string) []appapi.ChatMessage {
 	return c.history.search(query, convID)
+}
+
+// CompactHistory 手动触发本地 JSONL 历史文件 Compaction，合并同一 MsgID 的多次变更并原子重写（阶段三 v1.19）。
+func (c *Client) CompactHistory() int {
+	return c.history.compact()
+}
+
+// HistoryPage 按会话 ID 与游标时间戳 beforeTS 分页返回历史消息（阶段三 v1.19）。
+func (c *Client) HistoryPage(convID string, beforeTS int64, limit int) []appapi.ChatMessage {
+	return c.history.page(convID, beforeTS, limit)
 }
 
 func (c *Client) emitMessageUpdated(msg appapi.ChatMessage) {

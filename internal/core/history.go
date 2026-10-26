@@ -2,6 +2,9 @@ package core
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -15,17 +18,19 @@ import (
 )
 
 const (
-	maxHistoryMessages = 500
-	historyFileName    = "lanchat-history.jsonl"
+	maxHistoryMessages      = 500
+	historyCompactThreshold = 2000
+	historyFileName         = "lanchat-history.jsonl"
 )
 
-// historyStore 维护内存环形缓冲与可选的本地 JSONL 聊天历史文件（零 CGO，M23 支持 AES-GCM 静态加密落盘）。
+// historyStore 维护内存环形缓冲与可选的本地 JSONL 聊天历史文件（零 CGO，M23 支持 AES-GCM 静态加密落盘，v1.19 支持自动 Compaction、游标分页与媒体 CAS 落盘）。
 type historyStore struct {
 	mu        sync.Mutex
 	dir       string
 	atRestKey string
 	msgs      []appapi.ChatMessage
 	rawCipher map[string]string
+	diskLines int
 }
 
 func newHistoryStore(dir, atRestKey string) *historyStore {
@@ -65,11 +70,15 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 	var loaded []appapi.ChatMessage
 	idxByID := map[string]int{}
 	sc := bufio.NewScanner(f)
+	// 放宽单行缓冲上限至 2 MiB，兼容含内联缩略图或语音的历史行。
+	sc.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	rawLines := 0
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
 			continue
 		}
+		rawLines++
 		rawBytes, openErr := transfer.OpenHistoryLine(h.atRestKey, line)
 		if openErr != nil {
 			continue
@@ -81,6 +90,7 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 			}
 			m.Text = sanitizeQuoteAndReactions(m.Text)
 			populateStructuredFields(&m)
+			h.externalizeMediaCASLocked(&m)
 			if idx, ok := idxByID[m.ID]; ok {
 				loaded[idx] = m
 			} else if !existing[m.ID] {
@@ -89,11 +99,17 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 			}
 		}
 	}
+	_ = f.Close()
 	combined := append(loaded, h.msgs...)
 	if len(combined) > maxHistoryMessages {
 		combined = combined[len(combined)-maxHistoryMessages:]
 	}
 	h.msgs = combined
+	h.diskLines = rawLines
+	// 启动时若历史文件超过 Compaction 阈值或存在大量冗余变更行，自动重写合并。
+	if rawLines >= historyCompactThreshold || (rawLines > len(h.msgs)+32 && len(h.msgs) > 0) {
+		h.rewriteAllLocked()
+	}
 }
 
 func (h *historyStore) append(m appapi.ChatMessage) bool {
@@ -113,6 +129,7 @@ func (h *historyStore) append(m appapi.ChatMessage) bool {
 			return false
 		}
 	}
+	h.externalizeMediaCASLocked(&m)
 	h.msgs = append(h.msgs, m)
 	if len(h.msgs) > maxHistoryMessages {
 		h.msgs = append([]appapi.ChatMessage(nil), h.msgs[len(h.msgs)-maxHistoryMessages:]...)
@@ -132,7 +149,6 @@ func (h *historyStore) persistLocked(m appapi.ChatMessage) {
 	if err != nil {
 		return
 	}
-	defer func() { _ = f.Close() }()
 	if raw, err := json.Marshal(m); err == nil {
 		line := string(raw)
 		if h.atRestKey != "" {
@@ -141,6 +157,11 @@ func (h *historyStore) persistLocked(m appapi.ChatMessage) {
 			}
 		}
 		_, _ = f.WriteString(line + "\n")
+		h.diskLines++
+	}
+	_ = f.Close()
+	if h.diskLines >= historyCompactThreshold {
+		h.rewriteAllLocked()
 	}
 }
 
@@ -207,6 +228,7 @@ func (h *historyStore) rewriteAllLocked() {
 	if err != nil {
 		return
 	}
+	written := 0
 	for _, m := range h.msgs {
 		if raw, err := json.Marshal(m); err == nil {
 			line := string(raw)
@@ -216,10 +238,113 @@ func (h *historyStore) rewriteAllLocked() {
 				}
 			}
 			_, _ = f.WriteString(line + "\n")
+			written++
 		}
 	}
 	_ = f.Close()
 	_ = os.Rename(tmpPath, histPath)
+	h.diskLines = written
+}
+
+// compact 手动或自动触发 JSONL 历史文件 Compaction，返回合并消除的冗余行数（阶段三 v1.19）。
+func (h *historyStore) compact() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	before := h.diskLines
+	h.rewriteAllLocked()
+	if before > h.diskLines {
+		return before - h.diskLines
+	}
+	return 0
+}
+
+// page 按会话（convID 为空表示全部会话）与游标时间戳 beforeTS（0 表示从最新开始）分页返回历史消息（阶段三 v1.19）。
+func (h *historyStore) page(convID string, beforeTS int64, limit int) []appapi.ChatMessage {
+	if limit <= 0 {
+		limit = 50
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	var matched []appapi.ChatMessage
+	for _, m := range h.msgs {
+		if convID != "" && m.Group != convID && m.From != convID && m.To != convID {
+			continue
+		}
+		if beforeTS > 0 && m.TS >= beforeTS {
+			continue
+		}
+		matched = append(matched, m)
+	}
+	if len(matched) > limit {
+		matched = matched[len(matched)-limit:]
+	}
+	out := make([]appapi.ChatMessage, len(matched))
+	copy(out, matched)
+	return out
+}
+
+// externalizeMediaCASLocked 将内联 Base64 图片或语音载荷落盘至本地 CAS 目录（<dir>/cas/<sha256>.<ext>），填充 MediaMime 与 MediaPath（阶段三 v1.19）。
+func (h *historyStore) externalizeMediaCASLocked(m *appapi.ChatMessage) {
+	if m == nil || m.Revoked || h.dir == "" || m.MediaPath != "" {
+		return
+	}
+	raw := m.Text
+	var mimeType, b64Data string
+	lower := strings.ToLower(raw)
+	if idx := strings.Index(lower, "data:image/"); idx >= 0 {
+		sub := raw[idx:]
+		if semi := strings.Index(sub, ";base64,"); semi > len("data:") {
+			mimeType = sub[len("data:"):semi]
+			b64Data = strings.TrimSpace(sub[semi+len(";base64,"):])
+			if sp := strings.IndexAny(b64Data, " \t\r\n"); sp > 0 {
+				b64Data = b64Data[:sp]
+			}
+		}
+	} else if idx := strings.Index(lower, "data:audio/"); idx >= 0 {
+		sub := raw[idx:]
+		if semi := strings.Index(sub, ";base64,"); semi > len("data:") {
+			mimeType = sub[len("data:"):semi]
+			b64Data = strings.TrimSpace(sub[semi+len(";base64,"):])
+			if sp := strings.IndexAny(b64Data, " \t\r\n"); sp > 0 {
+				b64Data = b64Data[:sp]
+			}
+		}
+	}
+	if mimeType == "" || b64Data == "" {
+		return
+	}
+	decoded, err := base64.StdEncoding.DecodeString(b64Data)
+	if err != nil || len(decoded) == 0 {
+		return
+	}
+	sum := sha256.Sum256(decoded)
+	hashHex := hex.EncodeToString(sum[:])
+	ext := ".bin"
+	switch strings.ToLower(mimeType) {
+	case "image/png":
+		ext = ".png"
+	case "image/jpeg", "image/jpg":
+		ext = ".jpg"
+	case "image/gif":
+		ext = ".gif"
+	case "audio/mp4", "audio/aac", "audio/m4a":
+		ext = ".m4a"
+	case "audio/wav", "audio/x-wav":
+		ext = ".wav"
+	case "audio/ogg", "audio/opus":
+		ext = ".ogg"
+	}
+	casDir := filepath.Join(h.dir, "cas")
+	if err := os.MkdirAll(casDir, 0o755); err != nil {
+		return
+	}
+	casPath := filepath.Join(casDir, hashHex+ext)
+	if _, statErr := os.Stat(casPath); os.IsNotExist(statErr) {
+		_ = os.WriteFile(casPath, decoded, 0o600)
+	}
+	m.MediaMime = mimeType
+	m.MediaPath = casPath
 }
 
 // markRead 记录指定消息的已读回执（幂等去重）。

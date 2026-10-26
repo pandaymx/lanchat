@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.0](https://github.com/pandaymx/lanchat/compare/v1.11.1...v1.12.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add atomic CLI binary self-update via domestic mirror fallback ([617c9aa](https://github.com/pandaymx/lanchat/commit/617c9aaa374cd96a3c13ab0c4234585844d83371))
+* **server:** add full-screen interactive TUI client and update subcommand ([5e41554](https://github.com/pandaymx/lanchat/commit/5e41554998482f5fa0699e89e8665159c07b0ec5))
+
 ## [1.11.1](https://github.com/pandaymx/lanchat/compare/v1.11.0...v1.11.1) (2026-10-26)
 
 

@@ -317,6 +317,22 @@ struct LoginView: View {
             }
             .disabled(store.busy)
             .padding(.top, 4)
+
+            // 移动端一键房主模式（内置 Hub + mDNS 广播，无需电脑）
+            Button {
+                store.connect(addr: "local", psk: psk)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "antenna.radiowaves.left.and.right.circle.fill")
+                    Text("🏠 本机开启局域网房间（免电脑房主模式）")
+                        .font(.system(size: 14, weight: .semibold))
+                }
+                .foregroundStyle(QQTheme.qqBlue)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(QQTheme.qqBlue.opacity(0.10), in: Capsule())
+            }
+            .disabled(store.busy)
         }
         .padding(16)
         .background(

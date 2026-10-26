@@ -296,6 +296,23 @@ fun LoginScreen(state: AppUi, vm: AppViewModel) {
                         fontWeight = FontWeight.Bold,
                     )
                 }
+
+                // 移动端一键房主模式（内置 Hub + mDNS 广播，无需电脑）
+                OutlinedButton(
+                    enabled = !state.busy,
+                    onClick = { vm.connect("local", psk) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp),
+                    shape = RoundedCornerShape(50),
+                ) {
+                    Text(
+                        text = "🏠 本机开启局域网房间（免电脑房主模式）",
+                        color = QqPrimaryBlue,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
     }

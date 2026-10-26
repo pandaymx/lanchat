@@ -1,5 +1,6 @@
 package dev.lanchat.ui.screen
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -56,13 +57,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import dev.lanchat.R
+import java.io.File
 import dev.lanchat.model.Channel
 import dev.lanchat.model.Conversations
 import dev.lanchat.model.Peer
@@ -92,7 +96,33 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
     var showDownloadDirDialog by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showCreateChannelDialog by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(state.pendingInstallApkPath) {
+        val apkPath = state.pendingInstallApkPath
+        if (!apkPath.isNullOrEmpty()) {
+            vm.consumePendingInstallApk()
+            runCatching {
+                val apkFile = File(apkPath)
+                if (apkFile.exists()) {
+                    val uri = FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        apkFile,
+                    )
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, "application/vnd.android.package-archive")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                }
+            }.onFailure { e ->
+                snackbarHostState.showSnackbar("自动调起安装器失败，请从下载目录手动安装：${e.message ?: ""}")
+            }
+        }
+    }
 
     BackHandler(
         enabled = openChat != null || openChannelChat != null || searchQuery.isNotEmpty() || tab != Tab.MESSAGES,

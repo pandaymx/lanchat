@@ -31,6 +31,7 @@ data class AppUi(
     val unreadCounts: Map<String, Int> = emptyMap(),
     val matrixSummary: Map<String, String> = emptyMap(),
     val discoveredServers: List<ServerInfo> = emptyList(),
+    val pendingInstallApkPath: String? = null,
     val busy: Boolean = false,
     val error: String? = null,
 )
@@ -51,6 +52,10 @@ class AppViewModel : ViewModel() {
 
     fun consumeError() {
         _ui.update { it.copy(error = null) }
+    }
+
+    fun consumePendingInstallApk() {
+        _ui.update { it.copy(pendingInstallApkPath = null) }
     }
 
     fun refresh() {
@@ -366,7 +371,19 @@ class AppViewModel : ViewModel() {
         launchOp {
             val res = engine.sendText(to = "", text = cmd, group = "")
             val summary = res.removePrefix("update:")
-            _ui.update { it.copy(error = "🚀 $summary") }
+            val apkPath = if (!checkOnly && summary.contains("-> ")) {
+                summary.substringAfterLast("-> ").substringBefore(" |").trim().takeIf {
+                    it.endsWith(".apk", ignoreCase = true) && File(it).exists()
+                }
+            } else {
+                null
+            }
+            _ui.update {
+                it.copy(
+                    error = "🚀 $summary",
+                    pendingInstallApkPath = apkPath,
+                )
+            }
             refresh()
         }
     }

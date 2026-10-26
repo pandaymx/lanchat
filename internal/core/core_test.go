@@ -2,6 +2,11 @@ package core
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1202,3 +1207,63 @@ func TestM23EncryptedHistoryM24CASInstantTransferAndM25Status(t *testing.T) {
 		t.Fatalf("expected decrypted message after restart, got %+v", a2.GetState().Messages)
 	}
 }
+
+// TestM26SilentUpdateWithDomesticProxyFallback 验证国内加速代理自动回退、version.json 检测、SHA-256 校验与免浏览器静默下载。
+func TestM26SilentUpdateWithDomesticProxyFallback(t *testing.T) {
+	pkgBytes := []byte("DEB-PACKAGE-BINARY-PAYLOAD-V9.9.9")
+	sum := sha256.Sum256(pkgBytes)
+	sumHex := hex.EncodeToString(sum[:])
+
+	// 1. 构造故障代理节点（始终 502）与可用国内加速镜像节点。
+	badMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+	}))
+	defer badMirror.Close()
+
+	goodMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/latest/download/version.json"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"9.9.9","tag":"v9.9.9","commit":"abc1234"}`))
+		case strings.HasSuffix(r.URL.Path, "/download/v9.9.9/SHA256SUMS"):
+			_, _ = fmt.Fprintf(w, "%s  LANChat-9.9.9-linux-amd64.deb\n", sumHex)
+		case strings.HasSuffix(r.URL.Path, "/download/v9.9.9/LANChat-9.9.9-linux-amd64.deb"):
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(pkgBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer goodMirror.Close()
+
+	dlDir := t.TempDir()
+	cli := New(Options{Nickname: "Updater", OS: "linux", DownloadDir: dlDir})
+	t.Cleanup(cli.Close)
+	cli.updateBaseURL = "https://github.com/pandaymx/lanchat/releases"
+	cli.updateProxies = []string{badMirror.URL + "/", goodMirror.URL + "/"}
+	cli.updateHTTPClient = goodMirror.Client()
+
+	// 2. 验证内置国内代理列表查询
+	proxiesMsg, err := cli.SendText("", "/update proxies", "")
+	if err != nil || !strings.Contains(proxiesMsg, "ghfast.top") || !strings.Contains(proxiesMsg, "gh-proxy.com") {
+		t.Fatalf("unexpected /update proxies response: %q, err=%v", proxiesMsg, err)
+	}
+
+	// 3. 验证 /update check 自动跳过 502 代理并通过可用镜像检测新版本
+	checkMsg, err := cli.SendText("", "/update check", "")
+	if err != nil || !strings.HasPrefix(checkMsg, "update:发现新版本 v9.9.9") {
+		t.Fatalf("unexpected /update check response: %q, err=%v", checkMsg, err)
+	}
+
+	// 4. 验证 /update 静默下载安装包到 DownloadDir 并完成 SHA-256 校验
+	dlMsg, err := cli.SendText("", "/update", "")
+	if err != nil || !strings.Contains(dlMsg, "SHA-256 校验通过") {
+		t.Fatalf("unexpected /update response: %q, err=%v", dlMsg, err)
+	}
+	savedFile := filepath.Join(dlDir, "LANChat-9.9.9-linux-amd64.deb")
+	got, err := os.ReadFile(savedFile)
+	if err != nil || string(got) != string(pkgBytes) {
+		t.Fatalf("silent downloaded package content mismatch: err=%v, got=%q", err, string(got))
+	}
+}
+

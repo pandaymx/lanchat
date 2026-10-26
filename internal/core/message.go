@@ -40,6 +40,10 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		})
 		return "status:" + diag, nil
 	}
+	if trimmed == "/update" || strings.HasPrefix(trimmed, "/update ") {
+		arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/update"))
+		return c.handleUpdateCommand(arg, to, group)
+	}
 	if trimmed == "/fingerprint" || strings.HasPrefix(trimmed, "/fingerprint ") {
 		peerID := to
 		if arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/fingerprint")); arg != "" {

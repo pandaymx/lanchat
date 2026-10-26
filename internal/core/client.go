@@ -13,6 +13,7 @@ package core
 import (
 	"context"
 	"crypto/ecdh"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -85,6 +86,11 @@ type Client struct {
 	// forceRelay 为仅测试使用的钩子：禁止群文件数据面直连（外拨与入站均
 	// 拒绝），确定性迫使传输回退中继。生产代码路径恒为 false。
 	forceRelay bool
+
+	// updateBaseURL / updateProxies / updateHTTPClient 允许测试注入自定义更新源与代理列表。
+	updateBaseURL    string
+	updateProxies    []string
+	updateHTTPClient *http.Client
 }
 
 // Options 构造客户端时的参数。

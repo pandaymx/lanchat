@@ -24,6 +24,9 @@ func (c *Client) readPump(gen uint64, conn *websocket.Conn) error {
 			return err
 		}
 		c.dispatch(gen, env)
+		if env.Type == protocol.ServerShutdown {
+			return errors.New("server shutdown")
+		}
 	}
 }
 

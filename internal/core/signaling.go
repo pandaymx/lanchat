@@ -227,7 +227,7 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 
 	err := <-pumpErr
 	cancelHB()
-	_ = s.conn.Close(websocket.StatusNormalClosure, "")
+	_ = s.conn.CloseNow()
 	<-heartbeatDone
 
 	c.mu.Lock()
@@ -424,9 +424,13 @@ func (c *Client) startEmbeddedServer(psk string) (string, error) {
 		return "", err
 	}
 
+	srvID := "auto-" + devID
 	srvCtx, srvCancel := context.WithCancel(c.runCtx)
 	c.mu.Lock()
-	c.embeddedStop = srvCancel
+	c.embeddedStop = func() {
+		unregisterEmbeddedServer(srvID)
+		srvCancel()
+	}
 	c.mu.Unlock()
 
 	go func() { _ = srv.Serve(srvCtx) }()
@@ -443,7 +447,6 @@ func (c *Client) startEmbeddedServer(psk string) (string, error) {
 			return "", err
 		}
 
-		srvID := "auto-" + devID
 		advAddr := net.JoinHostPort(relayHost, portStr)
 		registerEmbeddedServer(appapi.Server{
 			Name:     nick,

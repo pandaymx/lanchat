@@ -325,7 +325,7 @@ func runCLISession(ctx context.Context, in io.Reader, out io.Writer, opts cliOpt
 			}
 			if err != nil {
 				listener.printf("[错误] 发送失败: %v", err)
-			} else if strings.HasPrefix(res, "update:") || strings.HasPrefix(res, "status:") || strings.HasPrefix(res, "fp:") || strings.HasPrefix(res, "bwlimit:") || strings.HasPrefix(res, "e2ee:") {
+			} else if strings.HasPrefix(res, "update:") || strings.HasPrefix(res, "status:") || strings.HasPrefix(res, "fp:") || strings.HasPrefix(res, "bwlimit:") || strings.HasPrefix(res, "e2ee:") || strings.HasPrefix(res, "clip:") {
 				listener.printf("[结果] %s", res)
 			}
 		}

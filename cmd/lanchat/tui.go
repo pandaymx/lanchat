@@ -870,7 +870,7 @@ func (m *tuiModel) executeTUICommand(rawLine string) (shouldQuit bool) {
 		m.setStatus("操作失败: " + err.Error())
 		return false
 	}
-	if strings.HasPrefix(res, "update:") || strings.HasPrefix(res, "status:") || strings.HasPrefix(res, "fp:") || strings.HasPrefix(res, "bwlimit:") || strings.HasPrefix(res, "e2ee:") {
+	if strings.HasPrefix(res, "update:") || strings.HasPrefix(res, "status:") || strings.HasPrefix(res, "fp:") || strings.HasPrefix(res, "bwlimit:") || strings.HasPrefix(res, "e2ee:") || strings.HasPrefix(res, "clip:") {
 		m.setStatus(res)
 	} else {
 		m.mu.Lock()
@@ -908,7 +908,11 @@ func (l *tuiEventListener) OnPeerLeft(peerID string) {
 	l.model.setStatus(fmt.Sprintf("成员离线: %s", peerID))
 }
 
-func (l *tuiEventListener) OnMessageReceived(_, _, _, _, _ string) {
+func (l *tuiEventListener) OnMessageReceived(_, _, _, typ, text string) {
+	if typ == "CLIP_SYNC" {
+		l.model.setStatus(text)
+		return
+	}
 	l.model.triggerRedraw()
 }
 

@@ -1,9 +1,11 @@
 package core
 
 import (
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -335,6 +337,21 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 			return "screenshare:stopped", true, nil
 		case strings.HasPrefix(arg, "frame "):
 			frame := strings.TrimSpace(strings.TrimPrefix(arg, "frame "))
+			if err := c.SendScreenFrame(to, group, frame); err != nil {
+				return "", true, err
+			}
+			return "screenshare:frame", true, nil
+		case strings.HasPrefix(arg, "snap "):
+			imgPath := strings.TrimSpace(strings.TrimPrefix(arg, "snap "))
+			raw, err := os.ReadFile(imgPath)
+			if err != nil {
+				return "", true, err
+			}
+			mime := "image/jpeg"
+			if strings.HasSuffix(strings.ToLower(imgPath), ".png") {
+				mime = "image/png"
+			}
+			frame := fmt.Sprintf("data:%s;base64,%s", mime, base64.StdEncoding.EncodeToString(raw))
 			if err := c.SendScreenFrame(to, group, frame); err != nil {
 				return "", true, err
 			}

@@ -97,6 +97,7 @@ struct ChatView: View {
     @State private var showSearchBar = false
     @State private var searchQuery = ""
     @State private var inVoiceCall = false
+    @State private var isScreenSharing = false
     @State private var replyingTo: ChatMessage? = nil
 
     private var thread: [ChatMessage] {
@@ -232,6 +233,29 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("发起或挂断局域网实时语音通话 (/call)")
+
+                Button {
+                    if isScreenSharing {
+                        isScreenSharing = false
+                        store.sendText(to: peer.id, text: "/screenshare stop")
+                    } else {
+                        isScreenSharing = true
+                        store.sendText(to: peer.id, text: "/screenshare start 15")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(isScreenSharing ? "⏹ 停止投屏" : "🖥️ 屏幕共享")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(isScreenSharing ? Color.orange.opacity(0.16) : Color.primary.opacity(0.05))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("开启或停止局域网 P2P 屏幕共享 (/screenshare)")
 
                 Button {
                     pickAndOffer()

@@ -30,6 +30,9 @@ public sealed partial class ChatViewModel : ViewModelBase
     private bool _isInVoiceCall;
 
     [ObservableProperty]
+    private bool _isScreenSharing;
+
+    [ObservableProperty]
     private ChatMessage? _replyingTo;
 
     public ObservableCollection<ChatMessage> Messages { get; } = [];
@@ -101,6 +104,8 @@ public sealed partial class ChatViewModel : ViewModelBase
     public string E2eeButtonText => IsE2eeEnabled ? "🔐 已加密" : "🔐 加密";
 
     public string VoiceCallButtonText => IsInVoiceCall ? "📵 挂断语音" : "📞 语音通话";
+
+    public string ScreenShareButtonText => IsScreenSharing ? "⏹ 停止投屏" : "🖥️ 屏幕共享";
 
     /// <summary>是否正在引用回复某条消息。</summary>
     public bool HasReplyTarget => ReplyingTo is not null;
@@ -978,6 +983,30 @@ public sealed partial class ChatViewModel : ViewModelBase
     }
 
     partial void OnIsInVoiceCallChanged(bool value) => OnPropertyChanged(nameof(VoiceCallButtonText));
+
+    partial void OnIsScreenSharingChanged(bool value) => OnPropertyChanged(nameof(ScreenShareButtonText));
+
+    [RelayCommand]
+    public async Task ToggleScreenShareAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        if (IsScreenSharing)
+        {
+            IsScreenSharing = false;
+            Draft = "/screenshare stop";
+        }
+        else
+        {
+            IsScreenSharing = true;
+            Draft = "/screenshare start 15";
+        }
+        await SendAsync();
+        Draft = prevDraft;
+    }
 
     [RelayCommand]
     public async Task ToggleVoiceCallAsync()

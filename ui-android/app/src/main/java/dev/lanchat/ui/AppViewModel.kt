@@ -30,6 +30,7 @@ data class AppUi(
     val messagesByConversation: Map<String, List<ChatMessage>> = emptyMap(),
     val unreadCounts: Map<String, Int> = emptyMap(),
     val matrixSummary: Map<String, String> = emptyMap(),
+    val screenFramesByConversation: Map<String, String> = emptyMap(),
     val discoveredServers: List<ServerInfo> = emptyList(),
     val pendingInstallApkPath: String? = null,
     val busy: Boolean = false,
@@ -56,6 +57,10 @@ class AppViewModel : ViewModel() {
 
     fun consumePendingInstallApk() {
         _ui.update { it.copy(pendingInstallApkPath = null) }
+    }
+
+    fun clearScreenFrame(convKey: String) {
+        _ui.update { it.copy(screenFramesByConversation = it.screenFramesByConversation - convKey) }
     }
 
     fun refresh() {
@@ -429,6 +434,31 @@ class AppViewModel : ViewModel() {
                 if (event.type == "CLIP_SYNC") {
                     _ui.update { it.copy(error = event.text) }
                     return
+                }
+                if (event.type == "SCREEN_FRAME") {
+                    val convKey = if (event.group.isNotEmpty()) {
+                        Conversations.groupKey(event.group)
+                    } else {
+                        Conversations.peerKey(event.from)
+                    }
+                    _ui.update { state ->
+                        state.copy(
+                            screenFramesByConversation = state.screenFramesByConversation + (convKey to event.text),
+                        )
+                    }
+                    return
+                }
+                if (event.type == "SCREEN_SHARE" && event.text.contains("已结束")) {
+                    val convKey = if (event.group.isNotEmpty()) {
+                        Conversations.groupKey(event.group)
+                    } else {
+                        Conversations.peerKey(event.from)
+                    }
+                    _ui.update { state ->
+                        state.copy(
+                            screenFramesByConversation = state.screenFramesByConversation - convKey,
+                        )
+                    }
                 }
                 if (event.type == "MSG_READ") {
                     _ui.update { state ->

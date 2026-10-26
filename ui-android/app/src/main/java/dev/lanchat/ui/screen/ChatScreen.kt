@@ -155,6 +155,8 @@ fun ChatScreen(
             state.messagesByConversation,
             Conversations.peerKey(peer.id),
         ),
+        screenFrame = state.screenFramesByConversation[Conversations.peerKey(peer.id)],
+        onClearScreenFrame = { vm.clearScreenFrame(Conversations.peerKey(peer.id)) },
         onBack = onBack,
         onSend = { vm.sendText(peer.id, it) },
         onAttach = { path -> vm.offerFile(peer.id, path) },
@@ -193,6 +195,8 @@ fun ChannelChatScreen(
             state.messagesByConversation,
             Conversations.groupKey(channel.id),
         ),
+        screenFrame = state.screenFramesByConversation[Conversations.groupKey(channel.id)],
+        onClearScreenFrame = { vm.clearScreenFrame(Conversations.groupKey(channel.id)) },
         onBack = onBack,
         onSend = { vm.sendChannelText(channel.id, it) },
         onAttach = { path -> vm.offerFileToChannel(channel.id, path) },
@@ -250,6 +254,8 @@ private fun ConversationScaffold(
     selfName: String = "我",
     selfSeed: String = "self",
     messages: List<ChatMessage>,
+    screenFrame: String? = null,
+    onClearScreenFrame: () -> Unit = {},
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onAttach: (String) -> Unit,
@@ -280,6 +286,7 @@ private fun ConversationScaffold(
     var inVoiceCall by remember { mutableStateOf(false) }
     var callMuted by remember { mutableStateOf(false) }
     var callDurationSec by remember { mutableIntStateOf(0) }
+    var isScreenSharing by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -511,6 +518,18 @@ private fun ConversationScaffold(
         }
     }
 
+    val screenFramePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val staged = stageContentUri(context, uri)
+            if (staged != null) {
+                isScreenSharing = true
+                onSend("/screenshare snap ${staged.absolutePath}")
+            }
+        }
+    }
+
     val imeVisible = WindowInsets.isImeVisible
 
     LaunchedEffect(messages.size, imeVisible) {
@@ -702,6 +721,82 @@ private fun ConversationScaffold(
             }
 
             // 手机 QQ 消息气泡流列表 (#F2F4F7 背景)
+            if (isScreenSharing || !screenFrame.isNullOrEmpty()) {
+                val decodedFrameBitmap = remember(screenFrame) {
+                    screenFrame?.let { decodeInlineDataImage(it) }
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                    tonalElevation = 4.dp,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = if (decodedFrameBitmap != null) {
+                                    "🖥️ 正在接收 P2P 实时屏幕共享画布"
+                                } else {
+                                    "🖥️ 已开启 P2P 屏幕共享（15fps）"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = QqPrimaryBlue,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = { screenFramePicker.launch("image/*") },
+                                    shape = RoundedCornerShape(14.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp),
+                                ) {
+                                    Text("📸 推送画面", fontSize = 11.sp)
+                                }
+                                Button(
+                                    onClick = {
+                                        if (isScreenSharing) {
+                                            isScreenSharing = false
+                                            onSend("/screenshare stop")
+                                        }
+                                        onClearScreenFrame()
+                                    },
+                                    shape = RoundedCornerShape(14.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = QqUnreadBadgeRed,
+                                        contentColor = Color.White,
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp),
+                                ) {
+                                    Text("⏹ 关闭投屏", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                        if (decodedFrameBitmap != null) {
+                            Image(
+                                bitmap = decodedFrameBitmap,
+                                contentDescription = "P2P 屏幕共享画面",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 120.dp, max = 240.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color.Black),
+                            )
+                        }
+                    }
+                }
+            }
+
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -929,9 +1024,17 @@ private fun ConversationScaffold(
                             onClick = { showE2eeDialog = true },
                         )
                         ComposerToolItem(
-                            label = "🛡️ 安全码",
-                            active = false,
-                            onClick = { onSend("/fingerprint") },
+                            label = if (isScreenSharing) "🖥️ 投屏中" else "🖥️ 投屏",
+                            active = isScreenSharing,
+                            onClick = {
+                                if (isScreenSharing) {
+                                    isScreenSharing = false
+                                    onSend("/screenshare stop")
+                                } else {
+                                    isScreenSharing = true
+                                    onSend("/screenshare start 15")
+                                }
+                            },
                         )
                         ComposerToolItem(
                             label = "🔍 记录",

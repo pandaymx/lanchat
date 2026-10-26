@@ -80,6 +80,12 @@
                             CornerRadius="6"
                             IsEnabled="{Binding Chat.CanSend}"
                             Command="{Binding Chat.ToggleVoiceCallCommand}" />
+                    <Button Content="{Binding Chat.ScreenShareButtonText, FallbackValue=🖥️ 屏幕共享}"
+                            FontSize="12"
+                            Padding="10,4"
+                            CornerRadius="6"
+                            IsEnabled="{Binding Chat.CanSend}"
+                            Command="{Binding Chat.ToggleScreenShareCommand}" />
                     <Button Content="📁 发送文件"
                             FontSize="12"
                             Padding="10,4"

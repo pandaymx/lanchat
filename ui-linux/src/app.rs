@@ -150,6 +150,7 @@ struct Widgets {
     sticker_menu_btn: gtk::MenuButton,
     sticker_popover: gtk::Popover,
     file_btn: gtk::Button,
+    folder_btn: gtk::Button,
     voice_btn: gtk::Button,
     e2ee_btn: gtk::Button,
     fingerprint_btn: gtk::Button,
@@ -529,6 +530,11 @@ fn build_ui(app: &adw::Application) -> Widgets {
     file_btn.add_css_class("qq-tool-btn");
     file_btn.set_tooltip_text(Some("发起 P2P 直连 / 群发文件传输"));
 
+    let folder_btn = gtk::Button::with_label("📂 文件夹");
+    folder_btn.add_css_class("flat");
+    folder_btn.add_css_class("qq-tool-btn");
+    folder_btn.set_tooltip_text(Some("选择整个文件夹流式传输并在对端自动还原目录树"));
+
     let voice_btn = gtk::Button::with_label("🎤 语音");
     voice_btn.add_css_class("flat");
     voice_btn.add_css_class("qq-tool-btn");
@@ -584,6 +590,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     composer_toolbar.append(&sticker_menu_btn);
     composer_toolbar.append(&sticker_btn);
     composer_toolbar.append(&file_btn);
+    composer_toolbar.append(&folder_btn);
     composer_toolbar.append(&voice_btn);
     composer_toolbar.append(&e2ee_btn);
     composer_toolbar.append(&fingerprint_btn);
@@ -791,6 +798,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
         sticker_menu_btn,
         sticker_popover,
         file_btn,
+        folder_btn,
         voice_btn,
         e2ee_btn,
         fingerprint_btn,
@@ -1107,6 +1115,43 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         ctx,
         move |_| {
             prompt_search_messages(&cx);
+        }
+    ));
+
+    // 发送整个文件夹（M28）
+    ctx.widgets.folder_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                cx.toast("请先选择联系人或频道");
+                return;
+            }
+            let dialog = gtk::FileDialog::new();
+            dialog.select_folder(
+                Some(&cx.widgets.window),
+                None::<&gio::Cancellable>,
+                clone!(
+                    #[strong]
+                    cx,
+                    #[strong]
+                    target,
+                    move |res| {
+                        if let Ok(folder) = res {
+                            if let Some(path) = folder.path() {
+                                let path_str = path.to_string_lossy().to_string();
+                                send_text_to_target(
+                                    &cx,
+                                    &target,
+                                    &format!("/senddir {}", path_str),
+                                );
+                                cx.toast(&format!("已发起文件夹流式传输：{}", path_str));
+                            }
+                        }
+                    }
+                ),
+            );
         }
     ));
 

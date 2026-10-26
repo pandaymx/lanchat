@@ -93,6 +93,13 @@ data class ChatMessage(
     val readBy: List<String> = emptyList(),
     /** 撤回前保存的原始可编辑消息正文（用于点击「重新编辑」恢复到输入框）。 */
     val originalText: String = "",
+    /** v1.1 结构化字段：引用摘要、表情回应表、二次编辑时间戳、置顶标记、媒体 MIME 与本地路径。 */
+    val replyQuote: String = "",
+    val reactions: Map<String, List<String>> = emptyMap(),
+    val editedAt: Long = 0L,
+    val pinned: Boolean = false,
+    val mediaMime: String = "",
+    val mediaPath: String = "",
 )
 
 /** 将 group.matrix 的 haveBitmap 转为紧凑块进度摘要（如 "▓▓▓░░░ 4/8 块"）。 */

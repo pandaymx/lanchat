@@ -274,10 +274,27 @@ private fun JSONArray?.toMessageList(selfId: String): List<ChatMessage> {
                     senderId = if (group.isNotEmpty() && inbound) from else "",
                     revoked = item.optBoolean("revoked", false),
                     readBy = item.optJSONArray("readBy").toStringList(),
+                    replyQuote = item.optString("replyQuote"),
+                    reactions = item.optJSONObject("reactions").toReactionMap(),
+                    editedAt = item.optLong("editedAt", 0L),
+                    pinned = item.optBoolean("pinned", false),
+                    mediaMime = item.optString("mediaMime"),
+                    mediaPath = item.optString("mediaPath"),
                 ),
             )
         }
     }
+}
+
+private fun JSONObject?.toReactionMap(): Map<String, List<String>> {
+    if (this == null) return emptyMap()
+    val keys = keys()
+    val map = mutableMapOf<String, List<String>>()
+    while (keys.hasNext()) {
+        val k = keys.next()
+        map[k] = optJSONArray(k).toStringList()
+    }
+    return map
 }
 
 private fun JSONArray?.toStringList(): List<String> {

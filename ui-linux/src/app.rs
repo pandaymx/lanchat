@@ -121,6 +121,7 @@ struct Widgets {
     nav_channels_btn: gtk::Button,
     transfers_btn: gtk::Button,
     channels_btn: gtk::Button,
+    update_btn: gtk::Button,
     nick_btn: gtk::Button,
     dirdir_btn: gtk::Button,
 
@@ -374,6 +375,11 @@ fn build_ui(app: &adw::Application) -> Widgets {
     dirdir_btn.add_css_class("qq-rail-sub-btn");
     dirdir_btn.set_tooltip_text(Some("设置默认下载目录"));
 
+    let update_btn = gtk::Button::with_label("🚀");
+    update_btn.add_css_class("flat");
+    update_btn.add_css_class("qq-rail-sub-btn");
+    update_btn.set_tooltip_text(Some("版本更新（国内加速代理静默下载 · 免浏览器）"));
+
     let nick_btn = gtk::Button::with_label("✏️");
     nick_btn.add_css_class("flat");
     nick_btn.add_css_class("qq-rail-sub-btn");
@@ -389,6 +395,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     left_rail.append(&transfers_btn);
     left_rail.append(&rail_spacer);
     left_rail.append(&channels_btn);
+    left_rail.append(&update_btn);
     left_rail.append(&dirdir_btn);
     left_rail.append(&nick_btn);
 
@@ -731,6 +738,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
         nav_channels_btn,
         transfers_btn,
         channels_btn,
+        update_btn,
         nick_btn,
         dirdir_btn,
         search_entry,
@@ -1213,6 +1221,15 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
+    // 版本更新（内置国内加速代理静默下载 · 免浏览器）
+    ctx.widgets.update_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            prompt_silent_update(&cx);
+        }
+    ));
+
     // 默认下载目录
     ctx.widgets.dirdir_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
@@ -1414,6 +1431,74 @@ fn prompt_set_nickname(ctx: &Rc<AppCtx>) {
     );
 }
 
+fn prompt_silent_update(ctx: &Rc<AppCtx>) {
+    let entry = gtk::Entry::new();
+    entry.set_placeholder_text(Some(
+        "可选自定义代理（留空自动轮询 ghfast.top / gh-proxy.com / ghproxy.net 等）",
+    ));
+    let dialog = adw::AlertDialog::new(
+        Some("🚀 版本更新（国内代理静默下载 · 免浏览器）"),
+        Some("自动按优先级轮询国内加速节点（ghfast.top → gh-proxy.com → ghproxy.net → mirror.ghproxy.com → ghps.cc → 直连），直接静默下载安装包并校验 SHA-256。"),
+    );
+    dialog.set_extra_child(Some(&entry));
+    dialog.add_responses(&[
+        ("cancel", "取消"),
+        ("check", "🔍 仅检查版本"),
+        ("download", "⬇️ 静默下载安装包"),
+    ]);
+    dialog.set_response_appearance("download", adw::ResponseAppearance::Suggested);
+    dialog.set_close_response("cancel");
+    dialog.choose(
+        &ctx.widgets.window,
+        None::<&gio::Cancellable>,
+        clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            #[strong]
+            entry,
+            move |response| {
+                if response == "check" || response == "download" {
+                    let proxy = entry.text().trim().to_string();
+                    let cmd = if response == "check" {
+                        "/update check".to_string()
+                    } else if proxy.is_empty() {
+                        "/update".to_string()
+                    } else {
+                        format!("/update {proxy}")
+                    };
+                    cx.toast(if response == "check" {
+                        "正在通过国内加速节点检查最新版本…"
+                    } else {
+                        "正在通过国内加速代理后台静默下载更新包…"
+                    });
+                    if let Some(ipc) = cx.ipc.borrow().clone() {
+                        let params = SendTextParams {
+                            to: String::new(),
+                            text: cmd.clone(),
+                            group: Some(String::new()),
+                        };
+                        let tx = cx.ui_tx.clone();
+                        crate::spawn_rt(async move {
+                            let res = ipc.invoke("SendText", Some(&params)).await.and_then(|v| {
+                                v.get("msgID")
+                                    .and_then(|m| m.as_str())
+                                    .map(|s| s.to_string())
+                                    .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
+                            });
+                            let _ = tx.try_send(UiEvent::TextSent(
+                                "*".to_string(),
+                                "*".to_string(),
+                                cmd,
+                                res,
+                            ));
+                        });
+                    }
+                }
+            }
+        ),
+    );
+}
+
 fn prompt_search_messages(ctx: &Rc<AppCtx>) {
     let entry = gtk::Entry::new();
     entry.set_placeholder_text(Some("输入要检索的聊天关键词…"));
@@ -1551,6 +1636,11 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                 }
                 if let Some(st) = msg_id.strip_prefix("status:") {
                     ctx.toast(&format!("📊 诊断状态：{st}"));
+                    ctx.sync_state();
+                    return;
+                }
+                if let Some(up) = msg_id.strip_prefix("update:") {
+                    ctx.toast(&format!("🚀 版本更新：{up}"));
                     ctx.sync_state();
                     return;
                 }

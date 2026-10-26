@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.0](https://github.com/pandaymx/lanchat/compare/v1.9.3...v1.10.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add silent update downloader with domestic proxy fallback ([a670cc2](https://github.com/pandaymx/lanchat/commit/a670cc21ab0302a57f4f5cf88b8f4291feaddb86))
+* **ui-android:** add silent update action with domestic proxy fallback ([c9811e2](https://github.com/pandaymx/lanchat/commit/c9811e2dc11008f9766e205e5a74bf8af9855015))
+* **ui-ios:** add silent update card with domestic proxy fallback ([9771a78](https://github.com/pandaymx/lanchat/commit/9771a78b52f3e4170a25d06fc33a863a3cec9336))
+* **ui-linux:** add silent update dialog with domestic proxy fallback ([66896d5](https://github.com/pandaymx/lanchat/commit/66896d5254d452ed541616d5f7dd21f8e8ed8e5a))
+* **ui-macos:** add silent update card with domestic proxy fallback ([8f897d4](https://github.com/pandaymx/lanchat/commit/8f897d43eea9caa5dd9eda583db171c2c1a8fed0))
+* **ui-win:** add silent update card with domestic proxy support ([aefa344](https://github.com/pandaymx/lanchat/commit/aefa344d4ca9550055bbce144d470e7f480c6637))
+
 ## [1.9.3](https://github.com/pandaymx/lanchat/compare/v1.9.2...v1.9.3) (2026-10-26)
 
 

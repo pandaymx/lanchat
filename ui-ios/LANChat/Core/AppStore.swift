@@ -304,8 +304,11 @@ final class AppStore: ObservableObject {
             peers.removeAll { $0.id == id }
 
         case let .message(from, group, msgId, type, text):
-            if type == "MSG_REVOKE" {
+            if type == "MSG_REVOKE" || type == "MSG_BURN" {
                 revokeMessage(id: msgId)
+                return
+            }
+            if type == "CLIP_SYNC" {
                 return
             }
             if type == "MSG_READ" {

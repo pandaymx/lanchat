@@ -151,6 +151,7 @@ struct Widgets {
     sticker_popover: gtk::Popover,
     file_btn: gtk::Button,
     folder_btn: gtk::Button,
+    clip_btn: gtk::Button,
     voice_btn: gtk::Button,
     e2ee_btn: gtk::Button,
     fingerprint_btn: gtk::Button,
@@ -535,6 +536,13 @@ fn build_ui(app: &adw::Application) -> Widgets {
     folder_btn.add_css_class("qq-tool-btn");
     folder_btn.set_tooltip_text(Some("选择整个文件夹流式传输并在对端自动还原目录树"));
 
+    let clip_btn = gtk::Button::with_label("📋 剪贴板");
+    clip_btn.add_css_class("flat");
+    clip_btn.add_css_class("qq-tool-btn");
+    clip_btn.set_tooltip_text(Some(
+        "一键同步系统剪贴板文本或直发剪贴板图片路径 (/clip / /paste)",
+    ));
+
     let voice_btn = gtk::Button::with_label("🎤 语音");
     voice_btn.add_css_class("flat");
     voice_btn.add_css_class("qq-tool-btn");
@@ -591,6 +599,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     composer_toolbar.append(&sticker_btn);
     composer_toolbar.append(&file_btn);
     composer_toolbar.append(&folder_btn);
+    composer_toolbar.append(&clip_btn);
     composer_toolbar.append(&voice_btn);
     composer_toolbar.append(&e2ee_btn);
     composer_toolbar.append(&fingerprint_btn);
@@ -799,6 +808,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
         sticker_popover,
         file_btn,
         folder_btn,
+        clip_btn,
         voice_btn,
         e2ee_btn,
         fingerprint_btn,
@@ -1115,6 +1125,42 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         ctx,
         move |_| {
             prompt_search_messages(&cx);
+        }
+    ));
+
+    // 局域网剪贴板同步与粘贴直发（M29）
+    ctx.widgets.clip_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                cx.toast("请先选择联系人或频道");
+                return;
+            }
+            let clipboard = cx.widgets.window.clipboard();
+            glib::spawn_future_local(clone!(
+                #[strong]
+                cx,
+                #[strong]
+                target,
+                async move {
+                    if let Ok(Some(text)) = clipboard.read_text_future().await {
+                        let trimmed = text.trim();
+                        if !trimmed.is_empty() {
+                            if trimmed.starts_with("data:image/") {
+                                send_text_to_target(&cx, &target, &format!("/paste {}", trimmed));
+                                cx.toast("已从剪贴板粘贴并直发图片");
+                            } else {
+                                send_text_to_target(&cx, &target, &format!("/clip {}", trimmed));
+                                cx.toast("已将剪贴板内容加密同步给对端");
+                            }
+                            return;
+                        }
+                    }
+                    cx.toast("系统剪贴板当前为空");
+                }
+            ));
         }
     ));
 

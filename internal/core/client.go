@@ -69,6 +69,7 @@ type Client struct {
 	history     *historyStore
 	e2eeKey     string
 	casIndex    map[string]string
+	sharedClip  string
 
 	cb appapi.Listener
 
@@ -258,4 +259,11 @@ func (c *Client) SetNickname(name string) error {
 		return c.sendPresenceUpdate(conn)
 	}
 	return nil
+}
+
+// LastClipboard 返回最近一次通过 /clip 发送或接收同步的局域网共享剪贴板文本（M29）。
+func (c *Client) LastClipboard() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sharedClip
 }

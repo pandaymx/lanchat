@@ -247,6 +247,16 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			}
 		}
 		return true
+
+	case strings.HasPrefix(text, "sys:clip:"):
+		clipBody := strings.TrimPrefix(text, "sys:clip:")
+		if clipBody != "" {
+			c.mu.Lock()
+			c.sharedClip = clipBody
+			c.mu.Unlock()
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "CLIP_SYNC", "📋 [剪贴板已同步] "+clipBody)
+		}
+		return true
 	}
 	return false
 }

@@ -1451,3 +1451,51 @@ func TestM28DirectoryTreeStreamingAndAutoUnpack(t *testing.T) {
 		t.Fatalf("expected unpacked empty-sub directory, err=%v", err)
 	}
 }
+
+// TestM29ClipboardSyncAndPasteToSend 验证 M29 局域网剪贴板快捷同步 (/clip) 与剪贴板截图直发 (/paste)。
+func TestM29ClipboardSyncAndPasteToSend(t *testing.T) {
+	wsURL := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	a := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	// 1. Alice 通过 /clip 向 Bob 同步一段代码片段，Bob 可通过 /clip 读取且不污染聊天气泡流
+	res, err := a.SendText(bID, "/clip ssh -i ~/.ssh/id_ed25519 dev@192.168.1.10", "")
+	if err != nil || res != "clip:ssh -i ~/.ssh/id_ed25519 dev@192.168.1.10" {
+		t.Fatalf("/clip push failed: res=%q err=%v", res, err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return b.LastClipboard() == "ssh -i ~/.ssh/id_ed25519 dev@192.168.1.10"
+	})
+	gotClip, err := b.SendText("", "/clip get", "")
+	if err != nil || gotClip != "clip:ssh -i ~/.ssh/id_ed25519 dev@192.168.1.10" {
+		t.Fatalf("/clip get mismatch: got=%q err=%v", gotClip, err)
+	}
+	if len(b.GetState().Messages) != 0 {
+		t.Fatalf("/clip should not pollute chat message bubbles, got %+v", b.GetState().Messages)
+	}
+
+	// 2. Alice 通过 /paste 直接粘贴发送剪贴板截图 data URI，Bob 收到文件传输与内联缩略图预览
+	clipURI := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	tid, err := a.SendText(bID, "/paste "+clipURI, "")
+	if err != nil || tid == "" {
+		t.Fatalf("/paste screenshot failed: tid=%q err=%v", tid, err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(b.GetState().Transfers) == 1 && len(b.GetState().Messages) == 1
+	})
+}

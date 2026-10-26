@@ -90,6 +90,36 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		return c.OfferFile(to, dirPath)
 	}
+	if strings.HasPrefix(trimmed, "/paste ") {
+		pasteTarget := strings.TrimSpace(strings.TrimPrefix(trimmed, "/paste "))
+		if pasteTarget == "" {
+			return "", errEmptyPath
+		}
+		if group != "" {
+			return c.OfferFileToGroup(group, pasteTarget)
+		}
+		return c.OfferFile(to, pasteTarget)
+	}
+	if trimmed == "/clip" || trimmed == "/clip get" {
+		return "clip:" + c.LastClipboard(), nil
+	}
+	if strings.HasPrefix(trimmed, "/clip ") {
+		clipText := strings.TrimSpace(strings.TrimPrefix(trimmed, "/clip "))
+		clipText = strings.TrimSpace(strings.TrimPrefix(clipText, "push "))
+		if clipText == "" {
+			return "", errEmptyText
+		}
+		if group == "" && to == "" {
+			return "", errPeerNotFound
+		}
+		c.mu.Lock()
+		c.sharedClip = clipText
+		c.mu.Unlock()
+		if err := c.sendControlText(to, group, "sys:clip:"+clipText); err != nil {
+			return "", err
+		}
+		return "clip:" + clipText, nil
+	}
 	if group == "" && to == "" {
 		return "", errPeerNotFound
 	}

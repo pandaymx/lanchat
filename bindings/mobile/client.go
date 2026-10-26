@@ -185,6 +185,16 @@ func (c *Client) GossipEndpointsJSON() []byte {
 	return mustJSON(c.core.GossipEndpoints())
 }
 
+// SyncHistory 发起个人多端历史消息增量同步（v3.0.0）。
+func (c *Client) SyncHistory(to string, group string, sinceTs int64) (int, error) {
+	return c.core.SyncHistoryWithPeer(to, group, sinceTs)
+}
+
+// TriggerMeshFailover 手动触发中心节点故障自愈选举与重连（v3.0.0）。
+func (c *Client) TriggerMeshFailover() (string, error) {
+	return c.core.TriggerMeshFailover()
+}
+
 // mustJSON 序列化；这些 DTO 只含基础类型，序列化不会失败，失败时返回 nil
 // 由宿主按空列表处理。
 func mustJSON(v any) []byte {

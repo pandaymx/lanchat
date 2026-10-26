@@ -397,6 +397,46 @@ func (c *Client) IsEmbeddedLeader() bool {
 	return c.embeddedStop != nil
 }
 
+// TriggerMeshFailover 手动或断线时触发中心节点故障自愈（v3.0.0）：
+// 优先探测存活候选中心节点或 Gossip 节点并重连；若全网无存活 Hub，则自动提升本机为内嵌房主并恢复频道。
+func (c *Client) TriggerMeshFailover() (string, error) {
+	c.mu.Lock()
+	psk := c.psk
+	c.autoMode = true
+	if c.conn != nil {
+		_ = c.conn.CloseNow()
+		c.conn = nil
+	}
+	c.connState = appapi.ConnConnecting
+	c.mu.Unlock()
+	c.listener().OnConnChanged(appapi.ConnConnecting, "mesh failover")
+
+	s, err := c.establishAuto(c.runCtx, psk)
+	if err != nil {
+		c.mu.Lock()
+		c.connState = appapi.ConnDisconnected
+		c.mu.Unlock()
+		c.listener().OnConnChanged(appapi.ConnDisconnected, err.Error())
+		return "", err
+	}
+
+	c.mu.Lock()
+	c.connState = appapi.ConnConnected
+	c.conn = s.conn
+	c.gen++
+	gen := c.gen
+	leader := c.leaderID
+	addr := c.addr
+	c.heartbeat = int(s.heartbeat / time.Second)
+	c.channelKeySent = map[string]map[string]bool{}
+	c.mu.Unlock()
+
+	c.listener().OnConnChanged(appapi.ConnConnected, "")
+	go c.watch(gen, s, time.Second)
+	_, _ = c.sendTo(s.conn, protocol.ChannelList, "", nil)
+	return "failover:" + leader + "@" + addr, nil
+}
+
 // ConvergeAutoLeader 执行 M31 零配置 mDNS Mesh 脑裂收敛：
 // 当客户端处于 autoMode 且发现局域网内存在存活且字典序更小（srv.ID < currentLeaderID）的中心节点时，
 // 先向该候选节点完成握手建连，成功后平滑关停本机内嵌服务器并切换主会话，消除多房主脑裂。

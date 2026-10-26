@@ -2,8 +2,11 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/coder/websocket"
@@ -317,6 +320,33 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		if raw != "" {
 			parts := strings.Split(raw, ",")
 			c.AddGossipEndpoints(parts...)
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:sync:"):
+		rest := strings.TrimPrefix(text, "sys:sync:")
+		switch {
+		case strings.HasPrefix(rest, "req:"):
+			sinceStr := strings.TrimSpace(strings.TrimPrefix(rest, "req:"))
+			sinceTs, _ := strconv.ParseInt(sinceStr, 10, 64)
+			msgs := c.history.exportSince(sinceTs)
+			if len(msgs) > 0 {
+				if raw, err := json.Marshal(msgs); err == nil {
+					b64 := base64.StdEncoding.EncodeToString(raw)
+					_ = c.sendControlText(env.From, env.Group, "sys:sync:push:"+b64)
+				}
+			}
+		case strings.HasPrefix(rest, "push:"):
+			b64 := strings.TrimSpace(strings.TrimPrefix(rest, "push:"))
+			if raw, err := base64.StdEncoding.DecodeString(b64); err == nil {
+				var incoming []appapi.ChatMessage
+				if json.Unmarshal(raw, &incoming) == nil && len(incoming) > 0 {
+					merged := c.history.mergeRemoteMessages(incoming)
+					if merged > 0 {
+						c.listener().OnMessageReceived(env.From, env.Group, env.ID, "HISTORY_SYNC", fmt.Sprintf("🔄 [多端漫游已同步 %d 条历史消息]", merged))
+					}
+				}
+			}
 		}
 		return true
 	}

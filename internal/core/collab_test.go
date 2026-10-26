@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pandaymx/lanchat/internal/appapi"
 )
 
 func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
@@ -77,5 +79,20 @@ func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
 	pAddr, _, pGossip, ok := ParseRoomInviteURI(uri)
 	if !ok || pAddr == "" || len(pGossip) < 2 {
 		t.Fatalf("ParseRoomInviteURI(%q) = addr:%q gossip:%v ok:%v", uri, pAddr, pGossip, ok)
+	}
+
+	// 验证 v3.0.0 多端加密历史漫游同步 (exportSince & mergeRemoteMessages)
+	alice.history.append(appapi.ChatMessage{ID: "m-sync-1", From: "alice", To: "bob", Type: "text", Text: "第一条多端消息", TS: 1000})
+	alice.history.append(appapi.ChatMessage{ID: "m-sync-2", From: "alice", To: "bob", Type: "text", Text: "第二条多端消息", TS: 2000})
+	exported := alice.history.exportSince(0)
+	if len(exported) != 2 {
+		t.Fatalf("exportSince(0) len = %d, want 2", len(exported))
+	}
+	merged := bob.history.mergeRemoteMessages(exported)
+	if merged != 2 {
+		t.Fatalf("mergeRemoteMessages count = %d, want 2", merged)
+	}
+	if mergedAgain := bob.history.mergeRemoteMessages(exported); mergedAgain != 0 {
+		t.Fatalf("idempotent mergeRemoteMessages count = %d, want 0", mergedAgain)
 	}
 }

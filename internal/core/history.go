@@ -697,6 +697,63 @@ func (h *historyStore) snapshot() []appapi.ChatMessage {
 	return out
 }
 
+// exportSince 导出 TS >= sinceTs 的本地历史消息切片（用于 v3.0.0 多端漫游增量同步）。
+func (h *historyStore) exportSince(sinceTs int64) []appapi.ChatMessage {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []appapi.ChatMessage
+	for _, m := range h.msgs {
+		if m.TS >= sinceTs {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// mergeRemoteMessages 幂等合并来自个人其他设备的历史漫游消息（按 MsgID 去重或更新状态，返回新增/更新条数，v3.0.0）。
+func (h *historyStore) mergeRemoteMessages(incoming []appapi.ChatMessage) int {
+	if len(incoming) == 0 {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	idxByID := make(map[string]int, len(h.msgs))
+	for i, m := range h.msgs {
+		if m.ID != "" {
+			idxByID[m.ID] = i
+		}
+	}
+	changed := 0
+	for _, rm := range incoming {
+		if rm.ID == "" {
+			continue
+		}
+		populateStructuredFields(&rm)
+		if idx, exists := idxByID[rm.ID]; exists {
+			cur := h.msgs[idx]
+			if rm.Revoked && !cur.Revoked {
+				h.msgs[idx].Revoked = true
+				h.msgs[idx].Text = "[消息已撤回]"
+				h.persistLocked(h.msgs[idx])
+				changed++
+			} else if rm.EditedAt > cur.EditedAt || (rm.Pinned && !cur.Pinned) {
+				h.msgs[idx] = rm
+				h.persistLocked(h.msgs[idx])
+				changed++
+			}
+			continue
+		}
+		h.msgs = append(h.msgs, rm)
+		idxByID[rm.ID] = len(h.msgs) - 1
+		h.persistLocked(rm)
+		changed++
+	}
+	if len(h.msgs) > maxHistoryMessages {
+		h.msgs = append([]appapi.ChatMessage(nil), h.msgs[len(h.msgs)-maxHistoryMessages:]...)
+	}
+	return changed
+}
+
 // extractMentionsAndReply 从消息文本中解析可选的 `[reply:<msgID>]` 前缀与 `@mention` 标记。
 func extractMentionsAndReply(text string) (replyTo string, mentions []string) {
 	trimmed := strings.TrimSpace(text)

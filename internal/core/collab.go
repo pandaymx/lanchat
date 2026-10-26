@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -390,6 +391,24 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 	case trimmed == "/roomcode" || strings.HasPrefix(trimmed, "/roomcode "):
 		return "roomcode:" + c.ExportRoomInviteURI(), true, nil
 
+	case trimmed == "/failover" || strings.HasPrefix(trimmed, "/failover "):
+		res, err := c.TriggerMeshFailover()
+		return res, true, err
+
+	case trimmed == "/sync" || strings.HasPrefix(trimmed, "/sync "):
+		arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/sync"))
+		var sinceTs int64
+		if arg != "" {
+			if n, err := strconv.ParseInt(arg, 10, 64); err == nil && n > 0 {
+				sinceTs = n
+			}
+		}
+		pushed, err := c.SyncHistoryWithPeer(to, group, sinceTs)
+		if err != nil {
+			return "", true, err
+		}
+		return fmt.Sprintf("sync:pushed:%d", pushed), true, nil
+
 	case strings.HasPrefix(trimmed, "/album "):
 		raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "/album "))
 		if raw == "" {
@@ -483,4 +502,21 @@ func ParseRoomInviteURI(raw string) (addr, psk string, gossip []string, ok bool)
 		}
 	}
 	return addr, psk, gossip, true
+}
+
+// SyncHistoryWithPeer 向目标设备或群组发起个人多端加密历史漫游增量同步（v3.0.0）。
+func (c *Client) SyncHistoryWithPeer(to, group string, sinceTs int64) (int, error) {
+	msgs := c.history.exportSince(sinceTs)
+	if to != "" || group != "" {
+		if _, err := c.connectedConn(); err == nil {
+			_ = c.sendControlText(to, group, fmt.Sprintf("sys:sync:req:%d", sinceTs))
+			if len(msgs) > 0 {
+				if raw, mErr := json.Marshal(msgs); mErr == nil {
+					b64 := base64.StdEncoding.EncodeToString(raw)
+					_ = c.sendControlText(to, group, "sys:sync:push:"+b64)
+				}
+			}
+		}
+	}
+	return len(msgs), nil
 }

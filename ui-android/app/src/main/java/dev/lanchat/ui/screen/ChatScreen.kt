@@ -737,7 +737,7 @@ private fun ConversationScaffold(
             // 手机 QQ 消息气泡流列表 (#F2F4F7 背景)
             if (isScreenSharing || !screenFrame.isNullOrEmpty()) {
                 val decodedFrameBitmap = remember(screenFrame) {
-                    screenFrame?.let { decodeInlineDataImage(it) }
+                    screenFrame?.let { decodeInlineBitmap(it) }
                 }
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f),
@@ -1234,6 +1234,10 @@ private fun ConversationScaffold(
                 onSend("/search $q")
                 showSearchDialog = false
             },
+            onSyncHistory = {
+                onSend("/sync")
+                showSearchDialog = false
+            },
         )
     }
 }
@@ -1709,18 +1713,27 @@ private fun E2eeKeyDialog(
 private fun SearchMessagesDialog(
     onDismiss: () -> Unit,
     onSearch: (String) -> Unit,
+    onSyncHistory: () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("🔍 搜索当前会话记录") },
+        title = { Text("🔍 搜索记录 & 多端漫游同步") },
         text = {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                singleLine = true,
-                label = { Text("搜索关键字") },
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    label = { Text("搜索关键字") },
+                )
+                OutlinedButton(
+                    onClick = onSyncHistory,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("🔄 从对端同步历史消息 (/sync)")
+                }
+            }
         },
         confirmButton = {
             TextButton(

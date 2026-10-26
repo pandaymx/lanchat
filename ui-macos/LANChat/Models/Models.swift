@@ -69,7 +69,13 @@ struct HistoryMessage: Codable, Identifiable, Hashable {
     var type: String
     var text: String
     var replyTo: String?
+    var replyQuote: String?
     var mentions: [String]?
+    var reactions: [String: [String]]?
+    var editedAt: Int64?
+    var pinned: Bool?
+    var mediaMime: String?
+    var mediaPath: String?
     var revoked: Bool?
     var readBy: [String]?
     var ts: Int64
@@ -98,6 +104,13 @@ struct ChatMessage: Identifiable, Hashable {
     var senderName: String? = nil
     /// 撤回前保留的原始消息文本，供本人点击「重新编辑」恢复到输入框。
     var originalText: String = ""
+    /// v1.1 结构化字段。
+    var replyQuote: String? = nil
+    var reactions: [String: [String]] = [:]
+    var editedAt: Int64 = 0
+    var pinned: Bool = false
+    var mediaMime: String? = nil
+    var mediaPath: String? = nil
 }
 
 /// 将 group.matrix 的块位图转为紧凑矩阵文本（如 `▓▓▓░░░ 3/6 块`）。

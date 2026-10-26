@@ -64,6 +64,7 @@ final class ChatStore: ObservableObject {
         let from: String; let group: String?; let msgId: String
         let type: String; let text: String
     }
+    private struct MsgUpdatedParams: Decodable { let message: HistoryMessage }
     private struct ProgressParams: Decodable { let transfer: Transfer }
     private struct TransferIdParams: Decodable { let transferId: String; let reason: String? }
     private struct GroupMatrixParams: Decodable {
@@ -89,6 +90,10 @@ final class ChatStore: ObservableObject {
         case "peer.left":
             if let p = try? decoder.decode(PeerLeftParams.self, from: params) {
                 peers.removeAll { $0.id == p.peerId }
+            }
+        case "msg.updated":
+            if let p = try? decoder.decode(MsgUpdatedParams.self, from: params) {
+                applyHistoryMessage(p.message)
             }
         case "msg.received":
             if let p = try? decoder.decode(MsgParams.self, from: params) {
@@ -280,22 +285,32 @@ final class ChatStore: ObservableObject {
         transfers = state.transfers
         channels = state.channels
         for m in state.messages ?? [] {
-            let inbound = !selfId.isEmpty && m.from != selfId
-            let threadKey: String? = (m.group?.isEmpty == false) ? m.group : nil
-            let peerKey = (threadKey != nil) ? m.from : (inbound ? m.from : (m.to ?? ""))
-            guard !peerKey.isEmpty || threadKey != nil else { continue }
-            let isRevoked = m.revoked ?? false
-            let display = isRevoked ? "[消息已撤回]" : m.text
-            append(ChatMessage(
-                id: m.id,
-                peerId: peerKey,
-                text: display,
-                inbound: inbound,
-                timestamp: Date(timeIntervalSince1970: TimeInterval(m.ts) / 1000.0),
-                revoked: isRevoked,
-                readBy: m.readBy ?? []
-            ), threadKey: threadKey)
+            applyHistoryMessage(m)
         }
+    }
+
+    private func applyHistoryMessage(_ m: HistoryMessage) {
+        let inbound = !selfId.isEmpty && m.from != selfId
+        let threadKey: String? = (m.group?.isEmpty == false) ? m.group : nil
+        let peerKey = (threadKey != nil) ? m.from : (inbound ? m.from : (m.to ?? ""))
+        guard !peerKey.isEmpty || threadKey != nil else { return }
+        let isRevoked = m.revoked ?? false
+        let display = isRevoked ? "[消息已撤回]" : m.text
+        append(ChatMessage(
+            id: m.id,
+            peerId: peerKey,
+            text: display,
+            inbound: inbound,
+            timestamp: Date(timeIntervalSince1970: TimeInterval(m.ts) / 1000.0),
+            revoked: isRevoked,
+            readBy: m.readBy ?? [],
+            replyQuote: m.replyQuote,
+            reactions: m.reactions ?? [:],
+            editedAt: m.editedAt ?? 0,
+            pinned: m.pinned ?? false,
+            mediaMime: m.mediaMime,
+            mediaPath: m.mediaPath
+        ), threadKey: threadKey)
     }
 
     func browseServers() async {

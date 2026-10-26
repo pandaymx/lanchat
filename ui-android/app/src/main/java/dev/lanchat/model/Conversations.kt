@@ -55,14 +55,25 @@ object Conversations {
         val key = keyOf(message)
         val existing = messagesByConversation[key] ?: emptyList()
         if (message.msgId.isNotEmpty() && existing.any { it.msgId == message.msgId }) {
-            val updated = existing.map { if (it.msgId == message.msgId) message else it }
+            val updated = existing.map { prev ->
+                if (prev.msgId == message.msgId) {
+                    val orig = message.originalText.ifEmpty {
+                        prev.originalText.ifEmpty {
+                            if (prev.revoked) "" else extractEditableOriginal(prev.text)
+                        }
+                    }
+                    message.copy(originalText = orig)
+                } else {
+                    prev
+                }
+            }
             return messagesByConversation + (key to updated)
         }
         val list = existing + message
         return messagesByConversation + (key to list)
     }
 
-    /** 将指定 msgId 的消息标记为已撤回。 */
+    /** 将指定 msgId 的消息标记为已撤回，并保留撤回前原文供「重新编辑」恢复。 */
     fun revokeMessage(
         messagesByConversation: Map<String, List<ChatMessage>>,
         msgId: String,
@@ -70,7 +81,14 @@ object Conversations {
         if (msgId.isEmpty()) return messagesByConversation
         return messagesByConversation.mapValues { (_, list) ->
             list.map { m ->
-                if (m.msgId == msgId) m.copy(revoked = true, text = "消息已撤回") else m
+                if (m.msgId == msgId) {
+                    val orig = m.originalText.ifEmpty {
+                        if (m.revoked) "" else extractEditableOriginal(m.text)
+                    }
+                    m.copy(revoked = true, text = "消息已撤回", originalText = orig)
+                } else {
+                    m
+                }
             }
         }
     }
@@ -209,5 +227,32 @@ object Conversations {
             }
         }
         return body to reactions
+    }
+
+    /** 拆分 `splitReactions` 后的正文是否包含引用块 `「...」\n`。 */
+    fun splitQuote(clean: String): Pair<String?, String> {
+        if (clean.startsWith("「")) {
+            val closeIdx = clean.indexOf("」\n")
+            if (closeIdx > 1) {
+                val quoted = clean.substring(1, closeIdx)
+                val rest = clean.substring(closeIdx + 2)
+                return quoted to rest
+            }
+        }
+        return null to clean
+    }
+
+    fun extractEditableOriginal(raw: String): String {
+        val (clean, _) = splitReactions(raw)
+        val (_, body) = splitQuote(clean)
+        val trimmed = body.trim()
+        if (trimmed.isEmpty() ||
+            trimmed == "消息已撤回" ||
+            trimmed == "[消息已撤回]" ||
+            trimmed.startsWith("data:image/", ignoreCase = true)
+        ) {
+            return ""
+        }
+        return trimmed
     }
 }

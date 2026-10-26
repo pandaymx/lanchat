@@ -107,4 +107,20 @@ class ConversationsTest {
         assertEquals("🎤 [语音消息 3\"]", voice)
         assertTrue(r3.isEmpty())
     }
+
+    @Test
+    fun revokeMessage_preservesOriginalTextForReEdit() {
+        var map = emptyMap<String, List<ChatMessage>>()
+        map = Conversations.append(map, peerMessage("p1", "m1", inbound = false))
+        map = Conversations.revokeMessage(map, "m1")
+
+        val list = Conversations.messagesOf(map, Conversations.peerKey("p1"))
+        assertEquals(1, list.size)
+        assertTrue(list[0].revoked)
+        assertEquals("hi-m1", list[0].originalText)
+
+        val (quote, body) = Conversations.splitQuote("「原消息」\n回复正文")
+        assertEquals("原消息", quote)
+        assertEquals("回复正文", body)
+    }
 }

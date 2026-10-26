@@ -91,6 +91,8 @@ data class ChatMessage(
     val revoked: Boolean = false,
     /** M11a: 已读该消息的对端 ID 列表。 */
     val readBy: List<String> = emptyList(),
+    /** 撤回前保存的原始可编辑消息正文（用于点击「重新编辑」恢复到输入框）。 */
+    val originalText: String = "",
 )
 
 /** 将 group.matrix 的 haveBitmap 转为紧凑块进度摘要（如 "▓▓▓░░░ 4/8 块"）。 */

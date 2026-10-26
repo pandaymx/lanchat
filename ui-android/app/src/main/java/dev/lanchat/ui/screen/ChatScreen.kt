@@ -38,6 +38,8 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,10 +66,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -234,6 +237,7 @@ private fun ConversationScaffold(
     actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {},
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     var input by remember { mutableStateOf("") }
     var replyTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var showStickerPanel by remember { mutableStateOf(false) }
@@ -378,13 +382,28 @@ private fun ConversationScaffold(
                         onMarkRead = { onSend("/read ${message.msgId}") },
                         onReact = { onSend("/react ${message.msgId} 👍") },
                         onPin = { onSend("/pin ${message.msgId}") },
+                        onReEdit = { original ->
+                            val clean = Conversations.extractEditableOriginal(original)
+                            if (clean.isNotEmpty()) {
+                                input = clean
+                            }
+                        },
+                        onCopy = { text ->
+                            clipboard.setText(AnnotatedString(text))
+                            scope.launch {
+                                snackbarHostState.showSnackbar("已复制到剪贴板")
+                            }
+                        },
                     )
                 }
             }
 
-            // 引用回复预览条
+            // 引用回复预览条（手机 QQ 样式）
             val activeReply = replyTarget
             if (activeReply != null) {
+                val replyClean = remember(activeReply.text) {
+                    Conversations.splitQuote(Conversations.splitReactions(activeReply.text).first).second
+                }
                 Surface(
                     color = QqPrimaryBlue.copy(alpha = 0.10f),
                     modifier = Modifier.fillMaxWidth(),
@@ -397,7 +416,7 @@ private fun ConversationScaffold(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "↩ 回复：「${activeReply.text}」",
+                            text = "回复：$replyClean",
                             fontSize = 12.sp,
                             color = QqPrimaryBlue,
                             maxLines = 1,
@@ -506,19 +525,19 @@ private fun ConversationScaffold(
                         }
                     }
 
-                    // 第二行：手机 QQ 底部四图标工具栏（😊 表情贴纸、📁 发送文件、🔐 E2EE 加密、🔍 搜索记录）
+                    // 第二行：手机 QQ 底部轻量工具栏（😊 表情、📁 文件、🎤 语音、🔐 加密、🛡️ 安全码、🔍 记录）
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         ComposerToolItem(
-                            label = "😊 表情贴纸",
+                            label = "😊 表情",
                             active = showStickerPanel,
                             onClick = { showStickerPanel = !showStickerPanel },
                         )
                         ComposerToolItem(
-                            label = "📁 发送文件",
+                            label = "📁 文件",
                             active = false,
                             onClick = { filePicker.launch("*/*") },
                         )
@@ -528,7 +547,7 @@ private fun ConversationScaffold(
                             onClick = { onSend("/voice 3") },
                         )
                         ComposerToolItem(
-                            label = if (e2eeActive) "🔐 E2EE 已开" else "🔐 E2EE 加密",
+                            label = if (e2eeActive) "🔐 已开" else "🔐 加密",
                             active = e2eeActive,
                             onClick = { showE2eeDialog = true },
                         )
@@ -538,7 +557,7 @@ private fun ConversationScaffold(
                             onClick = { onSend("/fingerprint") },
                         )
                         ComposerToolItem(
-                            label = "🔍 搜索记录",
+                            label = "🔍 记录",
                             active = false,
                             onClick = { showSearchDialog = true },
                         )
@@ -644,9 +663,9 @@ private fun ComposerToolItem(
         Text(
             text = label,
             color = if (active) QqPrimaryBlue else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
+            fontSize = 11.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
         )
     }
 }
@@ -665,40 +684,63 @@ private fun MessageBubbleRow(
     onMarkRead: () -> Unit,
     onReact: () -> Unit = {},
     onPin: () -> Unit = {},
+    onReEdit: (String) -> Unit = {},
+    onCopy: (String) -> Unit = {},
 ) {
-    // 已撤回消息居中灰色提示条
-    if (message.revoked) {
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Surface(
-                shape = RoundedCornerShape(50),
-                color = Color.Black.copy(alpha = 0.08f),
-            ) {
-                Text(
-                    text = "一条消息已撤回",
-                    fontSize = 11.sp,
-                    fontStyle = FontStyle.Italic,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-                )
-            }
-        }
-        return
-    }
-
     val senderDisplay = if (message.inbound) {
         if (showSender && message.senderId.isNotEmpty()) peerNameOf(message.senderId) else targetTitle
     } else {
         selfName
     }
+
+    // 已撤回消息：复刻手机 QQ 居中灰色系统提示胶囊 + 「重新编辑」蓝色链接
+    if (message.revoked) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = Color.Black.copy(alpha = 0.05f),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = if (message.inbound) {
+                            "\"$senderDisplay\" 撤回了一条消息"
+                        } else {
+                            "你撤回了一条消息"
+                        },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (!message.inbound && message.originalText.isNotBlank()) {
+                        Text(
+                            text = "重新编辑",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = QqPrimaryBlue,
+                            modifier = Modifier.clickable { onReEdit(message.originalText) },
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
+
     val senderSeed = if (message.inbound) {
         message.senderId.ifEmpty { targetSeed }
     } else {
         selfSeed
     }
     val timeStr = formatBubbleTime(message.timestamp)
+    var showMenu by remember { mutableStateOf(false) }
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -762,40 +804,147 @@ private fun MessageBubbleRow(
             val bubbleText = if (message.inbound) MaterialTheme.colorScheme.onSurface else QqOutboundText
 
             val (cleanBody, reactions) = remember(message.text) { Conversations.splitReactions(message.text) }
+            val (quotedText, bodyText) = remember(cleanBody) { Conversations.splitQuote(cleanBody) }
             val inlineBitmap = remember(cleanBody) { decodeInlineBitmap(cleanBody) }
+            val canAct = message.msgId.isNotEmpty() &&
+                !message.msgId.startsWith("search-") &&
+                !message.msgId.startsWith("e2ee-")
 
-            Surface(
-                shape = bubbleShape,
-                color = bubbleBg,
-                shadowElevation = 1.dp,
-            ) {
-                Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
-                    if (inlineBitmap != null) {
-                        Image(
-                            bitmap = inlineBitmap,
-                            contentDescription = "内联图片缩略图",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .size(width = 180.dp, height = 130.dp)
-                                .clip(RoundedCornerShape(10.dp)),
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "🖼️ [图片缩略图]",
-                            color = bubbleText,
-                            fontSize = 12.sp,
+            Box {
+                Surface(
+                    shape = bubbleShape,
+                    color = bubbleBg,
+                    shadowElevation = 1.dp,
+                    modifier = if (canAct) {
+                        Modifier.clickable { showMenu = true }
+                    } else {
+                        Modifier
+                    },
+                ) {
+                    Column(modifier = Modifier.padding(horizontal = 13.dp, vertical = 9.dp)) {
+                        // 手机 QQ 气泡内嵌引用回复卡片
+                        if (!quotedText.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (message.inbound) {
+                                    Color.Black.copy(alpha = 0.05f)
+                                } else {
+                                    Color.White.copy(alpha = 0.16f)
+                                },
+                                modifier = Modifier.padding(bottom = 6.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(3.dp)
+                                            .height(14.dp)
+                                            .background(
+                                                color = if (message.inbound) {
+                                                    QqPrimaryBlue
+                                                } else {
+                                                    Color.White.copy(alpha = 0.78f)
+                                                },
+                                                shape = RoundedCornerShape(2.dp),
+                                            ),
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = quotedText,
+                                        color = if (message.inbound) {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        } else {
+                                            Color.White.copy(alpha = 0.90f)
+                                        },
+                                        fontSize = 12.sp,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+
+                        if (inlineBitmap != null) {
+                            Image(
+                                bitmap = inlineBitmap,
+                                contentDescription = "内联图片缩略图",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .size(width = 180.dp, height = 130.dp)
+                                    .clip(RoundedCornerShape(10.dp)),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "🖼️ [图片缩略图]",
+                                color = bubbleText,
+                                fontSize = 12.sp,
+                            )
+                        } else {
+                            Text(
+                                text = bodyText,
+                                color = bubbleText,
+                                fontSize = 15.sp,
+                            )
+                        }
+                    }
+                }
+
+                // 手机 QQ 点击气泡弹出菜单（点赞回应 / 引用回复 / 复制文本 / 置顶消息 / 撤回或已读）
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("👍 点赞回应") },
+                        onClick = {
+                            showMenu = false
+                            onReact()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("💬 引用回复") },
+                        onClick = {
+                            showMenu = false
+                            onReply()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("📋 复制文本") },
+                        onClick = {
+                            showMenu = false
+                            onCopy(bodyText)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("📌 置顶消息") },
+                        onClick = {
+                            showMenu = false
+                            onPin()
+                        },
+                    )
+                    if (!message.inbound) {
+                        DropdownMenuItem(
+                            text = { Text("↩️ 撤回消息") },
+                            onClick = {
+                                showMenu = false
+                                onRevoke()
+                            },
                         )
                     } else {
-                        Text(
-                            text = cleanBody,
-                            color = bubbleText,
-                            fontSize = 15.sp,
+                        DropdownMenuItem(
+                            text = { Text("✓ 标为已读") },
+                            onClick = {
+                                showMenu = false
+                                onMarkRead()
+                            },
                         )
                     }
                 }
             }
 
-            // 气泡下方：已触发的点赞/表情回应胶囊徽章行
+            // 气泡下方：仅在存在点赞/表情回应时展示 QQ 胶囊徽章行
             if (reactions.isNotEmpty()) {
                 Row(
                     modifier = Modifier.padding(top = 4.dp),
@@ -816,49 +965,6 @@ private fun MessageBubbleRow(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                             )
                         }
-                    }
-                }
-            }
-
-            // 气泡下方快捷操作微标签：👍 点赞 / ↩ 回复 / 📌 置顶 / 撤回 / 已读
-            if (message.msgId.isNotEmpty() && !message.msgId.startsWith("search-") && !message.msgId.startsWith("e2ee-")) {
-                Row(
-                    modifier = Modifier.padding(top = 2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text(
-                        text = "👍 点赞",
-                        fontSize = 10.sp,
-                        color = QqPrimaryBlue,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.clickable(onClick = onReact),
-                    )
-                    Text(
-                        text = "↩ 回复",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(onClick = onReply),
-                    )
-                    Text(
-                        text = "📌 置顶",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.clickable(onClick = onPin),
-                    )
-                    if (!message.inbound) {
-                        Text(
-                            text = "撤回",
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.clickable(onClick = onRevoke),
-                        )
-                    } else {
-                        Text(
-                            text = "标为已读",
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.clickable(onClick = onMarkRead),
-                        )
                     }
                 }
             }

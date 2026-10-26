@@ -1003,7 +1003,7 @@ func TestM18AndM19ChannelE2EEAndAutoHeal(t *testing.T) {
 	var chID string
 	waitFor(t, 2*time.Second, func() bool {
 		chs := a.GetState().Channels
-		if len(chs) == 1 {
+		if len(chs) == 1 && len(b.GetState().Channels) == 1 {
 			chID = chs[0].ID
 			return true
 		}
@@ -1013,9 +1013,10 @@ func TestM18AndM19ChannelE2EEAndAutoHeal(t *testing.T) {
 	if err := b.ChannelJoin(chID); err != nil {
 		t.Fatal(err)
 	}
-	// 等待 Alice 自动把频道密钥经 ECDH 单播分发给 Bob。
+	// 等待 Alice 自动把频道密钥经 ECDH 单播分发给 Bob，且 Bob 已同步自身成员状态。
 	waitFor(t, 2*time.Second, func() bool {
-		return b.ensureChannelKey(chID) != ""
+		chs := b.GetState().Channels
+		return b.ensureChannelKey(chID) != "" && len(chs) == 1 && len(chs[0].Members) == 2
 	})
 
 	// Alice 在频道内发消息，默认使用 enc:ch1: 加密，Bob 自动解密为明文。
@@ -1032,8 +1033,9 @@ func TestM18AndM19ChannelE2EEAndAutoHeal(t *testing.T) {
 	})
 
 	// M18: 模拟房主切换至全新信令服务器 wsURL2（无历史频道），Alice（创建者）自动重建该频道，Bob 自动同名匹配重入。
+	// 先断开非 Owner 的 Bob 再断开 Owner Alice，避免原服在 Alice 先断线瞬间把 Owner 移交给 Bob 导致双方重复建群。
 	wsURL2 := startServer(t)
-	for _, cli := range []*Client{a, b} {
+	for _, cli := range []*Client{b, a} {
 		cli.mu.Lock()
 		cli.addr = normalizeAddr(wsURL2)
 		cli.autoMode = true
@@ -1043,7 +1045,7 @@ func TestM18AndM19ChannelE2EEAndAutoHeal(t *testing.T) {
 			_ = oldConn.CloseNow()
 		}
 	}
-	waitFor(t, 3*time.Second, func() bool {
+	waitFor(t, 5*time.Second, func() bool {
 		chs := b.GetState().Channels
 		return len(chs) == 1 && chs[0].ID != chID && chs[0].Name == "加密研发组" && len(chs[0].Members) == 2
 	})

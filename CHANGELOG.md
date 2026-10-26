@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.18.0](https://github.com/pandaymx/lanchat/compare/v1.17.4...v1.18.0) (2026-10-26)
+
+
+### Features
+
+* **appapi:** evolve IPC schema v1.1 with structured ChatMessage fields and msg.updated ([62489d0](https://github.com/pandaymx/lanchat/commit/62489d0c7c592f999718ff1fed91479f9ccc46ee))
+* **core:** populate structured ChatMessage fields and emit msg.updated (v1.18.0) ([a2d04ce](https://github.com/pandaymx/lanchat/commit/a2d04ce2f374e62a3870877dfe13e5e38a66f5a4))
+* **ipc:** broadcast msg.updated notifications from MessageUpdateListener ([58c8f35](https://github.com/pandaymx/lanchat/commit/58c8f35fdc7f4f453808823a1f337572c9905a5b))
+* **ui-android:** sync IPC v1.1 structured ChatMessage fields and bump to 1.18.0 ([646bb0b](https://github.com/pandaymx/lanchat/commit/646bb0ba83f622a29825278adcfed5f66ed26647))
+* **ui-ios:** sync IPC v1.1 structured HistoryMessageJSON fields ([4cb44d2](https://github.com/pandaymx/lanchat/commit/4cb44d26c6b8d706e6d6805acd7affd29a65c284))
+* **ui-linux:** sync IPC v1.1 structured HistoryMessage fields and msg.updated ([3b35711](https://github.com/pandaymx/lanchat/commit/3b35711e2ba85dbbcce915e24a99c9a1df474d4f))
+* **ui-macos:** sync IPC v1.1 structured HistoryMessage fields and msg.updated ([96e5253](https://github.com/pandaymx/lanchat/commit/96e525393c8b8486e46325e57f28b719ca08d33c))
+* **ui-win:** sync IPC v1.1 structured ChatMessage fields and msg.updated ([a6f86d4](https://github.com/pandaymx/lanchat/commit/a6f86d404f0921dc0c3fc6569b6099b3f96b4e52))
+
 ## [1.17.4](https://github.com/pandaymx/lanchat/compare/v1.17.3...v1.17.4) (2026-10-26)
 
 

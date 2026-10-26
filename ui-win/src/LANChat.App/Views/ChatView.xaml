@@ -342,7 +342,7 @@
                             CornerRadius="6"
                             IsEnabled="{Binding Chat.CanSend}">
                         <Button.Flyout>
-                            <Flyout Placement="TopEdgeAlignedLeft">
+                            <Flyout x:Name="EmojiFlyout" Placement="TopEdgeAlignedLeft">
                                 <StackPanel Spacing="10" Width="260">
                                     <TextBlock Text="快捷表情与自定义贴纸"
                                                FontSize="12"
@@ -434,7 +434,8 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0"
+                    <TextBox x:Name="DraftBox"
+                             Grid.Column="0"
                              MinHeight="64"
                              MaxHeight="110"
                              TextWrapping="Wrap"

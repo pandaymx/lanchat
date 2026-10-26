@@ -133,6 +133,9 @@ public sealed partial class ChatView : UserControl
         if (sender is Button { Tag: string emoji })
         {
             _shell?.Chat.InsertEmoji(emoji);
+            EmojiFlyout.Hide();
+            DraftBox.Focus(FocusState.Programmatic);
+            DraftBox.SelectionStart = DraftBox.Text.Length;
         }
     }
 

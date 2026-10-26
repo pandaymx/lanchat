@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/pandaymx/lanchat/compare/v1.18.0...v1.19.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add JSONL auto-compaction, cursor pagination, and CAS media externalization (v1.19.0) ([a8c6e70](https://github.com/pandaymx/lanchat/commit/a8c6e708b6c0d4bb3540b9ac7d7b93b5fadb464b))
+
 ## [1.18.0](https://github.com/pandaymx/lanchat/compare/v1.17.4...v1.18.0) (2026-10-26)
 
 

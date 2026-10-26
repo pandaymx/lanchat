@@ -17,6 +17,7 @@ final class ChatStore: ObservableObject {
     @Published var activeThreadKey: String? = "*"
     @Published var e2eeEnabledThreads: Set<String> = []
     @Published var daemonConnected = false
+    @Published var updateStatus: String = "内置国内加速节点：ghfast.top · gh-proxy.com · ghproxy.net · mirror.ghproxy.com · ghps.cc"
     @Published var error: String?
     @Published var ready = false
 
@@ -342,6 +343,10 @@ final class ChatStore: ObservableObject {
             } else if r.msgID.hasPrefix("status:") {
                 let st = String(r.msgID.dropFirst(7))
                 append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "📊 [诊断状态] \(st)", inbound: false, timestamp: Date()))
+            } else if r.msgID.hasPrefix("update:") {
+                let up = String(r.msgID.dropFirst(7))
+                updateStatus = up
+                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "🚀 [版本更新] \(up)", inbound: false, timestamp: Date()))
             } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {
@@ -470,6 +475,12 @@ final class ChatStore: ObservableObject {
                 append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "📊 [诊断状态] \(st)",
                                    inbound: false, timestamp: Date()),
                        threadKey: channelID)
+            } else if r.msgID.hasPrefix("update:") {
+                let up = String(r.msgID.dropFirst(7))
+                updateStatus = up
+                append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "🚀 [版本更新] \(up)",
+                                   inbound: false, timestamp: Date()),
+                       threadKey: channelID)
             } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {
@@ -557,6 +568,33 @@ final class ChatStore: ObservableObject {
             _ = try await ipc.call("PickDownloadDir", params: ["path": path])
             settings.downloadDir = path
         } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func checkAndSilentUpdate(customProxy: String = "", checkOnly: Bool = false) async {
+        let proxyArg = customProxy.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cmd: String
+        if checkOnly {
+            cmd = "/update check"
+            updateStatus = "正在通过国内加速节点检查最新版本…"
+        } else if proxyArg.isEmpty {
+            cmd = "/update"
+            updateStatus = "正在通过国内加速代理静默下载最新安装包（免浏览器）…"
+        } else {
+            cmd = "/update \(proxyArg)"
+            updateStatus = "正在通过 \(proxyArg) 静默下载最新安装包…"
+        }
+        do {
+            let r = try await ipc.call("SendText", params: ["to": "", "text": cmd, "group": ""], as: MsgIDResult.self)
+            if r.msgID.hasPrefix("update:") {
+                updateStatus = String(r.msgID.dropFirst(7))
+            } else {
+                updateStatus = r.msgID
+            }
+            await refreshState()
+        } catch {
+            updateStatus = "更新操作失败：\(error.localizedDescription)"
             self.error = error.localizedDescription
         }
     }

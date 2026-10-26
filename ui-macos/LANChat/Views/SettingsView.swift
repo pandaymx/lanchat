@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var store: ChatStore
     @ObservedObject var settings: SettingsStore
+    @State private var customUpdateProxy: String = ""
 
     var body: some View {
         ScrollView {
@@ -159,6 +160,49 @@ struct SettingsView: View {
                         Text("P2P TCP 直连优先 · AES-GCM 加密中继兜底 · SHA-256 完整性校验")
                             .font(.system(size: 11.5, weight: .medium))
                             .foregroundColor(.secondary)
+                    }
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                )
+
+                // 版本更新与国内代理静默下载卡片
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("🚀 版本更新（国内代理静默下载 · 免浏览器）")
+                        .font(.system(size: 13, weight: .bold))
+
+                    Text(store.updateStatus)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 10) {
+                        TextField("可选自定义加速代理前缀（留空默认自动轮询 ghfast.top / gh-proxy.com 等国内节点）", text: $customUpdateProxy)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("🔍 检查版本") {
+                            Task { await store.checkAndSilentUpdate(customProxy: customUpdateProxy, checkOnly: true) }
+                        }
+
+                        Button {
+                            Task { await store.checkAndSilentUpdate(customProxy: customUpdateProxy, checkOnly: false) }
+                        } label: {
+                            Text("⬇️ 静默下载更新包")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        .fill(QQPalette.qqBlue)
+                                )
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(16)

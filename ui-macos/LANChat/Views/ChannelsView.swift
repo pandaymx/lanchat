@@ -340,6 +340,12 @@ struct BroadcastChatView: View {
                                 },
                                 onMarkRead: { target in
                                     Task { await store.sendChannelText(channelID: broadcastKey, text: "/read \(target.id)") }
+                                },
+                                onReact: { target in
+                                    Task { await store.sendChannelText(channelID: broadcastKey, text: "/react \(target.id) 👍") }
+                                },
+                                onPin: { target in
+                                    Task { await store.sendChannelText(channelID: broadcastKey, text: "/pin \(target.id)") }
                                 }
                             )
                             .id(msg.id)
@@ -402,7 +408,11 @@ struct BroadcastChatView: View {
                     StickerPickerPopover(
                         onSendSticker: { sticker in
                             showStickerPopover = false
-                            Task { await store.sendSticker(to: broadcastKey, path: sticker, threadKey: broadcastKey) }
+                            if sticker == "👍 点赞", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
+                                Task { await store.sendChannelText(channelID: broadcastKey, text: "/react \(last.id) 👍") }
+                            } else {
+                                Task { await store.sendSticker(to: broadcastKey, path: sticker, threadKey: broadcastKey) }
+                            }
                         },
                         onInsertEmoji: { emoji in
                             draft += emoji
@@ -894,6 +904,12 @@ struct ChannelChatView: View {
                                 },
                                 onMarkRead: { target in
                                     Task { await store.sendChannelText(channelID: channelID, text: "/read \(target.id)") }
+                                },
+                                onReact: { target in
+                                    Task { await store.sendChannelText(channelID: channelID, text: "/react \(target.id) 👍") }
+                                },
+                                onPin: { target in
+                                    Task { await store.sendChannelText(channelID: channelID, text: "/pin \(target.id)") }
                                 }
                             )
                             .id(msg.id)
@@ -997,7 +1013,11 @@ struct ChannelChatView: View {
                     StickerPickerPopover(
                         onSendSticker: { sticker in
                             showStickerPopover = false
-                            Task { await store.sendSticker(to: channel.id, path: sticker, threadKey: channel.id) }
+                            if sticker == "👍 点赞", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
+                                Task { await store.sendChannelText(channelID: channel.id, text: "/react \(last.id) 👍") }
+                            } else {
+                                Task { await store.sendSticker(to: channel.id, path: sticker, threadKey: channel.id) }
+                            }
                         },
                         onInsertEmoji: { emoji in
                             draft += emoji

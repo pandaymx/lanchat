@@ -396,7 +396,11 @@ struct ChatView: View {
                     StickerPickerPopover(
                         onSendSticker: { sticker in
                             showStickerPopover = false
-                            Task { await store.sendSticker(to: peer.id, path: sticker) }
+                            if sticker == "👍 点赞", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
+                                Task { await store.sendText(to: peer.id, text: "/react \(last.id) 👍") }
+                            } else {
+                                Task { await store.sendSticker(to: peer.id, path: sticker) }
+                            }
                         },
                         onInsertEmoji: { emoji in
                             draft += emoji
@@ -588,6 +592,10 @@ struct BubbleRow: View {
         return isSelf ? "self" : message.peerId
     }
 
+    private var parsed: (body: String, reactions: [String]) {
+        Formatters.splitReactions(message.text)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             if isSelf {
@@ -614,30 +622,106 @@ struct BubbleRow: View {
                     }
                 }
 
-                // 气泡主体 + 悬浮快捷按钮
-                HStack(alignment: .center, spacing: 6) {
-                    if isSelf && isHovered && !message.revoked {
-                        hoverActions
-                    }
+                // 气泡主体
+                bubbleContent
 
-                    bubbleContent
-
-                    if !isSelf && isHovered && !message.revoked {
-                        hoverActions
+                // 气泡下方：已触发的点赞/表情回应胶囊徽章行
+                if !message.revoked && !parsed.reactions.isEmpty {
+                    HStack(spacing: 5) {
+                        ForEach(parsed.reactions, id: \.self) { emoji in
+                            Button {
+                                onReact?(message)
+                            } label: {
+                                Text("\(emoji) 1")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundColor(QQPalette.qqBlue)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        Capsule()
+                                            .fill(QQPalette.qqBlue.opacity(0.14))
+                                    )
+                                    .overlay(
+                                        Capsule()
+                                            .stroke(QQPalette.qqBlue.opacity(0.28), lineWidth: 0.8)
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
 
-                // 已读回执标签
-                if isSelf && !message.revoked {
-                    HStack(spacing: 4) {
-                        if !message.readBy.isEmpty {
-                            Text(message.readBy.count > 1 ? "✓ 已读(\(message.readBy.count))" : "✓ 已读")
-                                .font(.system(size: 10.5, weight: .medium))
-                                .foregroundColor(QQPalette.qqBlue)
-                        } else {
-                            Text("✓ 已发送")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary.opacity(0.7))
+                // 气泡下方：已读回执与快捷互动按钮（👍 点赞 / ↩ 回复 / 📌 置顶 / 撤回）
+                if !message.revoked {
+                    HStack(spacing: 8) {
+                        if isSelf {
+                            if !message.readBy.isEmpty {
+                                Text(message.readBy.count > 1 ? "✓ 已读(\(message.readBy.count))" : "✓ 已读")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundColor(QQPalette.qqBlue)
+                            } else {
+                                Text("✓ 已发送")
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary.opacity(0.7))
+                            }
+                        }
+
+                        if let onReact {
+                            Button {
+                                onReact(message)
+                            } label: {
+                                Text("👍 点赞")
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundColor(QQPalette.qqBlue)
+                            }
+                            .buttonStyle(.plain)
+                            .help("在气泡下方添加点赞回应 (/react)")
+                        }
+
+                        if let onReply {
+                            Button {
+                                onReply(message)
+                            } label: {
+                                Text("↩ 回复")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("引用回复此消息")
+                        }
+
+                        if let onPin {
+                            Button {
+                                onPin(message)
+                            } label: {
+                                Text("📌 置顶")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("置顶此消息 (/pin)")
+                        }
+
+                        if isSelf, let onRevoke {
+                            Button {
+                                onRevoke(message)
+                            } label: {
+                                Text("撤回")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundColor(.red.opacity(0.85))
+                            }
+                            .buttonStyle(.plain)
+                            .help("撤回此消息")
+                        } else if !isSelf, let onMarkRead {
+                            Button {
+                                onMarkRead(message)
+                            } label: {
+                                Text("标为已读")
+                                    .font(.system(size: 10.5, weight: .medium))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("发送已读回执")
                         }
                     }
                 }
@@ -682,7 +766,7 @@ struct BubbleRow: View {
                 Divider()
                 Button("📋 复制消息内容") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(message.text, forType: .string)
+                    NSPasteboard.general.setString(parsed.body, forType: .string)
                 }
             }
         }
@@ -711,7 +795,7 @@ struct BubbleRow: View {
                     Capsule()
                         .fill(Color.primary.opacity(0.05))
                 )
-        } else if let img = inlineNSImage(from: message.text) {
+        } else if let img = inlineNSImage(from: parsed.body) {
             VStack(alignment: .leading, spacing: 4) {
                 Image(nsImage: img)
                     .resizable()
@@ -740,7 +824,7 @@ struct BubbleRow: View {
                     )
             )
         } else {
-            Text(message.text)
+            Text(parsed.body)
                 .font(.system(size: 13.5))
                 .foregroundColor(isSelf ? .white : .primary)
                 .padding(.horizontal, 13)

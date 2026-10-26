@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.10.2](https://github.com/pandaymx/lanchat/compare/v1.10.1...v1.10.2) (2026-10-26)
+
+
+### Bug Fixes
+
+* **core:** exclude diagnostic outputs from chat history and strip reactions in reply quotes ([f0490dc](https://github.com/pandaymx/lanchat/commit/f0490dc50fbd26dd5babc66fab290651b3c94d79))
+* **ui-android:** show command diagnostics via snackbar instead of chat bubbles ([bd54d2c](https://github.com/pandaymx/lanchat/commit/bd54d2c4202809012baf0eaa4d14023edbea5f89))
+* **ui-ios:** filter diagnostic pseudo-messages and sanitize quoted reply bubbles ([657b229](https://github.com/pandaymx/lanchat/commit/657b2298fe6a4c2ab794266ae23565bdcf22aeec))
+* **ui-linux:** filter diagnostic pseudo-messages and sanitize quoted reply bubbles ([b029fac](https://github.com/pandaymx/lanchat/commit/b029facf92bf23a68936b8fbaafa99d9647b6500))
+* **ui-macos:** filter diagnostic pseudo-messages and sanitize quoted reply bubbles ([d45866a](https://github.com/pandaymx/lanchat/commit/d45866a9ecb598db18b03bf993aafebb40841fbb))
+* **ui-win:** filter diagnostic pseudo-messages and sanitize quoted reply bubbles ([5b77d4f](https://github.com/pandaymx/lanchat/commit/5b77d4fdded368a79f75266b1412231d71afd7cd))
+
 ## [1.10.1](https://github.com/pandaymx/lanchat/compare/v1.10.0...v1.10.1) (2026-10-26)
 
 

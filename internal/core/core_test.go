@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1329,4 +1330,56 @@ func TestDiagnosticExclusionAndReplyReactionSanitization(t *testing.T) {
 		msgs := a.GetState().Messages
 		return len(msgs) == 2 && msgs[1].Text == "「下午三点对齐接口」\n好的没问题"
 	})
+}
+
+// TestCLISelfUpdateBinaryInPlace 验证 CLI 二进制自更新（国内代理回退、SHA-256 校验与原地原子替换）。
+func TestCLISelfUpdateBinaryInPlace(t *testing.T) {
+	newBinBytes := []byte("#!/bin/sh\necho lanchat-v9.9.9\n")
+	sum := sha256.Sum256(newBinBytes)
+	sumHex := hex.EncodeToString(sum[:])
+	assetName := CLIBinaryAssetName("v9.9.9", runtime.GOOS, runtime.GOARCH)
+
+	mirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/latest/download/version.json"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"version":"9.9.9","tag":"v9.9.9","commit":"def5678"}`))
+		case strings.HasSuffix(r.URL.Path, "/download/v9.9.9/SHA256SUMS"):
+			_, _ = fmt.Fprintf(w, "%s  %s\n", sumHex, assetName)
+		case strings.HasSuffix(r.URL.Path, "/download/v9.9.9/"+assetName):
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write(newBinBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer mirror.Close()
+
+	workDir := t.TempDir()
+	fakeExec := filepath.Join(workDir, "lanchat")
+	if err := os.WriteFile(fakeExec, []byte("old-binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := SelfUpdateBinary(
+		context.Background(),
+		"1.11.0",
+		"",
+		fakeExec,
+		workDir,
+		false,
+		"https://github.com/pandaymx/lanchat/releases",
+		[]string{mirror.URL + "/"},
+		mirror.Client(),
+	)
+	if err != nil {
+		t.Fatalf("SelfUpdateBinary failed: %v", err)
+	}
+	if !res.HasNewVersion || !res.SHA256Verified || res.SavedPath != fakeExec {
+		t.Fatalf("unexpected SelfUpdateBinary result: %+v", res)
+	}
+	got, err := os.ReadFile(fakeExec)
+	if err != nil || string(got) != string(newBinBytes) {
+		t.Fatalf("replaced binary content mismatch: err=%v, got=%q", err, string(got))
+	}
 }

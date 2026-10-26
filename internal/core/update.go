@@ -19,7 +19,7 @@ import (
 )
 
 // CurrentVersion 当前客户端核心版本。
-const CurrentVersion = "1.10.4"
+const CurrentVersion = "1.11.1"
 
 // DefaultReleaseBaseURL GitHub Releases 默认基础地址。
 const DefaultReleaseBaseURL = "https://github.com/pandaymx/lanchat/releases"
@@ -436,6 +436,284 @@ func downloadFileWithSHA256(ctx context.Context, cli *http.Client, reqURL, destP
 	return verified, nil
 }
 
+// CLIBinaryAssetName 返回指定版本、操作系统与架构对应的 lanchat CLI/Server 独立二进制制品名。
+func CLIBinaryAssetName(tag, goos, goarch string) string {
+	t := strings.TrimSpace(tag)
+	if t != "" && !strings.HasPrefix(t, "v") {
+		t = "v" + t
+	}
+	ext := ""
+	if strings.EqualFold(goos, "windows") {
+		ext = ".exe"
+	}
+	return fmt.Sprintf("lanchat-server-%s-%s-%s%s", t, strings.ToLower(strings.TrimSpace(goos)), strings.ToLower(strings.TrimSpace(goarch)), ext)
+}
+
+// SelfUpdateCLI 通过国内加速代理链检测并静默下载最新 lanchat 独立二进制，原地替换当前可执行文件（若目标目录只读则回退保存至下载目录）。
+func (c *Client) SelfUpdateCLI(ctx context.Context, checkOnly bool, customProxy string) (*UpdateResult, error) {
+	execPath, _ := os.Executable()
+	return SelfUpdateBinary(
+		ctx,
+		CurrentVersion,
+		customProxy,
+		execPath,
+		c.resolveUpdateDownloadDir(),
+		checkOnly,
+		c.effectiveUpdateBaseURL(),
+		c.effectiveUpdateProxies(customProxy),
+		c.effectiveUpdateHTTPClient(3*time.Minute),
+	)
+}
+
+// SelfUpdateBinary 执行通用 CLI 二进制检测、静默下载、SHA-256 校验与原子原地替换。
+func SelfUpdateBinary(
+	ctx context.Context,
+	currentVer, customProxy, targetExecPath, fallbackDir string,
+	checkOnly bool,
+	baseURL string,
+	proxies []string,
+	httpClient *http.Client,
+) (*UpdateResult, error) {
+	curVer := strings.TrimPrefix(strings.TrimSpace(currentVer), "v")
+	if curVer == "" || curVer == "dev" {
+		curVer = CurrentVersion
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		if envBase := strings.TrimSpace(os.Getenv("LANCHAT_UPDATE_BASE_URL")); envBase != "" {
+			baseURL = strings.TrimRight(envBase, "/")
+		} else {
+			baseURL = DefaultReleaseBaseURL
+		}
+	}
+	if len(proxies) == 0 {
+		var pList []string
+		if strings.TrimSpace(customProxy) != "" {
+			pList = append(pList, strings.TrimSpace(customProxy))
+		}
+		if envProxy := strings.TrimSpace(os.Getenv("LANCHAT_UPDATE_PROXY")); envProxy != "" {
+			for _, part := range strings.Split(envProxy, ",") {
+				if strings.TrimSpace(part) != "" {
+					pList = append(pList, strings.TrimSpace(part))
+				}
+			}
+		}
+		pList = append(pList, DefaultDomesticProxies...)
+		proxies = pList
+	}
+	metaClient := httpClient
+	if metaClient == nil {
+		metaClient = &http.Client{Timeout: 15 * time.Second}
+	}
+	dlClient := httpClient
+	if dlClient == nil {
+		dlClient = &http.Client{Timeout: 3 * time.Minute}
+	}
+
+	versionTargetURL := strings.TrimRight(baseURL, "/") + "/latest/download/version.json"
+	var verInfo ReleaseVersionInfo
+	var chosenProxy string
+	var lastErr error
+	fetchedMeta := false
+
+	for _, proxyPrefix := range proxies {
+		reqURL := BuildProxiedURL(proxyPrefix, versionTargetURL)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		req.Header.Set("User-Agent", "LANChat-CLI-Updater/"+curVer)
+		resp, err := metaClient.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || readErr != nil {
+			if readErr != nil {
+				lastErr = readErr
+			} else {
+				lastErr = fmt.Errorf("HTTP %d from %s", resp.StatusCode, proxyDisplayName(proxyPrefix))
+			}
+			continue
+		}
+		if err := json.Unmarshal(body, &verInfo); err != nil || strings.TrimSpace(verInfo.Version) == "" {
+			lastErr = fmt.Errorf("invalid version.json from %s", proxyDisplayName(proxyPrefix))
+			continue
+		}
+		chosenProxy = proxyPrefix
+		fetchedMeta = true
+		break
+	}
+	if !fetchedMeta {
+		if lastErr == nil {
+			lastErr = errors.New("所有国内代理与直连节点均不可达")
+		}
+		return nil, fmt.Errorf("获取版本清单失败: %w", lastErr)
+	}
+
+	verInfo.Version = strings.TrimPrefix(strings.TrimSpace(verInfo.Version), "v")
+	if strings.TrimSpace(verInfo.Tag) == "" {
+		verInfo.Tag = "v" + verInfo.Version
+	}
+	hasNew := compareSemver(verInfo.Version, curVer) > 0
+	mirrorName := proxyDisplayName(chosenProxy)
+	assetName := CLIBinaryAssetName(verInfo.Tag, runtime.GOOS, runtime.GOARCH)
+
+	res := &UpdateResult{
+		CurrentVersion: curVer,
+		LatestVersion:  verInfo.Version,
+		Tag:            verInfo.Tag,
+		Mirror:         mirrorName,
+		AssetName:      assetName,
+		HasNewVersion:  hasNew,
+	}
+
+	if checkOnly {
+		if hasNew {
+			res.Summary = fmt.Sprintf("发现新版本 v%s（当前 v%s，加速节点: %s），可执行 lanchat update 或 /update self 静默升级", verInfo.Version, curVer, mirrorName)
+		} else {
+			res.Summary = fmt.Sprintf("当前已是最新版本 v%s（加速节点: %s）", verInfo.Version, mirrorName)
+		}
+		return res, nil
+	}
+
+	sumsTargetURL := fmt.Sprintf("%s/download/%s/SHA256SUMS", strings.TrimRight(baseURL, "/"), verInfo.Tag)
+	expectedSums := map[string]string{}
+	orderedProxies := append([]string{chosenProxy}, proxies...)
+	for _, proxyPrefix := range orderedProxies {
+		reqURL := BuildProxiedURL(proxyPrefix, sumsTargetURL)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+		if err != nil {
+			continue
+		}
+		req.Header.Set("User-Agent", "LANChat-CLI-Updater/"+curVer)
+		resp, err := metaClient.Do(req)
+		if err != nil {
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 256*1024))
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusOK && readErr == nil {
+			parsed := parseSHA256Sums(string(body))
+			if len(parsed) > 0 {
+				expectedSums = parsed
+				break
+			}
+		}
+	}
+
+	if strings.TrimSpace(fallbackDir) == "" {
+		fallbackDir = os.TempDir()
+	}
+	_ = os.MkdirAll(fallbackDir, 0o755)
+
+	stagePath := filepath.Join(fallbackDir, assetName+".new")
+	assetTargetURL := fmt.Sprintf("%s/download/%s/%s", strings.TrimRight(baseURL, "/"), verInfo.Tag, assetName)
+	expectedHash := expectedSums[assetName]
+
+	var dlErr error
+	var verified bool
+	var usedMirror string
+	downloaded := false
+	for _, proxyPrefix := range orderedProxies {
+		reqURL := BuildProxiedURL(proxyPrefix, assetTargetURL)
+		v, err := downloadFileWithSHA256(ctx, dlClient, reqURL, stagePath, expectedHash)
+		if err != nil {
+			dlErr = err
+			continue
+		}
+		verified = v
+		usedMirror = proxyDisplayName(proxyPrefix)
+		downloaded = true
+		break
+	}
+	if !downloaded {
+		if dlErr == nil {
+			dlErr = errors.New("未找到对应架构的 CLI 二进制制品")
+		}
+		return nil, fmt.Errorf("静默下载 CLI 二进制失败: %w", dlErr)
+	}
+	_ = os.Chmod(stagePath, 0o755)
+
+	finalPath := filepath.Join(fallbackDir, assetName)
+	replacedInPlace := false
+	if strings.TrimSpace(targetExecPath) != "" {
+		if err := replaceExecutableAtomically(stagePath, targetExecPath); err == nil {
+			finalPath = targetExecPath
+			replacedInPlace = true
+		} else {
+			_ = os.Rename(stagePath, finalPath)
+			_ = os.Chmod(finalPath, 0o755)
+		}
+	} else {
+		_ = os.Rename(stagePath, finalPath)
+		_ = os.Chmod(finalPath, 0o755)
+	}
+
+	res.Mirror = usedMirror
+	res.SavedPath = finalPath
+	res.SHA256Verified = verified
+	shaNote := "完成"
+	if verified {
+		shaNote = "SHA-256 校验通过"
+	}
+	if replacedInPlace {
+		res.Summary = fmt.Sprintf("已通过 [%s] 静默升级 CLI 二进制至 v%s (%s) -> %s", res.Mirror, verInfo.Version, shaNote, finalPath)
+	} else {
+		res.Summary = fmt.Sprintf("已通过 [%s] 静默下载 CLI 二进制 v%s (%s) -> %s", res.Mirror, verInfo.Version, shaNote, finalPath)
+	}
+	return res, nil
+}
+
+func replaceExecutableAtomically(newBinPath, targetExecPath string) error {
+	targetDir := filepath.Dir(targetExecPath)
+	localTmp := filepath.Join(targetDir, "."+filepath.Base(targetExecPath)+".upgrade.tmp")
+	src, err := os.Open(newBinPath)
+	if err != nil {
+		return err
+	}
+	dst, err := os.OpenFile(localTmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		_ = src.Close()
+		return err
+	}
+	_, copyErr := io.Copy(dst, src)
+	_ = src.Close()
+	closeErr := dst.Close()
+	if copyErr != nil || closeErr != nil {
+		_ = os.Remove(localTmp)
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	}
+	_ = os.Chmod(localTmp, 0o755)
+
+	oldBackup := targetExecPath + ".old"
+	_ = os.Remove(oldBackup)
+	if runtime.GOOS == "windows" {
+		_ = os.Rename(targetExecPath, oldBackup)
+	}
+	if err := os.Rename(localTmp, targetExecPath); err != nil {
+		// 尝试先移走正在运行的二进制再替换
+		if errOld := os.Rename(targetExecPath, oldBackup); errOld == nil {
+			if errRetry := os.Rename(localTmp, targetExecPath); errRetry == nil {
+				_ = os.Remove(oldBackup)
+				_ = os.Remove(newBinPath)
+				return nil
+			}
+			_ = os.Rename(oldBackup, targetExecPath)
+		}
+		_ = os.Remove(localTmp)
+		return err
+	}
+	_ = os.Remove(oldBackup)
+	_ = os.Remove(newBinPath)
+	return nil
+}
+
 func (c *Client) handleUpdateCommand(arg, _, _ string) (string, error) {
 	sub := strings.TrimSpace(arg)
 	if sub == "proxies" || sub == "mirrors" {
@@ -445,6 +723,18 @@ func (c *Client) handleUpdateCommand(arg, _, _ string) (string, error) {
 		}
 		msg := "内置国内加速代理节点: " + strings.Join(names, " -> ")
 		return "update:" + msg, nil
+	}
+	if sub == "self" || sub == "cli" || sub == "binary" || strings.HasPrefix(sub, "self ") || strings.HasPrefix(sub, "cli ") {
+		customProxy := ""
+		parts := strings.Fields(sub)
+		if len(parts) >= 2 {
+			customProxy = parts[1]
+		}
+		res, err := c.SelfUpdateCLI(c.runCtx, false, customProxy)
+		if err != nil {
+			return "", err
+		}
+		return "update:" + res.Summary, nil
 	}
 
 	checkOnly := false

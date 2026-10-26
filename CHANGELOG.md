@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.10.1](https://github.com/pandaymx/lanchat/compare/v1.10.0...v1.10.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **ui-android:** insert selected emoji into input box instead of sending immediately ([af001a0](https://github.com/pandaymx/lanchat/commit/af001a0d3c7839f452e805312948d3bd0bf72e14))
+* **ui-ios:** insert selected emoji into input box instead of sending immediately ([2d18433](https://github.com/pandaymx/lanchat/commit/2d184330108bc7759e461de0adde5d736178584e))
+* **ui-linux:** insert selected emoji into input box instead of sending immediately ([42a408e](https://github.com/pandaymx/lanchat/commit/42a408ef280cf5fe045b63c5b6c928bfa049fa52))
+* **ui-macos:** insert selected emoji into input box instead of sending immediately ([0a8ad0d](https://github.com/pandaymx/lanchat/commit/0a8ad0d845ddd2f6bf1372f60f134ac528d5348f))
+* **ui-win:** close flyout and focus input box after inserting emoji ([5b8b155](https://github.com/pandaymx/lanchat/commit/5b8b15539cfd82f0278d6b6a6d96c00b7652ba52))
+
 ## [1.10.0](https://github.com/pandaymx/lanchat/compare/v1.9.3...v1.10.0) (2026-10-26)
 
 

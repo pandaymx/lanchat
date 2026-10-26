@@ -323,6 +323,56 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private async void PasteClipboardButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is null || !_shell.Chat.CanSend)
+        {
+            return;
+        }
+        try
+        {
+            var dataView = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+            if (dataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems))
+            {
+                var items = await dataView.GetStorageItemsAsync();
+                foreach (var item in items)
+                {
+                    if (!string.IsNullOrEmpty(item.Path))
+                    {
+                        await _shell.Chat.OfferFileAsync(item.Path);
+                    }
+                }
+                return;
+            }
+            if (dataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Bitmap))
+            {
+                var streamRef = await dataView.GetBitmapAsync();
+                using var stream = await streamRef.OpenReadAsync();
+                using var mem = new System.IO.MemoryStream();
+                await System.IO.WindowsRuntimeStreamExtensions.AsStreamForRead(stream).CopyToAsync(mem);
+                var b64 = System.Convert.ToBase64String(mem.ToArray());
+                if (!string.IsNullOrEmpty(b64))
+                {
+                    await _shell.Chat.OfferFileAsync($"data:image/png;base64,{b64}");
+                    return;
+                }
+            }
+            if (dataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Text))
+            {
+                var text = await dataView.GetTextAsync();
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    _shell.Chat.Draft = $"/clip {text.Trim()}";
+                    await _shell.Chat.SendCommand.ExecuteAsync(null);
+                }
+            }
+        }
+        catch
+        {
+            // 剪贴板为空或无权限时忽略
+        }
+    }
+
     private void ChatView_DragOver(object sender, DragEventArgs e)
     {
         if (_shell?.Chat.CanSend == true && e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems))

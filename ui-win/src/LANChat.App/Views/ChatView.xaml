@@ -484,6 +484,16 @@
                                 IsEnabled="{Binding Chat.CanSend}"
                                 Click="PickFolderButton_Click" />
 
+                        <Button Content="📋 剪贴板"
+                                FontSize="12"
+                                Padding="8,4"
+                                CornerRadius="6"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="一键直发剪贴板截图/文件，或通过 /clip 同步剪贴板文本"
+                                IsEnabled="{Binding Chat.CanSend}"
+                                Click="PasteClipboardButton_Click" />
+
                         <Button Content="🎤 语音"
                                 FontSize="12"
                                 Padding="8,4"

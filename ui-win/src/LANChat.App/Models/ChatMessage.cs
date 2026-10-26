@@ -28,6 +28,24 @@ public sealed record ChatMessage
     /// <summary>M11a: 已读该消息的对端 ID 列表。</summary>
     public IReadOnlyList<string> ReadBy { get; init; } = [];
 
+    /// <summary>v1.1: 结构化被引用消息快照摘要。</summary>
+    public string? ReplyQuote { get; init; }
+
+    /// <summary>v1.1: 结构化表情回应映射（emoji -> 点赞用户 ID 列表）。</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>>? StructuredReactions { get; init; }
+
+    /// <summary>v1.1: 消息二次编辑时间戳（Unix 毫秒）。</summary>
+    public long EditedAt { get; init; }
+
+    /// <summary>v1.1: 消息是否置顶。</summary>
+    public bool Pinned { get; init; }
+
+    /// <summary>v1.1: 关联媒体 MIME 类型。</summary>
+    public string? MediaMime { get; init; }
+
+    /// <summary>v1.1: 关联本地媒体路径。</summary>
+    public string? MediaPath { get; init; }
+
     /// <summary>贴纸类型时，Text 为贴纸文件路径。</summary>
     public bool IsSticker => Type == "sticker";
 
@@ -86,23 +104,32 @@ public sealed record ChatMessage
     /// <summary>剥离尾部点赞/表情回应徽章后的消息正文。</summary>
     public string CleanText => SplitReactions(Text).Body;
 
-    /// <summary>是否包含 QQ 引用回复块（「...」\n）。</summary>
-    public bool HasQuote => !Revoked && !HasInlineImage && SplitQuote(CleanText).HasQuote;
+    /// <summary>是否包含 QQ 引用回复块（优先使用 v1.1 ReplyQuote，向后兼容 「...」\n）。</summary>
+    public bool HasQuote => !Revoked && !HasInlineImage &&
+        (!string.IsNullOrWhiteSpace(ReplyQuote) || SplitQuote(CleanText).HasQuote);
 
     /// <summary>被引用回复的原消息内容。</summary>
-    public string QuotedText => SplitQuote(CleanText).Quoted;
+    public string QuotedText => !string.IsNullOrWhiteSpace(ReplyQuote)
+        ? ReplyQuote!
+        : SplitQuote(CleanText).Quoted;
 
     /// <summary>剥离引用回复块与尾部表情回应后的实际消息正文。</summary>
     public string BodyText => HasInlineImage ? "🖼️ [图片]" : SplitQuote(CleanText).Body;
 
-    /// <summary>M20: 解析出的尾部表情回应列表（展示在气泡下方）。</summary>
-    public IReadOnlyList<string> Reactions => Revoked ? [] : SplitReactions(Text).Reactions;
+    /// <summary>M20/v1.1: 解析出的尾部表情回应列表（优先读取结构化映射，展示在气泡下方）。</summary>
+    public IReadOnlyList<string> Reactions => Revoked
+        ? []
+        : (StructuredReactions is { Count: > 0 }
+            ? StructuredReactions.Keys.ToList()
+            : SplitReactions(Text).Reactions);
 
     /// <summary>是否存在应在气泡下方展示的点赞/表情回应徽章。</summary>
     public bool HasReactions => !Revoked && Reactions.Count > 0;
 
     /// <summary>气泡下方点赞/表情回应胶囊展示文案（如 "👍 1"）。</summary>
-    public string ReactionsText => string.Join("  ", Reactions.Select(r => $"{r} 1"));
+    public string ReactionsText => StructuredReactions is { Count: > 0 }
+        ? string.Join("  ", StructuredReactions.Select(kv => $"{kv.Key} {Math.Max(1, kv.Value.Count)}"))
+        : string.Join("  ", Reactions.Select(r => $"{r} 1"));
 
     /// <summary>气泡展示文本（若包含引用块则仅返回正文部分，引用块由独立卡片渲染）。</summary>
     public string DisplayText => BodyText;

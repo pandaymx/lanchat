@@ -158,6 +158,9 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
             case "msg.received":
                 _ui.Post(() => Chat.HandleMessageReceived(parameters));
                 break;
+            case "msg.updated":
+                _ui.Post(() => Chat.HandleMessageUpdated(parameters));
+                break;
             case "channel.updated":
                 var channels = parameters.GetProperty("channels")
                     .Deserialize<IReadOnlyList<Channel>>(Ipc.IpcClient.JsonOptions) ?? [];

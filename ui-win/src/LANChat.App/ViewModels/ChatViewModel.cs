@@ -509,8 +509,29 @@ public sealed partial class ChatViewModel : ViewModelBase
                 Timestamp = hm.Ts > 0 ? DateTimeOffset.FromUnixTimeMilliseconds(hm.Ts) : DateTimeOffset.Now,
                 Revoked = hm.Revoked,
                 ReadBy = hm.ReadBy,
+                ReplyQuote = hm.ReplyQuote,
+                StructuredReactions = hm.Reactions,
+                EditedAt = hm.EditedAt,
+                Pinned = hm.Pinned,
+                MediaMime = hm.MediaMime,
+                MediaPath = hm.MediaPath,
             });
         }
+    }
+
+    /// <summary>处理契约 v1.1 msg.updated 通知：按结构化 HistoryMessage 直接替换对应 MsgId 的模型。</summary>
+    public void HandleMessageUpdated(JsonElement parameters)
+    {
+        if (!parameters.TryGetProperty("message", out var msgElem))
+        {
+            return;
+        }
+        var hm = msgElem.Deserialize<HistoryMessage>(Ipc.IpcClient.JsonOptions);
+        if (hm is null || string.IsNullOrEmpty(hm.Id))
+        {
+            return;
+        }
+        ApplyHistory([hm]);
     }
 
     /// <summary>解析 msg.received 通知，按 group 归类到频道会话。</summary>

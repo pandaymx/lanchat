@@ -54,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -269,6 +270,7 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
                                 singleLine = true,
+                                cursorBrush = SolidColor(QqPrimaryBlue),
                                 textStyle = TextStyle(
                                     color = Color(0xFF1F2937),
                                     fontSize = 13.sp,

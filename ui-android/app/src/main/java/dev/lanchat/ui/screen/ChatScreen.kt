@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Base64
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,11 +14,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -64,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -278,11 +285,20 @@ private fun ConversationScaffold(
         }
     }
 
-    LaunchedEffect(messages.size) {
+    val imeVisible = WindowInsets.isImeVisible
+
+    LaunchedEffect(messages.size, imeVisible) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
 
+    LaunchedEffect(imeVisible) {
+        if (imeVisible) {
+            showStickerPanel = false
+        }
+    }
+
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             // 手机 QQ 聊天顶部栏：返回按钮 + 目标圆形头像 + 昵称/频道名 + 在线副标题 + 快捷动作
             Row(
@@ -438,13 +454,15 @@ private fun ConversationScaffold(
                 }
             }
 
-            // 手机 QQ 底部输入栏 + 多功能工具图标行
+            // 手机 QQ 底部输入栏 + 多功能工具图标行（随软键盘自动平滑抬升，不遮挡输入框与工具栏）
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
                 tonalElevation = 3.dp,
+                shadowElevation = 6.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding(),
+                    .navigationBarsPadding()
+                    .imePadding(),
             ) {
                 Column(
                     modifier = Modifier
@@ -452,47 +470,61 @@ private fun ConversationScaffold(
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // 第一行：白色圆角输入框 + QQ 蓝胶囊「发送」按钮
+                    // 第一行：圆角输入框 + QQ 蓝胶囊「发送」按钮
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalAlignment = Alignment.Bottom,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Surface(
-                            shape = RoundedCornerShape(22.dp),
+                            shape = RoundedCornerShape(21.dp),
                             color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(
+                                width = 1.dp,
+                                color = if (input.isNotEmpty()) {
+                                    QqPrimaryBlue.copy(alpha = 0.55f)
+                                } else {
+                                    QqPrimaryBlue.copy(alpha = 0.25f)
+                                },
+                            ),
                             modifier = Modifier
                                 .weight(1f)
-                                .height(42.dp),
+                                .heightIn(min = 42.dp, max = 108.dp),
                         ) {
-                            Box(
+                            BasicTextField(
+                                value = input,
+                                onValueChange = { input = it },
+                                maxLines = 4,
+                                cursorBrush = SolidColor(QqPrimaryBlue),
+                                textStyle = TextStyle(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 15.sp,
+                                    lineHeight = 20.sp,
+                                ),
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 14.dp),
-                                contentAlignment = Alignment.CenterStart,
-                            ) {
-                                if (input.isEmpty()) {
-                                    Text(
-                                        text = if (activeReply != null) {
-                                            "输入回复内容…"
-                                        } else {
-                                            stringResource(R.string.chat_input_placeholder)
-                                        },
-                                        color = Color(0xFF9CA3AF),
-                                        fontSize = 14.sp,
-                                    )
-                                }
-                                BasicTextField(
-                                    value = input,
-                                    onValueChange = { input = it },
-                                    maxLines = 3,
-                                    textStyle = TextStyle(
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 14.sp,
-                                    ),
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                decorationBox = { innerTextField ->
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentAlignment = Alignment.CenterStart,
+                                    ) {
+                                        if (input.isEmpty()) {
+                                            Text(
+                                                text = if (activeReply != null) {
+                                                    "输入回复内容…"
+                                                } else {
+                                                    stringResource(R.string.chat_input_placeholder)
+                                                },
+                                                color = Color(0xFF9CA3AF),
+                                                fontSize = 15.sp,
+                                                lineHeight = 20.sp,
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
+                                },
+                            )
                         }
 
                         Button(
@@ -510,17 +542,20 @@ private fun ConversationScaffold(
                                 }
                             },
                             enabled = input.isNotBlank(),
-                            shape = RoundedCornerShape(50),
+                            shape = RoundedCornerShape(21.dp),
+                            contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = QqPrimaryBlue,
                                 contentColor = Color.White,
+                                disabledContainerColor = QqPrimaryBlue.copy(alpha = 0.42f),
+                                disabledContentColor = Color.White.copy(alpha = 0.72f),
                             ),
-                            modifier = Modifier.height(40.dp),
+                            modifier = Modifier.height(42.dp),
                         ) {
                             Text(
                                 text = stringResource(R.string.action_send),
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp,
+                                fontSize = 14.sp,
                             )
                         }
                     }

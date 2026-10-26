@@ -92,8 +92,10 @@ final class ChatStore: ObservableObject {
             }
         case "msg.received":
             if let p = try? decoder.decode(MsgParams.self, from: params) {
-                if p.type == "MSG_REVOKE" {
+                if p.type == "MSG_REVOKE" || p.type == "MSG_BURN" {
                     revokeMessage(id: p.msgId)
+                } else if p.type == "CLIP_SYNC" {
+                    return
                 } else if p.type == "MSG_READ" {
                     markMessageRead(id: p.msgId, readerId: p.from)
                 } else if p.type == "MSG_REACT" || p.type == "MSG_EDIT" || p.type == "MSG_PIN" {

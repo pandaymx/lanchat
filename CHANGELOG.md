@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.11.0](https://github.com/pandaymx/lanchat/compare/v1.10.4...v1.11.0) (2026-10-26)
+
+
+### Features
+
+* **ui-android:** redesign QQ chat bubbles, recall re-edit pill, and popup menu ([8de65d7](https://github.com/pandaymx/lanchat/commit/8de65d7d78ab2c9eb5fde247536e4be7d171dc29))
+* **ui-ios:** redesign QQ chat bubbles, recall re-edit pill, and quote card ([6aaf342](https://github.com/pandaymx/lanchat/commit/6aaf342a347842d5604bc4b68b9d3d6b87c3d747))
+* **ui-linux:** redesign QQ chat bubbles, recall re-edit pill, and popover menu ([782c070](https://github.com/pandaymx/lanchat/commit/782c07071686378fbc846b99fd3b393f62178e28))
+* **ui-macos:** redesign QQ chat bubbles, recall re-edit pill, and quote card ([9c9d9fb](https://github.com/pandaymx/lanchat/commit/9c9d9fb159490a7b55c325bf356de29f4fa8cba4))
+* **ui-win:** redesign QQ chat bubbles, recall re-edit pill, and context menu ([24334d1](https://github.com/pandaymx/lanchat/commit/24334d103430c116e9ca5611be4139605a2947f5))
+
 ## [1.10.4](https://github.com/pandaymx/lanchat/compare/v1.10.3...v1.10.4) (2026-10-26)
 
 

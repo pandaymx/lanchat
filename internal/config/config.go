@@ -45,6 +45,7 @@ type ServerConfig struct {
 	HeartbeatSec     int    `yaml:"heartbeatSec"`
 	IdleTimeoutSec   int    `yaml:"idleTimeoutSec"`
 	ShutdownGraceSec int    `yaml:"shutdownGraceSec"`
+	StateFile        string `yaml:"stateFile"`
 }
 
 // RelayConfig 是回退中继数据面配置。
@@ -86,6 +87,7 @@ func fields() []field {
 		{"path", "LANCHAT_PATH", func(c *Config, v string) error { c.Server.Path = v; return nil }},
 		{"psk-hash", "LANCHAT_PSK_HASH", func(c *Config, v string) error { c.Server.PSKHash = v; return nil }},
 		{"auth-mode", "LANCHAT_AUTH_MODE", func(c *Config, v string) error { c.Server.AuthMode = v; return nil }},
+		{"state-file", "LANCHAT_SERVER_STATE_FILE", func(c *Config, v string) error { c.Server.StateFile = strings.TrimSpace(v); return nil }},
 		{"heartbeat-sec", "LANCHAT_HEARTBEAT_SEC", func(c *Config, v string) error {
 			n, err := positiveInt(v)
 			if err != nil {

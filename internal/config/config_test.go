@@ -31,6 +31,7 @@ func clearConfigEnv(t *testing.T) {
 		"LANCHAT_LISTEN", "LANCHAT_PATH", "LANCHAT_PSK_HASH",
 		"LANCHAT_AUTH_MODE", "LANCHAT_HEARTBEAT_SEC",
 		"LANCHAT_IDLE_TIMEOUT_SEC", "LANCHAT_SHUTDOWN_GRACE_SEC",
+		"LANCHAT_SERVER_STATE_FILE",
 	} {
 		_, ok := os.LookupEnv(k)
 		if ok {
@@ -98,6 +99,7 @@ func TestLoadEnvOverridesAndPSKHash(t *testing.T) {
 	withEnv(t, "LANCHAT_PSK_HASH", hash)
 	withEnv(t, "LANCHAT_LISTEN", ":20000")
 	withEnv(t, "LANCHAT_HEARTBEAT_SEC", "7")
+	withEnv(t, "LANCHAT_SERVER_STATE_FILE", "/tmp/lanchat-state.json")
 
 	cfg, err := Load("", nil)
 	if err != nil {
@@ -111,6 +113,9 @@ func TestLoadEnvOverridesAndPSKHash(t *testing.T) {
 	}
 	if cfg.Server.HeartbeatSec != 7 {
 		t.Errorf("HeartbeatSec = %d, 期望 7", cfg.Server.HeartbeatSec)
+	}
+	if cfg.Server.StateFile != "/tmp/lanchat-state.json" {
+		t.Errorf("StateFile = %q, 期望 /tmp/lanchat-state.json", cfg.Server.StateFile)
 	}
 }
 

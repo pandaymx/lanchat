@@ -142,14 +142,20 @@ final class ChatStore: ObservableObject {
         }
         let key = (threadKey?.isEmpty == false) ? threadKey! : msg.peerId
         var list = messages[key] ?? []
-        if !msg.id.isEmpty, let idx = list.firstIndex(where: { $0.id == msg.id }) {
-            list[idx].text = msg.text
-            list[idx].revoked = msg.revoked
-            list[idx].readBy = msg.readBy
+        var incoming = msg
+        if incoming.originalText.isEmpty && !incoming.revoked && incoming.text != "[消息已撤回]" {
+            incoming.originalText = Formatters.extractEditableOriginal(incoming.text)
+        }
+        if !incoming.id.isEmpty, let idx = list.firstIndex(where: { $0.id == incoming.id }) {
+            let preserved = list[idx].originalText.isEmpty ? incoming.originalText : list[idx].originalText
+            list[idx].text = incoming.text
+            list[idx].revoked = incoming.revoked
+            list[idx].readBy = incoming.readBy
+            list[idx].originalText = preserved
             messages[key] = list
             return
         }
-        list.append(msg)
+        list.append(incoming)
         messages[key] = list
     }
 
@@ -158,6 +164,9 @@ final class ChatStore: ObservableObject {
         for (key, var list) in messages {
             var changed = false
             for idx in list.indices where list[idx].id == id {
+                if list[idx].originalText.isEmpty && list[idx].text != "[消息已撤回]" {
+                    list[idx].originalText = Formatters.extractEditableOriginal(list[idx].text)
+                }
                 list[idx].revoked = true
                 list[idx].text = "[消息已撤回]"
                 changed = true

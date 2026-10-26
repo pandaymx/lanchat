@@ -346,6 +346,12 @@ struct BroadcastChatView: View {
                                 },
                                 onPin: { target in
                                     Task { await store.sendChannelText(channelID: broadcastKey, text: "/pin \(target.id)") }
+                                },
+                                onReEdit: { original in
+                                    let clean = Formatters.extractEditableOriginal(original)
+                                    if !clean.isEmpty {
+                                        draft = clean
+                                    }
                                 }
                             )
                             .id(msg.id)
@@ -366,11 +372,12 @@ struct BroadcastChatView: View {
     private var composer: some View {
         VStack(spacing: 0) {
             if let replyingTo {
+                let cleanReply = Formatters.splitQuote(Formatters.splitReactions(replyingTo.text).body).body
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(QQPalette.qqBlue)
                         .frame(width: 3, height: 22)
-                    Text("回复：\(replyingTo.text)")
+                    Text("回复：\(cleanReply)")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
@@ -907,6 +914,12 @@ struct ChannelChatView: View {
                                 },
                                 onPin: { target in
                                     Task { await store.sendChannelText(channelID: channelID, text: "/pin \(target.id)") }
+                                },
+                                onReEdit: { original in
+                                    let clean = Formatters.extractEditableOriginal(original)
+                                    if !clean.isEmpty {
+                                        draft = clean
+                                    }
                                 }
                             )
                             .id(msg.id)
@@ -967,11 +980,12 @@ struct ChannelChatView: View {
             Divider()
 
             if let replyingTo {
+                let cleanReply = Formatters.splitQuote(Formatters.splitReactions(replyingTo.text).body).body
                 HStack(spacing: 8) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(QQPalette.qqBlue)
                         .frame(width: 3, height: 22)
-                    Text("回复：\(replyingTo.text)")
+                    Text("回复：\(cleanReply)")
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)

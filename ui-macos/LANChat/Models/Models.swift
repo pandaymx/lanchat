@@ -96,6 +96,8 @@ struct ChatMessage: Identifiable, Hashable {
     var readBy: [String] = []
     /// 频道消息的发送者昵称（单聊不显示，故可缺省）。
     var senderName: String? = nil
+    /// 撤回前保留的原始消息文本，供本人点击「重新编辑」恢复到输入框。
+    var originalText: String = ""
 }
 
 /// 将 group.matrix 的块位图转为紧凑矩阵文本（如 `▓▓▓░░░ 3/6 块`）。

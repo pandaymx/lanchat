@@ -133,6 +133,33 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		return "clip:" + clipText, nil
 	}
+	if trimmed == "/dnd" || strings.HasPrefix(trimmed, "/dnd ") {
+		arg := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "/dnd")))
+		c.mu.Lock()
+		switch arg {
+		case "on", "true", "1":
+			c.dnd = true
+		case "off", "false", "0":
+			c.dnd = false
+		case "status":
+		default:
+			c.dnd = !c.dnd
+		}
+		dnd := c.dnd
+		c.mu.Unlock()
+		if dnd {
+			return "dnd:on", nil
+		}
+		return "dnd:off", nil
+	}
+	if trimmed == "/unread" || strings.HasPrefix(trimmed, "/unread ") {
+		arg := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "/unread")))
+		if arg == "clear" || arg == "reset" {
+			c.ClearUnread("", "")
+		}
+		unread, mentions := c.UnreadTotal()
+		return fmt.Sprintf("unread:%d mentions:%d dnd:%t", unread, mentions, c.IsDND()), nil
+	}
 	if group == "" && to == "" {
 		return "", errPeerNotFound
 	}
@@ -148,6 +175,7 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		if err := c.MarkRead(to, group, targetID); err != nil {
 			return "", err
 		}
+		c.ClearUnread(to, group)
 		return targetID, nil
 	}
 	if trimmed == "/react" || strings.HasPrefix(trimmed, "/react ") {

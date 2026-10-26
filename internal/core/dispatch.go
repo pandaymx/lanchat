@@ -101,6 +101,7 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			Mentions: p.Mentions,
 			TS:       env.TS,
 		}) {
+			c.recordInboundUnread(env.From, env.Group, text, p.Mentions)
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.TextMsg, text)
 			if burnDur, ok := extractBurnDurationFromText(text); ok {
 				c.scheduleBurnPurge(env.ID, env.From, env.Group, burnDur)
@@ -129,6 +130,7 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			Text:  text,
 			TS:    env.TS,
 		}) {
+			c.recordInboundUnread(env.From, env.Group, text, nil)
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, protocol.StickerMsg, text)
 		}
 
@@ -410,4 +412,34 @@ func (c *Client) routeGroupSignal(env *protocol.Envelope, kind groupEventKind) {
 		return
 	}
 	t.post(groupEvent{kind: kind, from: env.From, env: env})
+}
+
+// recordInboundUnread 统计入站消息的未读计数与 @ 提及计数（M32）。
+func (c *Client) recordInboundUnread(from, group, text string, mentions []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if from == "" || from == c.selfID {
+		return
+	}
+	key := sessionUnreadKey(from, group)
+	c.unreadCounts[key]++
+
+	mentioned := false
+	lowerText := strings.ToLower(text)
+	lowerNick := strings.ToLower(strings.TrimSpace(c.nickname))
+	if lowerNick != "" && strings.Contains(lowerText, "@"+lowerNick) {
+		mentioned = true
+	} else if strings.Contains(lowerText, "@all") || strings.Contains(text, "@全体成员") || strings.Contains(text, "@所有人") {
+		mentioned = true
+	} else {
+		for _, m := range mentions {
+			if m == c.selfID || (lowerNick != "" && strings.EqualFold(m, lowerNick)) || strings.EqualFold(m, "all") {
+				mentioned = true
+				break
+			}
+		}
+	}
+	if mentioned {
+		c.mentionCounts[key]++
+	}
 }

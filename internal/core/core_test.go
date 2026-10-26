@@ -1612,3 +1612,90 @@ func TestM31ServerlessMeshSplitBrainConvergence(t *testing.T) {
 		return false
 	})
 }
+
+// TestM32AndM33DNDUnreadAndUpdateApply 验证 M32 免打扰 (/dnd)、未读与 @提及统计 (/unread)
+// 以及 M33 一键下载并生成安装器指令 (/update apply)。
+func TestM32AndM33DNDUnreadAndUpdateApply(t *testing.T) {
+	wsURL := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	a := New(Options{Nickname: "Alice", OS: "windows", DownloadDir: dirA})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", OS: "linux", DownloadDir: dirB})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	bID := b.GetState().SelfID
+	aID := a.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	// 1. 验证 /dnd 免打扰开关
+	dndRes, err := b.SendText(aID, "/dnd on", "")
+	if err != nil || dndRes != "dnd:on" || !b.IsDND() {
+		t.Fatalf("/dnd on failed: res=%q err=%v isDND=%v", dndRes, err, b.IsDND())
+	}
+
+	// 2. Alice 向 Bob 发送普通消息与 @Bob 提及消息，验证未读与提及计数
+	if _, err := a.SendText(bID, "第一条普通提醒", ""); err != nil {
+		t.Fatal(err)
+	}
+	msg2ID, err := a.SendText(bID, "@Bob 请查收发版清单", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		u, m := b.UnreadTotal()
+		return u == 2 && m == 1
+	})
+	unreadStat, err := b.SendText(aID, "/unread", "")
+	if err != nil || unreadStat != "unread:2 mentions:1 dnd:true" {
+		t.Fatalf("unexpected /unread stat: %q err=%v", unreadStat, err)
+	}
+
+	// Bob 执行 /read 后，该会话未读与 @ 提及计数应自动清零
+	if _, err := b.SendText(aID, "/read "+msg2ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	uAfter, mAfter := b.UnreadTotal()
+	if uAfter != 0 || mAfter != 0 {
+		t.Fatalf("expected unread/mentions cleared after /read, got unread=%d mentions=%d", uAfter, mAfter)
+	}
+
+	// 3. 验证 M33 /update apply 自动下载安装包并生成平台安装命令
+	winAsset := "LANChat-9.9.0-windows-x64-Sideload.msix"
+	winPayload := []byte("mock-msix-installer-binary-m33")
+	sum := sha256.Sum256(winPayload)
+	sumHex := hex.EncodeToString(sum[:])
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/releases/latest/download/version.json", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"version":"9.9.0","tag":"v9.9.0"}`)
+	})
+	mux.HandleFunc("/releases/download/v9.9.0/SHA256SUMS", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, "%s  %s\n", sumHex, winAsset)
+	})
+	mux.HandleFunc("/releases/download/v9.9.0/"+winAsset, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(winPayload)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	a.updateBaseURL = srv.URL + "/releases"
+	a.updateProxies = []string{""}
+	a.updateHTTPClient = srv.Client()
+
+	applyRes, err := a.SendText(bID, "/update apply", "")
+	if err != nil {
+		t.Fatalf("/update apply failed: %v", err)
+	}
+	if !strings.HasPrefix(applyRes, "update:apply:") || !strings.Contains(applyRes, "Add-AppxPackage") {
+		t.Fatalf("unexpected /update apply result: %q", applyRes)
+	}
+}

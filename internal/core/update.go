@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -19,7 +20,7 @@ import (
 )
 
 // CurrentVersion 当前客户端核心版本。
-const CurrentVersion = "1.16.0"
+const CurrentVersion = "1.17.0"
 
 // DefaultReleaseBaseURL GitHub Releases 默认基础地址。
 const DefaultReleaseBaseURL = "https://github.com/pandaymx/lanchat/releases"
@@ -89,6 +90,7 @@ func releaseAssetCandidatesForOS(osName, version string) []string {
 	switch strings.ToLower(strings.TrimSpace(osName)) {
 	case "windows", "win":
 		return []string{
+			fmt.Sprintf("LANChat-%s-windows-x64-Sideload.msix", ver),
 			fmt.Sprintf("LANChat-%s-windows-x64.msi", ver),
 			fmt.Sprintf("LANChat-%s-windows-x64-portable.zip", ver),
 		}
@@ -736,6 +738,25 @@ func (c *Client) handleUpdateCommand(arg, _, _ string) (string, error) {
 		}
 		return "update:" + res.Summary, nil
 	}
+	if sub == "apply" || sub == "install" || strings.HasPrefix(sub, "apply ") || strings.HasPrefix(sub, "install ") {
+		customProxy := ""
+		parts := strings.Fields(sub)
+		if len(parts) >= 2 {
+			customProxy = parts[1]
+		}
+		res, err := c.CheckAndDownloadUpdate(c.runCtx, false, customProxy)
+		if err != nil {
+			return "", err
+		}
+		cmdLine, prog, args := BuildInstallerCommand(c.effectiveOS(), res.SavedPath)
+		if strings.HasSuffix(strings.ToLower(res.SavedPath), ".appimage") {
+			_ = os.Chmod(res.SavedPath, 0o755)
+		}
+		if prog != "" && c.updateBaseURL == "" && os.Getenv("LANCHAT_SKIP_INSTALLER_EXEC") != "1" {
+			_ = exec.Command(prog, args...).Start()
+		}
+		return fmt.Sprintf("update:apply:%s | 安装命令: %s", res.Summary, cmdLine), nil
+	}
 
 	checkOnly := false
 	customProxy := ""
@@ -752,4 +773,57 @@ func (c *Client) handleUpdateCommand(arg, _, _ string) (string, error) {
 		return "", err
 	}
 	return "update:" + res.Summary, nil
+}
+
+// BuildInstallerCommand 根据平台与下载好的安装包路径，生成系统原生安装指令与可执行参数（M33）。
+func BuildInstallerCommand(osName, savedPath string) (cmdLine string, prog string, args []string) {
+	lowerOS := strings.ToLower(strings.TrimSpace(osName))
+	lowerPath := strings.ToLower(strings.TrimSpace(savedPath))
+
+	switch lowerOS {
+	case "windows", "win":
+		if strings.HasSuffix(lowerPath, ".msix") || strings.HasSuffix(lowerPath, ".appx") {
+			prog = "powershell.exe"
+			args = []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", fmt.Sprintf("Add-AppxPackage -Path %q", savedPath)}
+			return fmt.Sprintf("powershell.exe -NoProfile -Command \"Add-AppxPackage -Path '%s'\"", savedPath), prog, args
+		}
+		if strings.HasSuffix(lowerPath, ".msi") {
+			prog = "msiexec.exe"
+			args = []string{"/i", savedPath, "/passive"}
+			return fmt.Sprintf("msiexec.exe /i %q /passive", savedPath), prog, args
+		}
+		prog = "explorer.exe"
+		args = []string{savedPath}
+		return fmt.Sprintf("explorer.exe %q", savedPath), prog, args
+
+	case "macos", "darwin":
+		prog = "open"
+		args = []string{savedPath}
+		return fmt.Sprintf("open %q", savedPath), prog, args
+
+	case "android":
+		prog = "am"
+		args = []string{"start", "-a", "android.intent.action.VIEW", "-d", "file://" + savedPath, "-t", "application/vnd.android.package-archive"}
+		return fmt.Sprintf("am start -a android.intent.action.VIEW -d file://%s -t application/vnd.android.package-archive", savedPath), prog, args
+
+	default:
+		if strings.HasSuffix(lowerPath, ".deb") {
+			prog = "pkexec"
+			args = []string{"dpkg", "-i", savedPath}
+			return fmt.Sprintf("pkexec dpkg -i %q", savedPath), prog, args
+		}
+		if strings.HasSuffix(lowerPath, ".rpm") {
+			prog = "pkexec"
+			args = []string{"rpm", "-Uvh", savedPath}
+			return fmt.Sprintf("pkexec rpm -Uvh %q", savedPath), prog, args
+		}
+		if strings.HasSuffix(lowerPath, ".appimage") {
+			prog = savedPath
+			args = nil
+			return fmt.Sprintf("chmod +x %q && %q", savedPath, savedPath), prog, args
+		}
+		prog = "xdg-open"
+		args = []string{savedPath}
+		return fmt.Sprintf("xdg-open %q", savedPath), prog, args
+	}
 }

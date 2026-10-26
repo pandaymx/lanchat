@@ -67,11 +67,14 @@ type Client struct {
 
 	browser *discover.Browser
 
-	downloadDir string
-	history     *historyStore
-	e2eeKey     string
-	casIndex    map[string]string
-	sharedClip  string
+	downloadDir   string
+	history       *historyStore
+	e2eeKey       string
+	casIndex      map[string]string
+	sharedClip    string
+	dnd           bool
+	unreadCounts  map[string]int
+	mentionCounts map[string]int
 
 	cb appapi.Listener
 
@@ -137,6 +140,8 @@ func New(opts Options) *Client {
 		desiredChannels: map[string]desiredChannel{},
 		channelKeys:     map[string]string{},
 		channelKeySent:  map[string]map[string]bool{},
+		unreadCounts:    map[string]int{},
+		mentionCounts:   map[string]int{},
 		cb:              opts.Listener,
 		runCtx:          runCtx,
 		stopRun:         cancel,
@@ -268,4 +273,52 @@ func (c *Client) LastClipboard() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.sharedClip
+}
+
+// IsDND 返回当前客户端是否开启了免打扰模式（M32）。
+func (c *Client) IsDND() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dnd
+}
+
+// SetDND 设置免打扰模式开关（M32）。
+func (c *Client) SetDND(enabled bool) {
+	c.mu.Lock()
+	c.dnd = enabled
+	c.mu.Unlock()
+}
+
+// UnreadTotal 汇总当前所有会话的未读消息总数与 @ 提及总数（M32）。
+func (c *Client) UnreadTotal() (unread int, mentions int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, n := range c.unreadCounts {
+		unread += n
+	}
+	for _, m := range c.mentionCounts {
+		mentions += m
+	}
+	return unread, mentions
+}
+
+// ClearUnread 清空指定会话（to 或 group；均为空时清空全部）的未读与 @ 提及计数（M32）。
+func (c *Client) ClearUnread(to, group string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if to == "" && group == "" {
+		c.unreadCounts = map[string]int{}
+		c.mentionCounts = map[string]int{}
+		return
+	}
+	key := sessionUnreadKey(to, group)
+	delete(c.unreadCounts, key)
+	delete(c.mentionCounts, key)
+}
+
+func sessionUnreadKey(peerID, group string) string {
+	if strings.TrimSpace(group) != "" {
+		return "group:" + strings.TrimSpace(group)
+	}
+	return "peer:" + strings.TrimSpace(peerID)
 }

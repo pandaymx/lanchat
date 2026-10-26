@@ -33,7 +33,7 @@ jobs:
         run: dotnet build LANChat.WinUI.sln --no-restore
 
       - name: Test
-        run: dotnet test tests/LANChat.Ipc.Tests/LANChat.Ipc.Tests.csproj --no-build --verbosity normal
+        run: dotnet test tests/LANChat.Ipc.Tests/LANChat.Ipc.Tests.csproj --no-restore --verbosity normal
 
   # ─── Android: release Kotlin compile + unit tests (JVM) ───────────
   # 合并原 ci.yml 的 compileReleaseKotlin（校验 gomobile 绑定签名与 R 类资源）

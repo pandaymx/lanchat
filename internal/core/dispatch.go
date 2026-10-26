@@ -139,8 +139,9 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		if err := env.DecodePayload(&p); err != nil || p.MsgID == "" {
 			return
 		}
-		if _, ok := c.history.revoke(p.MsgID, env.From, revokeWindow); ok {
+		if updated, ok := c.history.revoke(p.MsgID, env.From, revokeWindow); ok {
 			c.listener().OnMessageReceived(env.From, env.Group, p.MsgID, protocol.MsgRevoke, "[消息已撤回]")
+			c.emitMessageUpdated(updated)
 		}
 
 	case protocol.MsgRead:
@@ -148,8 +149,9 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		if err := env.DecodePayload(&p); err != nil || p.MsgID == "" {
 			return
 		}
-		if _, ok := c.history.markRead(p.MsgID, env.From); ok {
+		if updated, ok := c.history.markRead(p.MsgID, env.From); ok {
 			c.listener().OnMessageReceived(env.From, env.Group, p.MsgID, protocol.MsgRead, p.MsgID)
+			c.emitMessageUpdated(updated)
 		}
 
 	case protocol.ServerShutdown:
@@ -228,8 +230,9 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		rest := strings.TrimPrefix(text, "sys:react:")
 		parts := strings.SplitN(rest, ":", 2)
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-			if updated, ok := c.history.react(parts[0], parts[1]); ok {
+			if updated, ok := c.history.reactBy(parts[0], env.From, parts[1]); ok {
 				c.listener().OnMessageReceived(env.From, env.Group, parts[0], "MSG_REACT", updated.Text)
+				c.emitMessageUpdated(updated)
 			}
 		}
 		return true
@@ -240,6 +243,7 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
 			if updated, ok := c.history.edit(parts[0], env.From, parts[1]); ok {
 				c.listener().OnMessageReceived(env.From, env.Group, parts[0], "MSG_EDIT", updated.Text)
+				c.emitMessageUpdated(updated)
 			}
 		}
 		return true
@@ -249,6 +253,7 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		if targetID != "" {
 			if updated, ok := c.history.pin(targetID); ok {
 				c.listener().OnMessageReceived(env.From, env.Group, targetID, "MSG_PIN", updated.Text)
+				c.emitMessageUpdated(updated)
 			}
 		}
 		return true

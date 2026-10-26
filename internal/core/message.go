@@ -198,7 +198,7 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		if targetID == "" {
 			return "", errEmptyText
 		}
-		updated, ok := c.history.react(targetID, emoji)
+		updated, ok := c.history.reactBy(targetID, c.selfIDValue(), emoji)
 		if !ok {
 			return "", errInvalidState
 		}
@@ -206,6 +206,7 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 			return "", err
 		}
 		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_REACT", updated.Text)
+		c.emitMessageUpdated(updated)
 		return targetID, nil
 	}
 	if strings.HasPrefix(trimmed, "/edit ") {
@@ -224,6 +225,7 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 			return "", err
 		}
 		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_EDIT", updated.Text)
+		c.emitMessageUpdated(updated)
 		return targetID, nil
 	}
 	if strings.HasPrefix(trimmed, "/pin ") {
@@ -239,6 +241,7 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 			return "", err
 		}
 		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_PIN", updated.Text)
+		c.emitMessageUpdated(updated)
 		return targetID, nil
 	}
 	if trimmed == "/voice" || strings.HasPrefix(trimmed, "/voice ") {
@@ -328,9 +331,11 @@ func (c *Client) RevokeMessage(to, group, msgID string) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := c.history.revoke(msgID, c.selfIDValue(), revokeWindow); !ok {
+	updated, ok := c.history.revoke(msgID, c.selfIDValue(), revokeWindow)
+	if !ok {
 		return errInvalidState
 	}
+	c.emitMessageUpdated(updated)
 	payload := protocol.MsgRevokePayload{MsgID: msgID}
 	if group != "" {
 		_, err = c.sendGroup(conn, protocol.MsgRevoke, group, payload)
@@ -353,7 +358,9 @@ func (c *Client) MarkRead(to, group, msgID string) error {
 	if err != nil {
 		return err
 	}
-	c.history.markRead(msgID, c.selfIDValue())
+	if updated, ok := c.history.markRead(msgID, c.selfIDValue()); ok {
+		c.emitMessageUpdated(updated)
+	}
 	payload := protocol.MsgReadPayload{MsgID: msgID}
 	if group != "" {
 		_, err = c.sendGroup(conn, protocol.MsgRead, group, payload)
@@ -366,6 +373,12 @@ func (c *Client) MarkRead(to, group, msgID string) error {
 // SearchHistory 在本地历史消息中按关键字（与可选会话 ID）检索未撤回消息。
 func (c *Client) SearchHistory(query, convID string) []appapi.ChatMessage {
 	return c.history.search(query, convID)
+}
+
+func (c *Client) emitMessageUpdated(msg appapi.ChatMessage) {
+	if ul, ok := c.listener().(appapi.MessageUpdateListener); ok {
+		ul.OnMessageUpdated(msg)
+	}
 }
 
 // SendSticker 发送表情。支持单播对端 ID 或已加入的频道 ID（贴纸以名称/路径引用）。

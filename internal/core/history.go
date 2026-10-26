@@ -80,6 +80,7 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 				continue
 			}
 			m.Text = sanitizeQuoteAndReactions(m.Text)
+			populateStructuredFields(&m)
 			if idx, ok := idxByID[m.ID]; ok {
 				loaded[idx] = m
 			} else if !existing[m.ID] {
@@ -103,6 +104,7 @@ func (h *historyStore) append(m appapi.ChatMessage) bool {
 	if m.TS == 0 {
 		m.TS = time.Now().UnixMilli()
 	}
+	populateStructuredFields(&m)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -287,11 +289,18 @@ func (h *historyStore) decryptChannelPending(channelID, chKey string) []appapi.C
 	return updated
 }
 
-// react 为指定消息添加表情回应并持久化（M20）。
+// react 为指定消息添加表情回应并持久化（M20 / 契约 v1.1 结构化 Reactions）。
 func (h *historyStore) react(msgID, emoji string) (appapi.ChatMessage, bool) {
+	return h.reactBy(msgID, "", emoji)
+}
+
+func (h *historyStore) reactBy(msgID, actorID, emoji string) (appapi.ChatMessage, bool) {
 	emoji = strings.TrimSpace(emoji)
 	if msgID == "" || emoji == "" {
 		return appapi.ChatMessage{}, false
+	}
+	if actorID == "" {
+		actorID = "peer"
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -302,6 +311,20 @@ func (h *historyStore) react(msgID, emoji string) (appapi.ChatMessage, bool) {
 		}
 		if !strings.Contains(h.msgs[i].Text, badge) {
 			h.msgs[i].Text = h.msgs[i].Text + " " + badge
+		}
+		if h.msgs[i].Reactions == nil {
+			h.msgs[i].Reactions = make(map[string][]string)
+		}
+		users := h.msgs[i].Reactions[emoji]
+		exists := false
+		for _, u := range users {
+			if u == actorID {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			h.msgs[i].Reactions[emoji] = append(users, actorID)
 		}
 		updated := h.msgs[i]
 		h.persistLocked(updated)
@@ -414,11 +437,14 @@ func (h *historyStore) edit(msgID, actorID, newText string) (appapi.ChatMessage,
 			return appapi.ChatMessage{}, false
 		}
 		prefix := ""
-		if strings.HasPrefix(h.msgs[i].Text, "📌 [置顶] ") {
+		if strings.HasPrefix(h.msgs[i].Text, "📌 [置顶] ") || h.msgs[i].Pinned {
 			prefix = "📌 [置顶] "
+			h.msgs[i].Pinned = true
 		}
 		_, reactSuffix := splitReactionBadges(h.msgs[i].Text)
 		h.msgs[i].Text = prefix + newText + " (已编辑)" + reactSuffix
+		h.msgs[i].EditedAt = time.Now().UnixMilli()
+		populateStructuredFields(&h.msgs[i])
 		updated := h.msgs[i]
 		h.persistLocked(updated)
 		return updated, true
@@ -426,7 +452,7 @@ func (h *historyStore) edit(msgID, actorID, newText string) (appapi.ChatMessage,
 	return appapi.ChatMessage{}, false
 }
 
-// pin 将指定消息标记为置顶公告并持久化（M20）。
+// pin 将指定消息标记为置顶公告并持久化（M20 / 契约 v1.1 Pinned）。
 func (h *historyStore) pin(msgID string) (appapi.ChatMessage, bool) {
 	if msgID == "" {
 		return appapi.ChatMessage{}, false
@@ -440,11 +466,62 @@ func (h *historyStore) pin(msgID string) (appapi.ChatMessage, bool) {
 		if !strings.HasPrefix(h.msgs[i].Text, "📌 [置顶] ") {
 			h.msgs[i].Text = "📌 [置顶] " + h.msgs[i].Text
 		}
+		h.msgs[i].Pinned = true
 		updated := h.msgs[i]
 		h.persistLocked(updated)
 		return updated, true
 	}
 	return appapi.ChatMessage{}, false
+}
+
+// populateStructuredFields 从消息正文中提取结构化字段（ReplyQuote / Reactions / Pinned / MediaMime），保持向后兼容。
+func populateStructuredFields(m *appapi.ChatMessage) {
+	if m == nil || m.Revoked {
+		return
+	}
+	body, suffix := splitReactionBadges(m.Text)
+	if strings.HasPrefix(body, "📌 [置顶] ") {
+		m.Pinned = true
+		body = strings.TrimPrefix(body, "📌 [置顶] ")
+	}
+	if strings.HasPrefix(body, "「") {
+		if idx := strings.Index(body, "」\n"); idx > len("「") {
+			if m.ReplyQuote == "" {
+				m.ReplyQuote = body[len("「"):idx]
+			}
+			body = body[idx+len("」\n"):]
+		}
+	}
+	if suffix != "" {
+		if m.Reactions == nil {
+			m.Reactions = make(map[string][]string)
+		}
+		for _, part := range strings.Split(strings.TrimSpace(suffix), " ") {
+			if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") && len(part) > 2 {
+				emoji := part[1 : len(part)-1]
+				if isReactionEmojiToken(emoji) && len(m.Reactions[emoji]) == 0 {
+					actor := m.From
+					if actor == "" {
+						actor = "peer"
+					}
+					m.Reactions[emoji] = []string{actor}
+				}
+			}
+		}
+	}
+	trimmedBody := strings.TrimSpace(body)
+	if m.MediaMime == "" {
+		if strings.HasPrefix(strings.ToLower(trimmedBody), "data:image/") {
+			if semi := strings.IndexByte(trimmedBody, ';'); semi > len("data:") {
+				m.MediaMime = trimmedBody[len("data:"):semi]
+			}
+		} else if audioIdx := strings.Index(strings.ToLower(trimmedBody), "data:audio/"); audioIdx >= 0 {
+			sub := trimmedBody[audioIdx:]
+			if semi := strings.IndexByte(sub, ';'); semi > len("data:") {
+				m.MediaMime = sub[len("data:"):semi]
+			}
+		}
+	}
 }
 
 // search 在本地历史中按关键字（大小写不敏感）与可选会话 ID 检索未撤回消息。

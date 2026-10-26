@@ -99,14 +99,7 @@ final class ChatStore: ObservableObject {
                 } else if p.type == "MSG_REACT" || p.type == "MSG_EDIT" || p.type == "MSG_PIN" {
                     updateMessageText(id: p.msgId, newText: p.text)
                 } else {
-                    let display: String
-                    if p.text.hasPrefix("data:image/") {
-                        display = p.text
-                    } else if p.type == "STICKER_MSG" || p.type == "sticker" {
-                        display = "[表情] \(p.text)"
-                    } else {
-                        display = p.text
-                    }
+                    let display = p.text
                     let key = (p.group?.isEmpty == false) ? p.group! : p.from
                     append(ChatMessage(
                         id: p.msgId, peerId: p.from, text: display,
@@ -144,6 +137,9 @@ final class ChatStore: ObservableObject {
     }
 
     private func append(_ msg: ChatMessage, threadKey: String? = nil) {
+        if Formatters.isSystemDiagnosticMessage(id: msg.id, text: msg.text) {
+            return
+        }
         let key = (threadKey?.isEmpty == false) ? threadKey! : msg.peerId
         var list = messages[key] ?? []
         if !msg.id.isEmpty, let idx = list.firstIndex(where: { $0.id == msg.id }) {
@@ -239,7 +235,8 @@ final class ChatStore: ObservableObject {
         let body = String(parts[1])
         for list in messages.values {
             if let orig = list.first(where: { $0.id == targetId && !$0.revoked }) {
-                return "「\(orig.text)」\n\(body)"
+                let cleanOrig = Formatters.splitReactions(orig.text).body
+                return "「\(cleanOrig)」\n\(body)"
             }
         }
         return "[re:\(targetId)] \(body)"
@@ -277,16 +274,7 @@ final class ChatStore: ObservableObject {
             let peerKey = (threadKey != nil) ? m.from : (inbound ? m.from : (m.to ?? ""))
             guard !peerKey.isEmpty || threadKey != nil else { continue }
             let isRevoked = m.revoked ?? false
-            let display: String
-            if isRevoked {
-                display = "[消息已撤回]"
-            } else if m.text.hasPrefix("data:image/") {
-                display = m.text
-            } else if m.type == "STICKER_MSG" || m.type == "sticker" {
-                display = "[表情] \(m.text)"
-            } else {
-                display = m.text
-            }
+            let display = isRevoked ? "[消息已撤回]" : m.text
             append(ChatMessage(
                 id: m.id,
                 peerId: peerKey,
@@ -321,7 +309,7 @@ final class ChatStore: ObservableObject {
         if trimmed.hasPrefix("/search ") {
             let q = String(trimmed.dropFirst(8)).trimmingCharacters(in: .whitespaces)
             let hits = searchMessages(in: peerId, query: q)
-            append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "[搜索“\(q)”：共 \(hits.count) 条匹配]", inbound: false, timestamp: Date()))
+            updateStatus = "搜索“\(q)”：共 \(hits.count) 条匹配"
             return
         }
         do {
@@ -332,21 +320,18 @@ final class ChatStore: ObservableObject {
                 } else {
                     e2eeEnabledThreads.remove(peerId)
                 }
-                let notice = (r.msgID == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
-                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: notice, inbound: false, timestamp: Date()))
             } else if r.msgID.hasPrefix("fp:") {
                 let fp = String(r.msgID.dropFirst(3))
-                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "🛡️ [安全码指纹核验] \(fp)", inbound: false, timestamp: Date()))
+                updateStatus = "🛡️ 安全码指纹核验：\(fp)"
             } else if r.msgID.hasPrefix("bwlimit:") {
                 let lim = String(r.msgID.dropFirst(8))
-                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "⚡ [带宽限速已设置为 \(lim) MB/s]", inbound: false, timestamp: Date()))
+                updateStatus = "⚡ 带宽限速已设置为 \(lim) MB/s"
             } else if r.msgID.hasPrefix("status:") {
                 let st = String(r.msgID.dropFirst(7))
-                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "📊 [诊断状态] \(st)", inbound: false, timestamp: Date()))
+                updateStatus = "📊 诊断状态：\(st)"
             } else if r.msgID.hasPrefix("update:") {
                 let up = String(r.msgID.dropFirst(7))
                 updateStatus = up
-                append(ChatMessage(id: UUID().uuidString, peerId: peerId, text: "🚀 [版本更新] \(up)", inbound: false, timestamp: Date()))
             } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {
@@ -366,7 +351,7 @@ final class ChatStore: ObservableObject {
         guard !path.isEmpty else { return }
         do {
             let r = try await ipc.call("SendSticker", params: ["to": targetId, "path": path], as: MsgIDResult.self)
-            append(ChatMessage(id: r.msgID, peerId: targetId, text: "[表情] \(path)", inbound: false, timestamp: Date()),
+            append(ChatMessage(id: r.msgID, peerId: targetId, text: path, inbound: false, timestamp: Date()),
                    threadKey: threadKey)
         } catch {
             self.error = error.localizedDescription
@@ -445,9 +430,7 @@ final class ChatStore: ObservableObject {
         if trimmed.hasPrefix("/search ") {
             let q = String(trimmed.dropFirst(8)).trimmingCharacters(in: .whitespaces)
             let hits = searchMessages(in: channelID, query: q)
-            append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "[搜索“\(q)”：共 \(hits.count) 条匹配]",
-                               inbound: false, timestamp: Date()),
-                   threadKey: channelID)
+            updateStatus = "搜索“\(q)”：共 \(hits.count) 条匹配"
             return
         }
         do {
@@ -461,26 +444,15 @@ final class ChatStore: ObservableObject {
                 } else {
                     e2eeEnabledThreads.remove(channelID)
                 }
-                let notice = (r.msgID == "e2ee:on") ? "[已开启端到端加密]" : "[已关闭端到端加密]"
-                append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: notice,
-                                   inbound: false, timestamp: Date()),
-                       threadKey: channelID)
             } else if r.msgID.hasPrefix("bwlimit:") {
                 let lim = String(r.msgID.dropFirst(8))
-                append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "⚡ [带宽限速已设置为 \(lim) MB/s]",
-                                   inbound: false, timestamp: Date()),
-                       threadKey: channelID)
+                updateStatus = "⚡ 带宽限速已设置为 \(lim) MB/s"
             } else if r.msgID.hasPrefix("status:") {
                 let st = String(r.msgID.dropFirst(7))
-                append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "📊 [诊断状态] \(st)",
-                                   inbound: false, timestamp: Date()),
-                       threadKey: channelID)
+                updateStatus = "📊 诊断状态：\(st)"
             } else if r.msgID.hasPrefix("update:") {
                 let up = String(r.msgID.dropFirst(7))
                 updateStatus = up
-                append(ChatMessage(id: UUID().uuidString, peerId: selfId, text: "🚀 [版本更新] \(up)",
-                                   inbound: false, timestamp: Date()),
-                       threadKey: channelID)
             } else if trimmed.hasPrefix("/revoke ") {
                 revokeMessage(id: r.msgID)
             } else if trimmed.hasPrefix("/read ") {

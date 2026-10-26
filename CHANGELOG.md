@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.4.0](https://github.com/pandaymx/lanchat/compare/v2.3.0...v2.4.0) (2026-10-26)
+
+
+### Features
+
+* **core:** add multi-photo album P2P batch transfer and lanchat://join room invite URI (v2.4.0) ([d82bee1](https://github.com/pandaymx/lanchat/commit/d82bee1472c48ba9e4b128923ddbf8a739879c09))
+
 ## [2.3.0](https://github.com/pandaymx/lanchat/compare/v2.2.0...v2.3.0) (2026-10-26)
 
 

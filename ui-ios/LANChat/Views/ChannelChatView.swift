@@ -231,12 +231,7 @@ struct ChannelChatView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
                 ForEach(QQTheme.presetStickers) { item in
                     Button {
-                        if item.id == "qq_zan", let last = thread.last(where: { !$0.revoked && !$0.id.isEmpty }) {
-                            store.sendGroupText(channel: live, text: "/react \(last.id) 👍")
-                        } else {
-                            let path = QQTheme.materializeStickerFile(item: item)
-                            store.sendSticker(to: live.id, path: path, group: live.id)
-                        }
+                        draft += item.emoji
                         showStickerDrawer = false
                     } label: {
                         VStack(spacing: 4) {

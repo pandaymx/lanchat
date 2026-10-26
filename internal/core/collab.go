@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -385,6 +386,101 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 			}
 		}
 		return fmt.Sprintf("gossip:%d [%s]", len(eps), strings.Join(eps, ",")), true, nil
+
+	case trimmed == "/roomcode" || strings.HasPrefix(trimmed, "/roomcode "):
+		return "roomcode:" + c.ExportRoomInviteURI(), true, nil
+
+	case strings.HasPrefix(trimmed, "/album "):
+		raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "/album "))
+		if raw == "" {
+			return "", true, errEmptyPath
+		}
+		parts := strings.Split(raw, ",")
+		var valid []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				valid = append(valid, p)
+			}
+		}
+		if len(valid) == 0 {
+			return "", true, errEmptyPath
+		}
+		for _, p := range valid {
+			if group != "" {
+				_, _ = c.OfferFileToGroup(group, p)
+			} else if to != "" {
+				_, _ = c.OfferFile(to, p)
+			}
+		}
+		return fmt.Sprintf("album:sent:%d", len(valid)), true, nil
 	}
 	return "", false, nil
+}
+
+// ExportRoomInviteURI 生成包含当前中心节点地址、跨网段/Tailscale 候选节点与可选 PSK 的二维码快连 URI（v2.4.0）。
+func (c *Client) ExportRoomInviteURI() string {
+	c.mu.Lock()
+	addr := c.addr
+	psk := c.psk
+	c.mu.Unlock()
+
+	if addr == "" {
+		if cands := discover.OverlayCandidateAddrs(7878); len(cands) > 0 {
+			addr = cands[0]
+		} else {
+			addr = "auto"
+		}
+	}
+	q := url.Values{}
+	q.Set("addr", addr)
+	if psk != "" {
+		q.Set("psk", psk)
+	}
+	gossip := append([]string(nil), c.GossipEndpoints()...)
+	for _, cand := range discover.OverlayCandidateAddrs(7878) {
+		found := false
+		for _, g := range gossip {
+			if g == cand {
+				found = true
+				break
+			}
+		}
+		if !found && len(gossip) < 8 {
+			gossip = append(gossip, cand)
+		}
+	}
+	if len(gossip) > 0 {
+		q.Set("gossip", strings.Join(gossip, ","))
+	}
+	return "lanchat://join?" + q.Encode()
+}
+
+// ParseRoomInviteURI 解析 lanchat://join?addr=...&psk=...&gossip=... 二维码快连链接（v2.4.0）。
+func ParseRoomInviteURI(raw string) (addr, psk string, gossip []string, ok bool) {
+	s := strings.TrimSpace(raw)
+	if !strings.HasPrefix(strings.ToLower(s), "lanchat://") {
+		return "", "", nil, false
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return "", "", nil, false
+	}
+	q := u.Query()
+	addr = strings.TrimSpace(q.Get("addr"))
+	if addr == "" && u.Host != "" && !strings.EqualFold(u.Host, "join") {
+		addr = u.Host
+	}
+	if addr == "" {
+		addr = "auto"
+	}
+	psk = q.Get("psk")
+	if gRaw := strings.TrimSpace(q.Get("gossip")); gRaw != "" {
+		for _, p := range strings.Split(gRaw, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				gossip = append(gossip, p)
+			}
+		}
+	}
+	return addr, psk, gossip, true
 }

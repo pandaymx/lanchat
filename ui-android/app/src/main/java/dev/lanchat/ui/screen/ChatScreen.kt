@@ -530,6 +530,20 @@ private fun ConversationScaffold(
         }
     }
 
+    val multiAlbumPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetMultipleContents(),
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) {
+            val stagedPaths = uris.take(9).mapNotNull { u ->
+                stageContentUri(context, u)?.absolutePath
+            }
+            if (stagedPaths.isNotEmpty()) {
+                onSend("/album ${stagedPaths.joinToString(",")}")
+                stagedPaths.forEach { p -> onSendSticker(p) }
+            }
+        }
+    }
+
     val imeVisible = WindowInsets.isImeVisible
 
     LaunchedEffect(messages.size, imeVisible) {
@@ -1000,6 +1014,11 @@ private fun ConversationScaffold(
                                     showVoicePanel = false
                                 }
                             },
+                        )
+                        ComposerToolItem(
+                            label = "🖼️ 多图",
+                            active = false,
+                            onClick = { multiAlbumPicker.launch("image/*") },
                         )
                         ComposerToolItem(
                             label = "📁 文件",

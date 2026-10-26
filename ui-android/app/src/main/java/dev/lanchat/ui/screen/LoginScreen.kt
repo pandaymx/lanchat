@@ -216,12 +216,12 @@ fun LoginScreen(state: AppUi, vm: AppViewModel) {
                     }
                 }
 
-                // 服务器地址输入框
+                // 服务器地址输入框（兼容 lanchat://join?addr=... 房间快连码）
                 OutlinedTextField(
                     value = addr,
                     onValueChange = { addr = it },
-                    label = { Text("服务器地址") },
-                    placeholder = { Text("ws://192.168.x.x:19090/lctp") },
+                    label = { Text("服务器地址 / lanchat:// 房间快连码") },
+                    placeholder = { Text("ws://192.168.x.x:19090/lctp 或 lanchat://join?...") },
                     leadingIcon = {
                         Icon(
                             Icons.Filled.Storage,

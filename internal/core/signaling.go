@@ -35,6 +35,15 @@ func (c *Client) Connect(addr, psk string) error {
 		return errInvalidState
 	}
 	trimmedAddr := strings.TrimSpace(addr)
+	if parsedAddr, parsedPSK, gossipEps, ok := ParseRoomInviteURI(trimmedAddr); ok {
+		trimmedAddr = parsedAddr
+		if psk == "" && parsedPSK != "" {
+			psk = parsedPSK
+		}
+		if len(gossipEps) > 0 {
+			go c.AddGossipEndpoints(gossipEps...)
+		}
+	}
 	isAuto := trimmedAddr == "" || strings.EqualFold(trimmedAddr, "auto")
 	isLocal := strings.EqualFold(trimmedAddr, "local")
 	c.autoMode = isAuto || isLocal

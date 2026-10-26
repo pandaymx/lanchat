@@ -67,4 +67,15 @@ func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
 	if err != nil || sRes != "screenshare:active:24fps" {
 		t.Fatalf("unexpected screenshare start result: %q, err=%v", sRes, err)
 	}
+
+	// 验证二维码房间码导出与解析 (v2.4.0)
+	rcRes, err := alice.SendText("", "/roomcode", "")
+	if err != nil || !strings.HasPrefix(rcRes, "roomcode:lanchat://join?") {
+		t.Fatalf("unexpected roomcode result: %q, err=%v", rcRes, err)
+	}
+	uri := strings.TrimPrefix(rcRes, "roomcode:")
+	pAddr, _, pGossip, ok := ParseRoomInviteURI(uri)
+	if !ok || pAddr == "" || len(pGossip) < 2 {
+		t.Fatalf("ParseRoomInviteURI(%q) = addr:%q gossip:%v ok:%v", uri, pAddr, pGossip, ok)
+	}
 }

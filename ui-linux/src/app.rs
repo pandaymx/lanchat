@@ -1479,6 +1479,11 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     ctx.toast(&format!("⚡ 传输限速已设为：{bw}"));
                     return;
                 }
+                if let Some(st) = msg_id.strip_prefix("status:") {
+                    ctx.toast(&format!("📊 诊断状态：{st}"));
+                    ctx.sync_state();
+                    return;
+                }
                 if trimmed.starts_with("/react ")
                     || trimmed.starts_with("/edit ")
                     || trimmed.starts_with("/pin ")

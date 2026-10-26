@@ -41,58 +41,14 @@
     </Content>
   </ItemGroup>
 
-  <!--
-    体积瘦身（MSIX / MSI / Portable ZIP 通用）：
-    在生成 .deps.json 及打包前，从 RuntimeCopyLocalItems / NativeCopyLocalItems 中剔除
-    LANChat 与 WinUI 3 完全零引用的 .NET BCL 重型库（XML / Data / VB / CSharp / Mail / Quic 等）
-    及崩溃转储调试器组件（mscordaccore / mscordbi / DiaSymReader），使 .deps.json 与包体积同步瘦身。
-  -->
-  <Target Name="PruneUnusedRuntimePackAssets"
-          AfterTargets="ResolveRuntimePackAssets;ResolvePackageAssets"
-          BeforeTargets="GenerateBuildDependencyFile;GeneratePublishDependencyFile;CopyFilesToOutputDirectory;_ComputeAppxPackagePayload;ComputeFilesToPublish">
-    <ItemGroup>
-      <RuntimeCopyLocalItems Remove="@(RuntimeCopyLocalItems)"
-        Condition="$([System.String]::Copy('%(Filename)').StartsWith('System.Private.Xml')) or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.Xml')) or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.Data')) or
-                   $([System.String]::Copy('%(Filename)').StartsWith('Microsoft.VisualBasic')) or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.Private.DataContractSerialization')) or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.Runtime.Serialization')) or
-                   '%(Filename)' == 'Microsoft.CSharp' or
-                   '%(Filename)' == 'System.Reflection.Metadata' or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.Transactions')) or
-                   '%(Filename)' == 'System.Net.HttpListener' or
-                   '%(Filename)' == 'System.Net.Mail' or
-                   '%(Filename)' == 'System.Net.Quic' or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.Net.WebSockets')) or
-                   '%(Filename)' == 'System.Net.WebProxy' or
-                   '%(Filename)' == 'System.Net.Requests' or
-                   '%(Filename)' == 'System.Net.Security' or
-                   '%(Filename)' == 'System.Net.Http' or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.Drawing')) or
-                   '%(Filename)' == 'System.Formats.Asn1' or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.Web')) or
-                   $([System.String]::Copy('%(Filename)').StartsWith('System.IO.Compression')) or
-                   '%(Filename)' == 'System.Linq.Parallel' or
-                   '%(Filename)' == 'System.Threading.Tasks.Dataflow'" />
-      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)"
-        Condition="$([System.String]::Copy('%(Filename)').StartsWith('Microsoft.DiaSymReader')) or
-                   $([System.String]::Copy('%(Filename)').StartsWith('mscordaccore')) or
-                   '%(Filename)' == 'mscordbi' or
-                   '%(Filename)' == 'createdump' or
-                   '%(Filename)' == 'msquic' or
-                   '%(Filename)' == 'System.IO.Compression.Native'" />
-    </ItemGroup>
-  </Target>
-
   <Target Name="PruneCompileTimeWinmdFromPayload"
           AfterTargets="ComputeFilesToPublish;_ComputeAppxPackagePayload"
           BeforeTargets="_GenerateAppxManifest;_CreateAppxPackage">
     <ItemGroup>
       <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
-        Condition="'%(Extension)' == '.pdb' or '%(Extension)' == '.winmd'" />
+        Condition="$(_UnusedRuntimeDllList.Contains(';%(ResolvedFileToPublish.Filename);')) or $([System.String]::Copy('%(ResolvedFileToPublish.Filename)').StartsWith('mscordaccore')) or '%(ResolvedFileToPublish.Extension)' == '.pdb' or '%(ResolvedFileToPublish.Extension)' == '.winmd'" />
       <AppxPackagePayload Remove="@(AppxPackagePayload)"
-        Condition="'%(Extension)' == '.pdb' or '%(Extension)' == '.winmd'" />
+        Condition="$(_UnusedRuntimeDllList.Contains(';%(AppxPackagePayload.Filename);')) or $([System.String]::Copy('%(AppxPackagePayload.Filename)').StartsWith('mscordaccore')) or '%(AppxPackagePayload.Extension)' == '.pdb' or '%(AppxPackagePayload.Extension)' == '.winmd'" />
     </ItemGroup>
   </Target>
 </Project>

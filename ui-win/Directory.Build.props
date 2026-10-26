@@ -6,9 +6,29 @@
     <!-- 仅保留简中与英文卫星资源包，剔除其余 11 国语言目录（约 170+ 个冗余 resource.dll） -->
     <SatelliteResourceLanguages>zh-Hans;en-US</SatelliteResourceLanguages>
     <PublishReadyToRun>false</PublishReadyToRun>
+    <_UnusedRuntimeDllList>;System.Private.Xml;System.Private.Xml.Linq;System.Xml;System.Xml.Linq;System.Xml.ReaderWriter;System.Xml.XDocument;System.Xml.XmlDocument;System.Xml.XmlSerializer;System.Xml.XPath;System.Xml.XPath.XDocument;System.Xml.Serialization;System.Data.Common;System.Data;System.Data.DataSetExtensions;System.Private.DataContractSerialization;System.Runtime.Serialization.Formatters;System.Runtime.Serialization.Xml;System.Runtime.Serialization.Json;System.Runtime.Serialization.Primitives;System.Runtime.Serialization;Microsoft.VisualBasic.Core;Microsoft.VisualBasic;Microsoft.CSharp;System.Reflection.Metadata;System.Transactions.Local;System.Transactions;System.Net.HttpListener;System.Net.Mail;System.Net.Quic;System.Net.WebSockets;System.Net.WebSockets.Client;System.Net.WebProxy;System.Net.Requests;System.Net.Security;System.Net.Http;System.Drawing.Primitives;System.Drawing;System.Formats.Asn1;System.Web.HttpUtility;System.Web;System.IO.Compression;System.IO.Compression.Brotli;System.IO.Compression.ZipFile;System.IO.Compression.FileSystem;System.Linq.Parallel;System.Threading.Tasks.Dataflow;System.DirectoryServices;Microsoft.DiaSymReader.Native.amd64;mscordaccore;mscordbi;createdump;msquic;System.IO.Compression.Native;</_UnusedRuntimeDllList>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
+
+  <!--
+    体积瘦身（同时作用于 LANChat.App 与 LANChat.Launcher，覆盖 MSIX / MSI / Portable ZIP）：
+    在 ResolvePackageAssets / ResolveLockFileCopyLocalFiles 之后同步从
+    RuntimeCopyLocalItems、NativeCopyLocalItems 与 ReferenceCopyLocalPaths 中剔除
+    零引用的 .NET BCL 重型库（XML / Data / VB / CSharp / Mail / Quic 等）与转储调试器组件。
+  -->
+  <Target Name="PruneUnusedRuntimePackAssets"
+          AfterTargets="ResolvePackageAssets;ResolveLockFileCopyLocalFiles"
+          BeforeTargets="GenerateBuildDependencyFile;GeneratePublishDependencyFile;CopyFilesToOutputDirectory;GetPackagingOutputs;ComputeFilesToPublish">
+    <ItemGroup>
+      <RuntimeCopyLocalItems Remove="@(RuntimeCopyLocalItems)"
+        Condition="$(_UnusedRuntimeDllList.Contains(';%(RuntimeCopyLocalItems.Filename);'))" />
+      <NativeCopyLocalItems Remove="@(NativeCopyLocalItems)"
+        Condition="$(_UnusedRuntimeDllList.Contains(';%(NativeCopyLocalItems.Filename);')) or $([System.String]::Copy('%(NativeCopyLocalItems.Filename)').StartsWith('mscordaccore'))" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)"
+        Condition="$(_UnusedRuntimeDllList.Contains(';%(ReferenceCopyLocalPaths.Filename);')) or $([System.String]::Copy('%(ReferenceCopyLocalPaths.Filename)').StartsWith('mscordaccore')) or '%(ReferenceCopyLocalPaths.Extension)' == '.pdb' or '%(ReferenceCopyLocalPaths.Extension)' == '.winmd'" />
+    </ItemGroup>
+  </Target>
 </Project>

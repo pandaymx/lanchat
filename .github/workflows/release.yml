@@ -205,12 +205,12 @@ jobs:
             "$SDKM" "platforms;android-37.0" "build-tools;36.0.0"
           fi
 
-      - name: Cache arm64 stripped mobile.aar
+      - name: Cache arm64 16KB-aligned mobile.aar
         id: cache-aar
         uses: actions/cache@v4
         with:
           path: ui-android/app/libs/mobile.aar
-          key: mobile-aar-arm64-stripped-${{ env.GOMOBILE_VERSION }}-${{ hashFiles('go.mod', 'go.sum', 'bindings/mobile/**', 'internal/**') }}
+          key: mobile-aar-arm64-16k-${{ env.GOMOBILE_VERSION }}-${{ hashFiles('go.mod', 'go.sum', 'bindings/mobile/**', 'internal/**') }}
 
       - name: Setup Go
         if: steps.cache-aar.outputs.cache-hit != 'true'
@@ -219,7 +219,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Generate AAR (arm64-v8a stripped)
+      - name: Generate AAR (arm64-v8a DWARF-stripped, 16KB page aligned)
         if: steps.cache-aar.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
@@ -237,7 +237,8 @@ jobs:
           gomobile init
           go get golang.org/x/mobile@${{ env.GOMOBILE_VERSION }}
           mkdir -p ui-android/app/libs
-          gomobile bind -target=android/arm64 -androidapi 26 -trimpath -ldflags="-s -w" \
+          gomobile bind -target=android/arm64 -androidapi 26 -trimpath \
+            -ldflags="-w -extldflags=-Wl,-z,max-page-size=16384" \
             -javapkg=dev.lanchat.bindings -o ui-android/app/libs/mobile.aar ./bindings/mobile
 
       # 签名凭据预检：把「能不能签」这件事在打包前问清楚，并给出可执行的结论。

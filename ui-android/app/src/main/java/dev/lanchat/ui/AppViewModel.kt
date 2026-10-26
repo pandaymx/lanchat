@@ -147,6 +147,19 @@ class AppViewModel : ViewModel() {
                 )
                 return@launchOp
             }
+            if (msgId.startsWith("status:")) {
+                val st = msgId.removePrefix("status:")
+                appendMessage(
+                    ChatMessage(
+                        peerId = to,
+                        msgId = "status-${System.currentTimeMillis()}",
+                        text = "📊 [诊断状态] $st",
+                        inbound = false,
+                        timestamp = System.currentTimeMillis(),
+                    ),
+                )
+                return@launchOp
+            }
             if (content.startsWith("/revoke ")) {
                 val targetId = content.removePrefix("/revoke ").trim()
                 _ui.update {

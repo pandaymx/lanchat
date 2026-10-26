@@ -99,7 +99,7 @@ func TestTUIModelRenderAndInteraction(t *testing.T) {
 	listener := &tuiEventListener{}
 	cli := newTUITestClient(t, wsURL, "tui-psk", "TUIUser", listener)
 	model := newTUIModel(cli, t.TempDir())
-	listener.model = model
+	listener.setModel(model)
 
 	// 模拟键盘输入中文消息并回车发送
 	handleTUIKeyBytes(model, []byte("全屏TUI测试消息\n"))

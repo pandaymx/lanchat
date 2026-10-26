@@ -902,59 +902,75 @@ func resolveTargetToAndGroup(c *core.Client, target string) (to, group string) {
 }
 
 type tuiEventListener struct {
+	mu    sync.Mutex
 	model *tuiModel
 }
 
+func (l *tuiEventListener) setModel(m *tuiModel) {
+	l.mu.Lock()
+	l.model = m
+	l.mu.Unlock()
+}
+
+func (l *tuiEventListener) getModel() *tuiModel {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.model
+}
+
 func (l *tuiEventListener) OnConnChanged(state appapi.ConnState, reason string) {
+	m := l.getModel()
 	if reason != "" {
-		l.model.setStatus(fmt.Sprintf("连接状态: %s (%s)", state, reason))
+		m.setStatus(fmt.Sprintf("连接状态: %s (%s)", state, reason))
 		return
 	}
-	l.model.setStatus(fmt.Sprintf("连接状态: %s", state))
+	m.setStatus(fmt.Sprintf("连接状态: %s", state))
 }
 
 func (l *tuiEventListener) OnPeerJoined(peer appapi.Peer) {
-	l.model.setStatus(fmt.Sprintf("成员上线: %s (%s)", orDefault(peer.Nickname, peer.ID), peer.OS))
+	l.getModel().setStatus(fmt.Sprintf("成员上线: %s (%s)", orDefault(peer.Nickname, peer.ID), peer.OS))
 }
 
 func (l *tuiEventListener) OnPeerLeft(peerID string) {
-	l.model.setStatus(fmt.Sprintf("成员离线: %s", peerID))
+	l.getModel().setStatus(fmt.Sprintf("成员离线: %s", peerID))
 }
 
 func (l *tuiEventListener) OnMessageReceived(_, _, _, typ, text string) {
+	m := l.getModel()
 	if typ == "CLIP_SYNC" {
-		l.model.setStatus(text)
+		m.setStatus(text)
 		return
 	}
 	if typ == "MSG_BURN" {
-		l.model.setStatus("🔥 一条阅后即焚消息已到期自动销毁")
+		m.setStatus("🔥 一条阅后即焚消息已到期自动销毁")
 		return
 	}
-	l.model.triggerRedraw()
+	m.triggerRedraw()
 }
 
 func (l *tuiEventListener) OnTransferProgress(tr appapi.Transfer) {
+	m := l.getModel()
 	if tr.Direction == appapi.TransferInbound && tr.State == appapi.TransferPending {
-		l.model.setStatus(fmt.Sprintf("收到文件邀请: %s (%d B) -> 输入 /accept 接收", tr.Name, tr.Size))
+		m.setStatus(fmt.Sprintf("收到文件邀请: %s (%d B) -> 输入 /accept 接收", tr.Name, tr.Size))
 		return
 	}
-	l.model.triggerRedraw()
+	m.triggerRedraw()
 }
 
 func (l *tuiEventListener) OnTransferDone(transferID string) {
-	l.model.setStatus("文件传输完成: " + transferID)
+	l.getModel().setStatus("文件传输完成: " + transferID)
 }
 
 func (l *tuiEventListener) OnTransferFailed(transferID, reason string) {
-	l.model.setStatus(fmt.Sprintf("文件传输失败 (%s): %s", transferID, reason))
+	l.getModel().setStatus(fmt.Sprintf("文件传输失败 (%s): %s", transferID, reason))
 }
 
 func (l *tuiEventListener) OnGroupMatrix(_, _ string, _ []byte) {
-	l.model.triggerRedraw()
+	l.getModel().triggerRedraw()
 }
 
 func (l *tuiEventListener) OnChannelUpdated(channels []appapi.Channel) {
-	l.model.setStatus(fmt.Sprintf("频道列表已同步（共 %d 个频道）", len(channels)))
+	l.getModel().setStatus(fmt.Sprintf("频道列表已同步（共 %d 个频道）", len(channels)))
 }
 
 // runInteractiveTUI 启动终端全屏交互式 TUI 界面。
@@ -975,7 +991,7 @@ func runInteractiveTUI(ctx context.Context, opts cliOptions) error {
 	defer client.Close()
 
 	model := newTUIModel(client, opts.downloadDir)
-	listener.model = model
+	listener.setModel(model)
 
 	if err := client.Connect(opts.addr, opts.psk); err != nil {
 		return err

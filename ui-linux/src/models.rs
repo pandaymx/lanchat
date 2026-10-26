@@ -178,6 +178,22 @@ pub struct HistoryMessage {
     pub msg_type: String,
     #[serde(default)]
     pub text: String,
+    #[serde(default, rename = "replyTo")]
+    pub reply_to: String,
+    #[serde(default, rename = "replyQuote")]
+    pub reply_quote: String,
+    #[serde(default)]
+    pub mentions: Vec<String>,
+    #[serde(default)]
+    pub reactions: std::collections::HashMap<String, Vec<String>>,
+    #[serde(default, rename = "editedAt")]
+    pub edited_at: i64,
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default, rename = "mediaMime")]
+    pub media_mime: String,
+    #[serde(default, rename = "mediaPath")]
+    pub media_path: String,
     #[serde(default)]
     pub revoked: bool,
     #[serde(default, rename = "readBy")]

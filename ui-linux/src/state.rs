@@ -83,34 +83,38 @@ impl AppState {
         self.transfers = s.transfers;
         self.channels = s.channels;
         for m in s.messages {
-            let inbound = !self.self_id.is_empty() && m.from != self.self_id;
-            let (conv_key, sender_id) = if !m.group.is_empty() {
-                (m.group.clone(), m.from.clone())
-            } else if inbound {
-                (m.from.clone(), String::new())
-            } else {
-                (m.to.clone(), String::new())
-            };
-            if conv_key.is_empty() {
-                continue;
-            }
-            let text = if m.revoked {
-                "[消息已撤回]".to_string()
-            } else {
-                m.text
-            };
-            self.push_message(ChatMessage {
-                peer_id: conv_key,
-                sender_id,
-                group: m.group,
-                msg_id: m.id,
-                text,
-                inbound,
-                revoked: m.revoked,
-                read_by: m.read_by,
-                ts: m.ts,
-            });
+            self.apply_history_message(m);
         }
+    }
+
+    pub fn apply_history_message(&mut self, m: crate::models::HistoryMessage) {
+        let inbound = !self.self_id.is_empty() && m.from != self.self_id;
+        let (conv_key, sender_id) = if !m.group.is_empty() {
+            (m.group.clone(), m.from.clone())
+        } else if inbound {
+            (m.from.clone(), String::new())
+        } else {
+            (m.to.clone(), String::new())
+        };
+        if conv_key.is_empty() {
+            return;
+        }
+        let text = if m.revoked {
+            "[消息已撤回]".to_string()
+        } else {
+            m.text
+        };
+        self.push_message(ChatMessage {
+            peer_id: conv_key,
+            sender_id,
+            group: m.group,
+            msg_id: m.id,
+            text,
+            inbound,
+            revoked: m.revoked,
+            read_by: m.read_by,
+            ts: m.ts,
+        });
     }
 
     pub fn upsert_transfer(&mut self, t: Transfer) {

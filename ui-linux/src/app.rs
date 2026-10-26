@@ -1992,6 +1992,15 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 ctx.render_roster();
             }
         }
+        "msg.updated" => {
+            if let Some(hm) = p.get("message").and_then(|v| {
+                serde_json::from_value::<crate::models::HistoryMessage>(v.clone()).ok()
+            }) {
+                ctx.state.borrow_mut().apply_history_message(hm);
+                ctx.render_roster();
+                ctx.render_messages();
+            }
+        }
         "msg.received" => {
             let from = p
                 .get("from")

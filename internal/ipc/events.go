@@ -9,7 +9,10 @@ type eventBridge struct {
 	srv *Server
 }
 
-var _ appapi.Listener = eventBridge{}
+var (
+	_ appapi.Listener              = eventBridge{}
+	_ appapi.MessageUpdateListener = eventBridge{}
+)
 
 func (e eventBridge) OnConnChanged(state appapi.ConnState, reason string) {
 	e.srv.broadcast("conn.changed", struct {
@@ -38,6 +41,12 @@ func (e eventBridge) OnMessageReceived(from, group, msgID, typ, text string) {
 		Type  string `json:"type"`
 		Text  string `json:"text"`
 	}{From: from, Group: group, MsgID: msgID, Type: typ, Text: text})
+}
+
+func (e eventBridge) OnMessageUpdated(msg appapi.ChatMessage) {
+	e.srv.broadcast("msg.updated", struct {
+		Message appapi.ChatMessage `json:"message"`
+	}{Message: msg})
 }
 
 func (e eventBridge) OnTransferProgress(t appapi.Transfer) {

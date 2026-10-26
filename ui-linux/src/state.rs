@@ -61,6 +61,10 @@ pub struct AppState {
     pub nav_tab: NavTab,
     pub search_filter: String,
     pub e2ee_enabled: bool,
+    /// msg_id → 撤回前保存的原始可编辑消息正文（用于点击「重新编辑」恢复到输入框）。
+    pub revoked_originals: HashMap<String, String>,
+    /// 当前正在引用回复的目标消息（用于输入框上方 QQ 引用回复预览条）。
+    pub reply_target: Option<ChatMessage>,
 }
 
 impl AppState {
@@ -153,6 +157,12 @@ impl AppState {
         let list = self.messages.entry(msg.peer_id.clone()).or_default();
         if !msg.msg_id.is_empty() {
             if let Some(existing) = list.iter_mut().find(|x| x.msg_id == msg.msg_id) {
+                if msg.revoked && !existing.revoked {
+                    let orig = extract_editable_original(&existing.text);
+                    if !orig.is_empty() {
+                        self.revoked_originals.insert(existing.msg_id.clone(), orig);
+                    }
+                }
                 existing.text = msg.text;
                 existing.revoked = msg.revoked;
                 existing.read_by = msg.read_by;
@@ -170,6 +180,12 @@ impl AppState {
         for list in self.messages.values_mut() {
             for m in list.iter_mut() {
                 if m.msg_id == msg_id {
+                    if !m.revoked {
+                        let orig = extract_editable_original(&m.text);
+                        if !orig.is_empty() {
+                            self.revoked_originals.insert(m.msg_id.clone(), orig);
+                        }
+                    }
                     m.revoked = true;
                     m.text = "[消息已撤回]".to_string();
                     updated = true;
@@ -349,6 +365,32 @@ pub fn split_reactions(raw: &str) -> (String, Vec<String>) {
     (body_slice.to_string(), reactions)
 }
 
+/// 拆分 `split_reactions` 后的正文是否包含引用块 `「...」\n`。
+pub fn split_quote(clean: &str) -> (Option<String>, String) {
+    if let Some(after_open) = clean.strip_prefix('「') {
+        if let Some(close_idx) = after_open.find("」\n") {
+            let quoted = &after_open[..close_idx];
+            let rest = &after_open[close_idx + "」\n".len()..];
+            return (Some(quoted.to_string()), rest.to_string());
+        }
+    }
+    (None, clean.to_string())
+}
+
+fn extract_editable_original(raw: &str) -> String {
+    let (clean, _) = split_reactions(raw);
+    let (_, body) = split_quote(&clean);
+    let trimmed = body.trim();
+    if trimmed.is_empty()
+        || trimmed == "[消息已撤回]"
+        || trimmed == "消息已撤回"
+        || trimmed.starts_with("data:image/")
+    {
+        return String::new();
+    }
+    trimmed.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,9 +445,16 @@ mod tests {
         assert_eq!(st.search_messages("c1", "频道").len(), 1);
         assert_eq!(st.format_reply_text("/reply m1 收到"), "「频道消息」\n收到");
         assert!(st.revoke_message("m2"));
+        assert_eq!(
+            st.revoked_originals.get("m2").map(|s| s.as_str()),
+            Some("私聊消息")
+        );
         assert_eq!(st.search_messages("p2", "私聊").len(), 0);
         assert_eq!(st.messages.get("c1").unwrap().len(), 1);
         assert_eq!(st.messages.get("p2").unwrap()[0].text, "[消息已撤回]");
+        let (q, b) = split_quote("「频道消息」\n收到");
+        assert_eq!(q.as_deref(), Some("频道消息"));
+        assert_eq!(b, "收到");
         st.current_chat = ChatTarget::Channel("c1".into());
         assert!(st.current_chat.is_channel());
         assert_eq!(st.current_chat.key(), Some("c1"));

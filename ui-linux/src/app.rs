@@ -141,6 +141,9 @@ struct Widgets {
     header_drawer_btn: gtk::Button,
     msg_list: gtk::ListBox,
     msg_scroll: gtk::ScrolledWindow,
+    reply_bar: gtk::Box,
+    reply_label: gtk::Label,
+    reply_cancel_btn: gtk::Button,
     input: gtk::TextView,
     send_btn: gtk::Button,
     sticker_btn: gtk::Button,
@@ -546,10 +549,34 @@ fn build_ui(app: &adw::Application) -> Widgets {
     search_chat_btn.add_css_class("qq-tool-btn");
     search_chat_btn.set_tooltip_text(Some("检索当前会话消息记录"));
 
+    // QQ 引用回复预览条（仅点击「引用回复」时在输入框上方展示）
+    let reply_accent = gtk::Box::new(Orientation::Vertical, 0);
+    reply_accent.set_size_request(3, 18);
+    reply_accent.add_css_class("qq-reply-accent");
+
+    let reply_label = gtk::Label::new(None);
+    reply_label.set_xalign(0.0);
+    reply_label.set_hexpand(true);
+    reply_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    reply_label.add_css_class("caption");
+    reply_label.add_css_class("qq-reply-text");
+
+    let reply_cancel_btn = gtk::Button::with_label("✕");
+    reply_cancel_btn.add_css_class("flat");
+    reply_cancel_btn.add_css_class("caption");
+    reply_cancel_btn.set_tooltip_text(Some("取消引用回复"));
+
+    let reply_bar = gtk::Box::new(Orientation::Horizontal, 8);
+    reply_bar.add_css_class("qq-reply-banner");
+    reply_bar.set_visible(false);
+    reply_bar.append(&reply_accent);
+    reply_bar.append(&reply_label);
+    reply_bar.append(&reply_cancel_btn);
+
     let toolbar_spacer = gtk::Box::new(Orientation::Horizontal, 0);
     toolbar_spacer.set_hexpand(true);
 
-    let shortcut_hint = gtk::Label::new(Some("Enter 发送 · Shift+Enter 换行"));
+    let shortcut_hint = gtk::Label::new(Some("右键气泡可点赞 / 回复 / 撤回 · Enter 发送"));
     shortcut_hint.add_css_class("caption");
     shortcut_hint.add_css_class("dim-label");
 
@@ -577,7 +604,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     input_scroll.set_min_content_height(78);
     input_scroll.add_css_class("qq-input-card");
 
-    let send_btn = gtk::Button::with_label("发送 (S)");
+    let send_btn = gtk::Button::with_label("发送");
     send_btn.add_css_class("suggested-action");
     send_btn.add_css_class("qq-send-btn");
     let btn_row = gtk::Box::new(Orientation::Horizontal, 8);
@@ -590,6 +617,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     composer.set_margin_bottom(10);
     composer.set_margin_start(14);
     composer.set_margin_end(14);
+    composer.append(&reply_bar);
     composer.append(&composer_toolbar);
     composer.append(&input_scroll);
     composer.append(&btn_row);
@@ -754,6 +782,9 @@ fn build_ui(app: &adw::Application) -> Widgets {
         header_drawer_btn,
         msg_list,
         msg_scroll,
+        reply_bar,
+        reply_label,
+        reply_cancel_btn,
         input,
         send_btn,
         sticker_btn,
@@ -946,6 +977,17 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
     ));
     ctx.widgets.input.add_controller(key_ctrl);
 
+    // 取消引用回复预览条
+    ctx.widgets.reply_cancel_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            cx.state.borrow_mut().reply_target = None;
+            cx.widgets.reply_bar.set_visible(false);
+            cx.widgets.input.grab_focus();
+        }
+    ));
+
     // 发送文本
     ctx.widgets.send_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
@@ -974,7 +1016,15 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 ));
                 return;
             }
-            send_text_to_target(&cx, &target, &text);
+            let reply_opt = cx.state.borrow_mut().reply_target.take();
+            cx.widgets.reply_bar.set_visible(false);
+            let payload = match reply_opt {
+                Some(rep) if !trimmed.starts_with('/') && !rep.msg_id.is_empty() => {
+                    format!("/reply {} {}", rep.msg_id, trimmed)
+                }
+                _ => text,
+            };
+            send_text_to_target(&cx, &target, &payload);
             buffer.set_text("");
         }
     ));
@@ -2284,7 +2334,12 @@ impl AppCtx {
         if let Some(key) = target.key() {
             self.state.borrow_mut().mark_conv_seen(key);
         }
-        self.state.borrow_mut().current_chat = target;
+        {
+            let mut st = self.state.borrow_mut();
+            st.current_chat = target;
+            st.reply_target = None;
+        }
+        self.widgets.reply_bar.set_visible(false);
         self.refresh_chat_header();
         self.render_roster();
         self.render_messages();
@@ -2699,7 +2754,49 @@ impl AppCtx {
                 self_nick.clone()
             };
 
-            let read_suffix = if !m.inbound && !m.revoked && !m.read_by.is_empty() {
+            // QQ 风格居中灰色撤回提示条（无头像、无聊天气泡；自己撤回时附带蓝色「重新编辑」按钮）
+            if m.revoked {
+                let revoke_row = gtk::Box::new(Orientation::Horizontal, 6);
+                revoke_row.set_halign(Align::Center);
+                revoke_row.set_margin_top(4);
+                revoke_row.set_margin_bottom(4);
+                revoke_row.add_css_class("qq-revoke-pill");
+
+                let notice_text = if m.inbound {
+                    format!("\"{sender_name}\" 撤回了一条消息")
+                } else {
+                    "你撤回了一条消息".to_string()
+                };
+                let notice_lbl = gtk::Label::new(Some(&notice_text));
+                notice_lbl.add_css_class("caption");
+                notice_lbl.add_css_class("dim-label");
+                revoke_row.append(&notice_lbl);
+
+                if !m.inbound {
+                    if let Some(orig) = st.revoked_originals.get(&m.msg_id).cloned() {
+                        if !orig.is_empty() {
+                            let reedit_btn = gtk::Button::with_label("重新编辑");
+                            reedit_btn.add_css_class("flat");
+                            reedit_btn.add_css_class("qq-reedit-btn");
+                            reedit_btn.set_tooltip_text(Some("将撤回前的原文恢复到输入框重新编辑"));
+                            reedit_btn.connect_clicked(clone!(
+                                #[strong(rename_to = cx)]
+                                self,
+                                move |_| {
+                                    cx.widgets.input.buffer().set_text(&orig);
+                                    cx.widgets.input.grab_focus();
+                                }
+                            ));
+                            revoke_row.append(&reedit_btn);
+                        }
+                    }
+                }
+
+                self.widgets.msg_list.append(&revoke_row);
+                continue;
+            }
+
+            let read_suffix = if !m.inbound && !m.read_by.is_empty() {
                 if m.read_by.len() > 1 {
                     format!(" · ✓ 已读({})", m.read_by.len())
                 } else {
@@ -2709,41 +2806,61 @@ impl AppCtx {
                 String::new()
             };
 
-            let meta_line = gtk::Label::new(Some(&format!(
-                "{}  {}{}",
-                sender_name,
-                format_hhmmss(m.ts),
-                read_suffix
-            )));
+            let meta_text = if m.inbound {
+                format!("{}  {}", sender_name, format_hhmm(m.ts))
+            } else {
+                format!("{}{}", format_hhmm(m.ts), read_suffix)
+            };
+            let meta_line = gtk::Label::new(Some(&meta_text));
             meta_line.add_css_class("caption");
             meta_line.add_css_class("dim-label");
             meta_line.set_xalign(if m.inbound { 0.0 } else { 1.0 });
 
             let bubble_card = gtk::Box::new(Orientation::Vertical, 6);
             bubble_card.add_css_class(if m.inbound { "bubble-in" } else { "bubble-out" });
+            bubble_card.set_tooltip_text(Some(
+                "右键点击打开消息菜单（点赞 / 回复 / 复制 / 置顶 / 撤回）",
+            ));
 
             let (clean_body, reactions) = crate::state::split_reactions(&m.text);
+            let (quoted_opt, body_only) = crate::state::split_quote(&clean_body);
 
-            if !m.revoked {
-                if let Some(b64) = extract_inline_image_b64(&clean_body) {
-                    let bytes = glib::base64_decode(b64);
-                    if !bytes.is_empty() {
-                        let gbytes = glib::Bytes::from_owned(bytes);
-                        if let Ok(texture) = gdk::Texture::from_bytes(&gbytes) {
-                            let pic = gtk::Picture::for_paintable(&texture);
-                            pic.set_can_shrink(true);
-                            pic.set_content_fit(gtk::ContentFit::Contain);
-                            pic.set_size_request(180, 130);
-                            bubble_card.append(&pic);
-                        }
+            // QQ 气泡内嵌引用回复卡片
+            if let Some(quoted_str) = &quoted_opt {
+                let quote_box = gtk::Box::new(Orientation::Horizontal, 6);
+                quote_box.add_css_class(if m.inbound {
+                    "qq-quote-in"
+                } else {
+                    "qq-quote-out"
+                });
+                let quote_lbl = gtk::Label::new(Some(quoted_str));
+                quote_lbl.set_xalign(0.0);
+                quote_lbl.set_wrap(true);
+                quote_lbl.set_max_width_chars(48);
+                quote_lbl.add_css_class("caption");
+                quote_box.append(&quote_lbl);
+                bubble_card.append(&quote_box);
+            }
+
+            let has_inline_img = extract_inline_image_b64(&clean_body).is_some();
+            if let Some(b64) = extract_inline_image_b64(&clean_body) {
+                let bytes = glib::base64_decode(b64);
+                if !bytes.is_empty() {
+                    let gbytes = glib::Bytes::from_owned(bytes);
+                    if let Ok(texture) = gdk::Texture::from_bytes(&gbytes) {
+                        let pic = gtk::Picture::for_paintable(&texture);
+                        pic.set_can_shrink(true);
+                        pic.set_content_fit(gtk::ContentFit::Contain);
+                        pic.set_size_request(180, 130);
+                        bubble_card.append(&pic);
                     }
                 }
             }
 
-            let display_body = if !m.revoked && extract_inline_image_b64(&clean_body).is_some() {
-                "🖼️ [图片缩略图]".to_string()
+            let display_body = if has_inline_img {
+                "🖼️ [图片]".to_string()
             } else {
-                clean_body
+                body_only.clone()
             };
             let escaped = glib::markup_escape_text(&display_body).to_string();
             let bubble = gtk::Label::new(None);
@@ -2753,28 +2870,122 @@ impl AppCtx {
             bubble.set_wrap(true);
             bubble.set_max_width_chars(56);
             bubble.set_xalign(0.0);
-            if m.revoked {
-                bubble.add_css_class("dim-label");
-            }
             bubble_card.append(&bubble);
             bubble_card.set_halign(if m.inbound { Align::Start } else { Align::End });
 
-            // 右键点击气泡快捷触发引用回复
-            if !m.revoked && !m.msg_id.is_empty() {
-                let rclick = gtk::GestureClick::new();
-                rclick.set_button(3);
-                let mid_rc = m.msg_id.clone();
-                rclick.connect_pressed(clone!(
+            // 右键点击气泡弹出 QQ 风格悬浮操作菜单（👍 点赞 / 💬 回复 / 📋 复制 / 📌 置顶 / ↩️ 撤回）
+            if !m.msg_id.is_empty() {
+                let ctx_pop = gtk::Popover::new();
+                ctx_pop.set_has_arrow(true);
+                let menu_col = gtk::Box::new(Orientation::Vertical, 2);
+                menu_col.set_margin_top(4);
+                menu_col.set_margin_bottom(4);
+                menu_col.set_margin_start(4);
+                menu_col.set_margin_end(4);
+
+                let mid_react = m.msg_id.clone();
+                let tgt_react = target.clone();
+                let btn_react = gtk::Button::with_label("👍  点赞回应");
+                btn_react.add_css_class("flat");
+                btn_react.add_css_class("qq-ctx-btn");
+                btn_react.connect_clicked(clone!(
                     #[strong(rename_to = cx)]
                     self,
-                    move |_, _, _, _| {
+                    #[weak]
+                    ctx_pop,
+                    move |_| {
+                        ctx_pop.popdown();
+                        send_text_to_target(&cx, &tgt_react, &format!("/react {mid_react} 👍"));
+                    }
+                ));
+                menu_col.append(&btn_react);
+
+                let msg_clone = m.clone();
+                let sender_for_reply = sender_name.clone();
+                let body_for_reply = body_only.clone();
+                let btn_reply = gtk::Button::with_label("💬  引用回复");
+                btn_reply.add_css_class("flat");
+                btn_reply.add_css_class("qq-ctx-btn");
+                btn_reply.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    #[weak]
+                    ctx_pop,
+                    move |_| {
+                        ctx_pop.popdown();
+                        cx.state.borrow_mut().reply_target = Some(msg_clone.clone());
                         cx.widgets
-                            .input
-                            .buffer()
-                            .set_text(&format!("/reply {mid_rc} "));
+                            .reply_label
+                            .set_text(&format!("回复 {}：{}", sender_for_reply, body_for_reply));
+                        cx.widgets.reply_bar.set_visible(true);
                         cx.widgets.input.grab_focus();
                     }
                 ));
+                menu_col.append(&btn_reply);
+
+                let copy_str = body_only.clone();
+                let btn_copy = gtk::Button::with_label("📋  复制文本");
+                btn_copy.add_css_class("flat");
+                btn_copy.add_css_class("qq-ctx-btn");
+                btn_copy.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    #[weak]
+                    ctx_pop,
+                    move |_| {
+                        ctx_pop.popdown();
+                        if let Some(display) = Display::default() {
+                            display.clipboard().set_text(&copy_str);
+                            cx.toast("已复制消息内容");
+                        }
+                    }
+                ));
+                menu_col.append(&btn_copy);
+
+                let mid_pin = m.msg_id.clone();
+                let tgt_pin = target.clone();
+                let btn_pin = gtk::Button::with_label("📌  置顶消息");
+                btn_pin.add_css_class("flat");
+                btn_pin.add_css_class("qq-ctx-btn");
+                btn_pin.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    #[weak]
+                    ctx_pop,
+                    move |_| {
+                        ctx_pop.popdown();
+                        send_text_to_target(&cx, &tgt_pin, &format!("/pin {mid_pin}"));
+                    }
+                ));
+                menu_col.append(&btn_pin);
+
+                if !m.inbound {
+                    let mid_rev = m.msg_id.clone();
+                    let tgt_rev = target.clone();
+                    let btn_revoke = gtk::Button::with_label("↩️  撤回消息");
+                    btn_revoke.add_css_class("flat");
+                    btn_revoke.add_css_class("qq-ctx-btn");
+                    btn_revoke.connect_clicked(clone!(
+                        #[strong(rename_to = cx)]
+                        self,
+                        #[weak]
+                        ctx_pop,
+                        move |_| {
+                            ctx_pop.popdown();
+                            send_text_to_target(&cx, &tgt_rev, &format!("/revoke {mid_rev}"));
+                        }
+                    ));
+                    menu_col.append(&btn_revoke);
+                }
+
+                ctx_pop.set_child(Some(&menu_col));
+                ctx_pop.set_parent(&bubble_card);
+
+                let rclick = gtk::GestureClick::new();
+                rclick.set_button(3);
+                rclick.connect_pressed(move |_, _, _, _| {
+                    ctx_pop.popup();
+                });
                 bubble_card.add_controller(rclick);
             }
 
@@ -2782,15 +2993,15 @@ impl AppCtx {
             col.append(&meta_line);
             col.append(&bubble_card);
 
-            // 气泡下方：已触发的点赞/表情回应胶囊徽章行
-            if !m.revoked && !reactions.is_empty() {
+            // 气泡下方：已触发的点赞/表情回应胶囊徽章行（仅在有人点赞时显示）
+            if !reactions.is_empty() {
                 let reactions_box = gtk::Box::new(Orientation::Horizontal, 4);
                 reactions_box.set_halign(if m.inbound { Align::Start } else { Align::End });
                 for emoji in &reactions {
                     let pill = gtk::Button::with_label(&format!("{emoji} 1"));
                     pill.add_css_class("flat");
                     pill.add_css_class("qq-reaction-pill");
-                    pill.set_tooltip_text(Some("已获点赞/表情回应"));
+                    pill.set_tooltip_text(Some("点击追加点赞回应"));
                     if !m.msg_id.is_empty() {
                         let mid_pill = m.msg_id.clone();
                         let tgt_pill = target.clone();
@@ -2810,79 +3021,6 @@ impl AppCtx {
                     reactions_box.append(&pill);
                 }
                 col.append(&reactions_box);
-            }
-
-            // 气泡下方快捷操作栏：👍 点赞 / ↩ 回复 / 📌 置顶 / 撤回
-            if !m.revoked && !m.msg_id.is_empty() {
-                let actions_box = gtk::Box::new(Orientation::Horizontal, 4);
-                actions_box.set_halign(if m.inbound { Align::Start } else { Align::End });
-
-                let react_btn = gtk::Button::with_label("👍 点赞");
-                react_btn.add_css_class("flat");
-                react_btn.add_css_class("qq-msg-action");
-                react_btn.set_tooltip_text(Some("在气泡下方添加点赞回应 (/react)"));
-                let mid_react = m.msg_id.clone();
-                let tgt_react = target.clone();
-                react_btn.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    move |_| {
-                        send_text_to_target(&cx, &tgt_react, &format!("/react {mid_react} 👍"));
-                    }
-                ));
-                actions_box.append(&react_btn);
-
-                let reply_btn = gtk::Button::with_label("↩ 回复");
-                reply_btn.add_css_class("flat");
-                reply_btn.add_css_class("qq-msg-action");
-                reply_btn.set_tooltip_text(Some("引用回复此消息"));
-                let mid = m.msg_id.clone();
-                reply_btn.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    move |_| {
-                        cx.widgets
-                            .input
-                            .buffer()
-                            .set_text(&format!("/reply {mid} "));
-                        cx.widgets.input.grab_focus();
-                    }
-                ));
-                actions_box.append(&reply_btn);
-
-                let pin_btn = gtk::Button::with_label("📌 置顶");
-                pin_btn.add_css_class("flat");
-                pin_btn.add_css_class("qq-msg-action");
-                pin_btn.set_tooltip_text(Some("置顶此消息 (/pin)"));
-                let mid_pin = m.msg_id.clone();
-                let tgt_pin = target.clone();
-                pin_btn.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    move |_| {
-                        send_text_to_target(&cx, &tgt_pin, &format!("/pin {mid_pin}"));
-                    }
-                ));
-                actions_box.append(&pin_btn);
-
-                if !m.inbound {
-                    let revoke_btn = gtk::Button::with_label("撤回");
-                    revoke_btn.add_css_class("flat");
-                    revoke_btn.add_css_class("qq-msg-action");
-                    revoke_btn.set_tooltip_text(Some("撤回这条消息"));
-                    let mid2 = m.msg_id.clone();
-                    let tgt = target.clone();
-                    revoke_btn.connect_clicked(clone!(
-                        #[strong(rename_to = cx)]
-                        self,
-                        move |_| {
-                            send_text_to_target(&cx, &tgt, &format!("/revoke {mid2}"));
-                        }
-                    ));
-                    actions_box.append(&revoke_btn);
-                }
-
-                col.append(&actions_box);
             }
 
             let avatar = adw::Avatar::new(36, Some(&sender_name), true);
@@ -3330,6 +3468,48 @@ fn load_css() {
     }
     .qq-reaction-pill:hover {
         background: alpha(#0099ff, 0.24);
+    }
+    .qq-revoke-pill {
+        background: alpha(#8a94a6, 0.16);
+        border-radius: 999px;
+        padding: 3px 12px;
+    }
+    .qq-reedit-btn {
+        color: #0099ff;
+        font-size: 0.82em;
+        font-weight: 700;
+        padding: 0px 4px;
+        min-height: 18px;
+    }
+    .qq-quote-in {
+        background: alpha(#8a94a6, 0.12);
+        border-left: 3px solid #0099ff;
+        border-radius: 6px;
+        padding: 5px 8px;
+    }
+    .qq-quote-out {
+        background: alpha(white, 0.18);
+        border-left: 3px solid white;
+        border-radius: 6px;
+        padding: 5px 8px;
+    }
+    .qq-reply-banner {
+        background: alpha(#0099ff, 0.09);
+        border-radius: 8px;
+        padding: 4px 10px;
+    }
+    .qq-reply-accent {
+        background: #0099ff;
+        border-radius: 2px;
+    }
+    .qq-reply-text {
+        color: #0077ee;
+        font-weight: 600;
+    }
+    .qq-ctx-btn {
+        padding: 5px 12px;
+        border-radius: 6px;
+        font-size: 0.88em;
     }
     .qq-input-card {
         background: @card_bg_color;

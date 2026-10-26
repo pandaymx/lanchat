@@ -81,6 +81,13 @@ struct ChatMessage: Identifiable, Equatable {
     var readBy: [String] = []
     /// 撤回前保留的原始消息文本，供本人点击「重新编辑」恢复到输入框。
     var originalText: String = ""
+    /// v1.1 结构化字段。
+    var replyQuote: String? = nil
+    var reactions: [String: [String]] = [:]
+    var editedAt: Int64 = 0
+    var pinned: Bool = false
+    var mediaMime: String? = nil
+    var mediaPath: String? = nil
 }
 
 /// 将 group.matrix 的 haveBitmap 转为紧凑块进度摘要（如 "▓▓▓░░░ 4/8 块"）。

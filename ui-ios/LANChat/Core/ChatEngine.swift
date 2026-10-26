@@ -314,6 +314,14 @@ struct HistoryMessageJSON: Decodable {
     let group: String?
     let type: String
     let text: String
+    let replyTo: String?
+    let replyQuote: String?
+    let mentions: [String]?
+    let reactions: [String: [String]]?
+    let editedAt: Int64?
+    let pinned: Bool?
+    let mediaMime: String?
+    let mediaPath: String?
     let ts: Int64
     let revoked: Bool?
     let readBy: [String]?
@@ -326,7 +334,13 @@ struct HistoryMessageJSON: Decodable {
                            inbound: inbound, timestamp: date,
                            group: (group?.isEmpty == false) ? group : nil,
                            revoked: revoked ?? false,
-                           readBy: readBy ?? [])
+                           readBy: readBy ?? [],
+                           replyQuote: replyQuote,
+                           reactions: reactions ?? [:],
+                           editedAt: editedAt ?? 0,
+                           pinned: pinned ?? false,
+                           mediaMime: mediaMime,
+                           mediaPath: mediaPath)
     }
 }
 

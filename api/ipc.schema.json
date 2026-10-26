@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "description": "LANChat daemon <-> 五端 UI 契约（JSON-RPC 2.0）。唯一真源为 internal/appapi；禁止任何端使用本文件之外的方法、事件或字段。",
   "transport": {
     "protocol": "jsonrpc-2.0",
@@ -118,6 +118,11 @@
         "text": "string"
       }
     },
+    "msg.updated": {
+      "payload": {
+        "message": "ChatMessage"
+      }
+    },
     "transfer.progress": {
       "payload": { "transfer": "Transfer" }
     },
@@ -188,7 +193,13 @@
       "type": "string",
       "text": "string",
       "replyTo": "string?",
+      "replyQuote": "string?",
       "mentions": "string[]?",
+      "reactions": "map<string,string[]>?",
+      "editedAt": "int64?",
+      "pinned": "bool?",
+      "mediaMime": "string?",
+      "mediaPath": "string?",
       "revoked": "bool?",
       "readBy": "string[]?",
       "ts": "int64"

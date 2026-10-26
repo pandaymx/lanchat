@@ -92,19 +92,25 @@ type Channel struct {
 	Members []string `json:"members"`
 }
 
-// ChatMessage 本地历史消息快照（M10/M11a：随 GetState 可选返回，支持重启后恢复会话记录、引用回复、@提及、撤回与已读回执）。
+// ChatMessage 本地历史消息快照（M10/M11a/v1.1：随 GetState 可选返回，支持重启后恢复会话记录、结构化引用回复、@提及、表情回应表、二次编辑时间戳、置顶标记、媒体附件元信息、撤回与已读回执）。
 type ChatMessage struct {
-	ID       string   `json:"id"`
-	From     string   `json:"from"`
-	To       string   `json:"to,omitempty"`
-	Group    string   `json:"group,omitempty"`
-	Type     string   `json:"type"`
-	Text     string   `json:"text"`
-	ReplyTo  string   `json:"replyTo,omitempty"`
-	Mentions []string `json:"mentions,omitempty"`
-	Revoked  bool     `json:"revoked,omitempty"`
-	ReadBy   []string `json:"readBy,omitempty"`
-	TS       int64    `json:"ts"`
+	ID         string              `json:"id"`
+	From       string              `json:"from"`
+	To         string              `json:"to,omitempty"`
+	Group      string              `json:"group,omitempty"`
+	Type       string              `json:"type"`
+	Text       string              `json:"text"`
+	ReplyTo    string              `json:"replyTo,omitempty"`
+	ReplyQuote string              `json:"replyQuote,omitempty"`
+	Mentions   []string            `json:"mentions,omitempty"`
+	Reactions  map[string][]string `json:"reactions,omitempty"`
+	EditedAt   int64               `json:"editedAt,omitempty"`
+	Pinned     bool                `json:"pinned,omitempty"`
+	MediaMime  string              `json:"mediaMime,omitempty"`
+	MediaPath  string              `json:"mediaPath,omitempty"`
+	Revoked    bool                `json:"revoked,omitempty"`
+	ReadBy     []string            `json:"readBy,omitempty"`
+	TS         int64               `json:"ts"`
 }
 
 // State GetState 返回的全量快照。
@@ -189,4 +195,10 @@ type Listener interface {
 	OnGroupMatrix(groupID, transferID string, haveBitmap []byte)
 	// OnChannelUpdated 频道列表 / 成员变化。
 	OnChannelUpdated(channels []Channel)
+}
+
+// MessageUpdateListener 是可选的扩展事件回调接口（契约 v1.1）：
+// 当消息因点赞回应、二次编辑、置顶、撤回或已读回执发生变化时，下发完整结构化 ChatMessage（对应 msg.updated）。
+type MessageUpdateListener interface {
+	OnMessageUpdated(msg ChatMessage)
 }

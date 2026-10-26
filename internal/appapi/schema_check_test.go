@@ -14,12 +14,13 @@ import (
 // schemaFile 契约文件相对仓库根的位置（本测试位于 internal/appapi）。
 const schemaFile = "../../api/ipc.schema.json"
 
-// wantNotifications schema 中必须存在的全部事件（与 Listener 回调一一对应）。
+// wantNotifications schema 中必须存在的全部事件（与 Listener / MessageUpdateListener 回调一一对应）。
 var wantNotifications = []string{
 	"conn.changed",
 	"peer.joined",
 	"peer.left",
 	"msg.received",
+	"msg.updated",
 	"transfer.progress",
 	"transfer.done",
 	"transfer.failed",
@@ -56,8 +57,8 @@ func loadSchema(t *testing.T) *schemaDoc {
 
 func TestSchemaIsValidV1(t *testing.T) {
 	doc := loadSchema(t)
-	if doc.SchemaVersion != "1.0" {
-		t.Errorf("schemaVersion = %q, want 1.0", doc.SchemaVersion)
+	if doc.SchemaVersion != "1.0" && doc.SchemaVersion != "1.1" {
+		t.Errorf("schemaVersion = %q, want 1.0 or 1.1", doc.SchemaVersion)
 	}
 	if len(doc.Requests) == 0 || len(doc.Notifications) == 0 {
 		t.Fatal("schema must define requests and notifications")
@@ -149,9 +150,16 @@ func TestSchemaTypeFields(t *testing.T) {
 	doc := loadSchema(t)
 
 	// 每个在 requests/notifications 中引用的复合类型都必须在 types 中定义。
-	for _, name := range []string{"Peer", "Server", "Transfer", "Channel"} {
+	for _, name := range []string{"Peer", "Server", "Transfer", "Channel", "ChatMessage"} {
 		if len(doc.Types[name]) == 0 {
 			t.Errorf("type %s is not defined in schema", name)
+		}
+	}
+
+	chatFields := doc.Types["ChatMessage"]
+	for _, f := range []string{"id", "from", "type", "text", "replyQuote", "reactions", "editedAt", "pinned", "mediaMime", "mediaPath", "revoked", "readBy", "ts"} {
+		if chatFields[f] == "" {
+			t.Errorf("ChatMessage.%s is missing in schema", f)
 		}
 	}
 }

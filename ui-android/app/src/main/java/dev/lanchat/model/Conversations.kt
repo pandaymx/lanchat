@@ -49,6 +49,9 @@ object Conversations {
         messagesByConversation: Map<String, List<ChatMessage>>,
         message: ChatMessage,
     ): Map<String, List<ChatMessage>> {
+        if (isSystemDiagnosticMessage(message.msgId, message.text)) {
+            return messagesByConversation
+        }
         val key = keyOf(message)
         val existing = messagesByConversation[key] ?: emptyList()
         if (message.msgId.isNotEmpty() && existing.any { it.msgId == message.msgId }) {
@@ -155,11 +158,22 @@ object Conversations {
         return true
     }
 
-    /**
-     * 拆分消息正文与尾部表情回应徽章（如 `"你好 [👍] [❤️]"` -> `"你好"` 与 `listOf("👍", "❤️")`），
-     * 供 UI 将点赞/表情回应渲染在聊天气泡下方而非气泡内部。
-     */
-    fun splitReactions(raw: String): Pair<String, List<String>> {
+    fun isSystemDiagnosticText(raw: String): Boolean {
+        val t = raw.trim()
+        return t.startsWith("[安全码指纹]") ||
+            t.startsWith("🛡️ [安全码指纹") ||
+            t.startsWith("📊 [诊断状态]") ||
+            t.startsWith("🚀 [版本更新]") ||
+            t.startsWith("⚡ [带宽限速")
+    }
+
+    fun isSystemDiagnosticMessage(msgId: String, text: String): Boolean {
+        val prefixes = listOf("fp-", "status-", "update-", "search-", "e2ee-", "bwlimit-")
+        if (prefixes.any { msgId.startsWith(it) }) return true
+        return isSystemDiagnosticText(text)
+    }
+
+    private fun stripTrailingReactions(raw: String): Pair<String, List<String>> {
         var body = raw
         val reversed = mutableListOf<String>()
         while (body.endsWith("]")) {
@@ -171,5 +185,29 @@ object Conversations {
             body = body.substring(0, idx)
         }
         return body to reversed.asReversed()
+    }
+
+    /**
+     * 拆分消息正文与尾部表情回应徽章（如 `"你好 [👍] [❤️]"` -> `"你好"` 与 `listOf("👍", "❤️")`），
+     * 同时清理引用块 `「...」\n` 内的 `[👍]` 或 `[安全码指纹]`，供 UI 将点赞渲染在聊天气泡下方。
+     */
+    fun splitReactions(raw: String): Pair<String, List<String>> {
+        val (rawBody, reactions) = stripTrailingReactions(raw)
+        var body = rawBody.removePrefix("[表情] ")
+        if (body.startsWith("「")) {
+            val closeIdx = body.indexOf("」\n")
+            if (closeIdx > 1) {
+                val quoted = body.substring(1, closeIdx)
+                val rest = body.substring(closeIdx + 2)
+                val (cleanQuotedRaw, _) = stripTrailingReactions(quoted)
+                val cleanQuoted = cleanQuotedRaw.removePrefix("[表情] ")
+                body = if (isSystemDiagnosticText(cleanQuoted)) {
+                    rest
+                } else {
+                    "「$cleanQuoted」\n$rest"
+                }
+            }
+        }
+        return body to reactions
     }
 }

@@ -95,82 +95,34 @@ class AppViewModel : ViewModel() {
         if (content.startsWith("/search ")) {
             val q = content.removePrefix("/search ").trim()
             val hits = Conversations.search(_ui.value.messagesByConversation, Conversations.peerKey(to), q)
-            appendMessage(
-                ChatMessage(
-                    peerId = to,
-                    msgId = "search-${System.currentTimeMillis()}",
-                    text = "[搜索“$q”：共 ${hits.size} 条匹配]",
-                    inbound = false,
-                    timestamp = System.currentTimeMillis(),
-                ),
-            )
+            _ui.update { it.copy(error = "🔍 搜索“$q”：共 ${hits.size} 条匹配") }
             return
         }
         launchOp {
             val msgId = engine.sendText(to, content)
             if (msgId == "e2ee:on" || msgId == "e2ee:off") {
-                val notice = if (msgId == "e2ee:on") "[已开启端到端加密]" else "[已关闭端到端加密]"
-                appendMessage(
-                    ChatMessage(
-                        peerId = to,
-                        msgId = "e2ee-${System.currentTimeMillis()}",
-                        text = notice,
-                        inbound = false,
-                        timestamp = System.currentTimeMillis(),
-                    ),
-                )
+                val notice = if (msgId == "e2ee:on") "🔐 已开启端到端加密" else "🔐 已关闭端到端加密"
+                _ui.update { it.copy(error = notice) }
                 return@launchOp
             }
             if (msgId.startsWith("fp:")) {
                 val fp = msgId.removePrefix("fp:")
-                appendMessage(
-                    ChatMessage(
-                        peerId = to,
-                        msgId = "fp-${System.currentTimeMillis()}",
-                        text = "🛡️ [安全码指纹核验] $fp",
-                        inbound = false,
-                        timestamp = System.currentTimeMillis(),
-                    ),
-                )
+                _ui.update { it.copy(error = "🛡️ 安全码指纹核验：$fp") }
                 return@launchOp
             }
             if (msgId.startsWith("bwlimit:")) {
                 val lim = msgId.removePrefix("bwlimit:")
-                appendMessage(
-                    ChatMessage(
-                        peerId = to,
-                        msgId = "bwlimit-${System.currentTimeMillis()}",
-                        text = "⚡ [带宽限速已设置为 $lim MB/s]",
-                        inbound = false,
-                        timestamp = System.currentTimeMillis(),
-                    ),
-                )
+                _ui.update { it.copy(error = "⚡ 带宽限速已设置为 $lim MB/s") }
                 return@launchOp
             }
             if (msgId.startsWith("status:")) {
                 val st = msgId.removePrefix("status:")
-                appendMessage(
-                    ChatMessage(
-                        peerId = to,
-                        msgId = "status-${System.currentTimeMillis()}",
-                        text = "📊 [诊断状态] $st",
-                        inbound = false,
-                        timestamp = System.currentTimeMillis(),
-                    ),
-                )
+                _ui.update { it.copy(error = "📊 诊断状态：$st") }
                 return@launchOp
             }
             if (msgId.startsWith("update:")) {
                 val up = msgId.removePrefix("update:")
-                appendMessage(
-                    ChatMessage(
-                        peerId = to,
-                        msgId = "update-${System.currentTimeMillis()}",
-                        text = "🚀 [版本更新] $up",
-                        inbound = false,
-                        timestamp = System.currentTimeMillis(),
-                    ),
-                )
+                _ui.update { it.copy(error = "🚀 版本更新：$up") }
                 return@launchOp
             }
             if (content.startsWith("/revoke ")) {
@@ -210,32 +162,14 @@ class AppViewModel : ViewModel() {
         if (content.startsWith("/search ")) {
             val q = content.removePrefix("/search ").trim()
             val hits = Conversations.search(_ui.value.messagesByConversation, Conversations.groupKey(channelId), q)
-            appendMessage(
-                ChatMessage(
-                    peerId = "",
-                    msgId = "search-${System.currentTimeMillis()}",
-                    text = "[搜索“$q”：共 ${hits.size} 条匹配]",
-                    inbound = false,
-                    timestamp = System.currentTimeMillis(),
-                    group = channelId,
-                ),
-            )
+            _ui.update { it.copy(error = "🔍 搜索“$q”：共 ${hits.size} 条匹配") }
             return
         }
         launchOp {
             val msgId = engine.sendText(to = "", text = content, group = channelId)
             if (msgId == "e2ee:on" || msgId == "e2ee:off") {
-                val notice = if (msgId == "e2ee:on") "[已开启端到端加密]" else "[已关闭端到端加密]"
-                appendMessage(
-                    ChatMessage(
-                        peerId = "",
-                        msgId = "e2ee-${System.currentTimeMillis()}",
-                        text = notice,
-                        inbound = false,
-                        timestamp = System.currentTimeMillis(),
-                        group = channelId,
-                    ),
-                )
+                val notice = if (msgId == "e2ee:on") "🔐 已开启端到端加密" else "🔐 已关闭端到端加密"
+                _ui.update { it.copy(error = notice) }
                 return@launchOp
             }
             if (content.startsWith("/revoke ")) {

@@ -8,18 +8,10 @@ on:
       - 'main'
     paths:
       - 'ui-win/**'
-      - 'cmd/**'
-      - 'internal/**'
-      - 'go.mod'
-      - 'go.sum'
       - '.github/workflows/windows-msix-build.yml'
   pull_request:
     paths:
       - 'ui-win/**'
-      - 'cmd/**'
-      - 'internal/**'
-      - 'go.mod'
-      - 'go.sum'
       - '.github/workflows/windows-msix-build.yml'
   workflow_dispatch:
 
@@ -67,11 +59,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "dist/bin" | Out-Null
           go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" -o "dist/bin/lanchat-daemon.exe" ./cmd/lanchat-daemon
-
-      - name: IPC tests
-        shell: pwsh
-        run: dotnet test tests/LANChat.Ipc.Tests/LANChat.Ipc.Tests.csproj -c Release -p:Platform=x64 --logger "console;verbosity=minimal"
-        working-directory: ui-win
 
       - name: Locate MSBuild
         id: msbuild

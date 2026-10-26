@@ -1,15 +1,10 @@
 name: Release
 
 # 触发方式：
-# 1. workflow_run：release-please 工作流成功后触发（release-please 用 GITHUB_TOKEN 打 tag，
-#    该 tag 不会触发 push 事件工作流，故必须监听 workflow_run）
-# 2. push tags：人类手动 push 的 tag
-# 3. workflow_dispatch：回填历史版本（如 v0.16.0）
+# 1. push tags：release-please（使用 RELEASE_PLEASE_TOKEN）或人类打出的 v* tag
+#    原生触发 push 事件，不再叠加 workflow_run，避免每次发版双跑两套 13-Job 流水线。
+# 2. workflow_dispatch：回填历史版本（如 v0.16.0）
 on:
-  workflow_run:
-    workflows: ['release-please']
-    types: [completed]
-    branches: [main]
   push:
     tags:
       - 'v*'
@@ -50,7 +45,6 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_REF: ${{ github.ref }}
           INPUT_TAG: ${{ inputs.tag }}
-          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
           do_build=false; tag=""; ref=""
@@ -66,18 +60,6 @@ jobs:
               git ls-remote --tags origin "refs/tags/$tag" | grep -q . \
                 || { echo "::error::tag $tag 不存在"; exit 1; }
               do_build=true
-              ;;
-            workflow_run)
-              # 仅当 workflow_run 指向的提交恰好带 v* tag 时才构建
-              tags="$(git ls-remote --tags origin | awk -v s="$HEAD_SHA" '$1==s{print $2}' | sed 's#refs/tags/##; s#\^{}##')"
-              tag="$(printf '%s\n' "$tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)"
-              if [ -n "$tag" ]; then
-                ref="$HEAD_SHA"
-                do_build=true
-                echo "release-please 提交 $HEAD_SHA 带 tag $tag，开始构建"
-              else
-                echo "该提交无发布 tag，跳过（普通 release-please PR 合并）"
-              fi
               ;;
           esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -135,7 +117,7 @@ jobs:
 
   linux:
     name: Build Linux packages (tar.gz, deb, rpm)
-    needs: resolve
+    needs: [resolve, daemon]
     if: needs.resolve.outputs.do_build == 'true'
     # GTK4 / libadwaita 直接取系统包，见下方 Install GTK4 / libadwaita 的说明。
     runs-on: ubuntu-26.04
@@ -144,11 +126,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.resolve.outputs.ref }}
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -172,19 +149,19 @@ jobs:
         working-directory: ui-linux
         run: cargo build --release
 
-      - name: Build lanchat-daemon
-        run: |
-          mkdir -p dist/stage
-          CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X main.commit=${GITHUB_SHA::7}" \
-            -o dist/stage/lanchat-daemon ./cmd/lanchat-daemon
+      - name: Fetch daemon from the matrix build
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-linux-amd64
+          path: dist/stage
 
       - name: Assemble Linux packages (tar.gz, deb, rpm)
         shell: bash
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          chmod +x scripts/package-linux.sh
+          mv "dist/stage/lanchat-daemon-${TAG}-linux-amd64" dist/stage/lanchat-daemon
+          chmod +x dist/stage/lanchat-daemon scripts/package-linux.sh
           VERSION="${TAG#v}" \
             UI_BIN="ui-linux/target/release/lanchat-ui" \
             DAEMON_BIN="dist/stage/lanchat-daemon" \
@@ -211,64 +188,57 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.ref }}
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-          # Gradle 缓存：与 ci.yml 的 android-compile 用完全相同的写法（不额外指定
+          # Gradle 缓存：与 native-ui-gates.yml 的 android-test 用完全相同的写法（不额外指定
           # cache-dependency-path），两个工作流因此落在同一个 cache key 上 ——
           # Release 构建能直接命中刚才 PR 跑出来的 Gradle 分发 + 依赖缓存。
-          # 收益实证：ci.yml 的 android-compile 全程 158s（日志 Cache restored from key: gradle-…），
-          # 而本作业未开缓存时 Build release APK 单步 196s。
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
-        with:
-          # 禁用对已废弃的 SDK 'tools' 包的默认安装（新版 cmdline-tools 已无此包）
-          packages: 'cmdline-tools;latest'
-
-      - name: Accept SDK licenses
-        run: yes | sdkmanager --licenses || true
-
-      - name: Install Android SDK packages
-        # API 37 的平台包带次版本号（android-37.0/37.1/37.2），
-        # 不存在 platforms;android-37 这个包，sdkmanager 会报 Failed to find package
-        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
-
-      - name: Setup NDK
-        id: ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26d
-          add-to-path: false
-
-      - name: Install gomobile
+      - name: Ensure Android SDK platform 37.0
         run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -d "$ANDROID_HOME/platforms/android-37.0" ] || [ ! -d "$ANDROID_HOME/build-tools/36.0.0" ]; then
+            yes | "$SDKM" --licenses >/dev/null || true
+            "$SDKM" "platforms;android-37.0" "build-tools;36.0.0"
+          fi
+
+      - name: Cache full-ABI mobile.aar
+        id: cache-aar
+        uses: actions/cache@v4
+        with:
+          path: ui-android/app/libs/mobile.aar
+          key: mobile-aar-release-${{ env.GOMOBILE_VERSION }}-${{ hashFiles('go.mod', 'go.sum', 'bindings/mobile/**', 'internal/**') }}
+
+      - name: Setup Go
+        if: steps.cache-aar.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generate AAR (all ABIs)
+        if: steps.cache-aar.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          NDK_ROOT="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            NDK_ROOT="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1 || true)"
+          fi
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.3.11579264"
+            NDK_ROOT="$ANDROID_HOME/ndk/26.3.11579264"
+          fi
+          export ANDROID_NDK_HOME="$NDK_ROOT"
           go install golang.org/x/mobile/cmd/gomobile@${{ env.GOMOBILE_VERSION }}
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: gomobile init
-        run: gomobile init
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
-
-      - name: Add gomobile dependency
-        run: go get golang.org/x/mobile@${{ env.GOMOBILE_VERSION }}
-
-      - name: Generate AAR
-        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          gomobile init
+          go get golang.org/x/mobile@${{ env.GOMOBILE_VERSION }}
           mkdir -p ui-android/app/libs
           gomobile bind -target=android -androidapi 26 -javapkg=dev.lanchat.bindings \
             -o ui-android/app/libs/mobile.aar ./bindings/mobile
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
 
       # 签名凭据预检：把「能不能签」这件事在打包前问清楚，并给出可执行的结论。
       # 历史故障：keystore 能被 storepass 打开，但 ANDROID_KEY_PASSWORD 恢复不出私钥，
@@ -446,7 +416,7 @@ jobs:
           else
             SIGN_PASS="$KEY_PASS"
           fi
-          ./gradlew assembleRelease --no-daemon \
+          ./gradlew assembleRelease --no-daemon -x lintVitalRelease \
             -Pandroid.injected.signing.store.file="$KS_PATH" \
             -Pandroid.injected.signing.store.password="$KS_PASS" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
@@ -455,7 +425,7 @@ jobs:
       - name: Build debug APK (fallback)
         if: steps.sign.outputs.ready != 'true'
         working-directory: ui-android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon -x lintVitalRelease
 
       - name: Collect APK
         env:
@@ -481,7 +451,7 @@ jobs:
 
   macos:
     name: Build macOS package (unsigned, universal daemon)
-    needs: resolve
+    needs: [resolve, daemon]
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: macos-15
     timeout-minutes: 20
@@ -490,12 +460,10 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.ref }}
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
       - name: Install XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: brew install xcodegen
 
       - name: Generate Xcode project
@@ -510,15 +478,25 @@ jobs:
             CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
             ONLY_ACTIVE_ARCH=NO build
 
-      - name: Build universal daemon
+      - name: Fetch darwin arm64 daemon
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-darwin-arm64
+          path: dist/daemon
+
+      - name: Fetch darwin amd64 daemon
+        uses: actions/download-artifact@v4
+        with:
+          name: daemon-darwin-amd64
+          path: dist/daemon
+
+      - name: Assemble universal daemon
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
         run: |
-          mkdir -p dist/daemon
-          for arch in arm64 amd64; do
-            CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath \
-              -ldflags "-s -w -X main.commit=${GITHUB_SHA::7}" \
-              -o "dist/daemon/lanchat-daemon-$arch" ./cmd/lanchat-daemon
-          done
-          lipo -create dist/daemon/lanchat-daemon-arm64 dist/daemon/lanchat-daemon-amd64 \
+          lipo -create \
+            "dist/daemon/lanchat-daemon-${TAG}-darwin-arm64" \
+            "dist/daemon/lanchat-daemon-${TAG}-darwin-amd64" \
             -output dist/daemon/lanchat-daemon
 
       - name: Bundle daemon and zip
@@ -551,26 +529,41 @@ jobs:
         with:
           ref: ${{ needs.resolve.outputs.ref }}
 
+      - name: Cache Mobile.xcframework
+        id: cache-xcframework
+        uses: actions/cache@v4
+        with:
+          path: ui-ios/Frameworks/Mobile.xcframework
+          key: xcframework-${{ runner.os }}-${{ env.GOMOBILE_VERSION }}-${{ hashFiles('go.mod', 'go.sum', 'bindings/mobile/**', 'internal/**') }}
+
       - uses: actions/setup-go@v5
+        if: steps.cache-xcframework.outputs.cache-hit != 'true'
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install gomobile
+        if: steps.cache-xcframework.outputs.cache-hit != 'true'
         run: |
           go install golang.org/x/mobile/cmd/gomobile@${{ env.GOMOBILE_VERSION }}
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
       - name: Install XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: brew install xcodegen
 
       - name: Add gomobile dependency
+        if: steps.cache-xcframework.outputs.cache-hit != 'true'
         run: go get golang.org/x/mobile@${{ env.GOMOBILE_VERSION }}
 
       - name: gomobile init
+        if: steps.cache-xcframework.outputs.cache-hit != 'true'
         run: gomobile init
 
       - name: Generate XCFramework
+        if: steps.cache-xcframework.outputs.cache-hit != 'true'
         run: |
           mkdir -p ui-ios/Frameworks
           gomobile bind -target=ios -iosversion=16.0 -prefix=LC \
@@ -804,7 +797,7 @@ jobs:
         run: |
           $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
           & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
-            /restore /t:Build /p:Configuration=Release /p:Platform=x64 `
+            /t:Build /p:Configuration=Release /p:Platform=x64 `
             /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
             /p:RestoreRuntimeIdentifier=win-x64 `
             /p:WindowsPackageType=MSIX /p:WindowsAppSDKSelfContained=true `

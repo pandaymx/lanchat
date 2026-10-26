@@ -33,21 +33,18 @@ jobs:
         run: dotnet build LANChat.WinUI.sln --no-restore
 
       - name: Test
-        run: dotnet test tests/LANChat.Ipc.Tests/LANChat.Ipc.Tests.csproj --verbosity normal
+        run: dotnet test tests/LANChat.Ipc.Tests/LANChat.Ipc.Tests.csproj --no-build --verbosity normal
 
-  # ─── Android: unit tests (JVM) ────────────────────────────────────
-  # testDebugUnitTest 会编译 app 模块，而 app 依赖 gomobile 生成的 mobile.aar，
-  # 所以必须先跑完 gomobile bind 才能编译通过。
+  # ─── Android: release Kotlin compile + unit tests (JVM) ───────────
+  # 合并原 ci.yml 的 compileReleaseKotlin（校验 gomobile 绑定签名与 R 类资源）
+  # 与 testDebugUnitTest，消除每次 PR/Push 双跑两套 NDK + gomobile bind 的开销。
+  # CI 门禁仅需 AAR 内的 classes.jar 与单架构产物，故绑定单 ABI（android/arm64）
+  # 并按 Go 源码哈希缓存 mobile.aar；Release 作业仍构建全 4 架构 AAR。
   android-test:
-    name: Android (unit tests)
+    name: Android (compile + unit tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
 
       - uses: actions/setup-java@v4
         with:
@@ -55,49 +52,52 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
-        with:
-          packages: 'cmdline-tools;latest'
-
-      - name: Accept SDK licenses
-        run: yes | sdkmanager --licenses || true
-
-      - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
-
-      - name: Setup NDK
-        id: ndk
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: r26d
-          add-to-path: false
-
-      - name: Install gomobile
+      - name: Ensure Android SDK platform 37.0
         run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -d "$ANDROID_HOME/platforms/android-37.0" ] || [ ! -d "$ANDROID_HOME/build-tools/36.0.0" ]; then
+            yes | "$SDKM" --licenses >/dev/null || true
+            "$SDKM" "platforms;android-37.0" "build-tools;36.0.0"
+          fi
+
+      - name: Cache mobile.aar
+        id: cache-aar
+        uses: actions/cache@v4
+        with:
+          path: ui-android/app/libs/mobile.aar
+          key: mobile-aar-ci-v0.0.0-20260908204917-8b95e45f8d3e-${{ hashFiles('go.mod', 'go.sum', 'bindings/mobile/**', 'internal/**') }}
+
+      - name: Setup Go
+        if: steps.cache-aar.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Generate AAR (single ABI for CI gate)
+        if: steps.cache-aar.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          NDK_ROOT="${ANDROID_NDK_LATEST_HOME:-${ANDROID_NDK_HOME:-}}"
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            NDK_ROOT="$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | sort -V | tail -1 || true)"
+          fi
+          if [ -z "$NDK_ROOT" ] || [ ! -d "$NDK_ROOT" ]; then
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;26.3.11579264"
+            NDK_ROOT="$ANDROID_HOME/ndk/26.3.11579264"
+          fi
+          export ANDROID_NDK_HOME="$NDK_ROOT"
           go install golang.org/x/mobile/cmd/gomobile@v0.0.0-20260908204917-8b95e45f8d3e
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: gomobile init
-        run: gomobile init
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
-
-      - name: Add gomobile dependency
-        run: go get golang.org/x/mobile@v0.0.0-20260908204917-8b95e45f8d3e
-
-      - name: Generate AAR
-        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          gomobile init
+          go get golang.org/x/mobile@v0.0.0-20260908204917-8b95e45f8d3e
           mkdir -p ui-android/app/libs
-          gomobile bind -target=android -androidapi 26 -javapkg=dev.lanchat.bindings \
+          gomobile bind -target=android/arm64 -androidapi 26 -javapkg=dev.lanchat.bindings \
             -o ui-android/app/libs/mobile.aar ./bindings/mobile
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
-          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk_root }}
 
-      - name: Run unit tests
+      - name: Compile release Kotlin & run unit tests
         working-directory: ui-android
-        run: ./gradlew testDebugUnitTest --no-daemon
+        run: ./gradlew compileReleaseKotlin testDebugUnitTest --no-daemon
 
   # ─── macOS: xcodegen + xcodebuild compile check ───────────────────
   macos:
@@ -111,6 +111,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install XcodeGen
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
         run: brew install xcodegen
 
       - name: Generate Xcode project

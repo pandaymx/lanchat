@@ -1266,4 +1266,3 @@ func TestM26SilentUpdateWithDomesticProxyFallback(t *testing.T) {
 		t.Fatalf("silent downloaded package content mismatch: err=%v, got=%q", err, string(got))
 	}
 }
-

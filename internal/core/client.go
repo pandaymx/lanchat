@@ -24,6 +24,7 @@ import (
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/discover"
 	"github.com/pandaymx/lanchat/internal/protocol"
+	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
 // Client 是一个 LANChat 客户端核心实例，实现 appapi.API。
@@ -66,6 +67,7 @@ type Client struct {
 	downloadDir string
 	history     *historyStore
 	e2eeKey     string
+	casIndex    map[string]string
 
 	cb appapi.Listener
 
@@ -105,13 +107,15 @@ func New(opts Options) *Client {
 		nick = defaultNickname()
 	}
 	deviceID, idPriv, idPub := loadOrCreateIdentity(opts.DownloadDir)
+	histKey, _ := transfer.DeriveHistoryKey(idPriv)
 	c := &Client{
 		connState:       appapi.ConnDisconnected,
 		nickname:        nick,
 		os:              opts.OS,
 		downloadDir:     opts.DownloadDir,
-		history:         newHistoryStore(opts.DownloadDir),
+		history:         newHistoryStore(opts.DownloadDir, histKey),
 		e2eeKey:         strings.TrimSpace(os.Getenv("LANCHAT_E2EE_KEY")),
+		casIndex:        map[string]string{},
 		deviceID:        deviceID,
 		identityPriv:    idPriv,
 		identityPub:     idPub,
@@ -223,11 +227,13 @@ func (c *Client) PickDownloadDir(path string) error {
 		c.deviceID = id
 		c.identityPriv = priv
 		c.identityPub = pub
+		curPriv = priv
 		c.mu.Unlock()
 	} else if _, err := os.Stat(filepath.Join(path, identityFileName)); os.IsNotExist(err) {
 		saveIdentity(path, curID, curPriv, curPub)
 	}
-	c.history.setDir(path)
+	histKey, _ := transfer.DeriveHistoryKey(curPriv)
+	c.history.setDir(path, histKey)
 	return nil
 }
 

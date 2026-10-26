@@ -1108,3 +1108,92 @@ func TestM20ReactionsEditPinAndM21Bwlimit(t *testing.T) {
 		t.Fatalf("/bwlimit off got %q, err %v", res, err)
 	}
 }
+
+// TestM23EncryptedHistoryM24CASInstantTransferAndM25Status 验证 M23 静态加密历史落盘、M24 内容寻址秒传去重与 M25 /status 诊断指令。
+func TestM23EncryptedHistoryM24CASInstantTransferAndM25Status(t *testing.T) {
+	wsURL := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+
+	a := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	t.Cleanup(b.Close)
+	if err := a.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Connect(wsURL, testPSK); err != nil {
+		t.Fatal(err)
+	}
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 1 && len(b.GetState().Peers) == 1
+	})
+
+	// 1. M23: 发送消息后检查本地 lanchat-history.jsonl 为 enc:hist1: 密文，且新客户端重启可完整解密还原。
+	if _, err := a.SendText(bID, "绝密架构设计纪要", ""); err != nil {
+		t.Fatal(err)
+	}
+	rawHist, err := os.ReadFile(filepath.Join(dirA, historyFileName))
+	if err != nil {
+		t.Fatalf("read history file: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(rawHist)), "enc:hist1:") || strings.Contains(string(rawHist), "绝密架构设计纪要") {
+		t.Fatalf("expected encrypted history file, got:\n%s", string(rawHist))
+	}
+
+	// 2. M24: 内容寻址秒传（CAS Instant Transfer）— Bob 下载目录已有相同内容文件时，RespondFile 立即 0 字节秒传完成。
+	payload := []byte("CAS-INSTANT-DEDUP-PAYLOAD-2026-LANCHAT")
+	srcPath := filepath.Join(dirA, "release-bundle.bin")
+	if err := os.WriteFile(srcPath, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 在 Bob 的下载目录预置一份同内容文件（模拟历史已接收过同 SHA-256 的文件）。
+	seedCopy := filepath.Join(dirB, "cached-copy.bin")
+	if err := os.WriteFile(seedCopy, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	transferID, err := a.OfferFile(bID, srcPath)
+	if err != nil {
+		t.Fatalf("OfferFile: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(b.GetState().Transfers) == 1
+	})
+	destPath := filepath.Join(dirB, "instant-received.bin")
+	if err := b.RespondFile(transferID, true, destPath); err != nil {
+		t.Fatalf("RespondFile: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		stA := a.GetState().Transfers
+		stB := b.GetState().Transfers
+		return len(stA) == 1 && stA[0].State == appapi.TransferDone &&
+			len(stB) == 1 && stB[0].State == appapi.TransferDone
+	})
+	gotBytes, err := os.ReadFile(destPath)
+	if err != nil || string(gotBytes) != string(payload) {
+		t.Fatalf("CAS instant copy content mismatch: %v", err)
+	}
+
+	// 3. M25: /status 诊断指令返回连接状态、安全指纹与 CAS 索引数量。
+	res, err := a.SendText(bID, "/status", "")
+	if err != nil || !strings.HasPrefix(res, "status:conn=connected ") || !strings.Contains(res, "cas=1") {
+		t.Fatalf("unexpected /status result %q, err %v", res, err)
+	}
+
+	// 验证 Alice 重启后从加密历史恢复消息。
+	a.Close()
+	a2 := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a2.Close)
+	foundDecrypted := false
+	for _, m := range a2.GetState().Messages {
+		if m.Text == "绝密架构设计纪要" {
+			foundDecrypted = true
+			break
+		}
+	}
+	if !foundDecrypted {
+		t.Fatalf("expected decrypted message after restart, got %+v", a2.GetState().Messages)
+	}
+}

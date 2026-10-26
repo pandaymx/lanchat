@@ -19,28 +19,33 @@ const (
 	historyFileName    = "lanchat-history.jsonl"
 )
 
-// historyStore 维护内存环形缓冲与可选的本地 JSONL 聊天历史文件（零 CGO）。
+// historyStore 维护内存环形缓冲与可选的本地 JSONL 聊天历史文件（零 CGO，M23 支持 AES-GCM 静态加密落盘）。
 type historyStore struct {
 	mu        sync.Mutex
 	dir       string
+	atRestKey string
 	msgs      []appapi.ChatMessage
 	rawCipher map[string]string
 }
 
-func newHistoryStore(dir string) *historyStore {
+func newHistoryStore(dir, atRestKey string) *historyStore {
 	h := &historyStore{
+		atRestKey: atRestKey,
 		rawCipher: make(map[string]string),
 	}
 	if dir != "" {
-		h.setDir(dir)
+		h.setDir(dir, atRestKey)
 	}
 	return h
 }
 
-func (h *historyStore) setDir(dir string) {
+func (h *historyStore) setDir(dir, atRestKey string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.dir = dir
+	if atRestKey != "" {
+		h.atRestKey = atRestKey
+	}
 	if dir == "" {
 		return
 	}
@@ -65,8 +70,12 @@ func (h *historyStore) setDir(dir string) {
 		if line == "" {
 			continue
 		}
+		rawBytes, openErr := transfer.OpenHistoryLine(h.atRestKey, line)
+		if openErr != nil {
+			continue
+		}
 		var m appapi.ChatMessage
-		if err := json.Unmarshal([]byte(line), &m); err == nil && m.ID != "" {
+		if err := json.Unmarshal(rawBytes, &m); err == nil && m.ID != "" {
 			if idx, ok := idxByID[m.ID]; ok {
 				loaded[idx] = m
 			} else if !existing[m.ID] {
@@ -115,7 +124,13 @@ func (h *historyStore) persistLocked(m appapi.ChatMessage) {
 	}
 	defer func() { _ = f.Close() }()
 	if raw, err := json.Marshal(m); err == nil {
-		_, _ = f.Write(append(raw, '\n'))
+		line := string(raw)
+		if h.atRestKey != "" {
+			if sealed, sErr := transfer.SealHistoryLine(h.atRestKey, raw); sErr == nil {
+				line = sealed
+			}
+		}
+		_, _ = f.WriteString(line + "\n")
 	}
 }
 

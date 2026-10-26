@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/google/uuid"
@@ -55,6 +57,9 @@ func (c *Client) OfferFile(to, path string) (string, error) {
 	t.file = info.file
 	t.senderPriv = priv
 	t.sha256 = sum
+	if !strings.HasPrefix(path, "data:") {
+		c.registerCAS(sum, path)
+	}
 
 	// M17: 当发送 < 256 KiB 的图片或 data:image/... 剪贴板图片时，同步发送带缩略图的 STICKER_MSG 内联预览。
 	c.maybeSendInlineThumbnail(conn, to, "", info, sum)
@@ -126,6 +131,19 @@ func (c *Client) RespondFile(transferID string, accept bool, dest string) error 
 		return errEmptyPath
 	}
 
+	// M24: 内容寻址秒传去重（CAS Instant Transfer）：若本地已有同 SHA-256 且校验通过的文件，
+	// 直接本地复制并通知发送方 FILE_DONE，0 字节瞬时完成。
+	if t.sha256 != "" && c.tryCASInstantCopy(t.sha256, t.snap.Size, destPath) {
+		_, _ = c.sendTo(conn, protocol.FileDone, t.snap.PeerID, protocol.FileDonePayload{
+			TransferID: transferID,
+			SHA256:     t.sha256,
+		})
+		cp := t.setProgress(t.snap.Size, 0)
+		c.listener().OnTransferProgress(cp)
+		t.done()
+		return nil
+	}
+
 	if _, err := c.sendTo(conn, protocol.FileAccept, t.snap.PeerID, protocol.FileAcceptPayload{
 		TransferID: transferID,
 	}); err != nil {
@@ -134,6 +152,93 @@ func (c *Client) RespondFile(transferID string, accept bool, dest string) error 
 	t.setState(appapi.TransferActive)
 	go c.runInbound(t, conn, destPath)
 	return nil
+}
+
+// registerCAS 记录本地已校验文件的 SHA-256 索引（M24）。
+func (c *Client) registerCAS(sha256Hex, localPath string) {
+	if sha256Hex == "" || localPath == "" {
+		return
+	}
+	c.mu.Lock()
+	if c.casIndex == nil {
+		c.casIndex = make(map[string]string)
+	}
+	c.casIndex[strings.ToLower(sha256Hex)] = localPath
+	c.mu.Unlock()
+}
+
+// tryCASInstantCopy 检查本地 CAS 索引或下载目录是否已存在同哈希文件，若命中则原子复制到 destPath（M24）。
+func (c *Client) tryCASInstantCopy(sha256Hex string, wantSize int64, destPath string) bool {
+	targetHash := strings.ToLower(strings.TrimSpace(sha256Hex))
+	if targetHash == "" || destPath == "" || wantSize < 0 {
+		return false
+	}
+	c.mu.Lock()
+	indexed := c.casIndex[targetHash]
+	dlDir := c.downloadDir
+	c.mu.Unlock()
+
+	candidates := make([]string, 0, 4)
+	if indexed != "" && filepath.Clean(indexed) != filepath.Clean(destPath) {
+		candidates = append(candidates, indexed)
+	}
+	if dlDir != "" {
+		if entries, err := os.ReadDir(dlDir); err == nil {
+			for _, e := range entries {
+				if e.IsDir() || strings.HasSuffix(e.Name(), ".part") || strings.HasSuffix(e.Name(), ".meta") {
+					continue
+				}
+				p := filepath.Join(dlDir, e.Name())
+				if filepath.Clean(p) == filepath.Clean(destPath) {
+					continue
+				}
+				if st, err := e.Info(); err == nil && st.Size() == wantSize {
+					candidates = append(candidates, p)
+				}
+			}
+		}
+	}
+
+	for _, srcPath := range candidates {
+		f, err := os.Open(srcPath)
+		if err != nil {
+			continue
+		}
+		st, err := f.Stat()
+		if err != nil || st.Size() != wantSize {
+			_ = f.Close()
+			continue
+		}
+		sum, err := hashFile(f, wantSize)
+		if err != nil || !strings.EqualFold(sum, targetHash) {
+			_ = f.Close()
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+			_ = f.Close()
+			continue
+		}
+		tmpPath := destPath + ".cas.tmp"
+		out, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			_ = f.Close()
+			continue
+		}
+		_, copyErr := io.Copy(out, f)
+		_ = out.Close()
+		_ = f.Close()
+		if copyErr != nil {
+			_ = os.Remove(tmpPath)
+			continue
+		}
+		if err := os.Rename(tmpPath, destPath); err != nil {
+			_ = os.Remove(tmpPath)
+			continue
+		}
+		c.registerCAS(targetHash, destPath)
+		return true
+	}
+	return false
 }
 
 // progressFn 返回适配 transfer 包的进度回调，更新任务并下发（暂停时阻塞数据流直至恢复或取消）。

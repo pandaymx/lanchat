@@ -92,6 +92,7 @@ func isControl(typ string) bool {
 	switch typ {
 	case protocol.FileCancel,
 		protocol.FileReject,
+		protocol.FileDone,
 		protocol.FileReverse,
 		protocol.RelayGrant,
 		protocol.RelayKey,
@@ -148,6 +149,15 @@ func (c *Client) abortCanceled(t *transferTask) bool {
 // finishOrSwitch 处理路径结束：成功 / 对端终止 / 被取消返回 true；其余（失败）返回 false。
 func (c *Client) finishOrSwitch(t *transferTask, out pathOutcome) bool {
 	if out.succeeded() {
+		if t.snap.Direction == "inbound" && t.sha256 != "" && t.destPath != "" {
+			c.registerCAS(t.sha256, t.destPath)
+		}
+		t.done()
+		return true
+	}
+	if out.sig != nil && out.sig.typ == protocol.FileDone {
+		cp := t.setProgress(t.snap.Size, 0)
+		c.listener().OnTransferProgress(cp)
 		t.done()
 		return true
 	}
@@ -195,8 +205,8 @@ func (c *Client) runOutbound(t *transferTask, conn *websocket.Conn) {
 		return
 	}
 
-	// 等接收方接受 / 拒绝。
-	sig, st := c.await(t, protocol.FileAccept)
+	// 等接收方接受 / 拒绝 / 秒传完成（FILE_DONE）。
+	sig, st := c.await(t, protocol.FileAccept, protocol.FileDone)
 	if st == statusCanceled {
 		_ = c.abortCanceled(t)
 		return
@@ -207,6 +217,11 @@ func (c *Client) runOutbound(t *transferTask, conn *websocket.Conn) {
 		return
 	case protocol.FileCancel:
 		t.canceled("peer canceled")
+		return
+	case protocol.FileDone:
+		cp := t.setProgress(t.snap.Size, 0)
+		c.listener().OnTransferProgress(cp)
+		t.done()
 		return
 	case protocol.FileAccept:
 	}

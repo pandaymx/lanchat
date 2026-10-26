@@ -27,6 +27,19 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	if trimmed == "" {
 		return "", errEmptyText
 	}
+	if trimmed == "/status" || strings.HasPrefix(trimmed, "/status ") {
+		diag := c.diagnosticSummary()
+		c.history.append(appapi.ChatMessage{
+			ID:    "status-" + uuid.NewString(),
+			From:  c.selfIDValue(),
+			To:    to,
+			Group: group,
+			Type:  protocol.TextMsg,
+			Text:  "📊 [诊断状态] " + diag,
+			TS:    time.Now().UnixMilli(),
+		})
+		return "status:" + diag, nil
+	}
 	if trimmed == "/fingerprint" || strings.HasPrefix(trimmed, "/fingerprint ") {
 		peerID := to
 		if arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/fingerprint")); arg != "" {
@@ -376,7 +389,33 @@ func (c *Client) sendControlText(to, group, ctrlPlain string) error {
 func (c *Client) selfIDValue() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.selfID
+	if c.selfID != "" {
+		return c.selfID
+	}
+	return c.deviceID
+}
+
+// diagnosticSummary 汇总当前客户端连接、安全指纹、在线成员、频道、CAS 索引与限速状态（M25）。
+func (c *Client) diagnosticSummary() string {
+	c.mu.Lock()
+	conn := string(c.connState)
+	id := c.selfID
+	if id == "" {
+		id = c.deviceID
+	}
+	pub := c.identityPub
+	peers := len(c.peers)
+	channels := len(c.channels)
+	casCount := len(c.casIndex)
+	c.mu.Unlock()
+
+	bw := transfer.BandwidthLimitBps()
+	bwStr := "off"
+	if bw > 0 {
+		bwStr = fmt.Sprintf("%.1fMB/s", float64(bw)/(1024*1024))
+	}
+	return fmt.Sprintf("conn=%s id=%s fp=%s peers=%d channels=%d cas=%d bw=%s",
+		conn, id, IdentityFingerprint(pub), peers, channels, casCount, bwStr)
 }
 
 // connectedConn 返回当前信令连接，未连接报错。

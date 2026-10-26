@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/pandaymx/lanchat/compare/v2.4.0...v3.0.0) (2026-10-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** add mesh hub automatic failover and multi-device history roaming sync (v3.0.0)
+
+### Features
+
+* **core:** add mesh hub automatic failover and multi-device history roaming sync (v3.0.0) ([a5a9845](https://github.com/pandaymx/lanchat/commit/a5a98456980d6654e557c2d115036089a46694db))
+
 ## [2.4.0](https://github.com/pandaymx/lanchat/compare/v2.3.0...v2.4.0) (2026-10-26)
 
 

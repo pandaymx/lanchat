@@ -438,6 +438,18 @@ struct ChatView: View {
                 .help("发送文件或文件夹")
 
                 Button {
+                    pasteOrSyncClipboard()
+                } label: {
+                    Text("📋 剪贴板")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.primary.opacity(0.85))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.plain)
+                .help("一键直发剪贴板截图/文件，或通过 /clip 同步剪贴板文本")
+
+                Button {
                     Task { await store.sendText(to: peer.id, text: "/voice 3") }
                 } label: {
                     Text("🎤 语音")
@@ -574,6 +586,23 @@ struct ChatView: View {
         panel.canChooseFiles = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Task { await store.offerFile(to: peer.id, path: url.path) }
+    }
+
+    private func pasteOrSyncClipboard() {
+        let pb = NSPasteboard.general
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+           let first = urls.first {
+            Task { await store.offerFile(to: peer.id, path: first.path) }
+            return
+        }
+        if let pngData = pb.data(forType: .png), !pngData.isEmpty {
+            let uri = "data:image/png;base64," + pngData.base64EncodedString()
+            Task { await store.offerFile(to: peer.id, path: uri) }
+            return
+        }
+        if let text = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+            Task { await store.sendText(to: peer.id, text: "/clip \(text)") }
+        }
     }
 }
 

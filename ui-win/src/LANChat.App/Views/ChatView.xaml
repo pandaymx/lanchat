@@ -3,7 +3,10 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:LANChat.Models">
-    <Grid Background="#F2F3F5">
+    <Grid Background="#F2F3F5"
+          AllowDrop="True"
+          DragOver="ChatView_DragOver"
+          Drop="ChatView_Drop">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -470,6 +473,16 @@
                                 ToolTipService.ToolTip="通过 P2P 高速直连发送文件"
                                 IsEnabled="{Binding Chat.CanSend}"
                                 Command="{Binding Chat.PickFileCommand}" />
+
+                        <Button Content="📂 文件夹"
+                                FontSize="12"
+                                Padding="8,4"
+                                CornerRadius="6"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                ToolTipService.ToolTip="选择整个文件夹流式传输并在对端自动还原目录树"
+                                IsEnabled="{Binding Chat.CanSend}"
+                                Click="PickFolderButton_Click" />
 
                         <Button Content="🎤 语音"
                                 FontSize="12"

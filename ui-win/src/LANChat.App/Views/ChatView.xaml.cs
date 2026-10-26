@@ -302,6 +302,56 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private async void PickFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is null || _mainWindow is null || !_shell.Chat.CanSend)
+        {
+            return;
+        }
+
+        var folderPicker = new FolderPicker
+        {
+            SuggestedStartLocation = PickerLocationId.DocumentsLibrary,
+        };
+        folderPicker.FileTypeFilter.Add("*");
+        InitializeWithWindow.Initialize(folderPicker, WindowNative.GetWindowHandle(_mainWindow));
+
+        var folder = await folderPicker.PickSingleFolderAsync();
+        if (folder is not null && !string.IsNullOrEmpty(folder.Path))
+        {
+            await _shell.Chat.OfferFileAsync(folder.Path);
+        }
+    }
+
+    private void ChatView_DragOver(object sender, DragEventArgs e)
+    {
+        if (_shell?.Chat.CanSend == true && e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems))
+        {
+            e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy;
+            e.DragUIOverride.Caption = "松开鼠标直传文件或文件夹";
+        }
+    }
+
+    private async void ChatView_Drop(object sender, DragEventArgs e)
+    {
+        if (_shell is null || !_shell.Chat.CanSend)
+        {
+            return;
+        }
+        if (!e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems))
+        {
+            return;
+        }
+        var items = await e.DataView.GetStorageItemsAsync();
+        foreach (var item in items)
+        {
+            if (!string.IsNullOrEmpty(item.Path))
+            {
+                await _shell.Chat.OfferFileAsync(item.Path);
+            }
+        }
+    }
+
     private async void OnIncomingFileOffer(Transfer transfer)
     {
         if (_shell is null || _mainWindow is null)

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.13.0](https://github.com/pandaymx/lanchat/compare/v1.12.0...v1.13.0) (2026-10-26)
+
+
+### Features
+
+* **core:** stream directory tree bundles and auto-unpack on receive (M28) ([e588924](https://github.com/pandaymx/lanchat/commit/e588924568732417205394c06cc40d93b738225f))
+* **server:** support /senddir and /folder commands in TUI client ([cee3c6e](https://github.com/pandaymx/lanchat/commit/cee3c6eb6e16b3cebfc5718dd0a767b8cb68acc5))
+* **ui-linux:** add folder picker toolbar button for directory transfer ([d247040](https://github.com/pandaymx/lanchat/commit/d247040d226b2720f80719e4915a1862078c3ab9))
+* **ui-macos:** support drag-and-drop file and folder transfer in chat view ([fb3db7c](https://github.com/pandaymx/lanchat/commit/fb3db7c190756aa640d00ec994f008d28a9dccbe))
+* **ui-win:** add folder picker and drag-and-drop directory transfer ([7a6ba2a](https://github.com/pandaymx/lanchat/commit/7a6ba2a1eba32c82825b6fecdc56d216744149f0))
+
 ## [1.12.0](https://github.com/pandaymx/lanchat/compare/v1.11.1...v1.12.0) (2026-10-26)
 
 

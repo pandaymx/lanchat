@@ -53,10 +53,7 @@ func startUDPBeacon(ctx context.Context, servicePort int, meta ServerMeta) func(
 
 func serveUDPBeaconConn(ctx context.Context, conn *net.UDPConn, servicePort int, meta ServerMeta) {
 	buf := make([]byte, 2048)
-	for {
-		if ctx.Err() != nil {
-			return
-		}
+	for ctx.Err() == nil {
 		n, remoteAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -133,10 +130,7 @@ func ProbeUDP(ctx context.Context, timeout time.Duration, extraHosts ...string) 
 
 	byKey := map[string]*Server{}
 	buf := make([]byte, 4096)
-	for {
-		if ctx.Err() != nil {
-			break
-		}
+	for ctx.Err() == nil {
 		n, remoteAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
 			break

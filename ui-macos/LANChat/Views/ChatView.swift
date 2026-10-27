@@ -116,10 +116,69 @@ struct ChatView: View {
         store.transfers.filter { $0.state == "active" || $0.state == "pending" }.count
     }
 
+    private var pinnedMessage: ChatMessage? {
+        (store.messages[peer.id] ?? []).last { msg in
+            !msg.revoked && (msg.pinned || msg.text.hasPrefix("📌 "))
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             chatHeader
             Divider()
+
+            if let pinned = pinnedMessage {
+                HStack(spacing: 8) {
+                    Text("📌 [置顶] \(Formatters.splitQuote(Formatters.splitReactions(pinned.text).body).body)")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.orange)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(Color.orange.opacity(0.10))
+                Divider()
+            }
+
+            if inVoiceCall || (store.voiceCall?.state == "in_call" || store.voiceCall?.state == "calling") {
+                HStack(spacing: 8) {
+                    Text("📞 实时低延迟 P2P 语音通话进行中")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(QQPalette.onlineGreen)
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+                .background(QQPalette.onlineGreen.opacity(0.10))
+                Divider()
+            }
+
+            if isScreenSharing, let frameStr = store.latestScreenFrame, !frameStr.isEmpty {
+                VStack(spacing: 6) {
+                    HStack {
+                        Text("🖥️ 实时屏幕共享舞台 · 支持激光笔坐标批注")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.white)
+                        Spacer()
+                        Button {
+                            Task { await store.sendText(to: peer.id, text: "/annotate 0.5 0.5 重点关注此处") }
+                        } label: {
+                            Text("📍 激光批注")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(QQPalette.qqBlue))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.black.opacity(0.85))
+                Divider()
+            }
 
             if showSearchBar {
                 searchHeaderBar
@@ -256,6 +315,23 @@ struct ChatView: View {
                 }
                 .buttonStyle(.plain)
                 .help("开启或停止局域网 P2P 屏幕共享 (/screenshare)")
+
+                Button {
+                    Task { await store.sendText(to: peer.id, text: "/sync 50") }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("🔄 漫游同步")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.primary.opacity(0.05))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("向对端请求离线缺失消息增量漫游同步 (/sync)")
 
                 Button {
                     pickAndOffer()
@@ -472,6 +548,23 @@ struct ChatView: View {
                         }
                     )
                 }
+
+                Button {
+                    Task { await store.sendText(to: peer.id, text: "/sync 50") }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("🔄 漫游同步")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7, style: .continuous)
+                            .fill(Color.primary.opacity(0.05))
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("向对端请求离线缺失消息增量漫游同步 (/sync)")
 
                 Button {
                     pickAndOffer()
@@ -880,6 +973,18 @@ struct BubbleRow: View {
                     .font(.system(size: 13.5))
                     .foregroundColor(isSelf ? .white : .primary)
                     .textSelection(.enabled)
+
+                if splitQuoteBody.body.contains("```") {
+                    Text(splitQuoteBody.body.replacingOccurrences(of: "```", with: "").trimmingCharacters(in: .whitespacesAndNewlines))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(Color(red: 0.89, green: 0.91, blue: 0.94))
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(Color(red: 0.12, green: 0.16, blue: 0.23))
+                        )
+                        .textSelection(.enabled)
+                }
             }
             .padding(.horizontal, 13)
             .padding(.vertical, 9)

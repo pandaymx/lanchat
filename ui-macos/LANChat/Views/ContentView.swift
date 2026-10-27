@@ -328,12 +328,22 @@ private struct QQSessionListColumn: View {
     }
 
     private var filteredPeers: [Peer] {
-        guard !normalizedQuery.isEmpty else { return store.peers }
-        return store.peers.filter { peer in
-            if peer.nickname.lowercased().contains(normalizedQuery) || peer.os.lowercased().contains(normalizedQuery) {
-                return true
+        let base: [Peer]
+        if normalizedQuery.isEmpty {
+            base = store.peers
+        } else {
+            base = store.peers.filter { peer in
+                if peer.nickname.lowercased().contains(normalizedQuery) || peer.os.lowercased().contains(normalizedQuery) {
+                    return true
+                }
+                return !store.searchMessages(in: peer.id, query: normalizedQuery).isEmpty
             }
-            return !store.searchMessages(in: peer.id, query: normalizedQuery).isEmpty
+        }
+        guard activeTab == .messages else { return base }
+        return base.sorted { a, b in
+            let tsA = store.messages[a.id]?.last?.timestamp ?? .distantPast
+            let tsB = store.messages[b.id]?.last?.timestamp ?? .distantPast
+            return tsA > tsB
         }
     }
 

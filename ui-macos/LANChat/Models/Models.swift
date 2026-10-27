@@ -81,6 +81,24 @@ struct HistoryMessage: Codable, Identifiable, Hashable {
     var ts: Int64
 }
 
+struct VoiceCallState: Codable, Hashable {
+    var state: String
+    var peerId: String?
+    var groupId: String?
+    var localAddr: String?
+    var remoteAddr: String?
+    var framesIn: Int64?
+    var framesOut: Int64?
+}
+
+struct ScreenShareState: Codable, Hashable {
+    var active: Bool
+    var peerId: String?
+    var groupId: String?
+    var fps: Int?
+    var latestFrame: String?
+}
+
 struct FullState: Codable {
     var conn: String
     var server: String?
@@ -90,6 +108,8 @@ struct FullState: Codable {
     var transfers: [Transfer]
     var channels: [Channel]
     var messages: [HistoryMessage]?
+    var voiceCall: VoiceCallState?
+    var screenShare: ScreenShareState?
 }
 
 struct ChatMessage: Identifiable, Hashable {

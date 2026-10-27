@@ -16,8 +16,8 @@ android {
         applicationId = "dev.lanchat"
         minSdk = 26
         targetSdk = 36
-        versionCode = 38
-        versionName = "4.2.0"
+        versionCode = 39
+        versionName = "4.3.0"
         ndk {
             abiFilters += listOf("arm64-v8a")
         }

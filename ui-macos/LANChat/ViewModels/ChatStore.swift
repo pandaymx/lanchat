@@ -16,6 +16,8 @@ final class ChatStore: ObservableObject {
     @Published var unreadCounts: [String: Int] = [:]
     @Published var activeThreadKey: String? = "*"
     @Published var e2eeEnabledThreads: Set<String> = []
+    @Published var voiceCall: VoiceCallState? = nil
+    @Published var latestScreenFrame: String? = nil
     @Published var daemonConnected = false
     @Published var updateStatus: String = "内置国内加速节点：ghfast.top · gh-proxy.com · ghproxy.net · mirror.ghproxy.com · ghps.cc"
     @Published var error: String?
@@ -71,6 +73,9 @@ final class ChatStore: ObservableObject {
         let groupId: String; let transferId: String; let haveBitmap: Data
     }
     private struct ChannelsParams: Decodable { let channels: [Channel] }
+    private struct ScreenFrameParams: Decodable {
+        let from: String?; let group: String?; let frame: String; let ts: Int64?
+    }
 
     private func handle(method: String, params: Data) {
         let decoder = JSONDecoder()
@@ -137,6 +142,14 @@ final class ChatStore: ObservableObject {
         case "channel.updated":
             if let p = try? decoder.decode(ChannelsParams.self, from: params) {
                 channels = p.channels
+            }
+        case "call.state":
+            if let p = try? decoder.decode(VoiceCallState.self, from: params) {
+                voiceCall = p
+            }
+        case "screen.frame":
+            if let p = try? decoder.decode(ScreenFrameParams.self, from: params) {
+                latestScreenFrame = p.frame
             }
         default:
             break
@@ -284,6 +297,10 @@ final class ChatStore: ObservableObject {
         peers = state.peers
         transfers = state.transfers
         channels = state.channels
+        voiceCall = state.voiceCall
+        if let frame = state.screenShare?.latestFrame, !frame.isEmpty {
+            latestScreenFrame = frame
+        }
         for m in state.messages ?? [] {
             applyHistoryMessage(m)
         }

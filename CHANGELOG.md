@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/pandaymx/lanchat/compare/v4.1.0...v4.2.0) (2026-10-27)
+
+
+### Features
+
+* **ui-linux:** upgrade Linux GTK4 client to NTQQ 9.x collab stage and contract v1.2 ([353e7cb](https://github.com/pandaymx/lanchat/commit/353e7cb87975f031568f88eed991af4e7b572e27))
+
 ## [4.1.0](https://github.com/pandaymx/lanchat/compare/v4.0.0...v4.1.0) (2026-10-27)
 
 

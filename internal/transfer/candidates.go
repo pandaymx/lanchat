@@ -16,7 +16,8 @@ import (
 // 候选按 IP 排序，使调用方可配合错峰拨号（Happy Eyeballs）；网卡同 /24
 // 优先的排序在接收方拨号侧完成（需要对端参考地址），这里仅保证稳定顺序。
 func candidateAddrs(port string) []string {
-	var ips []net.IP
+	var lanIPs []net.IP
+	var tsIPs []net.IP
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return nil
@@ -25,31 +26,45 @@ func candidateAddrs(port string) []string {
 		if (ifi.Flags & net.FlagUp) == 0 {
 			continue
 		}
-		if isVirtualIfaceName(ifi.Name) {
-			continue
-		}
 		addrs, err := ifi.Addrs()
 		if err != nil {
 			continue
 		}
+		isVirt := isVirtualIfaceName(ifi.Name)
 		for _, addr := range addrs {
 			ip, _, err := net.ParseCIDR(addr.String())
 			if err != nil {
-				continue
+				if parsed := net.ParseIP(strings.TrimSpace(addr.String())); parsed != nil {
+					ip = parsed
+				} else {
+					continue
+				}
 			}
 			v4 := ip.To4()
-			if v4 == nil || v4.IsLoopback() || isCGNATIP(v4) || !v4.IsPrivate() {
+			if v4 == nil || v4.IsLoopback() {
 				continue
 			}
-			ips = append(ips, v4)
+			if isCGNATIP(v4) {
+				tsIPs = append(tsIPs, v4)
+				continue
+			}
+			if !isVirt && v4.IsPrivate() {
+				lanIPs = append(lanIPs, v4)
+			}
 		}
 	}
 
-	sort.Slice(ips, func(i, j int) bool { return ips[i].String() < ips[j].String() })
+	sort.Slice(lanIPs, func(i, j int) bool { return lanIPs[i].String() < lanIPs[j].String() })
+	sort.Slice(tsIPs, func(i, j int) bool { return tsIPs[i].String() < tsIPs[j].String() })
 
-	out := make([]string, 0, len(ips))
-	for _, ip := range ips {
-		out = append(out, net.JoinHostPort(ip.String(), port))
+	seen := map[string]bool{}
+	out := make([]string, 0, len(lanIPs)+len(tsIPs))
+	for _, ip := range append(lanIPs, tsIPs...) {
+		hp := net.JoinHostPort(ip.String(), port)
+		if !seen[hp] {
+			seen[hp] = true
+			out = append(out, hp)
+		}
 	}
 	return out
 }
@@ -90,14 +105,25 @@ func sameSubnet(a, b net.IP) bool {
 	return a[0] == b[0] && a[1] == b[1] && a[2] == b[2]
 }
 
-// preferLocalSubnet 把与本机任一私网网卡 IP 同 /24 的候选排到最前（稳定），
-// 用于多网卡环境优先选直连同网段的对端地址。
+// preferLocalSubnet 按「同 /24 物理网卡直连 > Tailscale CGNAT 直连 > 跨子网私网」对候选地址稳定排序。
 func preferLocalSubnet(candidates []string) []string {
 	local := localPrivateIPv4()
+	tier := func(ip net.IP) int {
+		if ip == nil {
+			return 0
+		}
+		if sharesSubnetWith(ip, local) {
+			return 2
+		}
+		if isCGNATIP(ip) {
+			return 1
+		}
+		return 0
+	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		ci := parseCandidateIP(candidates[i])
 		cj := parseCandidateIP(candidates[j])
-		return sharesSubnetWith(ci, local) && !sharesSubnetWith(cj, local)
+		return tier(ci) > tier(cj)
 	})
 	return candidates
 }

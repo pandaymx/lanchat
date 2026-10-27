@@ -199,6 +199,22 @@ func (b *GossipPeerBook) Add(endpoints ...string) int {
 	return added
 }
 
+// SeedTailscalePeers 自动读取 tailscale status --json 中在线对端的 Tailscale IP 并注入 GossipPeerBook（v4.7.0）。
+func (b *GossipPeerBook) SeedTailscalePeers(defaultPort int) int {
+	if defaultPort <= 0 {
+		defaultPort = 7878
+	}
+	ips := TailscalePeerIPs()
+	if len(ips) == 0 {
+		return 0
+	}
+	eps := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		eps = append(eps, net.JoinHostPort(ip, strconv.Itoa(defaultPort)))
+	}
+	return b.Add(eps...)
+}
+
 // Endpoints 返回按字典序排列的全部已知跨网段节点地址。
 func (b *GossipPeerBook) Endpoints() []string {
 	b.mu.Lock()

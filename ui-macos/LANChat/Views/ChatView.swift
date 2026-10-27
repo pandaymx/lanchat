@@ -260,7 +260,10 @@ struct ChatView: View {
                     Circle()
                         .fill(peer.status == "busy" ? QQPalette.busyOrange : QQPalette.onlineGreen)
                         .frame(width: 6.5, height: 6.5)
-                    Text(peer.status.isEmpty ? "在线 · P2P 直连就绪" : peer.status)
+                    let linkBadge = (ServerInfo.isTailscaleAddress(store.server) || ServerInfo.isTailscaleAddress(peer.status))
+                        ? "🌐 Tailscale 直连"
+                        : "⚡ 局域网直连"
+                    Text("\(peer.status.isEmpty ? "在线" : peer.status) · \(linkBadge)")
                         .font(.system(size: 11.5))
                         .foregroundColor(.secondary)
                 }

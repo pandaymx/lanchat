@@ -203,3 +203,85 @@ func TestUDPBeaconAdvertiseAndProbe(t *testing.T) {
 		t.Fatalf("expected beacon-srv-1 in ProbeUDP results, got %+v", srvs)
 	}
 }
+
+// TestTailscalePeerDiscoveryAndDualStackPriority 验证 v4.7.0 Tailscale 节点 JSON 解析、Gossip 自动注入与 LAN+Tailscale 双栈优先级排序。
+func TestTailscalePeerDiscoveryAndDualStackPriority(t *testing.T) {
+	rawJSON := []byte(`{
+		"BackendState": "Running",
+		"TailscaleIPs": ["100.93.183.47", "fd7a:115c:a1e0::839:b730"],
+		"Self": {
+			"HostName": "jctx-dev",
+			"TailscaleIPs": ["100.93.183.47"],
+			"Online": true
+		},
+		"Peer": {
+			"nodekey:1": {
+				"HostName": "ymx-dev",
+				"TailscaleIPs": ["100.83.15.53", "fd7a:115c:a1e0::1"],
+				"Online": true
+			},
+			"nodekey:2": {
+				"HostName": "tencent-cloud-test",
+				"TailscaleIPs": ["100.105.48.87"],
+				"Online": true
+			},
+			"nodekey:3": {
+				"HostName": "archlinux",
+				"TailscaleIPs": ["100.123.66.17"],
+				"Online": false,
+				"Active": false
+			}
+		}
+	}`)
+
+	ips := ParseTailscaleStatusJSON(rawJSON)
+	if len(ips) != 2 || ips[0] != "100.105.48.87" || ips[1] != "100.83.15.53" {
+		t.Fatalf("ParseTailscaleStatusJSON = %v, want [100.105.48.87 100.83.15.53]", ips)
+	}
+
+	tailscaleCacheMu.Lock()
+	tailscaleStatusProvider = func() ([]byte, error) { return rawJSON, nil }
+	tailscaleCacheExpiresAt = time.Time{}
+	tailscaleCacheMu.Unlock()
+	defer func() {
+		tailscaleCacheMu.Lock()
+		tailscaleStatusProvider = nil
+		tailscaleCacheExpiresAt = time.Time{}
+		tailscaleCacheMu.Unlock()
+	}()
+
+	book := NewGossipPeerBook("")
+	if added := book.SeedTailscalePeers(7878); added != 2 {
+		t.Fatalf("SeedTailscalePeers added = %d, want 2", added)
+	}
+	eps := book.Endpoints()
+	if len(eps) != 2 || eps[0] != "100.105.48.87:7878" || eps[1] != "100.83.15.53:7878" {
+		t.Fatalf("GossipPeerBook.Endpoints() = %v", eps)
+	}
+
+	if !IsTailscaleIP("ws://100.105.48.87:7878/lanchat") || IsTailscaleIP("192.168.1.52:7878") {
+		t.Fatal("IsTailscaleIP classification mismatch")
+	}
+	if LinkModeLabel("100.83.15.53:7878") != "🌐 Tailscale 直连" || LinkModeLabel("192.168.1.52:7878") != "⚡ 局域网直连" {
+		t.Fatal("LinkModeLabel mismatch")
+	}
+
+	_, lanNet, _ := net.ParseCIDR("192.168.1.0/24")
+	// 场景 A：同局域网双栈节点（192.168.1.88 + 100.83.15.53），同子网物理网卡 IP 排第一
+	sameLAN := prioritizeDualStackWithSubnets([]net.IP{
+		net.ParseIP("100.83.15.53"),
+		net.ParseIP("192.168.1.88"),
+	}, []*net.IPNet{lanNet})
+	if len(sameLAN) != 2 || sameLAN[0].String() != "192.168.1.88" {
+		t.Fatalf("expected physical LAN IP 192.168.1.88 first on same subnet, got %v", sameLAN)
+	}
+
+	// 场景 B：跨网段节点（对端内网 10.0.13.4 不在本机子网 + Tailscale 100.105.48.87），Tailscale IP 排第一
+	crossNet := prioritizeDualStackWithSubnets([]net.IP{
+		net.ParseIP("10.0.13.4"),
+		net.ParseIP("100.105.48.87"),
+	}, []*net.IPNet{lanNet})
+	if len(crossNet) != 2 || crossNet[0].String() != "100.105.48.87" {
+		t.Fatalf("expected Tailscale IP 100.105.48.87 first across subnets, got %v", crossNet)
+	}
+}

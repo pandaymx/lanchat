@@ -153,7 +153,18 @@ func (t *blockTransport) listenOn() ([]string, error) {
 		_ = ln.Close()
 		return nil, err
 	}
-	return discover.CandidateAddrs(portNum), nil
+	cands := discover.CandidateAddrs(portNum)
+	seen := make(map[string]bool, len(cands)+4)
+	for _, c := range cands {
+		seen[c] = true
+	}
+	for _, oc := range discover.OverlayCandidateAddrs(portNum) {
+		if !seen[oc] {
+			seen[oc] = true
+			cands = append(cands, oc)
+		}
+	}
+	return cands, nil
 }
 
 func (t *blockTransport) acceptLoop(ln net.Listener) {

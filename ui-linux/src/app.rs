@@ -2829,13 +2829,14 @@ impl AppCtx {
 
     fn refresh_chat_header(&self) {
         let st = self.state.borrow();
+        let server_badge = link_mode_badge(&st.server_addr);
         match &st.current_chat {
             ChatTarget::None => {
                 self.widgets.chat_avatar.set_text(Some("LANChat"));
                 self.widgets.chat_header.set_text("选择一个会话开始聊天");
-                self.widgets
-                    .chat_subtitle
-                    .set_text("P2P 直连加密传输 · 中心节点信令转发");
+                self.widgets.chat_subtitle.set_text(&format!(
+                    "{server_badge} · P2P 直连加密传输 · 中心节点信令转发"
+                ));
                 self.widgets.header_invite_btn.set_visible(false);
                 self.widgets.header_leave_btn.set_visible(false);
             }
@@ -2845,8 +2846,9 @@ impl AppCtx {
                     .chat_header
                     .set_text("📢 局域网全员广播群 (G1)");
                 self.widgets.chat_subtitle.set_text(&format!(
-                    "● 在线成员 {} 人 · 全员广播与 Swarm P2P 文件块分发",
-                    st.peers.len() + 1
+                    "● 在线成员 {} 人 · {} · 全员广播与 Swarm P2P 文件块分发",
+                    st.peers.len() + 1,
+                    server_badge
                 ));
                 self.widgets.header_invite_btn.set_visible(false);
                 self.widgets.header_leave_btn.set_visible(false);
@@ -2860,9 +2862,9 @@ impl AppCtx {
                     } else {
                         "频道成员"
                     };
-                    self.widgets
-                        .chat_subtitle
-                        .set_text(&format!("● {role} · 支持群内聊天与 Swarm 文件分发"));
+                    self.widgets.chat_subtitle.set_text(&format!(
+                        "● {role} · {server_badge} · 支持群内聊天与 Swarm 文件分发"
+                    ));
                     self.widgets
                         .header_invite_btn
                         .set_visible(st.is_channel_owner(cid));
@@ -2873,21 +2875,30 @@ impl AppCtx {
             }
             ChatTarget::Peer(pid) => {
                 if let Some(peer) = st.peer(pid) {
+                    let peer_badge =
+                        if is_tailscale_addr(&peer.status) || is_tailscale_addr(&st.server_addr) {
+                            "🌐 Tailscale 直连"
+                        } else {
+                            "⚡ 局域网直连"
+                        };
                     self.widgets.chat_avatar.set_text(Some(&peer.nickname));
                     self.widgets.chat_header.set_text(&peer.nickname);
                     self.widgets.chat_subtitle.set_text(&format!(
-                        "● {} · {} · P2P TCP 直连就绪",
+                        "● {} · {} · {}",
                         if peer.os.is_empty() { "LAN" } else { &peer.os },
                         if peer.status.is_empty() {
                             "在线"
                         } else {
                             &peer.status
-                        }
+                        },
+                        peer_badge
                     ));
                 } else {
                     self.widgets.chat_avatar.set_text(Some(pid));
                     self.widgets.chat_header.set_text(pid);
-                    self.widgets.chat_subtitle.set_text("● 局域网对端节点");
+                    self.widgets
+                        .chat_subtitle
+                        .set_text(&format!("● 对端节点 · {server_badge}"));
                 }
                 self.widgets.header_invite_btn.set_visible(false);
                 self.widgets.header_leave_btn.set_visible(false);
@@ -2918,25 +2929,31 @@ impl AppCtx {
         let st = self.state.borrow();
         if st.discovered.is_empty() {
             let row = adw::ActionRow::new();
-            row.set_title("暂未扫到局域网节点，可点击上方「自动发现」或直接连接");
+            row.set_title("暂未扫到局域网或 Tailscale 节点，可点击上方「自动发现」或直接连接");
             row.set_sensitive(false);
             self.widgets.server_list.append(&row);
             return;
         }
         for srv in &st.discovered {
             let row = adw::ActionRow::new();
+            let link_badge = link_mode_badge(&srv.addr);
             row.set_title(if srv.name.is_empty() {
                 &srv.addr
             } else {
                 &srv.name
             });
             row.set_subtitle(&format!(
-                "{} · 协议 {}",
+                "{} · {} · 协议 {}",
+                link_badge,
                 server_addr_with_path(srv),
                 srv.version
             ));
             let av = adw::Avatar::new(34, Some(&srv.name), true);
             row.add_prefix(&av);
+            let link_lbl = gtk::Label::new(Some(link_badge));
+            link_lbl.add_css_class("caption-heading");
+            link_lbl.add_css_class("qq-tag-badge");
+            row.add_suffix(&link_lbl);
             let badge = gtk::Label::new(Some(if srv.auth_mode == "none" {
                 "🔓 免密开放"
             } else {
@@ -4233,6 +4250,37 @@ fn server_addr_with_path(srv: &ServerInfo) -> String {
     }
 }
 
+fn is_tailscale_addr(raw: &str) -> bool {
+    let mut s = raw.trim();
+    for p in ["ws://", "wss://", "http://", "https://"] {
+        if let Some(rest) = s.strip_prefix(p) {
+            s = rest;
+            break;
+        }
+    }
+    if let Some((host_port, _)) = s.split_once('/') {
+        s = host_port;
+    }
+    if let Some((host, _)) = s.split_once(':') {
+        s = host;
+    }
+    let parts: Vec<&str> = s.trim().split('.').collect();
+    if parts.len() == 4 {
+        if let (Ok(a), Ok(b)) = (parts[0].parse::<u8>(), parts[1].parse::<u8>()) {
+            return a == 100 && (64..=127).contains(&b);
+        }
+    }
+    false
+}
+
+fn link_mode_badge(addr: &str) -> &'static str {
+    if is_tailscale_addr(addr) {
+        "🌐 Tailscale 直连"
+    } else {
+        "⚡ 局域网直连"
+    }
+}
+
 fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -4535,5 +4583,14 @@ mod tests {
             Some("/9j/4AA=")
         );
         assert_eq!(extract_inline_image_b64("普通文本"), None);
+    }
+
+    #[test]
+    fn tailscale_and_lan_link_badge_classification() {
+        assert!(is_tailscale_addr("100.105.48.87:7878"));
+        assert!(is_tailscale_addr("ws://100.93.183.47:7878/lanchat"));
+        assert!(!is_tailscale_addr("192.168.1.52:7878"));
+        assert_eq!(link_mode_badge("100.83.15.53:7878"), "🌐 Tailscale 直连");
+        assert_eq!(link_mode_badge("192.168.1.52:7878"), "⚡ 局域网直连");
     }
 }

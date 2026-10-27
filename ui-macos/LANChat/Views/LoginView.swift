@@ -441,7 +441,7 @@ private struct ServerRow: View {
                         )
                 }
 
-                Text("\(server.addr) · v\(server.version)")
+                Text("\(server.linkBadgeText) · \(server.addr) · v\(server.version)")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
                     .lineLimit(1)

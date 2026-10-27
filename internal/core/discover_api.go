@@ -78,18 +78,28 @@ func (c *Client) BrowseServers() []appapi.Server {
 
 	entries := b.Snapshot()
 	seenAddr := make(map[string]bool, len(entries)+4)
-	seenID := make(map[string]bool, len(entries)+4)
+	seenID := make(map[string]int, len(entries)+4)
 	out := make([]appapi.Server, 0, len(entries)+4)
 	addSrv := func(srv appapi.Server) {
 		if srv.Addr == "" {
 			return
 		}
-		if seenAddr[srv.Addr] || (srv.ID != "" && seenID[srv.ID]) {
+		if seenAddr[srv.Addr] {
 			return
+		}
+		if srv.ID != "" {
+			if idx, ok := seenID[srv.ID]; ok {
+				// LAN + Tailscale 双栈优先级：同一节点同时存在 Tailscale 与物理局域网地址时，优先升级为物理网卡 IP
+				if discover.IsTailscaleIP(out[idx].Addr) && !discover.IsTailscaleIP(srv.Addr) {
+					seenAddr[srv.Addr] = true
+					out[idx] = srv
+				}
+				return
+			}
 		}
 		seenAddr[srv.Addr] = true
 		if srv.ID != "" {
-			seenID[srv.ID] = true
+			seenID[srv.ID] = len(out)
 		}
 		out = append(out, srv)
 	}
@@ -102,6 +112,9 @@ func (c *Client) BrowseServers() []appapi.Server {
 		addSrv(s)
 	}
 
+	if autoStandby {
+		c.ensureGossipBook().SeedTailscalePeers(7878)
+	}
 	gossipEps := c.GossipEndpoints()
 	if autoStandby {
 		for _, s := range discover.ProbeUDP(c.runCtx, 180*time.Millisecond, gossipEps...) {
@@ -184,11 +197,12 @@ func probeHTTPStatusOnly(hostPort string) (appapi.Server, bool) {
 	}, true
 }
 
-// toAPIServer 把 discover 记录映射为契约结构；地址取首个 IPv4:Port。
+// toAPIServer 把 discover 记录映射为契约结构；地址按「物理局域网 > Tailscale」双栈优先级取最优 IPv4:Port。
 func toAPIServer(s discover.Server) appapi.Server {
 	addr := ""
-	if len(s.Addresses) > 0 {
-		addr = net.JoinHostPort(s.Addresses[0].String(), strconv.Itoa(s.Port))
+	addrs := discover.PrioritizeDualStackAddresses(s.Addresses)
+	if len(addrs) > 0 {
+		addr = net.JoinHostPort(addrs[0].String(), strconv.Itoa(s.Port))
 	}
 	return appapi.Server{
 		Name:     s.Name,

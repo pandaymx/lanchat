@@ -211,6 +211,7 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(ShowLogin));
             SelfId = state.SelfId;
             Chat.SelfId = state.SelfId ?? "";
+            Chat.ServerAddr = state.Server ?? "";
             if (!string.IsNullOrWhiteSpace(state.Nickname) && string.IsNullOrWhiteSpace(Settings.Nickname))
             {
                 Settings.Nickname = state.Nickname;

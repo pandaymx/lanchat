@@ -118,7 +118,7 @@
                                                                FontWeight="SemiBold"
                                                                FontSize="13"
                                                                TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{Binding Addr}"
+                                                    <TextBlock Text="{Binding AddrWithLinkDisplay}"
                                                                FontSize="11"
                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                 </StackPanel>

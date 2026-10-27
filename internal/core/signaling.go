@@ -231,7 +231,13 @@ func (c *Client) establishAddr(ctx context.Context, targetAddr string) (*session
 	}
 	c.mu.Lock()
 	c.selfID = wp.SelfID
-	c.server = wp.AuthMode
+	if c.embeddedAddr != "" && isSameServerAddr(targetAddr, c.embeddedAddr) {
+		c.server = c.embeddedAddr
+	} else if targetAddr != "" {
+		c.server = targetAddr
+	} else {
+		c.server = wp.AuthMode
+	}
 	c.mu.Unlock()
 
 	// USER_LIST 是握手后首帧，同步消化，避免 connected 事件早于在线表。

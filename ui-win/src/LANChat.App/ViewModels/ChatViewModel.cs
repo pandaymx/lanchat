@@ -91,25 +91,29 @@ public sealed partial class ChatViewModel : ViewModelBase
     {
         get
         {
+            var linkBadge = ServerInfo.IsTailscaleAddress(ServerAddr) || ServerInfo.IsTailscaleAddress(CurrentPeer?.Status)
+                ? "🌐 Tailscale 直连"
+                : "⚡ 局域网直连";
+
             if (CurrentChannel is not null)
             {
                 if (CurrentChannel.Id == "*")
                 {
-                    return "● G1 全员广播群 · Swarm P2P 多源并发直连就绪";
+                    return $"● G1 全员广播群 · {linkBadge} · Swarm P2P 多源并发直连就绪";
                 }
                 var topicPart = string.IsNullOrWhiteSpace(CurrentChannel.Topic)
                     ? "G2 自定义频道"
                     : CurrentChannel.Topic;
-                return $"👥 {CurrentChannel.Members.Count} 名成员 · {topicPart}";
+                return $"👥 {CurrentChannel.Members.Count} 名成员 · {linkBadge} · {topicPart}";
             }
 
             if (CurrentPeer is not null)
             {
                 var osPart = string.IsNullOrWhiteSpace(CurrentPeer.Os) ? "LAN" : CurrentPeer.Os;
-                return $"● 在线 ({osPart}) · P2P 高速直连就绪";
+                return $"● 在线 ({osPart}) · {linkBadge} · P2P 高速直连就绪";
             }
 
-            return "从左侧选择在线好友、全员广播群或 G2 频道开始交流";
+            return $"从左侧选择在线好友、全员广播群或 G2 频道开始交流 · {linkBadge}";
         }
     }
 
@@ -719,6 +723,9 @@ public sealed partial class ChatViewModel : ViewModelBase
 
     /// <summary>当前用户 id（由 Shell 随 State 注入）。</summary>
     public string SelfId { get; set; } = "";
+
+    /// <summary>当前连接的服务器地址（由 Shell 随 State 注入，用于判定 ⚡ 局域网直连 / 🌐 Tailscale 直连）。</summary>
+    public string ServerAddr { get; set; } = "";
 
     private Peer? ResolvePeer(string peerId) => PeerResolver?.Invoke(peerId);
 

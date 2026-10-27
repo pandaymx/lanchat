@@ -1504,7 +1504,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             };
             if target.key().is_some() {
                 cx.select_chat_target(target.clone());
-                send_text_to_target(&cx, &target, "/call accept");
+                invoke_accept_voice_call(&cx, &target);
                 cx.toast("🟢 已接听实时语音通话，建立双向 UDP 音频流");
             }
         }
@@ -1528,7 +1528,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 cx.state.borrow().current_chat.clone()
             };
             if target.key().is_some() {
-                send_text_to_target(&cx, &target, "/call hangup");
+                invoke_stop_voice_call(&cx, &target);
             }
             cx.widgets.call_bar.set_visible(false);
             cx.widgets.header_call_btn.set_label("📞 语音通话");
@@ -1547,25 +1547,15 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             let cur_label = btn.label().map(|s| s.to_string()).unwrap_or_default();
             if cur_label.contains("挂断") {
                 btn.set_label("📞 语音通话");
-                let cmd = if target.is_channel() {
-                    "/voiceroom leave"
-                } else {
-                    "/call stop"
-                };
-                send_text_to_target(&cx, &target, cmd);
+                invoke_stop_voice_call(&cx, &target);
             } else {
                 btn.set_label("📵 挂断语音");
-                let cmd = if target.is_channel() {
-                    "/voiceroom join"
-                } else {
-                    "/call start"
-                };
-                send_text_to_target(&cx, &target, cmd);
+                invoke_start_voice_call(&cx, &target);
             }
         }
     ));
 
-    // 顶部局域网屏幕投屏与多端漫游同步快捷按钮 (v3.2.0)
+    // 顶部局域网屏幕投屏与多端漫游同步快捷按钮 (v3.2.0 / 契约 v1.3)
     ctx.widgets.header_screen_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -1578,11 +1568,11 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             let cur_label = btn.label().map(|s| s.to_string()).unwrap_or_default();
             if cur_label.contains("停止") {
                 btn.set_label("🖥️ 屏幕投屏");
-                send_text_to_target(&cx, &target, "/screenshare stop");
+                invoke_stop_screen_share(&cx, &target);
                 cx.toast("已停止局域网屏幕投屏");
             } else {
                 btn.set_label("⏹ 停止投屏");
-                send_text_to_target(&cx, &target, "/screenshare start 15");
+                invoke_start_screen_share(&cx, &target, 15);
                 cx.toast("🖥️ 已开启 15fps 局域网屏幕投屏");
             }
         }
@@ -1608,12 +1598,12 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             if target.key().is_none() {
                 return;
             }
-            send_text_to_target(&cx, &target, "/annotate 0.5,0.5 重点关注此处");
+            invoke_send_screen_annotation(&cx, &target, 0.5, 0.5, "重点关注此处");
             cx.toast("📍 已发送屏幕共享激光笔坐标批注");
         }
     ));
 
-    // 点击实时投屏画面直接发送归一化坐标激光笔红点批注（v4.8.0）
+    // 点击实时投屏画面直接发送归一化坐标激光笔红点批注（v4.8.0 / 契约 v1.3）
     let screen_click = gtk::GestureClick::new();
     screen_click.connect_released(clone!(
         #[strong(rename_to = cx)]
@@ -1627,11 +1617,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             let h = cx.widgets.screen_pic.height().max(1) as f64;
             let norm_x = (x / w).clamp(0.0, 1.0);
             let norm_y = (y / h).clamp(0.0, 1.0);
-            send_text_to_target(
-                &cx,
-                &target,
-                &format!("/annotate {norm_x:.3},{norm_y:.3} 🔴 激光笔点击批注"),
-            );
+            invoke_send_screen_annotation(&cx, &target, norm_x, norm_y, "🔴 激光笔点击批注");
             cx.toast(&format!("📍 激光笔红点批注 ({norm_x:.2}, {norm_y:.2})"));
         }
     ));
@@ -1792,6 +1778,114 @@ fn send_text_to_target(ctx: &Rc<AppCtx>, target: &ChatTarget, text: &str) {
                     .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
             });
             let _ = tx.try_send(UiEvent::TextSent(key, group, owned_text, res));
+        });
+    }
+}
+
+fn resolve_target_to_group(target: &ChatTarget) -> (String, String) {
+    let Some(key) = target.key().map(|s| s.to_string()) else {
+        return (String::new(), String::new());
+    };
+    if target.is_channel() {
+        (String::new(), key)
+    } else {
+        (key, String::new())
+    }
+}
+
+fn invoke_start_voice_call(ctx: &Rc<AppCtx>, target: &ChatTarget) {
+    let (to, group) = resolve_target_to_group(target);
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "to": to, "group": group });
+            let _ = ipc.invoke("StartVoiceCall", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_accept_voice_call(ctx: &Rc<AppCtx>, target: &ChatTarget) {
+    let (to, group) = resolve_target_to_group(target);
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "to": to, "group": group, "remoteUDP": "" });
+            let _ = ipc.invoke("AcceptVoiceCall", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_stop_voice_call(ctx: &Rc<AppCtx>, target: &ChatTarget) {
+    let (to, group) = resolve_target_to_group(target);
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "to": to, "group": group });
+            let _ = ipc.invoke("StopVoiceCall", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_start_screen_share(ctx: &Rc<AppCtx>, target: &ChatTarget, fps: i32) {
+    let (to, group) = resolve_target_to_group(target);
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "to": to, "group": group, "fps": fps });
+            let _ = ipc.invoke("StartScreenShare", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_stop_screen_share(ctx: &Rc<AppCtx>, target: &ChatTarget) {
+    let (to, group) = resolve_target_to_group(target);
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "to": to, "group": group });
+            let _ = ipc.invoke("StopScreenShare", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_send_screen_annotation(
+    ctx: &Rc<AppCtx>,
+    target: &ChatTarget,
+    norm_x: f64,
+    norm_y: f64,
+    note: &str,
+) {
+    let (to, group) = resolve_target_to_group(target);
+    let note_owned = note.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "to": to,
+                "group": group,
+                "normX": norm_x,
+                "normY": norm_y,
+                "note": note_owned,
+            });
+            let _ = ipc.invoke("SendScreenAnnotation", Some(&body)).await;
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_collab_advanced_rpcs(
+    ctx: &Rc<AppCtx>,
+    target: &ChatTarget,
+    dir_path: &str,
+    subject: &str,
+) {
+    let (to, group) = resolve_target_to_group(target);
+    let dir_owned = dir_path.to_string();
+    let sub_owned = subject.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let sync_body = serde_json::json!({ "to": to, "group": group, "dirPath": dir_owned });
+            let _ = ipc.invoke("SyncFolder", Some(&sync_body)).await;
+            let issue_body =
+                serde_json::json!({ "subject": sub_owned, "org": "LANChat", "ttlSec": 86400 });
+            let _ = ipc.invoke("IssueTrustCert", Some(&issue_body)).await;
+            let verify_body = serde_json::json!({ "token": sub_owned, "rootPub": "" });
+            let _ = ipc.invoke("VerifyTrustCert", Some(&verify_body)).await;
+            let _ = ipc.invoke::<()>("RunNetworkDiagnostics", None).await;
         });
     }
 }

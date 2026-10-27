@@ -38,9 +38,23 @@ var handlers = map[string]handler{
 	"ChannelCreate":    hChannelCreate,
 	"ChannelJoin":      hChannelJoin,
 	"ChannelInvite":    hChannelInvite,
-	"ChannelLeave":     hChannelLeave,
+	"ChannelLeave":          hChannelLeave,
 	"ChannelList": func(api appapi.API, _ json.RawMessage) (interface{}, *rpcErr) {
 		return api.ChannelList(), nil
+	},
+	"StartVoiceCall":       hStartVoiceCall,
+	"AcceptVoiceCall":      hAcceptVoiceCall,
+	"StopVoiceCall":        hStopVoiceCall,
+	"StartScreenShare":     hStartScreenShare,
+	"StopScreenShare":      hStopScreenShare,
+	"SendScreenAnnotation": hSendScreenAnnotation,
+	"SyncFolder":           hSyncFolder,
+	"IssueTrustCert":       hIssueTrustCert,
+	"VerifyTrustCert":      hVerifyTrustCert,
+	"RunNetworkDiagnostics": func(api appapi.API, _ json.RawMessage) (interface{}, *rpcErr) {
+		return struct {
+			Report string `json:"report"`
+		}{Report: api.RunNetworkDiagnostics()}, nil
 	},
 }
 
@@ -301,4 +315,184 @@ func hChannelLeave(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
 		return nil, apiErr(err)
 	}
 	return struct{}{}, nil
+}
+
+type voiceCallTargetParams struct {
+	To    string `json:"to"`
+	Group string `json:"group"`
+}
+
+func hStartVoiceCall(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[voiceCallTargetParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	status, err := api.StartVoiceCall(p.To, p.Group)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: status}, nil
+}
+
+type acceptVoiceCallParams struct {
+	To        string `json:"to"`
+	Group     string `json:"group"`
+	RemoteUDP string `json:"remoteUDP"`
+}
+
+func hAcceptVoiceCall(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p acceptVoiceCallParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[acceptVoiceCallParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	status, err := api.AcceptVoiceCall(p.To, p.Group, p.RemoteUDP)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: status}, nil
+}
+
+func hStopVoiceCall(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p voiceCallTargetParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[voiceCallTargetParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	if err := api.StopVoiceCall(p.To, p.Group); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+type startScreenShareParams struct {
+	To    string `json:"to"`
+	Group string `json:"group"`
+	FPS   int    `json:"fps"`
+}
+
+func hStartScreenShare(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[startScreenShareParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	status, err := api.StartScreenShare(p.To, p.Group, p.FPS)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: status}, nil
+}
+
+func hStopScreenShare(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p voiceCallTargetParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[voiceCallTargetParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	if err := api.StopScreenShare(p.To, p.Group); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+type sendScreenAnnotationParams struct {
+	To    string  `json:"to"`
+	Group string  `json:"group"`
+	NormX float64 `json:"normX"`
+	NormY float64 `json:"normY"`
+	Note  string  `json:"note"`
+}
+
+func hSendScreenAnnotation(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[sendScreenAnnotationParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.SendScreenAnnotation(p.To, p.Group, p.NormX, p.NormY, p.Note); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+type syncFolderParams struct {
+	To      string `json:"to"`
+	Group   string `json:"group"`
+	DirPath string `json:"dirPath"`
+}
+
+func hSyncFolder(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[syncFolderParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if strings.TrimSpace(p.DirPath) == "" {
+		return nil, &rpcErr{code: codeInvalidParam, message: "dirPath 不能为空"}
+	}
+	synced, err := api.SyncFolder(p.To, p.Group, p.DirPath)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Synced int `json:"synced"`
+	}{Synced: synced}, nil
+}
+
+type issueTrustCertParams struct {
+	Subject string `json:"subject"`
+	Org     string `json:"org"`
+	TTLSec  int64  `json:"ttlSec"`
+}
+
+func hIssueTrustCert(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[issueTrustCertParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if strings.TrimSpace(p.Subject) == "" {
+		return nil, &rpcErr{code: codeInvalidParam, message: "subject 不能为空"}
+	}
+	token, err := api.IssueTrustCert(p.Subject, p.Org, p.TTLSec)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Token string `json:"token"`
+	}{Token: token}, nil
+}
+
+type verifyTrustCertParams struct {
+	Token   string `json:"token"`
+	RootPub string `json:"rootPub"`
+}
+
+func hVerifyTrustCert(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[verifyTrustCertParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if strings.TrimSpace(p.Token) == "" {
+		return nil, &rpcErr{code: codeInvalidParam, message: "token 不能为空"}
+	}
+	identity, err := api.VerifyTrustCert(p.Token, p.RootPub)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Identity string `json:"identity"`
+	}{Identity: identity}, nil
 }

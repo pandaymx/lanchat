@@ -206,12 +206,22 @@ func (c *Client) SyncHistory(to string, group string, sinceTs int64) (int, error
 	return c.core.SyncHistoryWithPeer(to, group, sinceTs)
 }
 
-// SyncFolder 扫描本地文件夹并执行 P2P 增量块去重同步（v3.4.0）。
+// SyncFolder 扫描本地文件夹并执行 P2P 增量块去重同步（v3.4.0 / 契约 v1.3）。
 func (c *Client) SyncFolder(to string, group string, dirPath string) (int, error) {
-	return c.core.SyncFolderWithPeer(to, group, dirPath)
+	return c.core.SyncFolder(to, group, dirPath)
 }
 
-// RunNetworkDiagnostics 返回局域网与跨网段链路诊断雷达摘要（v4.0.0）。
+// IssueTrustCert 使用本机 Ed25519 根密钥签发组织节点准入证书（契约 v1.3）。
+func (c *Client) IssueTrustCert(subject string, org string, ttlSec int64) (string, error) {
+	return c.core.IssueTrustCert(subject, org, ttlSec)
+}
+
+// VerifyTrustCert 校验 Ed25519 组织节点准入证书（契约 v1.3）。
+func (c *Client) VerifyTrustCert(token string, rootPub string) (string, error) {
+	return c.core.VerifyTrustCert(token, rootPub)
+}
+
+// RunNetworkDiagnostics 返回局域网与跨网段链路诊断雷达摘要（v4.0.0 / 契约 v1.3）。
 func (c *Client) RunNetworkDiagnostics() string {
 	return c.core.RunNetworkDiagnostics()
 }

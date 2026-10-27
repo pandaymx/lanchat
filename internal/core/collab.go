@@ -1511,6 +1511,38 @@ func (c *Client) SyncFolderWithPeer(to, group, dirPath string) (int, error) {
 	return len(changedFiles), nil
 }
 
+// SyncFolder 实现 appapi.API 契约 v1.3 显式增量目录同步接口，委托 SyncFolderWithPeer。
+func (c *Client) SyncFolder(to, group, dirPath string) (int, error) {
+	return c.SyncFolderWithPeer(to, group, dirPath)
+}
+
+// IssueTrustCert 实现 appapi.API 契约 v1.3 显式签发组织准入证书接口，返回 "token|rootPubB64"。
+func (c *Client) IssueTrustCert(subject, org string, ttlSec int64) (string, error) {
+	if ttlSec <= 0 {
+		ttlSec = 86400 * 30
+	}
+	tok, pub, err := c.IssueNodeCertificate(subject, org, ttlSec)
+	if err != nil {
+		return "", err
+	}
+	return tok + "|" + pub, nil
+}
+
+// VerifyTrustCert 实现 appapi.API 契约 v1.3 显式校验组织准入证书接口，返回 "subject@org"。
+func (c *Client) VerifyTrustCert(token, rootPub string) (string, error) {
+	token = strings.TrimSpace(token)
+	rootPub = strings.TrimSpace(rootPub)
+	if parts := strings.SplitN(token, "|", 2); len(parts) == 2 && rootPub == "" {
+		token = parts[0]
+		rootPub = parts[1]
+	}
+	sub, org, ok := VerifyNodeCertificate(token, rootPub)
+	if !ok {
+		return "", fmt.Errorf("core: invalid or expired trust certificate")
+	}
+	return sub + "@" + org, nil
+}
+
 // RunNetworkDiagnostics 生成局域网与跨网段（Tailscale/WireGuard）链路质量与节点状态诊断雷达摘要（v4.0.0）。
 func (c *Client) RunNetworkDiagnostics() string {
 	c.mu.Lock()

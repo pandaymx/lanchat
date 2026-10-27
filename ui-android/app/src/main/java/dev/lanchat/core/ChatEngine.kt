@@ -143,6 +143,43 @@ class ChatEngine {
     suspend fun channelList(): List<Channel> =
         ioOp { decodeChannels(requireClient().channelListJSON()) }
 
+    // ---- 契约 v1.3 显式协作 RPC 绑定方法 ----
+
+    suspend fun startVoiceCall(to: String, group: String = ""): String =
+        ioOp { requireClient().startVoiceCall(to, group) }
+
+    suspend fun acceptVoiceCall(to: String, group: String = "", remoteUDP: String = ""): String =
+        ioOp { requireClient().acceptVoiceCall(to, group, remoteUDP) }
+
+    suspend fun stopVoiceCall(to: String, group: String = ""): Unit =
+        ioOp { requireClient().stopVoiceCall(to, group) }
+
+    suspend fun startScreenShare(to: String, group: String = "", fps: Long = 15L): String =
+        ioOp { requireClient().startScreenShare(to, group, fps) }
+
+    suspend fun stopScreenShare(to: String, group: String = ""): Unit =
+        ioOp { requireClient().stopScreenShare(to, group) }
+
+    suspend fun sendScreenAnnotation(
+        to: String,
+        group: String = "",
+        normX: Double,
+        normY: Double,
+        note: String = "",
+    ): Unit = ioOp { requireClient().sendScreenAnnotation(to, group, normX, normY, note) }
+
+    suspend fun syncFolder(to: String, group: String = "", dirPath: String): Long =
+        ioOp { requireClient().syncFolder(to, group, dirPath) }
+
+    suspend fun issueTrustCert(subject: String, org: String = "LANChat", ttlSec: Long = 86400L): String =
+        ioOp { requireClient().issueTrustCert(subject, org, ttlSec) }
+
+    suspend fun verifyTrustCert(token: String, rootPub: String = ""): String =
+        ioOp { requireClient().verifyTrustCert(token, rootPub) }
+
+    suspend fun runNetworkDiagnostics(): String =
+        ioOp { requireClient().runNetworkDiagnostics() }
+
     private suspend fun <T> ioOp(block: () -> T): T =
         withContext(Dispatchers.IO) {
             try {

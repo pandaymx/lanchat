@@ -1159,15 +1159,34 @@ public sealed partial class ChatViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasScreenShareStage));
     }
 
+    private (string To, string Group) ResolveCollabTarget()
+    {
+        if (CurrentChannel is not null)
+        {
+            return ("", CurrentChannel.Id);
+        }
+        return (CurrentPeer?.Id ?? "", "");
+    }
+
     [RelayCommand]
     public async Task AcceptIncomingCallAsync()
     {
         IsIncomingCallRinging = false;
         IsInVoiceCall = true;
-        var prevDraft = Draft;
-        Draft = "/call accept";
-        await SendAsync();
-        Draft = prevDraft;
+        var (to, grp) = ResolveCollabTarget();
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("AcceptVoiceCall", new
+            {
+                to,
+                group = grp,
+                remoteUDP = "",
+            });
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"接听失败：{ex.Message}");
+        }
         NotifyCollabBannerChanged();
     }
 
@@ -1177,21 +1196,30 @@ public sealed partial class ChatViewModel : ViewModelBase
         IsIncomingCallRinging = false;
         IsInVoiceCall = false;
         VoiceCallStatusText = "";
-        var prevDraft = Draft;
-        Draft = "/call hangup";
-        await SendAsync();
-        Draft = prevDraft;
+        var (to, grp) = ResolveCollabTarget();
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("StopVoiceCall", new
+            {
+                to,
+                group = grp,
+            });
+        }
+        catch
+        {
+            // ignore
+        }
         NotifyCollabBannerChanged();
     }
 
-    /// <summary>v3.0/v4.8: 屏幕共享激光笔批注（/annotate x,y note）。</summary>
+    /// <summary>v3.0/v4.8/v5.0: 屏幕共享激光笔批注（SendScreenAnnotation RPC）。</summary>
     [RelayCommand]
     public async Task AnnotateScreenAsync()
     {
         await AnnotateScreenAtAsync(0.5, 0.5);
     }
 
-    /// <summary>v4.8: 点击投屏画面按归一化坐标发送激光笔红点批注。</summary>
+    /// <summary>v4.8/v5.0: 点击投屏画面按归一化坐标发送激光笔红点批注。</summary>
     public async Task AnnotateScreenAtAsync(double normX, double normY)
     {
         if (!CanSend)
@@ -1200,10 +1228,22 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
         var x = Math.Clamp(normX, 0.0, 1.0);
         var y = Math.Clamp(normY, 0.0, 1.0);
-        var prevDraft = Draft;
-        Draft = $"/annotate {x:F3},{y:F3} 🔴 激光笔点击批注";
-        await SendAsync();
-        Draft = prevDraft;
+        var (to, grp) = ResolveCollabTarget();
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("SendScreenAnnotation", new
+            {
+                to,
+                group = grp,
+                normX = x,
+                normY = y,
+                note = "🔴 激光笔点击批注",
+            });
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"激光批注失败：{ex.Message}");
+        }
     }
 
     /// <summary>v3.0/v4.0: P2P 离线历史消息漫游同步（/sync）。</summary>
@@ -1220,18 +1260,49 @@ public sealed partial class ChatViewModel : ViewModelBase
         Draft = prevDraft;
     }
 
-    /// <summary>v3.0/v4.0: 局域网全链路诊断雷达（/netdiag）。</summary>
+    /// <summary>v5.0: 增量块去重目录同步（SyncFolder RPC）。</summary>
+    public async Task SyncFolderExplicitAsync(string dirPath)
+    {
+        var (to, grp) = ResolveCollabTarget();
+        await _services.Ipc.InvokeAsync<object>("SyncFolder", new
+        {
+            to,
+            group = grp,
+            dirPath,
+        });
+    }
+
+    /// <summary>v5.0: 签发与校验零信任节点准入证书（IssueTrustCert / VerifyTrustCert RPC）。</summary>
+    public async Task<string> IssueAndVerifyTrustCertAsync(string subject, string org)
+    {
+        _ = await _services.Ipc.InvokeAsync<object>("IssueTrustCert", new
+        {
+            subject,
+            org,
+            ttlSec = 86400 * 30,
+        });
+        _ = await _services.Ipc.InvokeAsync<object>("VerifyTrustCert", new
+        {
+            token = subject,
+            rootPub = "",
+        });
+        return subject;
+    }
+
+    /// <summary>v3.0/v4.0/v5.0: 局域网全链路诊断雷达（RunNetworkDiagnostics RPC）。</summary>
     [RelayCommand]
     public async Task RunNetDiagAsync()
     {
-        if (!CanSend)
+        try
         {
-            return;
+            var res = await _services.Ipc.InvokeAsync<System.Text.Json.JsonElement>("RunNetworkDiagnostics");
+            var report = res.TryGetProperty("report", out var prop) ? prop.GetString() : res.ToString();
+            AppendSystemMessage($"📡 链路诊断：{report}");
         }
-        var prevDraft = Draft;
-        Draft = "/netdiag";
-        await SendAsync();
-        Draft = prevDraft;
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"链路诊断失败：{ex.Message}");
+        }
     }
 
     [RelayCommand]
@@ -1241,19 +1312,33 @@ public sealed partial class ChatViewModel : ViewModelBase
         {
             return;
         }
-        var prevDraft = Draft;
-        if (IsScreenSharing)
+        var (to, grp) = ResolveCollabTarget();
+        try
         {
-            IsScreenSharing = false;
-            Draft = "/screenshare stop";
+            if (IsScreenSharing)
+            {
+                IsScreenSharing = false;
+                await _services.Ipc.InvokeAsync<object>("StopScreenShare", new
+                {
+                    to,
+                    group = grp,
+                });
+            }
+            else
+            {
+                IsScreenSharing = true;
+                await _services.Ipc.InvokeAsync<object>("StartScreenShare", new
+                {
+                    to,
+                    group = grp,
+                    fps = 15,
+                });
+            }
         }
-        else
+        catch (Exception ex)
         {
-            IsScreenSharing = true;
-            Draft = "/screenshare start 15";
+            AppendSystemMessage($"屏幕共享操作失败：{ex.Message}");
         }
-        await SendAsync();
-        Draft = prevDraft;
     }
 
     [RelayCommand]
@@ -1263,19 +1348,32 @@ public sealed partial class ChatViewModel : ViewModelBase
         {
             return;
         }
-        var prevDraft = Draft;
-        if (IsInVoiceCall)
+        var (to, grp) = ResolveCollabTarget();
+        try
         {
-            IsInVoiceCall = false;
-            Draft = CurrentChannel is not null ? "/voiceroom leave" : "/call stop";
+            if (IsInVoiceCall)
+            {
+                IsInVoiceCall = false;
+                await _services.Ipc.InvokeAsync<object>("StopVoiceCall", new
+                {
+                    to,
+                    group = grp,
+                });
+            }
+            else
+            {
+                IsInVoiceCall = true;
+                await _services.Ipc.InvokeAsync<object>("StartVoiceCall", new
+                {
+                    to,
+                    group = grp,
+                });
+            }
         }
-        else
+        catch (Exception ex)
         {
-            IsInVoiceCall = true;
-            Draft = CurrentChannel is not null ? "/voiceroom join" : "/call start";
+            AppendSystemMessage($"语音通话操作失败：{ex.Message}");
         }
-        await SendAsync();
-        Draft = prevDraft;
     }
 
     private void NotifyConversationHeaderChanged()

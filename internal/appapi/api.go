@@ -191,6 +191,29 @@ type API interface {
 	ChannelLeave(channelID string) error
 	// ChannelList 列出当前可见频道。
 	ChannelList() []Channel
+
+	// StartVoiceCall 发起 1:1 或频道实时 UDP 语音呼叫（契约 v1.3）。
+	StartVoiceCall(to, group string) (status string, err error)
+	// AcceptVoiceCall 接听来电并绑定对端 UDP 语音地址（契约 v1.3）。
+	AcceptVoiceCall(to, group, remoteUDP string) (status string, err error)
+	// StopVoiceCall 挂断当前实时语音通话（契约 v1.3）。
+	StopVoiceCall(to, group string) error
+
+	// StartScreenShare 开启局域网低延迟 P2P 屏幕共享（契约 v1.3）。
+	StartScreenShare(to, group string, fps int) (status string, err error)
+	// StopScreenShare 停止屏幕共享（契约 v1.3）。
+	StopScreenShare(to, group string) error
+	// SendScreenAnnotation 在屏幕共享会话中发送归一化坐标激光笔批注（契约 v1.3）。
+	SendScreenAnnotation(to, group string, normX, normY float64, note string) error
+
+	// SyncFolder 扫描本地目录并执行 P2P 增量块去重同步（契约 v1.3）。
+	SyncFolder(to, group, dirPath string) (synced int, err error)
+	// IssueTrustCert 使用本机 Ed25519 根密钥签发组织节点准入证书（契约 v1.3）。
+	IssueTrustCert(subject, org string, ttlSec int64) (token string, err error)
+	// VerifyTrustCert 校验 Ed25519 组织节点准入证书（契约 v1.3）。
+	VerifyTrustCert(token, rootPub string) (identity string, err error)
+	// RunNetworkDiagnostics 执行局域网/Tailscale 全链路网络诊断雷达（契约 v1.3）。
+	RunNetworkDiagnostics() string
 }
 
 // Listener 是 core → UI 的事件回调集合（notification）。

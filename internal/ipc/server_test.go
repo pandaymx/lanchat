@@ -111,6 +111,54 @@ func (s *stubAPI) ChannelLeave(id string) error {
 
 func (s *stubAPI) ChannelList() []appapi.Channel { return s.channels }
 
+func (s *stubAPI) StartVoiceCall(to, group string) (string, error) {
+	s.gotName = to + ":" + group
+	return "calling:" + to, nil
+}
+
+func (s *stubAPI) AcceptVoiceCall(to, group, remoteUDP string) (string, error) {
+	s.gotName = to + ":" + group + ":" + remoteUDP
+	return "active:" + to, nil
+}
+
+func (s *stubAPI) StopVoiceCall(to, group string) error {
+	s.gotName = to + ":" + group
+	return nil
+}
+
+func (s *stubAPI) StartScreenShare(to, group string, fps int) (string, error) {
+	s.gotName = to + ":" + group
+	return "sharing", nil
+}
+
+func (s *stubAPI) StopScreenShare(to, group string) error {
+	s.gotName = to + ":" + group
+	return nil
+}
+
+func (s *stubAPI) SendScreenAnnotation(to, group string, normX, normY float64, note string) error {
+	s.gotName = note
+	return nil
+}
+
+func (s *stubAPI) SyncFolder(to, group, dirPath string) (int, error) {
+	s.gotPath = dirPath
+	return 3, nil
+}
+
+func (s *stubAPI) IssueTrustCert(subject, org string, ttlSec int64) (string, error) {
+	s.gotName = subject + "@" + org
+	return "cert-tok|pub-b64", nil
+}
+
+func (s *stubAPI) VerifyTrustCert(token, rootPub string) (string, error) {
+	return "dev-node@LANChat-Org", nil
+}
+
+func (s *stubAPI) RunNetworkDiagnostics() string {
+	return "netdiag:conn=connected peers=2"
+}
+
 // startServer 在临时本地传输（Unix socket / 命名管道）上启动服务端，
 // 返回服务端与客户端连接。
 func startServer(t *testing.T, api appapi.API) (*Server, net.Conn) {
@@ -445,6 +493,46 @@ func TestChannelCreateAndJoin(t *testing.T) {
 	resp = call(t, c, "ChannelLeave", map[string]string{"channelID": "cid-9"})
 	if resp.Error != nil || api.gotTransferID != "cid-9" {
 		t.Fatalf("ChannelLeave 失败: %+v", resp.Error)
+	}
+}
+
+func TestCollabV13Methods(t *testing.T) {
+	api := &stubAPI{}
+	srv, c := startServer(t, api)
+	defer srv.Close()
+	defer c.Close()
+
+	if resp := call(t, c, "StartVoiceCall", map[string]string{"to": "bob"}); resp.Error != nil {
+		t.Fatalf("StartVoiceCall failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "AcceptVoiceCall", map[string]string{"to": "bob", "remoteUDP": "127.0.0.1:49999"}); resp.Error != nil {
+		t.Fatalf("AcceptVoiceCall failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "StopVoiceCall", map[string]string{"to": "bob"}); resp.Error != nil {
+		t.Fatalf("StopVoiceCall failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "StartScreenShare", map[string]interface{}{"to": "bob", "fps": 15}); resp.Error != nil {
+		t.Fatalf("StartScreenShare failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "SendScreenAnnotation", map[string]interface{}{
+		"to": "bob", "normX": 0.5, "normY": 0.5, "note": "laser",
+	}); resp.Error != nil {
+		t.Fatalf("SendScreenAnnotation failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "StopScreenShare", map[string]string{"to": "bob"}); resp.Error != nil {
+		t.Fatalf("StopScreenShare failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "SyncFolder", map[string]string{"to": "bob", "dirPath": "/tmp/sync"}); resp.Error != nil {
+		t.Fatalf("SyncFolder failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "IssueTrustCert", map[string]interface{}{"subject": "node-1", "org": "QXJ", "ttlSec": 3600}); resp.Error != nil {
+		t.Fatalf("IssueTrustCert failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "VerifyTrustCert", map[string]string{"token": "tok", "rootPub": "pub"}); resp.Error != nil {
+		t.Fatalf("VerifyTrustCert failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "RunNetworkDiagnostics", nil); resp.Error != nil {
+		t.Fatalf("RunNetworkDiagnostics failed: %v", resp.Error)
 	}
 }
 

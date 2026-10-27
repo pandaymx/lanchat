@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.2",
+  "schemaVersion": "1.3",
   "description": "LANChat daemon <-> 五端 UI 契约（JSON-RPC 2.0）。唯一真源为 internal/appapi；禁止任何端使用本文件之外的方法、事件或字段。",
   "transport": {
     "protocol": "jsonrpc-2.0",
@@ -99,6 +99,46 @@
     "ChannelList": {
       "params": [],
       "result": { "type": "Channel[]" }
+    },
+    "StartVoiceCall": {
+      "params": { "to": "string?", "group": "string?" },
+      "result": { "status": "string" }
+    },
+    "AcceptVoiceCall": {
+      "params": { "to": "string?", "group": "string?", "remoteUDP": "string?" },
+      "result": { "status": "string" }
+    },
+    "StopVoiceCall": {
+      "params": { "to": "string?", "group": "string?" },
+      "result": {}
+    },
+    "StartScreenShare": {
+      "params": { "to": "string?", "group": "string?", "fps": "int?" },
+      "result": { "status": "string" }
+    },
+    "StopScreenShare": {
+      "params": { "to": "string?", "group": "string?" },
+      "result": {}
+    },
+    "SendScreenAnnotation": {
+      "params": { "to": "string?", "group": "string?", "normX": "float64", "normY": "float64", "note": "string?" },
+      "result": {}
+    },
+    "SyncFolder": {
+      "params": { "to": "string?", "group": "string?", "dirPath": "string" },
+      "result": { "synced": "int" }
+    },
+    "IssueTrustCert": {
+      "params": { "subject": "string", "org": "string?", "ttlSec": "int64?" },
+      "result": { "token": "string" }
+    },
+    "VerifyTrustCert": {
+      "params": { "token": "string", "rootPub": "string" },
+      "result": { "identity": "string" }
+    },
+    "RunNetworkDiagnostics": {
+      "params": [],
+      "result": { "report": "string" }
     }
   },
   "notifications": {

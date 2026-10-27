@@ -59,8 +59,8 @@ func loadSchema(t *testing.T) *schemaDoc {
 
 func TestSchemaIsValidV1(t *testing.T) {
 	doc := loadSchema(t)
-	if doc.SchemaVersion != "1.0" && doc.SchemaVersion != "1.1" && doc.SchemaVersion != "1.2" {
-		t.Errorf("schemaVersion = %q, want 1.0, 1.1 or 1.2", doc.SchemaVersion)
+	if doc.SchemaVersion != "1.0" && doc.SchemaVersion != "1.1" && doc.SchemaVersion != "1.2" && doc.SchemaVersion != "1.3" {
+		t.Errorf("schemaVersion = %q, want 1.0, 1.1, 1.2 or 1.3", doc.SchemaVersion)
 	}
 	if len(doc.Requests) == 0 || len(doc.Notifications) == 0 {
 		t.Fatal("schema must define requests and notifications")

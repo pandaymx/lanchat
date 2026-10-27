@@ -200,6 +200,83 @@ final class ChatEngine {
         try await runOnIOThrowing { try $0.setNickname(name) }
     }
 
+    // MARK: - 契约 v1.3 显式协作绑定方法
+
+    @discardableResult
+    func startVoiceCall(to: String, group: String = "") async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let status = c.startVoiceCall(to, group: group, error: &err)
+            if let err { throw err }
+            return status
+        }
+    }
+
+    @discardableResult
+    func acceptVoiceCall(to: String, group: String = "", remoteUDP: String = "") async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let status = c.acceptVoiceCall(to, group: group, peerAddr: remoteUDP, error: &err)
+            if let err { throw err }
+            return status
+        }
+    }
+
+    func stopVoiceCall(to: String, group: String = "") async throws {
+        try await runOnIOThrowing { try $0.stopVoiceCall(to, group: group) }
+    }
+
+    @discardableResult
+    func startScreenShare(to: String, group: String = "", fps: Int = 15) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let status = c.startScreenShare(to, group: group, fps: fps, error: &err)
+            if let err { throw err }
+            return status
+        }
+    }
+
+    func stopScreenShare(to: String, group: String = "") async throws {
+        try await runOnIOThrowing { try $0.stopScreenShare(to, group: group) }
+    }
+
+    func sendScreenAnnotation(to: String, group: String = "", normX: Double, normY: Double, note: String = "") async throws {
+        try await runOnIOThrowing { try $0.sendScreenAnnotation(to, group: group, normX: normX, normY: normY, note: note) }
+    }
+
+    @discardableResult
+    func syncFolder(to: String, group: String = "", dirPath: String) async throws -> Int {
+        try await runOnIOThrowing { c in
+            var synced: Int = 0
+            try c.syncFolder(to, group: group, dirPath: dirPath, ret0_: &synced)
+            return synced
+        }
+    }
+
+    @discardableResult
+    func issueTrustCert(subject: String, org: String = "LANChat", ttlSec: Int64 = 86400) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let tok = c.issueTrustCert(subject, org: org, ttlSec: ttlSec, error: &err)
+            if let err { throw err }
+            return tok
+        }
+    }
+
+    @discardableResult
+    func verifyTrustCert(token: String, rootPub: String = "") async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let ident = c.verifyTrustCert(token, rootPub: rootPub, error: &err)
+            if let err { throw err }
+            return ident
+        }
+    }
+
+    func runNetworkDiagnostics() async -> String {
+        await runOnIO { $0.runNetworkDiagnostics() }
+    }
+
     // MARK: - 线程包装
 
     private func runOnIO<T>(_ block: @escaping @Sendable (LCMobileClient) -> T) async -> T {

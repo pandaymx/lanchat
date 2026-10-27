@@ -602,6 +602,99 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: - 契约 v1.3 显式协作 RPC 方法
+
+    func startVoiceCall(to: String, group: String = "") async {
+        do {
+            _ = try await ipc.call("StartVoiceCall", params: ["to": to, "group": group])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func acceptVoiceCall(to: String, group: String = "", remoteUDP: String = "") async {
+        do {
+            _ = try await ipc.call("AcceptVoiceCall", params: ["to": to, "group": group, "remoteUDP": remoteUDP])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func stopVoiceCall(to: String, group: String = "") async {
+        do {
+            _ = try await ipc.call("StopVoiceCall", params: ["to": to, "group": group])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func startScreenShare(to: String, group: String = "", fps: Int = 15) async {
+        do {
+            _ = try await ipc.call("StartScreenShare", params: ["to": to, "group": group, "fps": fps])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func stopScreenShare(to: String, group: String = "") async {
+        do {
+            _ = try await ipc.call("StopScreenShare", params: ["to": to, "group": group])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func sendScreenAnnotation(to: String, group: String = "", normX: Double, normY: Double, note: String) async {
+        do {
+            _ = try await ipc.call("SendScreenAnnotation", params: [
+                "to": to,
+                "group": group,
+                "normX": normX,
+                "normY": normY,
+                "note": note
+            ])
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func syncFolder(to: String, group: String = "", dirPath: String) async {
+        do {
+            _ = try await ipc.call("SyncFolder", params: ["to": to, "group": group, "dirPath": dirPath])
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func issueTrustCert(subject: String, org: String = "LANChat", ttlSec: Int64 = 86400) async {
+        do {
+            _ = try await ipc.call("IssueTrustCert", params: ["subject": subject, "org": org, "ttlSec": ttlSec])
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func verifyTrustCert(token: String, rootPub: String = "") async {
+        do {
+            _ = try await ipc.call("VerifyTrustCert", params: ["token": token, "rootPub": rootPub])
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func runNetworkDiagnostics() async {
+        do {
+            _ = try await ipc.call("RunNetworkDiagnostics", params: nil)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     func checkAndSilentUpdate(customProxy: String = "", checkOnly: Bool = false) async {
         let proxyArg = customProxy.trimmingCharacters(in: .whitespacesAndNewlines)
         let cmd: String

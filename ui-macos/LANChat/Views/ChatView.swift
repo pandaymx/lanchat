@@ -156,7 +156,7 @@ struct ChatView: View {
                     if isRinging {
                         Button {
                             inVoiceCall = true
-                            Task { await store.sendText(to: callerId, text: "/call accept") }
+                            Task { await store.acceptVoiceCall(to: callerId) }
                         } label: {
                             Text("🟢 接听")
                                 .font(.system(size: 11, weight: .semibold))
@@ -169,7 +169,7 @@ struct ChatView: View {
                     }
                     Button {
                         inVoiceCall = false
-                        Task { await store.sendText(to: callerId, text: "/call hangup") }
+                        Task { await store.stopVoiceCall(to: callerId) }
                     } label: {
                         Text("🔴 挂断")
                             .font(.system(size: 11, weight: .semibold))
@@ -194,7 +194,7 @@ struct ChatView: View {
                             .foregroundColor(.white)
                         Spacer()
                         Button {
-                            Task { await store.sendText(to: peer.id, text: "/annotate 0.5,0.5 重点关注此处") }
+                            Task { await store.sendScreenAnnotation(to: peer.id, normX: 0.5, normY: 0.5, note: "重点关注此处") }
                         } label: {
                             Text("📍 激光批注")
                                 .font(.system(size: 11, weight: .semibold))
@@ -212,7 +212,7 @@ struct ChatView: View {
                             .frame(maxHeight: 190)
                             .cornerRadius(8)
                             .onTapGesture {
-                                Task { await store.sendText(to: peer.id, text: "/annotate 0.500,0.500 🔴 激光笔点击批注") }
+                                Task { await store.sendScreenAnnotation(to: peer.id, normX: 0.5, normY: 0.5, note: "🔴 激光笔点击批注") }
                             }
                     }
                 }
@@ -318,10 +318,10 @@ struct ChatView: View {
                 Button {
                     if inVoiceCall {
                         inVoiceCall = false
-                        Task { await store.sendText(to: peer.id, text: "/call stop") }
+                        Task { await store.stopVoiceCall(to: peer.id) }
                     } else {
                         inVoiceCall = true
-                        Task { await store.sendText(to: peer.id, text: "/call start") }
+                        Task { await store.startVoiceCall(to: peer.id) }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -336,15 +336,15 @@ struct ChatView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help("发起或挂断局域网实时语音通话 (/call)")
+                .help("发起或挂断局域网实时语音通话 (StartVoiceCall / StopVoiceCall)")
 
                 Button {
                     if isScreenSharing {
                         isScreenSharing = false
-                        Task { await store.sendText(to: peer.id, text: "/screenshare stop") }
+                        Task { await store.stopScreenShare(to: peer.id) }
                     } else {
                         isScreenSharing = true
-                        Task { await store.sendText(to: peer.id, text: "/screenshare start 15") }
+                        Task { await store.startScreenShare(to: peer.id, fps: 15) }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -359,7 +359,7 @@ struct ChatView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help("开启或停止局域网 P2P 屏幕共享 (/screenshare)")
+                .help("开启或停止局域网 P2P 屏幕共享 (StartScreenShare / StopScreenShare)")
 
                 Button {
                     Task { await store.sendText(to: peer.id, text: "/sync 50") }

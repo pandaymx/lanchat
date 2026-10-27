@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.4.0](https://github.com/pandaymx/lanchat/compare/v3.3.0...v3.4.0) (2026-10-27)
+
+
+### Features
+
+* **core:** add multi-dimensional encrypted FTS and P2P folder incremental sync ([356f45d](https://github.com/pandaymx/lanchat/commit/356f45d6e9f98db624bb0ea648d7a84722f0acdd))
+
 ## [3.3.0](https://github.com/pandaymx/lanchat/compare/v3.2.0...v3.3.0) (2026-10-27)
 
 

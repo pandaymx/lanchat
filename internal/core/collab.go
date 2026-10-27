@@ -641,6 +641,39 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 			return "", true, err
 		}
 		return fmt.Sprintf("foldersync:queued:%d", synced), true, nil
+
+	case trimmed == "/netdiag" || strings.HasPrefix(trimmed, "/netdiag "):
+		return c.RunNetworkDiagnostics(), true, nil
+
+	case trimmed == "/trust" || strings.HasPrefix(trimmed, "/trust "):
+		arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/trust"))
+		if strings.HasPrefix(arg, "verify ") {
+			parts := strings.Fields(strings.TrimPrefix(arg, "verify "))
+			if len(parts) < 2 {
+				return "trust:invalid", true, nil
+			}
+			sub, org, ok := VerifyNodeCertificate(parts[0], parts[1])
+			if !ok {
+				return "trust:invalid", true, nil
+			}
+			return fmt.Sprintf("trust:verified:%s@%s", sub, org), true, nil
+		}
+		subject := c.DeviceID()
+		org := "LANChat-Enterprise"
+		if strings.HasPrefix(arg, "issue ") {
+			fields := strings.Fields(strings.TrimPrefix(arg, "issue "))
+			if len(fields) >= 1 {
+				subject = fields[0]
+			}
+			if len(fields) >= 2 {
+				org = fields[1]
+			}
+		}
+		tok, pub, err := c.IssueNodeCertificate(subject, org, 86400*30)
+		if err != nil {
+			return "", true, err
+		}
+		return fmt.Sprintf("trust:issued:%s pub:%s", tok, pub), true, nil
 	}
 	return "", false, nil
 }
@@ -782,4 +815,35 @@ func (c *Client) SyncFolderWithPeer(to, group, dirPath string) (int, error) {
 		}
 	}
 	return len(changedFiles), nil
+}
+
+// RunNetworkDiagnostics 生成局域网与跨网段（Tailscale/WireGuard）链路质量与节点状态诊断雷达摘要（v4.0.0）。
+func (c *Client) RunNetworkDiagnostics() string {
+	c.mu.Lock()
+	state := string(c.connState)
+	addr := c.addr
+	peersCount := len(c.peers)
+	transfersCount := len(c.transfers)
+	casCount := len(c.casIndex)
+	voiceSnap := c.voiceCallSnapshotLocked()
+	screenSnap := c.screenShareSnapshotLocked()
+	c.mu.Unlock()
+
+	if addr == "" {
+		addr = "disconnected"
+	}
+	voiceStatus := "idle"
+	if voiceSnap != nil && voiceSnap.State != "" {
+		voiceStatus = voiceSnap.State
+	}
+	screenStatus := "off"
+	if screenSnap != nil && screenSnap.Active {
+		screenStatus = fmt.Sprintf("active(%dfps)", screenSnap.FPS)
+	}
+	overlays := discover.OverlayCandidateAddrs(7878)
+	gossip := c.GossipEndpoints()
+	return fmt.Sprintf(
+		"netdiag:conn=%s server=%s peers=%d transfers=%d cas=%d voice=%s screen=%s overlay=%d gossip=%d",
+		state, addr, peersCount, transfersCount, casCount, voiceStatus, screenStatus, len(overlays), len(gossip),
+	)
 }

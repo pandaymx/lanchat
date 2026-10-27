@@ -166,4 +166,25 @@ func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
 	if err != nil || fs3 != "foldersync:queued:1" {
 		t.Fatalf("third modified /foldersync = %q, err=%v, want foldersync:queued:1", fs3, err)
 	}
+
+	// 验证 v4.0.0 Ed25519 零信任节点准入证书签发、验签与防篡改 + /netdiag 诊断雷达
+	tok, rootPub, err := alice.IssueNodeCertificate("dev-bob-01", "QXJ-SecOps", 3600)
+	if err != nil || tok == "" || rootPub == "" {
+		t.Fatalf("IssueNodeCertificate failed: tok=%q pub=%q err=%v", tok, rootPub, err)
+	}
+	sub, org, ok := VerifyNodeCertificate(tok, rootPub)
+	if !ok || sub != "dev-bob-01" || org != "QXJ-SecOps" {
+		t.Fatalf("VerifyNodeCertificate = (%q, %q, %v), want (dev-bob-01, QXJ-SecOps, true)", sub, org, ok)
+	}
+	if _, _, okTamper := VerifyNodeCertificate(tok+"tampered", rootPub); okTamper {
+		t.Fatal("VerifyNodeCertificate should reject tampered signature")
+	}
+	vCmd, err := bob.SendText("", "/trust verify "+tok+" "+rootPub, "")
+	if err != nil || vCmd != "trust:verified:dev-bob-01@QXJ-SecOps" {
+		t.Fatalf("/trust verify = %q, err=%v", vCmd, err)
+	}
+	diagRes, err := alice.SendText("", "/netdiag", "")
+	if err != nil || !strings.HasPrefix(diagRes, "netdiag:conn=") {
+		t.Fatalf("/netdiag = %q, err=%v", diagRes, err)
+	}
 }

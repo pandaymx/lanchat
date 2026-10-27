@@ -2,6 +2,7 @@ package core
 
 import (
 	"crypto/ecdh"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pandaymx/lanchat/internal/transfer"
 )
@@ -107,6 +109,14 @@ func (c *Client) Fingerprint() string {
 	return IdentityFingerprint(pub)
 }
 
+// DeviceID 返回本机静态身份公钥派生的设备标识（M15）。
+func (c *Client) DeviceID() string {
+	c.mu.Lock()
+	id := c.deviceID
+	c.mu.Unlock()
+	return id
+}
+
 // PeerFingerprint 返回指定对端公钥的可读安全码指纹；对端无公钥时返回空串。
 func (c *Client) PeerFingerprint(peerID string) string {
 	c.mu.Lock()
@@ -145,4 +155,84 @@ func (c *Client) ensureChannelKey(channelID string) string {
 		}
 	}
 	return ""
+}
+
+// nodeCertClaims 表示 v4.0.0 零信任企业节点准入证书载荷。
+type nodeCertClaims struct {
+	SubjectID string `json:"sub"`
+	Org       string `json:"org"`
+	IssuedAt  int64  `json:"iat"`
+	ExpiresAt int64  `json:"exp"`
+}
+
+func (c *Client) deriveEd25519SigningKey() (ed25519.PrivateKey, ed25519.PublicKey) {
+	c.mu.Lock()
+	priv := c.identityPriv
+	devID := c.deviceID
+	c.mu.Unlock()
+	var seed [32]byte
+	if priv != nil {
+		seed = sha256.Sum256(priv.Bytes())
+	} else {
+		seed = sha256.Sum256([]byte("lanchat-ed25519-" + devID))
+	}
+	edPriv := ed25519.NewKeyFromSeed(seed[:])
+	edPub := edPriv.Public().(ed25519.PublicKey)
+	return edPriv, edPub
+}
+
+// IssueNodeCertificate 使用本机派生的 Ed25519 根私钥为指定设备签发组织准入证书（v4.0.0）。
+func (c *Client) IssueNodeCertificate(subjectDeviceID, orgName string, ttlSec int64) (token string, rootPubB64 string, err error) {
+	subjectDeviceID = strings.TrimSpace(subjectDeviceID)
+	if subjectDeviceID == "" {
+		subjectDeviceID = c.DeviceID()
+	}
+	orgName = strings.TrimSpace(orgName)
+	if orgName == "" {
+		orgName = "LANChat-Enterprise"
+	}
+	if ttlSec <= 0 {
+		ttlSec = 86400 * 30
+	}
+	now := time.Now().Unix()
+	claims := nodeCertClaims{
+		SubjectID: subjectDeviceID,
+		Org:       orgName,
+		IssuedAt:  now,
+		ExpiresAt: now + ttlSec,
+	}
+	payloadRaw, err := json.Marshal(claims)
+	if err != nil {
+		return "", "", err
+	}
+	edPriv, edPub := c.deriveEd25519SigningKey()
+	sig := ed25519.Sign(edPriv, payloadRaw)
+	token = base64.RawURLEncoding.EncodeToString(payloadRaw) + "." + base64.RawURLEncoding.EncodeToString(sig)
+	rootPubB64 = base64.StdEncoding.EncodeToString(edPub)
+	return token, rootPubB64, nil
+}
+
+// VerifyNodeCertificate 校验 Ed25519 组织准入证书签名与有效期（v4.0.0）。
+func VerifyNodeCertificate(token, rootPubB64 string) (subjectDeviceID, orgName string, ok bool) {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	payloadRaw, err1 := base64.RawURLEncoding.DecodeString(parts[0])
+	sig, err2 := base64.RawURLEncoding.DecodeString(parts[1])
+	pubRaw, err3 := base64.StdEncoding.DecodeString(strings.TrimSpace(rootPubB64))
+	if err1 != nil || err2 != nil || err3 != nil || len(pubRaw) != ed25519.PublicKeySize || len(sig) != ed25519.SignatureSize {
+		return "", "", false
+	}
+	if !ed25519.Verify(ed25519.PublicKey(pubRaw), payloadRaw, sig) {
+		return "", "", false
+	}
+	var claims nodeCertClaims
+	if json.Unmarshal(payloadRaw, &claims) != nil || claims.SubjectID == "" {
+		return "", "", false
+	}
+	if claims.ExpiresAt > 0 && time.Now().Unix() > claims.ExpiresAt {
+		return "", "", false
+	}
+	return claims.SubjectID, claims.Org, true
 }

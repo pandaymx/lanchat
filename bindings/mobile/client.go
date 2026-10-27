@@ -210,6 +210,11 @@ func (c *Client) SyncFolder(to string, group string, dirPath string) (int, error
 	return c.core.SyncFolderWithPeer(to, group, dirPath)
 }
 
+// RunNetworkDiagnostics 返回局域网与跨网段链路诊断雷达摘要（v4.0.0）。
+func (c *Client) RunNetworkDiagnostics() string {
+	return c.core.RunNetworkDiagnostics()
+}
+
 // TriggerMeshFailover 手动触发中心节点故障自愈选举与重连（v3.0.0）。
 func (c *Client) TriggerMeshFailover() (string, error) {
 	return c.core.TriggerMeshFailover()

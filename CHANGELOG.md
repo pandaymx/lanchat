@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/pandaymx/lanchat/compare/v3.0.1...v3.1.0) (2026-10-27)
+
+
+### Features
+
+* **appapi:** evolve contract to v1.2 with voice call and UDP screen share stream ([705044e](https://github.com/pandaymx/lanchat/commit/705044e041c4066c342ae70925189f8ff8c9c45a))
+
 ## [3.0.1](https://github.com/pandaymx/lanchat/compare/v3.0.0...v3.0.1) (2026-10-27)
 
 

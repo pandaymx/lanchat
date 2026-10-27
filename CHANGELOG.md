@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.6.0](https://github.com/pandaymx/lanchat/compare/v4.5.1...v4.6.0) (2026-10-27)
+
+
+### Features
+
+* **ui-win:** add Windows ARM64 build, MSI/MSIX packaging, and auto-update support ([ef2b73a](https://github.com/pandaymx/lanchat/commit/ef2b73a92dc64bf5344eaff04bb0d45140b9e8c6))
+
 ## [4.5.1](https://github.com/pandaymx/lanchat/compare/v4.5.0...v4.5.1) (2026-10-27)
 
 

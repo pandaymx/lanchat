@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.2.0](https://github.com/pandaymx/lanchat/compare/v3.1.0...v3.2.0) (2026-10-27)
+
+
+### Features
+
+* **ui-linux:** align screen share and history roaming sync controls across Linux and iOS ([84f977a](https://github.com/pandaymx/lanchat/commit/84f977a860012b12998b07f0b7168d362b181a93))
+
 ## [3.1.0](https://github.com/pandaymx/lanchat/compare/v3.0.1...v3.1.0) (2026-10-27)
 
 

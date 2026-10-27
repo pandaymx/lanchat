@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.0](https://github.com/pandaymx/lanchat/compare/v4.2.0...v4.3.0) (2026-10-27)
+
+
+### Features
+
+* **ui-macos:** upgrade macOS SwiftUI client to NTQQ 9.x collab stage and contract v1.2 ([d9f997d](https://github.com/pandaymx/lanchat/commit/d9f997da5a5ac47ee04dccd8da78f11cd554f0b3))
+
 ## [4.2.0](https://github.com/pandaymx/lanchat/compare/v4.1.0...v4.2.0) (2026-10-27)
 
 

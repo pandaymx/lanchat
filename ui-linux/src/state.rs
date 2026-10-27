@@ -1,7 +1,10 @@
 //! 应用共享状态：由 GTK 主线程独占读写。
 //! tokio 后台线程只通过 `glib::idle_add_local` 把事件 marshal 回主线程。
 
-use crate::models::{Channel, ChatMessage, ConnState, Peer, ServerInfo, State, Transfer};
+use crate::models::{
+    Channel, ChatMessage, ConnState, Peer, ScreenShareState, ServerInfo, State, Transfer,
+    VoiceCallState,
+};
 use std::collections::HashMap;
 
 /// 当前打开的会话。
@@ -65,6 +68,10 @@ pub struct AppState {
     pub revoked_originals: HashMap<String, String>,
     /// 当前正在引用回复的目标消息（用于输入框上方 QQ 引用回复预览条）。
     pub reply_target: Option<ChatMessage>,
+    /// v1.2 实时语音通话状态快照。
+    pub voice_call: VoiceCallState,
+    /// v1.2 实时屏幕投屏状态快照。
+    pub screen_share: ScreenShareState,
 }
 
 impl AppState {
@@ -82,6 +89,12 @@ impl AppState {
         self.peers = s.peers;
         self.transfers = s.transfers;
         self.channels = s.channels;
+        if let Some(vc) = s.voice_call {
+            self.voice_call = vc;
+        }
+        if let Some(ss) = s.screen_share {
+            self.screen_share = ss;
+        }
         for m in s.messages {
             self.apply_history_message(m);
         }
@@ -114,6 +127,12 @@ impl AppState {
             revoked: m.revoked,
             read_by: m.read_by,
             ts: m.ts,
+            reply_quote: m.reply_quote,
+            reactions: m.reactions,
+            edited_at: m.edited_at,
+            pinned: m.pinned,
+            media_mime: m.media_mime,
+            media_path: m.media_path,
         });
     }
 
@@ -170,6 +189,22 @@ impl AppState {
                 existing.text = msg.text;
                 existing.revoked = msg.revoked;
                 existing.read_by = msg.read_by;
+                if !msg.reply_quote.is_empty() {
+                    existing.reply_quote = msg.reply_quote;
+                }
+                if !msg.reactions.is_empty() {
+                    existing.reactions = msg.reactions;
+                }
+                if msg.edited_at > 0 {
+                    existing.edited_at = msg.edited_at;
+                }
+                existing.pinned = msg.pinned || existing.pinned;
+                if !msg.media_mime.is_empty() {
+                    existing.media_mime = msg.media_mime;
+                }
+                if !msg.media_path.is_empty() {
+                    existing.media_path = msg.media_path;
+                }
                 return;
             }
         }
@@ -256,6 +291,15 @@ impl AppState {
     /// 获取指定会话的最新一条消息。
     pub fn last_message(&self, conv_key: &str) -> Option<&ChatMessage> {
         self.messages.get(conv_key).and_then(|v| v.last())
+    }
+
+    /// 获取指定会话的最新置顶消息（用于顶部 NTQQ 置顶横幅）。
+    pub fn pinned_message(&self, conv_key: &str) -> Option<&ChatMessage> {
+        self.messages.get(conv_key).and_then(|v| {
+            v.iter()
+                .rev()
+                .find(|m| !m.revoked && (m.pinned || m.text.starts_with("📌 ")))
+        })
     }
 
     /// 在指定会话（或空键表示全部会话）中按关键字检索未撤回消息（M12）。
@@ -433,6 +477,7 @@ mod tests {
             revoked: false,
             read_by: Vec::new(),
             ts: 1,
+            ..Default::default()
         });
         st.push_message(ChatMessage {
             peer_id: "p2".into(),
@@ -444,6 +489,7 @@ mod tests {
             revoked: false,
             read_by: Vec::new(),
             ts: 2,
+            ..Default::default()
         });
         assert!(st.mark_read("m1", "p3"));
         assert_eq!(st.search_messages("c1", "频道").len(), 1);

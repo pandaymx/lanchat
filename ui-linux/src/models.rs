@@ -203,6 +203,38 @@ pub struct HistoryMessage {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct VoiceCallState {
+    #[serde(default)]
+    pub state: String,
+    #[serde(default, rename = "peerId")]
+    pub peer_id: String,
+    #[serde(default, rename = "groupId")]
+    pub group_id: String,
+    #[serde(default, rename = "localAddr")]
+    pub local_addr: String,
+    #[serde(default, rename = "remoteAddr")]
+    pub remote_addr: String,
+    #[serde(default, rename = "framesIn")]
+    pub frames_in: i64,
+    #[serde(default, rename = "framesOut")]
+    pub frames_out: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ScreenShareState {
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default, rename = "peerId")]
+    pub peer_id: String,
+    #[serde(default, rename = "groupId")]
+    pub group_id: String,
+    #[serde(default)]
+    pub fps: i32,
+    #[serde(default, rename = "latestFrame")]
+    pub latest_frame: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct State {
     #[serde(default)]
     pub conn: ConnState,
@@ -220,10 +252,14 @@ pub struct State {
     pub channels: Vec<Channel>,
     #[serde(default)]
     pub messages: Vec<HistoryMessage>,
+    #[serde(default, rename = "voiceCall")]
+    pub voice_call: Option<VoiceCallState>,
+    #[serde(default, rename = "screenShare")]
+    pub screen_share: Option<ScreenShareState>,
 }
 
 /// 一条聊天消息（UI 本地模型；来自 msg.received、GetState 历史或自己发送回执）。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ChatMessage {
     /// 会话归属键：单播为对端 peer_id；频道为 channelID。
     pub peer_id: String,
@@ -237,6 +273,18 @@ pub struct ChatMessage {
     pub revoked: bool,
     pub read_by: Vec<String>,
     pub ts: i64,
+    /// v1.1 结构化被引用消息快照摘要。
+    pub reply_quote: String,
+    /// v1.1 结构化表情回应映射（emoji -> 点赞用户 ID 列表）。
+    pub reactions: std::collections::HashMap<String, Vec<String>>,
+    /// v1.1 消息二次编辑时间戳。
+    pub edited_at: i64,
+    /// v1.1 消息是否置顶。
+    pub pinned: bool,
+    /// v1.1 关联媒体 MIME 类型。
+    pub media_mime: String,
+    /// v1.1 关联本地媒体路径。
+    pub media_path: String,
 }
 
 /// 解析 base64 编码的块位图并生成紧凑块矩阵进度文本（如 `▓▓▓░░░ 3/6 块`）。

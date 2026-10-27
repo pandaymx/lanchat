@@ -142,6 +142,13 @@ struct Widgets {
     header_invite_btn: gtk::Button,
     header_leave_btn: gtk::Button,
     header_drawer_btn: gtk::Button,
+    pinned_bar: gtk::Box,
+    pinned_label: gtk::Label,
+    call_bar: gtk::Box,
+    call_label: gtk::Label,
+    screen_bar: gtk::Box,
+    screen_pic: gtk::Picture,
+    screen_annotate_btn: gtk::Button,
     msg_list: gtk::ListBox,
     msg_scroll: gtk::ScrolledWindow,
     reply_bar: gtk::Box,
@@ -522,6 +529,48 @@ fn build_ui(app: &adw::Application) -> Widgets {
     header_bar.append(&header_leave_btn);
     header_bar.append(&header_drawer_btn);
 
+    // NTQQ 次顶栏：置顶消息横幅 + 实时语音通话栏 + 实时屏幕共享画布舞台
+    let pinned_label = gtk::Label::new(None);
+    pinned_label.set_xalign(0.0);
+    pinned_label.set_hexpand(true);
+    pinned_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    pinned_label.add_css_class("caption-heading");
+    let pinned_bar = gtk::Box::new(Orientation::Horizontal, 8);
+    pinned_bar.add_css_class("qq-pinned-banner");
+    pinned_bar.set_visible(false);
+    pinned_bar.append(&pinned_label);
+
+    let call_label = gtk::Label::new(Some("📞 实时低延迟 P2P 语音通话中"));
+    call_label.set_xalign(0.0);
+    call_label.set_hexpand(true);
+    call_label.add_css_class("caption-heading");
+    let call_bar = gtk::Box::new(Orientation::Horizontal, 8);
+    call_bar.add_css_class("qq-call-banner");
+    call_bar.set_visible(false);
+    call_bar.append(&call_label);
+
+    let screen_title = gtk::Label::new(Some("🖥️ 实时屏幕共享舞台 · 支持激光笔坐标批注"));
+    screen_title.set_xalign(0.0);
+    screen_title.set_hexpand(true);
+    screen_title.add_css_class("caption-heading");
+    let screen_annotate_btn = gtk::Button::with_label("📍 激光批注");
+    screen_annotate_btn.add_css_class("flat");
+    screen_annotate_btn.add_css_class("caption");
+    let screen_head = gtk::Box::new(Orientation::Horizontal, 8);
+    screen_head.append(&screen_title);
+    screen_head.append(&screen_annotate_btn);
+
+    let screen_pic = gtk::Picture::new();
+    screen_pic.set_can_shrink(true);
+    screen_pic.set_content_fit(gtk::ContentFit::Contain);
+    screen_pic.set_size_request(-1, 180);
+
+    let screen_bar = gtk::Box::new(Orientation::Vertical, 6);
+    screen_bar.add_css_class("qq-screen-stage");
+    screen_bar.set_visible(false);
+    screen_bar.append(&screen_head);
+    screen_bar.append(&screen_pic);
+
     let msg_list = gtk::ListBox::new();
     msg_list.set_selection_mode(gtk::SelectionMode::None);
     msg_list.add_css_class("messages");
@@ -664,6 +713,9 @@ fn build_ui(app: &adw::Application) -> Widgets {
     chat_col.add_css_class("qq-chat-col");
     chat_col.append(&header_bar);
     chat_col.append(&gtk::Separator::new(Orientation::Horizontal));
+    chat_col.append(&pinned_bar);
+    chat_col.append(&call_bar);
+    chat_col.append(&screen_bar);
     chat_col.append(&msg_scroll);
     chat_col.append(&gtk::Separator::new(Orientation::Horizontal));
     chat_col.append(&composer);
@@ -819,6 +871,13 @@ fn build_ui(app: &adw::Application) -> Widgets {
         header_invite_btn,
         header_leave_btn,
         header_drawer_btn,
+        pinned_bar,
+        pinned_label,
+        call_bar,
+        call_label,
+        screen_bar,
+        screen_pic,
+        screen_annotate_btn,
         msg_list,
         msg_scroll,
         reply_bar,
@@ -1378,6 +1437,18 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             cx.toast("🔄 已触发个人多端加密历史漫游增量同步");
         }
     ));
+    ctx.widgets.screen_annotate_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                return;
+            }
+            send_text_to_target(&cx, &target, "/annotate 0.5 0.5 重点关注此处");
+            cx.toast("📍 已发送屏幕共享激光笔坐标批注");
+        }
+    ));
 
     // 顶部频道邀请 & 退出快捷按钮
     ctx.widgets.header_invite_btn.connect_clicked(clone!(
@@ -1900,6 +1971,7 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                         revoked: false,
                         read_by: Vec::new(),
                         ts: now,
+                        ..Default::default()
                     });
                 }
                 ctx.render_roster();
@@ -2160,6 +2232,7 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 revoked: false,
                 read_by: Vec::new(),
                 ts: now_secs(),
+                ..Default::default()
             });
             let is_current = ctx.state.borrow().current_chat.key() == Some(conv_key.as_str());
             if is_current {
@@ -2245,6 +2318,44 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 ctx.render_channels();
                 ctx.render_roster();
                 ctx.refresh_chat_header();
+            }
+        }
+        "call.state" => {
+            let state_str = p
+                .get("state")
+                .and_then(|v| v.as_str())
+                .unwrap_or("idle")
+                .to_string();
+            let peer_id = p
+                .get("peerId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let active = matches!(state_str.as_str(), "calling" | "in_call");
+            ctx.state.borrow_mut().voice_call.state = state_str.clone();
+            ctx.state.borrow_mut().voice_call.peer_id = peer_id.clone();
+            ctx.widgets.call_bar.set_visible(active);
+            if active {
+                ctx.widgets.call_label.set_text(&format!(
+                    "📞 实时低延迟语音通话中 ({state_str}) · {peer_id}"
+                ));
+                ctx.widgets.header_call_btn.set_label("📵 挂断语音");
+            } else {
+                ctx.widgets.header_call_btn.set_label("📞 语音通话");
+            }
+        }
+        "screen.frame" => {
+            if let Some(frame) = p.get("frame").and_then(|v| v.as_str()) {
+                if let Some(b64) = extract_inline_image_b64(frame) {
+                    let bytes = glib::base64_decode(b64);
+                    if !bytes.is_empty() {
+                        let gbytes = glib::Bytes::from_owned(bytes);
+                        if let Ok(texture) = gdk::Texture::from_bytes(&gbytes) {
+                            ctx.widgets.screen_pic.set_paintable(Some(&texture));
+                            ctx.widgets.screen_bar.set_visible(true);
+                        }
+                    }
+                }
             }
         }
         other => tracing::debug!("未处理通知：{other}"),
@@ -2732,9 +2843,17 @@ impl AppCtx {
             }
         }
 
-        // 3. 在线联系人（在「消息」与「好友」页签展示）
+        // 3. 在线联系人（在「消息」页签按最新消息时间戳倒序排列；在「好友」页签按通讯录排列）
         if matches!(tab, NavTab::Sessions | NavTab::Contacts) {
-            for peer in &st.peers {
+            let mut sorted_peers: Vec<&crate::models::Peer> = st.peers.iter().collect();
+            if tab == NavTab::Sessions {
+                sorted_peers.sort_by(|a, b| {
+                    let ts_a = st.last_message(&a.id).map(|m| m.ts).unwrap_or(0);
+                    let ts_b = st.last_message(&b.id).map(|m| m.ts).unwrap_or(0);
+                    ts_b.cmp(&ts_a)
+                });
+            }
+            for peer in sorted_peers {
                 if !q.is_empty()
                     && !peer.nickname.to_lowercase().contains(&q)
                     && !peer.os.to_lowercase().contains(&q)
@@ -2918,6 +3037,16 @@ impl AppCtx {
         } else {
             st.nickname.clone()
         };
+        if let Some(pinned) = st.pinned_message(&conv_key) {
+            let (clean_p, _) = crate::state::split_reactions(&pinned.text);
+            let (_, p_body) = crate::state::split_quote(&clean_p);
+            self.widgets
+                .pinned_label
+                .set_text(&format!("📌 [置顶] {p_body}"));
+            self.widgets.pinned_bar.set_visible(true);
+        } else {
+            self.widgets.pinned_bar.set_visible(false);
+        }
         let Some(msgs) = st.messages.get(&conv_key) else {
             // 空会话引导气泡
             let hint = gtk::Label::new(Some(
@@ -3003,10 +3132,32 @@ impl AppCtx {
                 String::new()
             };
 
-            let meta_text = if m.inbound {
-                format!("{}  {}", sender_name, format_hhmm(m.ts))
+            let pin_prefix = if m.pinned || m.text.starts_with("📌 ") {
+                "📌 [置顶] · "
             } else {
-                format!("{}{}", format_hhmm(m.ts), read_suffix)
+                ""
+            };
+            let edit_suffix = if m.edited_at > 0 || m.text.ends_with(" (已编辑)") {
+                " · (已编辑)"
+            } else {
+                ""
+            };
+            let meta_text = if m.inbound {
+                format!(
+                    "{}{}  {}{}",
+                    pin_prefix,
+                    sender_name,
+                    format_hhmm(m.ts),
+                    edit_suffix
+                )
+            } else {
+                format!(
+                    "{}{}{}{}",
+                    pin_prefix,
+                    format_hhmm(m.ts),
+                    read_suffix,
+                    edit_suffix
+                )
             };
             let meta_line = gtk::Label::new(Some(&meta_text));
             meta_line.add_css_class("caption");
@@ -3019,8 +3170,18 @@ impl AppCtx {
                 "右键点击打开消息菜单（点赞 / 回复 / 复制 / 置顶 / 撤回）",
             ));
 
-            let (clean_body, reactions) = crate::state::split_reactions(&m.text);
-            let (quoted_opt, body_only) = crate::state::split_quote(&clean_body);
+            let (clean_body, text_reactions) = crate::state::split_reactions(&m.text);
+            let reactions: Vec<String> = if !m.reactions.is_empty() {
+                m.reactions.keys().cloned().collect()
+            } else {
+                text_reactions
+            };
+            let (parsed_quote, body_only) = crate::state::split_quote(&clean_body);
+            let quoted_opt = if !m.reply_quote.is_empty() {
+                Some(m.reply_quote.clone())
+            } else {
+                parsed_quote
+            };
 
             // QQ 气泡内嵌引用回复卡片
             if let Some(quoted_str) = &quoted_opt {
@@ -3068,9 +3229,33 @@ impl AppCtx {
             bubble.set_max_width_chars(56);
             bubble.set_xalign(0.0);
             bubble_card.append(&bubble);
+
+            // NTQQ 暗色等宽代码块卡片（支持 ```lang ... ```）
+            if !has_inline_img && body_only.contains("```") {
+                if let (Some(first), Some(last)) = (body_only.find("```"), body_only.rfind("```")) {
+                    if last > first + 3 {
+                        let inner = &body_only[first + 3..last];
+                        let code_str = inner
+                            .find('\n')
+                            .map(|nl| &inner[nl + 1..])
+                            .unwrap_or(inner)
+                            .trim();
+                        if !code_str.is_empty() {
+                            let code_lbl = gtk::Label::new(Some(code_str));
+                            code_lbl.set_xalign(0.0);
+                            code_lbl.set_selectable(true);
+                            code_lbl.set_wrap(true);
+                            code_lbl.add_css_class("monospace");
+                            code_lbl.add_css_class("qq-code-card");
+                            bubble_card.append(&code_lbl);
+                        }
+                    }
+                }
+            }
+
             bubble_card.set_halign(if m.inbound { Align::Start } else { Align::End });
 
-            // 右键点击气泡弹出 QQ 风格悬浮操作菜单（👍 点赞 / 💬 回复 / 📋 复制 / 📌 置顶 / ↩️ 撤回）
+            // 右键点击气泡弹出 QQ 风格悬浮操作菜单（6 枚快捷表情行 + 💬 回复 / 📋 复制 / 📌 置顶 / ↩️ 撤回）
             if !m.msg_id.is_empty() {
                 let ctx_pop = gtk::Popover::new();
                 ctx_pop.set_has_arrow(true);
@@ -3079,6 +3264,27 @@ impl AppCtx {
                 menu_col.set_margin_bottom(4);
                 menu_col.set_margin_start(4);
                 menu_col.set_margin_end(4);
+
+                let quick_emoji_row = gtk::Box::new(Orientation::Horizontal, 2);
+                for quick_emoji in ["👍", "❤️", "😂", "🔥", "🎉", "🚀"] {
+                    let mid_q = m.msg_id.clone();
+                    let tgt_q = target.clone();
+                    let em_q = quick_emoji.to_string();
+                    let q_btn = gtk::Button::with_label(quick_emoji);
+                    q_btn.add_css_class("flat");
+                    q_btn.connect_clicked(clone!(
+                        #[strong(rename_to = cx)]
+                        self,
+                        #[weak]
+                        ctx_pop,
+                        move |_| {
+                            ctx_pop.popdown();
+                            send_text_to_target(&cx, &tgt_q, &format!("/react {mid_q} {em_q}"));
+                        }
+                    ));
+                    quick_emoji_row.append(&q_btn);
+                }
+                menu_col.append(&quick_emoji_row);
 
                 let mid_react = m.msg_id.clone();
                 let tgt_react = target.clone();
@@ -3694,6 +3900,28 @@ fn load_css() {
         background: alpha(#0099ff, 0.09);
         border-radius: 8px;
         padding: 4px 10px;
+    }
+    .qq-pinned-banner {
+        background: alpha(#f59e0b, 0.14);
+        color: #b45309;
+        padding: 6px 14px;
+    }
+    .qq-call-banner {
+        background: alpha(#10b981, 0.14);
+        color: #047857;
+        padding: 6px 14px;
+    }
+    .qq-screen-stage {
+        background: #111827;
+        color: white;
+        padding: 8px 14px;
+    }
+    .qq-code-card {
+        background: #1e293b;
+        color: #e2e8f0;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 0.86em;
     }
     .qq-reply-accent {
         background: #0099ff;

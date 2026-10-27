@@ -17,8 +17,13 @@ on:
 
 jobs:
   msix:
-    name: Build Store MSIX
+    name: Build Store MSIX (${{ matrix.arch }})
     runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - { arch: x64,   platform: x64,   rid: win-x64,   goarch: amd64 }
+          - { arch: arm64, platform: ARM64, rid: win-arm64, goarch: arm64 }
 
     steps:
       - name: Checkout
@@ -56,6 +61,10 @@ jobs:
 
       - name: Build daemon
         shell: pwsh
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
         run: |
           New-Item -ItemType Directory -Force -Path "dist/bin" | Out-Null
           go build -trimpath -ldflags "-s -w -X main.commit=$($env:GITHUB_SHA.Substring(0,7))" -o "dist/bin/lanchat-daemon.exe" ./cmd/lanchat-daemon
@@ -75,15 +84,15 @@ jobs:
         run: |
           $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
           & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
-            /restore /t:Build /p:Configuration=Release /p:Platform=x64 `
-            /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
-            /p:RestoreRuntimeIdentifier=win-x64 `
+            /restore /t:Build /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
+            /p:RuntimeIdentifier=${{ matrix.rid }} /p:SelfContained=true `
+            /p:RestoreRuntimeIdentifier=${{ matrix.rid }} `
             /p:WindowsPackageType=MSIX `
             /p:WindowsAppSDKSelfContained=true `
             /p:AppxPackageSigningEnabled=false `
             /p:GenerateAppxPackageOnBuild=true `
             /p:UapAppxPackageBuildMode=StoreUpload `
-            /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
+            /p:AppxBundle=Never /p:AppxBundlePlatforms=${{ matrix.platform }} `
             /p:GenerateAppInstallerFile=false `
             "/p:DaemonPath=$daemon" `
             /p:AppxPackageDir="$env:GITHUB_WORKSPACE\dist\AppPackages\\"
@@ -102,13 +111,13 @@ jobs:
           if (-not $pkg) { $pkg = $all | Select-Object -First 1 }
           if (-not $pkg) { throw "未找到生成的 MSIX 文件" }
           Write-Host "Found package: $($pkg.FullName)"
-          Copy-Item $pkg.FullName "dist/out/LANChat-$($env:VERSION)-windows-x64$($pkg.Extension)"
+          Copy-Item $pkg.FullName "dist/out/LANChat-$($env:VERSION)-windows-${{ matrix.arch }}$($pkg.Extension)"
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Upload MSIX
         uses: actions/upload-artifact@v4
         with:
-          name: lanchat-msix-x64-${{ github.run_number }}
+          name: lanchat-msix-${{ matrix.arch }}-${{ github.run_number }}
           path: dist/out/*
           if-no-files-found: error

@@ -80,6 +80,7 @@ jobs:
           - { goos: darwin,  goarch: amd64 }
           - { goos: darwin,  goarch: arm64 }
           - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -602,11 +603,16 @@ jobs:
           if-no-files-found: error
 
   windows-msi:
-    name: Build Windows MSI + portable zip (unsigned)
+    name: Build Windows MSI + portable zip (${{ matrix.arch }}, unsigned)
     needs: [resolve, daemon]
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: windows-latest
     timeout-minutes: 25
+    strategy:
+      matrix:
+        include:
+          - { arch: x64,   platform: x64,   rid: win-x64,   goarch: amd64, wix_arch: x64 }
+          - { arch: arm64, platform: ARM64, rid: win-arm64, goarch: arm64, wix_arch: arm64 }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -636,16 +642,16 @@ jobs:
       - name: Fetch daemon from the matrix build
         uses: actions/download-artifact@v4
         with:
-          name: daemon-windows-amd64
+          name: daemon-windows-${{ matrix.goarch }}
           path: dist/bin
 
       - name: Normalize daemon binary name
         shell: pwsh
-        # 矩阵产物名为 lanchat-daemon-<tag>-windows-amd64.exe，
+        # 矩阵产物名为 lanchat-daemon-<tag>-windows-<goarch>.exe，
         # 归一化成后续步骤约定的 dist/bin/lanchat-daemon.exe。
         run: |
           $exe = Get-ChildItem "dist/bin" -Filter "lanchat-daemon-*.exe" | Select-Object -First 1
-          if (-not $exe) { throw "dist/bin 下没有 daemon-windows-amd64 制品" }
+          if (-not $exe) { throw "dist/bin 下没有 daemon-windows-${{ matrix.goarch }} 制品" }
           Move-Item $exe.FullName "dist/bin/lanchat-daemon.exe" -Force
 
       - name: Publish WinUI app (self-contained, unpackaged)
@@ -655,7 +661,7 @@ jobs:
         # 不走 MSIX 的 FullTrustProcessLauncher / ApplicationData 路径。
         run: |
           dotnet publish ui-win/src/LANChat.App/LANChat.App.csproj `
-            -c Release -p:Platform=x64 -r win-x64 `
+            -c Release -p:Platform=${{ matrix.platform }} -r ${{ matrix.rid }} `
             --self-contained true `
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
@@ -682,13 +688,13 @@ jobs:
             -Version '${{ steps.ver.outputs.msiVersion }}' `
             -UpgradeCode "7B3E9A24-1C5F-4D6B-9E8A-2F0C5D8A3B17"
           $v = '${{ steps.ver.outputs.version }}'
-          wix build -arch x64 -nologo `
-            -o "dist/LANChat-$v-windows-x64.msi" dist/lanchat.wxs
+          wix build -arch ${{ matrix.wix_arch }} -nologo `
+            -o "dist/LANChat-$v-windows-${{ matrix.arch }}.msi" dist/lanchat.wxs
 
       - name: Build portable zip
         shell: pwsh
         run: |
-          7z a -tzip -mx=9 "dist/LANChat-${{ steps.ver.outputs.version }}-windows-x64-portable.zip" ./dist/publish/*
+          7z a -tzip -mx=9 "dist/LANChat-${{ steps.ver.outputs.version }}-windows-${{ matrix.arch }}-portable.zip" ./dist/publish/*
 
       - name: List artifacts
         shell: pwsh
@@ -696,18 +702,23 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-msi
+          name: windows-msi-${{ matrix.arch }}
           path: |
-            dist/LANChat-*-windows-x64.msi
-            dist/LANChat-*-windows-x64-portable.zip
+            dist/LANChat-*-windows-${{ matrix.arch }}.msi
+            dist/LANChat-*-windows-${{ matrix.arch }}-portable.zip
           if-no-files-found: error
 
   msix:
-    name: Build MSIX (Store + Sideload)
+    name: Build MSIX (${{ matrix.arch }}, Store + Sideload)
     needs: [resolve, daemon]
     if: needs.resolve.outputs.do_build == 'true'
     runs-on: windows-latest
     timeout-minutes: 25
+    strategy:
+      matrix:
+        include:
+          - { arch: x64,   platform: x64,   rid: win-x64,   goarch: amd64 }
+          - { arch: arm64, platform: ARM64, rid: win-arm64, goarch: arm64 }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -733,14 +744,14 @@ jobs:
       - name: Fetch daemon from the matrix build
         uses: actions/download-artifact@v4
         with:
-          name: daemon-windows-amd64
+          name: daemon-windows-${{ matrix.goarch }}
           path: dist/bin
 
       - name: Normalize daemon binary name
         shell: pwsh
         run: |
           $exe = Get-ChildItem "dist/bin" -Filter "lanchat-daemon-*.exe" | Select-Object -First 1
-          if (-not $exe) { throw "dist/bin 下没有 daemon-windows-amd64 制品" }
+          if (-not $exe) { throw "dist/bin 下没有 daemon-windows-${{ matrix.goarch }} 制品" }
           Move-Item $exe.FullName "dist/bin/lanchat-daemon.exe" -Force
 
       - name: Locate MSBuild
@@ -776,13 +787,13 @@ jobs:
           $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
           $pfx = Join-Path $env:GITHUB_WORKSPACE "dist\lanchat-sideload.pfx"
           & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
-            /restore /t:Build /p:Configuration=Release /p:Platform=x64 `
-            /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
-            /p:RestoreRuntimeIdentifier=win-x64 `
+            /restore /t:Build /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
+            /p:RuntimeIdentifier=${{ matrix.rid }} /p:SelfContained=true `
+            /p:RestoreRuntimeIdentifier=${{ matrix.rid }} `
             /p:WindowsPackageType=MSIX /p:WindowsAppSDKSelfContained=true `
             /p:GenerateAppxPackageOnBuild=true `
             /p:UapAppxPackageBuildMode=SideloadOnly `
-            /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
+            /p:AppxBundle=Never /p:AppxBundlePlatforms=${{ matrix.platform }} `
             /p:GenerateAppInstallerFile=false `
             /p:AppxPackageSigningEnabled=true `
             "/p:PackageCertificateKeyFile=$pfx" `
@@ -797,15 +808,15 @@ jobs:
         run: |
           $daemon = Join-Path $env:GITHUB_WORKSPACE "dist/bin/lanchat-daemon.exe"
           & "${{ steps.msbuild.outputs.path }}" src/LANChat.App/LANChat.App.csproj `
-            /t:Build /p:Configuration=Release /p:Platform=x64 `
-            /p:RuntimeIdentifier=win-x64 /p:SelfContained=true `
-            /p:RestoreRuntimeIdentifier=win-x64 `
+            /t:Build /p:Configuration=Release /p:Platform=${{ matrix.platform }} `
+            /p:RuntimeIdentifier=${{ matrix.rid }} /p:SelfContained=true `
+            /p:RestoreRuntimeIdentifier=${{ matrix.rid }} `
             /p:WindowsPackageType=MSIX /p:WindowsAppSDKSelfContained=true `
             /p:AppxPackageSigningEnabled=false `
             /p:AppxPackageSigningKeyFile="" `
             /p:GenerateAppxPackageOnBuild=true `
             /p:UapAppxPackageBuildMode=StoreUpload `
-            /p:AppxBundle=Never /p:AppxBundlePlatforms=x64 `
+            /p:AppxBundle=Never /p:AppxBundlePlatforms=${{ matrix.platform }} `
             /p:GenerateAppInstallerFile=false `
             "/p:DaemonPath=$daemon" `
             /p:AppxPackageDir="$env:GITHUB_WORKSPACE\dist\StorePackages\\"
@@ -816,26 +827,30 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "dist/out" | Out-Null
           $v = '${{ steps.ver.outputs.version }}'
+          $arch = '${{ matrix.arch }}'
           # Store 上传包
           $store = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\StorePackages" -Recurse `
             -Include *.msixupload,*.msix | Where-Object { $_.FullName -notmatch '\\obj\\' } |
             Sort-Object Extension -Descending | Select-Object -First 1
           if (-not $store) { throw "未找到 Store 包" }
-          Copy-Item $store.FullName "dist/out/LANChat-$v-windows-x64-Store$($store.Extension)"
+          Copy-Item $store.FullName "dist/out/LANChat-$v-windows-$arch-Store$($store.Extension)"
           # Sideload 主包 + 安装证书 + appinstaller
           $side = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\SideloadPackages" -Recurse `
             -Include *.msix | Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
           if (-not $side) { throw "未找到 Sideload 包" }
-          Copy-Item $side.FullName "dist/out/LANChat-$v-windows-x64-Sideload.msix"
+          Copy-Item $side.FullName "dist/out/LANChat-$v-windows-$arch-Sideload.msix"
           $appinst = Get-ChildItem "$env:GITHUB_WORKSPACE\dist\SideloadPackages" -Recurse `
             -Include *.appinstaller | Where-Object { $_.FullName -notmatch '\\obj\\' } | Select-Object -First 1
-          if ($appinst) { Copy-Item $appinst.FullName "dist/out/LANChat-$v-windows-x64.appinstaller" }
-          Copy-Item "$env:GITHUB_WORKSPACE\dist\lanchat-sideload.pfx" "dist/out/lanchat-sideload-cert.pfx"
+          if ($appinst) { Copy-Item $appinst.FullName "dist/out/LANChat-$v-windows-$arch.appinstaller" }
+          Copy-Item "$env:GITHUB_WORKSPACE\dist\lanchat-sideload.pfx" "dist/out/lanchat-sideload-cert-$arch.pfx"
+          if ($arch -eq 'x64') {
+            Copy-Item "$env:GITHUB_WORKSPACE\dist\lanchat-sideload.pfx" "dist/out/lanchat-sideload-cert.pfx"
+          }
           Get-ChildItem dist/out
 
       - uses: actions/upload-artifact@v4
         with:
-          name: msix-release
+          name: msix-release-${{ matrix.arch }}
           path: dist/out/*
           if-no-files-found: error
 

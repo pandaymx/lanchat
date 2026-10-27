@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0-windows</TargetFramework>
-    <Platforms>x64</Platforms>
+    <Platforms>x64;ARM64</Platforms>
     <IsPackable>false</IsPackable>
     <OutputType>Library</OutputType>
     <RootNamespace>LANChat.Ipc.Tests</RootNamespace>

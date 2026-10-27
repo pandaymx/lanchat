@@ -20,7 +20,7 @@ import (
 )
 
 // CurrentVersion 当前客户端核心版本。
-const CurrentVersion = "4.5.1"
+const CurrentVersion = "4.6.0"
 
 // DefaultReleaseBaseURL GitHub Releases 默认基础地址。
 const DefaultReleaseBaseURL = "https://github.com/pandaymx/lanchat/releases"
@@ -87,12 +87,35 @@ func (c *Client) resolveUpdateDownloadDir() string {
 // releaseAssetCandidatesForOS 返回目标平台优先下载的 Release 制品文件名候选列表。
 func releaseAssetCandidatesForOS(osName, version string) []string {
 	ver := strings.TrimPrefix(strings.TrimSpace(version), "v")
-	switch strings.ToLower(strings.TrimSpace(osName)) {
-	case "windows", "win":
+	lower := strings.ToLower(strings.TrimSpace(osName))
+	switch lower {
+	case "windows-arm64", "win-arm64":
+		return []string{
+			fmt.Sprintf("LANChat-%s-windows-arm64-Sideload.msix", ver),
+			fmt.Sprintf("LANChat-%s-windows-arm64.msi", ver),
+			fmt.Sprintf("LANChat-%s-windows-arm64-portable.zip", ver),
+			fmt.Sprintf("LANChat-%s-windows-x64-Sideload.msix", ver),
+			fmt.Sprintf("LANChat-%s-windows-x64.msi", ver),
+			fmt.Sprintf("LANChat-%s-windows-x64-portable.zip", ver),
+		}
+	case "windows", "win", "windows-x64", "win-x64":
+		if runtime.GOARCH == "arm64" && !strings.Contains(lower, "x64") {
+			return []string{
+				fmt.Sprintf("LANChat-%s-windows-arm64-Sideload.msix", ver),
+				fmt.Sprintf("LANChat-%s-windows-arm64.msi", ver),
+				fmt.Sprintf("LANChat-%s-windows-arm64-portable.zip", ver),
+				fmt.Sprintf("LANChat-%s-windows-x64-Sideload.msix", ver),
+				fmt.Sprintf("LANChat-%s-windows-x64.msi", ver),
+				fmt.Sprintf("LANChat-%s-windows-x64-portable.zip", ver),
+			}
+		}
 		return []string{
 			fmt.Sprintf("LANChat-%s-windows-x64-Sideload.msix", ver),
 			fmt.Sprintf("LANChat-%s-windows-x64.msi", ver),
 			fmt.Sprintf("LANChat-%s-windows-x64-portable.zip", ver),
+			fmt.Sprintf("LANChat-%s-windows-arm64-Sideload.msix", ver),
+			fmt.Sprintf("LANChat-%s-windows-arm64.msi", ver),
+			fmt.Sprintf("LANChat-%s-windows-arm64-portable.zip", ver),
 		}
 	case "linux":
 		return []string{
@@ -781,7 +804,7 @@ func BuildInstallerCommand(osName, savedPath string) (cmdLine string, prog strin
 	lowerPath := strings.ToLower(strings.TrimSpace(savedPath))
 
 	switch lowerOS {
-	case "windows", "win":
+	case "windows", "win", "windows-x64", "win-x64", "windows-arm64", "win-arm64":
 		if strings.HasSuffix(lowerPath, ".msix") || strings.HasSuffix(lowerPath, ".appx") {
 			prog = "powershell.exe"
 			args = []string{"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", fmt.Sprintf("Add-AppxPackage -Path %q", savedPath)}

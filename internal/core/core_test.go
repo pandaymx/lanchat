@@ -1698,4 +1698,9 @@ func TestM32AndM33DNDUnreadAndUpdateApply(t *testing.T) {
 	if !strings.HasPrefix(applyRes, "update:apply:") || !strings.Contains(applyRes, "Add-AppxPackage") {
 		t.Fatalf("unexpected /update apply result: %q", applyRes)
 	}
+
+	arm64Cands := releaseAssetCandidatesForOS("windows-arm64", "v9.9.0")
+	if len(arm64Cands) == 0 || arm64Cands[0] != "LANChat-9.9.0-windows-arm64-Sideload.msix" {
+		t.Fatalf("unexpected windows-arm64 candidates: %v", arm64Cands)
+	}
 }

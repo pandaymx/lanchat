@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.4.0](https://github.com/pandaymx/lanchat/compare/v4.3.0...v4.4.0) (2026-10-27)
+
+
+### Features
+
+* **ui-ios:** upgrade Android and iOS clients to Mobile QQ 9.x collab stage and contract v1.2 ([edd388e](https://github.com/pandaymx/lanchat/commit/edd388ea9d5daef9e36cd0cfc2676575ec359231))
+
 ## [4.3.0](https://github.com/pandaymx/lanchat/compare/v4.2.0...v4.3.0) (2026-10-27)
 
 

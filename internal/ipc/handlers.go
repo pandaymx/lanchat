@@ -38,7 +38,7 @@ var handlers = map[string]handler{
 	"ChannelCreate":    hChannelCreate,
 	"ChannelJoin":      hChannelJoin,
 	"ChannelInvite":    hChannelInvite,
-	"ChannelLeave":          hChannelLeave,
+	"ChannelLeave":     hChannelLeave,
 	"ChannelList": func(api appapi.API, _ json.RawMessage) (interface{}, *rpcErr) {
 		return api.ChannelList(), nil
 	},

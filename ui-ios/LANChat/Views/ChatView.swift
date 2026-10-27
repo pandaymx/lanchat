@@ -24,10 +24,51 @@ struct ChatView: View {
         return all.filter { !$0.revoked && $0.text.lowercased().contains(q) }
     }
 
+    private var pinnedMessage: ChatMessage? {
+        (store.messagesByPeer[peer.id] ?? []).last { msg in
+            !msg.revoked && (msg.pinned || msg.text.hasPrefix("📌 "))
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // 顶部状态副横幅（OS / 在线状态 / E2EE 指示）
             chatStatusSubheader
+
+            if let pinned = pinnedMessage {
+                HStack(spacing: 6) {
+                    Text("📌 [置顶] \(QQTheme.splitQuote(QQTheme.splitReactions(pinned.text).body).body)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 5)
+                .background(Color.orange.opacity(0.12))
+            }
+
+            if isScreenSharing {
+                HStack(spacing: 8) {
+                    Text("🖥️ 实时屏幕共享中 · 支持激光笔坐标批注")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button {
+                        store.sendText(to: peer.id, text: "/annotate 0.5 0.5 重点关注此处")
+                    } label: {
+                        Text("📍 激光批注")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(QQTheme.qqBlue, in: Capsule())
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.86))
+            }
 
             // 聊天内搜索条（点击底部「🔍 搜索」展开）
             if showSearchBar {
@@ -558,6 +599,18 @@ struct BubbleRow: View {
                                     .font(.system(size: 15))
                                     .foregroundStyle(bubbleForeground)
                                     .textSelection(.enabled)
+
+                                if splitQuoteBody.body.contains("```") {
+                                    Text(splitQuoteBody.body.replacingOccurrences(of: "```", with: "").trimmingCharacters(in: .whitespacesAndNewlines))
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundStyle(Color(red: 0.89, green: 0.91, blue: 0.94))
+                                        .padding(8)
+                                        .background(
+                                            Color(red: 0.12, green: 0.16, blue: 0.23),
+                                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        )
+                                        .textSelection(.enabled)
+                                }
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 10)

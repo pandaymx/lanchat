@@ -66,6 +66,24 @@ data class Channel(
     val members: List<String> = emptyList(),
 )
 
+data class VoiceCallState(
+    val state: String = "idle",
+    val peerId: String = "",
+    val groupId: String = "",
+    val localAddr: String = "",
+    val remoteAddr: String = "",
+    val framesIn: Long = 0L,
+    val framesOut: Long = 0L,
+)
+
+data class ScreenShareState(
+    val active: Boolean = false,
+    val peerId: String = "",
+    val groupId: String = "",
+    val fps: Int = 0,
+    val latestFrame: String = "",
+)
+
 data class FullState(
     val conn: String = ConnState.DISCONNECTED,
     val server: String = "",
@@ -75,6 +93,8 @@ data class FullState(
     val transfers: List<Transfer> = emptyList(),
     val channels: List<Channel> = emptyList(),
     val messages: List<ChatMessage> = emptyList(),
+    val voiceCall: VoiceCallState? = null,
+    val screenShare: ScreenShareState? = null,
 )
 
 data class ChatMessage(

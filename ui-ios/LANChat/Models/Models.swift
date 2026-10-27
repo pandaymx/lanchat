@@ -56,6 +56,26 @@ struct Channel: Identifiable, Equatable, Hashable {
     var members: [String]
 }
 
+/// 契约 v1.2 实时语音通话状态快照。
+struct VoiceCallState: Equatable, Hashable {
+    var state: String = "idle"
+    var peerId: String = ""
+    var groupId: String = ""
+    var localAddr: String = ""
+    var remoteAddr: String = ""
+    var framesIn: Int64 = 0
+    var framesOut: Int64 = 0
+}
+
+/// 契约 v1.2 实时屏幕共享状态快照。
+struct ScreenShareState: Equatable, Hashable {
+    var active: Bool = false
+    var peerId: String = ""
+    var groupId: String = ""
+    var fps: Int = 0
+    var latestFrame: String = ""
+}
+
 /// GetState 返回的全量快照。
 struct FullState {
     var conn: String
@@ -66,6 +86,8 @@ struct FullState {
     var transfers: [Transfer]
     var channels: [Channel]
     var messages: [ChatMessage] = []
+    var voiceCall: VoiceCallState? = nil
+    var screenShare: ScreenShareState? = nil
 }
 
 /// 一条聊天消息（本地聚合，UI 使用）。

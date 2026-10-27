@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.7.0](https://github.com/pandaymx/lanchat/compare/v4.6.1...v4.7.0) (2026-10-27)
+
+
+### Features
+
+* **discover:** add Tailscale zero-config peer discovery and dual-stack priority ([6a74677](https://github.com/pandaymx/lanchat/commit/6a74677481f7db1e2af4fbfb375e6968b0b62cd4))
+
 ## [4.6.1](https://github.com/pandaymx/lanchat/compare/v4.6.0...v4.6.1) (2026-10-27)
 
 

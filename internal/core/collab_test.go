@@ -114,4 +114,18 @@ func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
 	if mergedAgain := bob.history.mergeRemoteMessages(exported); mergedAgain != 0 {
 		t.Fatalf("idempotent mergeRemoteMessages count = %d, want 0", mergedAgain)
 	}
+
+	// 验证 v3.3.0 自动剪贴板开关与屏幕共享激光批注指令
+	acRes, err := alice.SendText("", "/autoclip on", "")
+	if err != nil || acRes != "autoclip:on" || !alice.IsAutoClipboard() {
+		t.Fatalf("unexpected autoclip on: res=%q, enabled=%v, err=%v", acRes, alice.IsAutoClipboard(), err)
+	}
+	acOff, err := alice.SendText("", "/autoclip off", "")
+	if err != nil || acOff != "autoclip:off" || alice.IsAutoClipboard() {
+		t.Fatalf("unexpected autoclip off: res=%q, enabled=%v, err=%v", acOff, alice.IsAutoClipboard(), err)
+	}
+	anRes, err := alice.SendText("", "/annotate 0.42,0.75 请检查此函数", "")
+	if err != nil || anRes != "annotate:0.42,0.75" {
+		t.Fatalf("unexpected annotate result: %q, err=%v", anRes, err)
+	}
 }

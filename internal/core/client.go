@@ -72,6 +72,7 @@ type Client struct {
 	e2eeKey           string
 	casIndex          map[string]string
 	sharedClip        string
+	autoClipboard     bool
 	dnd               bool
 	unreadCounts      map[string]int
 	mentionCounts     map[string]int

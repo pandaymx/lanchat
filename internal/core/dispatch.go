@@ -324,6 +324,9 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			c.recordScreenFrame(env.From, env.Group, 0, frame)
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_FRAME", frame)
 			c.emitScreenShareFrame(env.From, env.Group, 0, frame)
+		case strings.HasPrefix(rest, "annot:"):
+			annot := strings.TrimSpace(strings.TrimPrefix(rest, "annot:"))
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_ANNOT", "📍 [屏幕批注 "+annot+"]")
 		case rest == "stop":
 			c.mu.Lock()
 			c.screenSharing = false

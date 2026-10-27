@@ -332,6 +332,37 @@ func (c *Client) StopScreenShare(to, group string) error {
 	return nil
 }
 
+// SendScreenAnnotation 在局域网屏幕共享会话中发送归一化坐标激光笔/画笔批注（v3.3.0）。
+func (c *Client) SendScreenAnnotation(to, group string, normX, normY float64, note string) error {
+	if normX < 0 {
+		normX = 0
+	} else if normX > 1 {
+		normX = 1
+	}
+	if normY < 0 {
+		normY = 0
+	} else if normY > 1 {
+		normY = 1
+	}
+	note = strings.TrimSpace(note)
+	payload := fmt.Sprintf("sys:screen:annot:%.3f,%.3f:%s", normX, normY, note)
+	return c.sendControlText(to, group, payload)
+}
+
+// SetAutoClipboard 开启或关闭跨设备剪贴板自动监听同步模式（v3.3.0）。
+func (c *Client) SetAutoClipboard(enabled bool) {
+	c.mu.Lock()
+	c.autoClipboard = enabled
+	c.mu.Unlock()
+}
+
+// IsAutoClipboard 返回当前是否开启跨设备剪贴板自动监听同步（v3.3.0）。
+func (c *Client) IsAutoClipboard() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.autoClipboard
+}
+
 func (c *Client) voiceCallSnapshotLocked() *appapi.VoiceCallState {
 	vs := c.voice
 	if vs == nil {
@@ -554,6 +585,49 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 			}
 		}
 		return fmt.Sprintf("album:sent:%d", len(valid)), true, nil
+
+	case trimmed == "/autoclip" || strings.HasPrefix(trimmed, "/autoclip "):
+		arg := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(trimmed, "/autoclip")))
+		switch arg {
+		case "off", "0", "false", "stop":
+			c.SetAutoClipboard(false)
+			return "autoclip:off", true, nil
+		case "status":
+			if c.IsAutoClipboard() {
+				return "autoclip:on", true, nil
+			}
+			return "autoclip:off", true, nil
+		default:
+			c.SetAutoClipboard(true)
+			return "autoclip:on", true, nil
+		}
+
+	case strings.HasPrefix(trimmed, "/annotate "):
+		raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "/annotate "))
+		if raw == "" {
+			return "", true, errEmptyText
+		}
+		parts := strings.SplitN(raw, " ", 2)
+		coords := strings.SplitN(parts[0], ",", 2)
+		normX, normY := 0.5, 0.5
+		if len(coords) == 2 {
+			if x, err := strconv.ParseFloat(strings.TrimSpace(coords[0]), 64); err == nil {
+				normX = x
+			}
+			if y, err := strconv.ParseFloat(strings.TrimSpace(coords[1]), 64); err == nil {
+				normY = y
+			}
+		}
+		note := ""
+		if len(parts) == 2 {
+			note = strings.TrimSpace(parts[1])
+		}
+		if to != "" || group != "" {
+			if _, err := c.connectedConn(); err == nil {
+				_ = c.SendScreenAnnotation(to, group, normX, normY, note)
+			}
+		}
+		return fmt.Sprintf("annotate:%.2f,%.2f", normX, normY), true, nil
 	}
 	return "", false, nil
 }

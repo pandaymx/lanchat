@@ -91,6 +91,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -767,6 +768,14 @@ private fun ConversationScaffold(
                                 modifier = Modifier.weight(1f),
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = { onSend("/annotate 0.50,0.50 激光笔标记重点") },
+                                    shape = RoundedCornerShape(14.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(26.dp),
+                                ) {
+                                    Text("📍 批注", fontSize = 11.sp)
+                                }
                                 OutlinedButton(
                                     onClick = { screenFramePicker.launch("image/*") },
                                     shape = RoundedCornerShape(14.dp),
@@ -1539,6 +1548,51 @@ private fun MessageBubbleRow(
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                                             )
                                         }
+                                    }
+                                }
+                            } else if (displayBodyText.contains("```")) {
+                                val rawCode = remember(displayBodyText) {
+                                    displayBodyText
+                                        .substringAfter("```")
+                                        .substringBeforeLast("```")
+                                        .trimStart('\r', '\n')
+                                        .trimEnd()
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0xFF1E293B),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                text = "💻 代码片段",
+                                                color = Color(0xFF94A3B8),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                            Text(
+                                                text = "📋 复制代码",
+                                                color = Color(0xFF38BDF8),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.clickable { onCopy(rawCode) },
+                                            )
+                                        }
+                                        Text(
+                                            text = rawCode,
+                                            color = Color(0xFFF8FAFC),
+                                            fontSize = 12.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            lineHeight = 17.sp,
+                                        )
                                     }
                                 }
                             } else {

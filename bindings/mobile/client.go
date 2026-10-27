@@ -180,6 +180,21 @@ func (c *Client) StopScreenShare(to string, group string) error {
 	return c.core.StopScreenShare(to, group)
 }
 
+// SendScreenAnnotation 在局域网屏幕共享会话中发送归一化坐标激光笔/画笔批注（v3.3.0）。
+func (c *Client) SendScreenAnnotation(to string, group string, normX float64, normY float64, note string) error {
+	return c.core.SendScreenAnnotation(to, group, normX, normY, note)
+}
+
+// SetAutoClipboard 开启或关闭跨设备剪贴板自动同步模式（v3.3.0）。
+func (c *Client) SetAutoClipboard(enabled bool) {
+	c.core.SetAutoClipboard(enabled)
+}
+
+// IsAutoClipboard 返回当前是否开启跨设备剪贴板自动同步（v3.3.0）。
+func (c *Client) IsAutoClipboard() bool {
+	return c.core.IsAutoClipboard()
+}
+
 // GossipEndpointsJSON 返回跨网段/Tailscale 已知 Gossip 节点列表 JSON。
 func (c *Client) GossipEndpointsJSON() []byte {
 	return mustJSON(c.core.GossipEndpoints())

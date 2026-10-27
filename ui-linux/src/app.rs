@@ -4130,7 +4130,7 @@ fn write_fallback_voice_wav(wav_path: &std::path::Path, duration_secs: u32) -> s
     buf.extend_from_slice(&data_bytes.to_le_bytes());
     for i in 0..num_samples {
         let t = i as f32 / sample_rate as f32;
-        let freq = if (i / (sample_rate / 2)) % 2 == 0 {
+        let freq = if (i / (sample_rate / 2)).is_multiple_of(2) {
             523.25_f32
         } else {
             659.25_f32

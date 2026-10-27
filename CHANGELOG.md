@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.3.0](https://github.com/pandaymx/lanchat/compare/v3.2.0...v3.3.0) (2026-10-27)
+
+
+### Features
+
+* **core:** add screen share annotation, auto-clipboard sync, and code block cards ([8fc3588](https://github.com/pandaymx/lanchat/commit/8fc3588e16ff009159a4108faccc6da3ef69d705))
+
 ## [3.2.0](https://github.com/pandaymx/lanchat/compare/v3.1.0...v3.2.0) (2026-10-27)
 
 

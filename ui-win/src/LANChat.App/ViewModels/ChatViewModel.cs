@@ -674,14 +674,15 @@ public sealed partial class ChatViewModel : ViewModelBase
             IncomingFileOffer?.Invoke(transfer);
         }
 
-        var pathBadge = transfer.PathType == PathType.Relay ? "⚠ AES-GCM 加密中继" : "⚡ P2P 高速直连";
+        var pathBadge = transfer.ViaRelay ? "⚠ AES-GCM 加密中继" : "⚡ P2P 高速直连";
         var dirLabel = transfer.Direction == TransferDirection.Inbound ? "📥 收到文件" : "📤 发送文件";
-        var pct = transfer.Size > 0 ? Math.Clamp((int)(transfer.Transferred * 100 / transfer.Size), 0, 100) : 0;
-        var senderName = ResolvePeer(transfer.PeerId)?.Nickname ?? transfer.PeerId;
+        var pct = transfer.Size > 0 ? Math.Clamp((int)(transfer.BytesDone * 100 / transfer.Size), 0, 100) : 0;
+        var peerId = transfer.PeerId ?? "";
+        var senderName = ResolvePeer(peerId)?.Nickname ?? peerId;
         AppendMessage(new ChatMessage
         {
             MsgId = $"file-{transfer.Id}",
-            FromId = transfer.PeerId,
+            FromId = peerId,
             FromName = transfer.Direction == TransferDirection.Outbound ? "我" : senderName,
             GroupId = string.IsNullOrEmpty(transfer.GroupId) ? null : transfer.GroupId,
             Text = $"{dirLabel}：{transfer.Name}\n📊 进度 {pct}% · {pathBadge} · 状态 {transfer.State}",

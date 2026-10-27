@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.5.1](https://github.com/pandaymx/lanchat/compare/v4.5.0...v4.5.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **ui-linux:** eliminate GTK4 main-thread lag with lazy popovers, incremental rendering, and texture caching ([b966dec](https://github.com/pandaymx/lanchat/commit/b966dec12203a718c6cd0cc4b1dca6264beb8f76))
+
 ## [4.5.0](https://github.com/pandaymx/lanchat/compare/v4.4.0...v4.5.0) (2026-10-27)
 
 

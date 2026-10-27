@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0](https://github.com/pandaymx/lanchat/compare/v4.9.0...v5.0.0) (2026-10-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **appapi:** upgrade to v5.0.0 with IPC contract v1.3 explicit RPC methods for voice calls, screen sharing, annotations, folder sync, zero-trust node certificates, and network diagnostics
+
+### Features
+
+* **appapi:** upgrade contract to v1.3 with structured collab RPC methods ([af035f4](https://github.com/pandaymx/lanchat/commit/af035f453a9059f526cbea1588dceff899ebef1e))
+
 ## [4.9.0](https://github.com/pandaymx/lanchat/compare/v4.8.0...v4.9.0) (2026-10-27)
 
 

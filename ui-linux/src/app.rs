@@ -137,6 +137,8 @@ struct Widgets {
     chat_header: gtk::Label,
     chat_subtitle: gtk::Label,
     header_call_btn: gtk::Button,
+    header_screen_btn: gtk::Button,
+    header_sync_btn: gtk::Button,
     header_invite_btn: gtk::Button,
     header_leave_btn: gtk::Button,
     header_drawer_btn: gtk::Button,
@@ -493,6 +495,14 @@ fn build_ui(app: &adw::Application) -> Widgets {
         "发起/挂断局域网实时 UDP 语音通话 (/call / /voiceroom)",
     ));
 
+    let header_screen_btn = gtk::Button::with_label("🖥️ 屏幕投屏");
+    header_screen_btn.add_css_class("flat");
+    header_screen_btn.set_tooltip_text(Some("开启/停止局域网低延迟 P2P 屏幕投屏 (/screenshare)"));
+
+    let header_sync_btn = gtk::Button::with_label("🔄 漫游同步");
+    header_sync_btn.add_css_class("flat");
+    header_sync_btn.set_tooltip_text(Some("向对端或频道触发个人多端加密历史漫游增量同步 (/sync)"));
+
     let header_drawer_btn = gtk::Button::with_label("📊 传输面板");
     header_drawer_btn.add_css_class("flat");
     header_drawer_btn.set_tooltip_text(Some("展开/收起右侧文件传输面板"));
@@ -506,6 +516,8 @@ fn build_ui(app: &adw::Application) -> Widgets {
     header_bar.append(&chat_avatar);
     header_bar.append(&header_titles);
     header_bar.append(&header_call_btn);
+    header_bar.append(&header_screen_btn);
+    header_bar.append(&header_sync_btn);
     header_bar.append(&header_invite_btn);
     header_bar.append(&header_leave_btn);
     header_bar.append(&header_drawer_btn);
@@ -802,6 +814,8 @@ fn build_ui(app: &adw::Application) -> Widgets {
         chat_header,
         chat_subtitle,
         header_call_btn,
+        header_screen_btn,
+        header_sync_btn,
         header_invite_btn,
         header_leave_btn,
         header_drawer_btn,
@@ -1326,6 +1340,42 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 };
                 send_text_to_target(&cx, &target, cmd);
             }
+        }
+    ));
+
+    // 顶部局域网屏幕投屏与多端漫游同步快捷按钮 (v3.2.0)
+    ctx.widgets.header_screen_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |btn| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                cx.toast("请先选择联系人或频道");
+                return;
+            }
+            let cur_label = btn.label().map(|s| s.to_string()).unwrap_or_default();
+            if cur_label.contains("停止") {
+                btn.set_label("🖥️ 屏幕投屏");
+                send_text_to_target(&cx, &target, "/screenshare stop");
+                cx.toast("已停止局域网屏幕投屏");
+            } else {
+                btn.set_label("⏹ 停止投屏");
+                send_text_to_target(&cx, &target, "/screenshare start 15");
+                cx.toast("🖥️ 已开启 15fps 局域网屏幕投屏");
+            }
+        }
+    ));
+    ctx.widgets.header_sync_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                cx.toast("请先选择联系人或频道");
+                return;
+            }
+            send_text_to_target(&cx, &target, "/sync");
+            cx.toast("🔄 已触发个人多端加密历史漫游增量同步");
         }
     ));
 

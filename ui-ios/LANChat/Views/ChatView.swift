@@ -14,6 +14,7 @@ struct ChatView: View {
     @State private var searchQuery = ""
     @State private var e2eeEnabled = false
     @State private var inVoiceCall = false
+    @State private var isScreenSharing = false
     @State private var replyingTo: ChatMessage?
 
     private var thread: [ChatMessage] {
@@ -135,6 +136,34 @@ struct ChatView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background((inVoiceCall ? Color.red : QQTheme.qqBlue).opacity(0.12), in: Capsule())
+            }
+
+            Button {
+                if isScreenSharing {
+                    isScreenSharing = false
+                    store.sendText(to: peer.id, text: "/screenshare stop")
+                } else {
+                    isScreenSharing = true
+                    store.sendText(to: peer.id, text: "/screenshare start 15")
+                }
+            } label: {
+                Text(isScreenSharing ? "⏹ 停止投屏" : "🖥️ 投屏")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(isScreenSharing ? .orange : QQTheme.qqBlue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background((isScreenSharing ? Color.orange : QQTheme.qqBlue).opacity(0.12), in: Capsule())
+            }
+
+            Button {
+                store.sendText(to: peer.id, text: "/sync")
+            } label: {
+                Text("🔄 同步")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(QQTheme.qqBlue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
             }
 
             if e2eeEnabled {

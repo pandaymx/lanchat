@@ -1,6 +1,6 @@
 [package]
 name = "lanchat-ui"
-version = "4.5.0"
+version = "4.5.1"
 edition = "2021"
 description = "LANChat Linux 原生 UI（GTK4 + libadwaita）"
 

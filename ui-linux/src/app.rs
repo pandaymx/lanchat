@@ -18,7 +18,8 @@ use gtk::gio;
 use gtk::glib;
 use gtk::{Align, Orientation};
 use serde::Serialize;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -188,6 +189,11 @@ pub struct AppCtx {
     stop: Arc<Notify>,
     session_targets: Rc<RefCell<Vec<ChatTarget>>>,
     voice_recorder: Rc<RefCell<Option<(std::process::Child, PathBuf, std::time::Instant)>>>,
+    texture_cache: Rc<RefCell<HashMap<String, gdk::Texture>>>,
+    updating_roster: Cell<bool>,
+    sync_in_flight: Cell<bool>,
+    sync_pending: Cell<bool>,
+    last_transfer_render_ms: Cell<u128>,
 }
 
 /// 应用启动入口（Application::activate）。
@@ -206,6 +212,11 @@ pub fn on_activate(app: &adw::Application) {
         stop: Arc::new(Notify::new()),
         session_targets: Rc::new(RefCell::new(Vec::new())),
         voice_recorder: Rc::new(RefCell::new(None)),
+        texture_cache: Rc::new(RefCell::new(HashMap::new())),
+        updating_roster: Cell::new(false),
+        sync_in_flight: Cell::new(false),
+        sync_pending: Cell::new(false),
+        last_transfer_render_ms: Cell::new(0),
     });
 
     wire_actions(&ctx);
@@ -1036,21 +1047,28 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 搜索框实时过滤
+    // 搜索框实时过滤（120ms 防抖避免输入卡顿）
+    ctx.widgets.search_entry.set_search_delay(120);
     ctx.widgets.search_entry.connect_search_changed(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |entry| {
-            cx.state.borrow_mut().search_filter = entry.text().to_string();
-            cx.render_roster();
+            let next = entry.text().to_string();
+            if cx.state.borrow().search_filter != next {
+                cx.state.borrow_mut().search_filter = next;
+                cx.render_roster();
+            }
         }
     ));
 
-    // 选择左侧列表项 → 切换当前会话
+    // 选择左侧列表项 → 切换当前会话（忽略由 render_roster 触发的程序化信号）
     ctx.widgets.roster.connect_row_selected(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |_, row| {
+            if cx.updating_roster.get() {
+                return;
+            }
             if let Some(row) = row {
                 let idx = row.index();
                 if idx >= 0 {
@@ -1156,7 +1174,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 语音消息录制与发送 (/voice)：首次点击启动 PipeWire/ALSA 录音，再次点击结束录音并发送 WAV
+    // 语音消息录制与发送 (/voice)：后台线程收尾录音，避免阻塞 GTK 主线程
     ctx.widgets.voice_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -1167,22 +1185,52 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 return;
             }
             if let Some((mut child, wav_path, started_at)) = cx.voice_recorder.borrow_mut().take() {
-                let _ = std::process::Command::new("kill")
-                    .args(["-s", "INT", &child.id().to_string()])
-                    .status();
-                std::thread::sleep(std::time::Duration::from_millis(90));
-                let _ = child.kill();
-                let _ = child.wait();
                 btn.set_label("🎤 语音");
                 let secs = started_at.elapsed().as_secs().clamp(1, 60) as u32;
-                let valid_wav = std::fs::metadata(&wav_path)
-                    .map(|m| m.len() > 100)
-                    .unwrap_or(false);
-                if !valid_wav {
-                    let _ = write_fallback_voice_wav(&wav_path, secs.clamp(1, 5));
-                }
-                send_text_to_target(&cx, &target, &format!("/voice {}", wav_path.display()));
-                cx.toast(&format!("🎤 已发送 {secs}\" 语音消息"));
+                cx.toast(&format!("🎤 正在封装并发送 {secs}\" 语音消息…"));
+                let ipc_opt = cx.ipc.borrow().clone();
+                let tx = cx.ui_tx.clone();
+                let key = target.key().unwrap_or("").to_string();
+                let is_channel = target.is_channel();
+                crate::spawn_rt(async move {
+                    let wav_for_stop = wav_path.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let _ = std::process::Command::new("kill")
+                            .args(["-s", "INT", &child.id().to_string()])
+                            .status();
+                        std::thread::sleep(std::time::Duration::from_millis(80));
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let valid_wav = std::fs::metadata(&wav_for_stop)
+                            .map(|m| m.len() > 100)
+                            .unwrap_or(false);
+                        if !valid_wav {
+                            let _ = write_fallback_voice_wav(&wav_for_stop, secs.clamp(1, 5));
+                        }
+                    })
+                    .await;
+                    if let Some(ipc) = ipc_opt {
+                        let text = format!("/voice {}", wav_path.display());
+                        let (to, group) = if is_channel {
+                            (String::new(), Some(key.clone()))
+                        } else {
+                            (key.clone(), None)
+                        };
+                        let params = SendTextParams {
+                            to,
+                            text: text.clone(),
+                            group: group.clone(),
+                        };
+                        let r = ipc.invoke("SendText", Some(&params)).await.and_then(|v| {
+                            v.get("msgID")
+                                .and_then(|m| m.as_str())
+                                .map(|s| s.to_string())
+                                .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
+                        });
+                        let _ =
+                            tx.try_send(UiEvent::TextSent(key, group.unwrap_or_default(), text, r));
+                    }
+                });
                 return;
             }
 
@@ -1898,14 +1946,20 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
             trigger_browse(ctx);
         }
         UiEvent::Reconnected => ctx.sync_state(),
-        UiEvent::State(res) => match res {
-            Ok(state) => {
-                let was_connected = ctx.state.borrow().conn == ConnState::Connected;
-                ctx.state.borrow_mut().apply_full_state(state);
-                render_all(ctx, was_connected);
+        UiEvent::State(res) => {
+            ctx.sync_in_flight.set(false);
+            match res {
+                Ok(state) => {
+                    let was_connected = ctx.state.borrow().conn == ConnState::Connected;
+                    ctx.state.borrow_mut().apply_full_state(state);
+                    render_all(ctx, was_connected);
+                }
+                Err(e) => tracing::warn!("GetState 失败：{e}"),
             }
-            Err(e) => tracing::warn!("GetState 失败：{e}"),
-        },
+            if ctx.sync_pending.replace(false) {
+                ctx.sync_state();
+            }
+        }
         UiEvent::Discovered(res) => match res {
             Ok(servers) => {
                 let n = servers.len();
@@ -2005,30 +2059,32 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     ctx.sync_state();
                     return;
                 }
-                if trimmed == "/voice"
-                    || trimmed.starts_with("/voice ")
-                    || trimmed.starts_with("/react ")
+                if trimmed == "/voice" || trimmed.starts_with("/voice ") {
+                    ctx.sync_state();
+                    return;
+                }
+                if trimmed.starts_with("/react ")
                     || trimmed.starts_with("/edit ")
                     || trimmed.starts_with("/pin ")
                 {
-                    ctx.sync_state();
                     return;
                 }
                 if trimmed.starts_with("/revoke ") {
                     ctx.state.borrow_mut().revoke_message(&msg_id);
+                    ctx.render_roster();
+                    if ctx.state.borrow().current_chat.key() == Some(key.as_str()) {
+                        ctx.render_messages();
+                    }
                 } else if trimmed.starts_with("/read ") {
                     let me = ctx.state.borrow().self_id.clone();
                     ctx.state.borrow_mut().mark_read(&msg_id, &me);
+                    if ctx.state.borrow().current_chat.key() == Some(key.as_str()) {
+                        ctx.render_messages();
+                    }
                 } else {
                     let now = now_secs();
-                    let display_text = if trimmed == "/voice" || trimmed.starts_with("/voice ") {
-                        let sec = trimmed.trim_start_matches("/voice").trim();
-                        let sec = if sec.is_empty() { "3" } else { sec };
-                        format!("🎤 [语音消息 {sec}\"]")
-                    } else {
-                        ctx.state.borrow().format_reply_text(&text)
-                    };
-                    ctx.state.borrow_mut().push_message(ChatMessage {
+                    let display_text = ctx.state.borrow().format_reply_text(&text);
+                    let new_msg = ChatMessage {
                         peer_id: key.clone(),
                         sender_id: String::new(),
                         group,
@@ -2039,11 +2095,12 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                         read_by: Vec::new(),
                         ts: now,
                         ..Default::default()
-                    });
-                }
-                ctx.render_roster();
-                if ctx.state.borrow().current_chat.key() == Some(key.as_str()) {
-                    ctx.render_messages();
+                    };
+                    ctx.state.borrow_mut().push_message(new_msg.clone());
+                    ctx.render_roster();
+                    if ctx.state.borrow().current_chat.key() == Some(key.as_str()) {
+                        ctx.append_single_message(&new_msg);
+                    }
                 }
             }
             Err(e) => ctx.toast(&format!("发送失败：{e}")),
@@ -2247,6 +2304,9 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .unwrap_or("")
                 .to_string();
             let msg_type = p.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+            if msg_type == "SCREEN_FRAME" {
+                return;
+            }
             if msg_type == "MSG_REVOKE" || msg_type == "MSG_BURN" {
                 if ctx.state.borrow_mut().revoke_message(&msg_id) {
                     ctx.render_roster();
@@ -2289,7 +2349,7 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             } else {
                 (group.clone(), from.clone())
             };
-            ctx.state.borrow_mut().push_message(ChatMessage {
+            let new_msg = ChatMessage {
                 peer_id: conv_key.clone(),
                 sender_id,
                 group,
@@ -2300,11 +2360,12 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 read_by: Vec::new(),
                 ts: now_secs(),
                 ..Default::default()
-            });
+            };
+            ctx.state.borrow_mut().push_message(new_msg.clone());
             let is_current = ctx.state.borrow().current_chat.key() == Some(conv_key.as_str());
             if is_current {
                 ctx.state.borrow_mut().mark_conv_seen(&conv_key);
-                ctx.render_messages();
+                ctx.append_single_message(&new_msg);
             } else {
                 ctx.toast("收到新消息");
             }
@@ -2315,8 +2376,13 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .get("transfer")
                 .and_then(|v| serde_json::from_value::<Transfer>(v.clone()).ok())
             {
+                let is_active = t.state == crate::models::TransferState::Active;
                 ctx.state.borrow_mut().upsert_transfer(t);
-                ctx.render_transfers();
+                let now_ms = now_millis();
+                if !is_active || now_ms.saturating_sub(ctx.last_transfer_render_ms.get()) >= 100 {
+                    ctx.last_transfer_render_ms.set(now_ms);
+                    ctx.render_transfers();
+                }
                 maybe_prompt_inbound(ctx);
             }
         }
@@ -2707,18 +2773,46 @@ impl AppCtx {
     }
 
     fn select_chat_target(self: &Rc<Self>, target: ChatTarget) {
+        if self.state.borrow().current_chat == target {
+            return;
+        }
+        let had_unseen = target
+            .key()
+            .map(|k| self.state.borrow().unseen_count(k) > 0)
+            .unwrap_or(false);
         if let Some(key) = target.key() {
             self.state.borrow_mut().mark_conv_seen(key);
         }
         {
             let mut st = self.state.borrow_mut();
-            st.current_chat = target;
+            st.current_chat = target.clone();
             st.reply_target = None;
         }
         self.widgets.reply_bar.set_visible(false);
         self.refresh_chat_header();
-        self.render_roster();
+        if had_unseen {
+            self.render_roster();
+        } else {
+            self.update_roster_selection_in_place(&target);
+        }
         self.render_messages();
+    }
+
+    fn update_roster_selection_in_place(&self, target: &ChatTarget) {
+        let targets = self.session_targets.borrow();
+        let mut idx = 0usize;
+        let mut child_opt = self.widgets.roster.first_child();
+        while let Some(child) = child_opt {
+            if let Some(t) = targets.get(idx) {
+                if t == target {
+                    child.add_css_class("qq-session-active");
+                } else {
+                    child.remove_css_class("qq-session-active");
+                }
+            }
+            child_opt = child.next_sibling();
+            idx += 1;
+        }
     }
 
     fn refresh_chat_header(&self) {
@@ -2790,7 +2884,12 @@ impl AppCtx {
     }
 
     fn sync_state(&self) {
+        if self.sync_in_flight.get() {
+            self.sync_pending.set(true);
+            return;
+        }
         if let Some(ipc) = self.ipc.borrow().clone() {
+            self.sync_in_flight.set(true);
             let tx = self.ui_tx.clone();
             crate::spawn_rt(async move {
                 let res = ipc
@@ -2839,6 +2938,7 @@ impl AppCtx {
     }
 
     fn render_roster(&self) {
+        self.updating_roster.set(true);
         clear_listbox(&self.widgets.roster);
         self.session_targets.borrow_mut().clear();
 
@@ -2853,7 +2953,7 @@ impl AppCtx {
         {
             let preview = st
                 .last_message("*")
-                .map(|m| m.text.clone())
+                .map(|m| format_session_preview(&m.text))
                 .unwrap_or_else(|| "点击向全员发送广播消息或群发文件".to_string());
             let time_str = st
                 .last_message("*")
@@ -2888,7 +2988,7 @@ impl AppCtx {
                 let title = format!("{lock}{}", ch.name);
                 let preview = st
                     .last_message(&ch.id)
-                    .map(|m| m.text.clone())
+                    .map(|m| format_session_preview(&m.text))
                     .unwrap_or_else(|| {
                         if ch.topic.trim().is_empty() {
                             format!("{} 名成员", ch.members.len())
@@ -2930,7 +3030,7 @@ impl AppCtx {
                 }
                 let preview = st
                     .last_message(&peer.id)
-                    .map(|m| m.text.clone())
+                    .map(|m| format_session_preview(&m.text))
                     .unwrap_or_else(|| {
                         format!(
                             "[在线] {} · {}",
@@ -2970,6 +3070,7 @@ impl AppCtx {
             empty_row.set_sensitive(false);
             self.widgets.roster.append(&empty_row);
         }
+        self.updating_roster.set(false);
     }
 
     fn render_channels(self: &Rc<Self>) {
@@ -3110,7 +3211,7 @@ impl AppCtx {
             let (_, p_body) = crate::state::split_quote(&clean_p);
             self.widgets
                 .pinned_label
-                .set_text(&format!("📌 [置顶] {p_body}"));
+                .set_text(&format!("📌 [置顶] {}", format_session_preview(&p_body)));
             self.widgets.pinned_bar.set_visible(true);
         } else {
             self.widgets.pinned_bar.set_visible(false);
@@ -3128,8 +3229,54 @@ impl AppCtx {
             return;
         };
 
-        for m in msgs {
-            let sender_name = if m.inbound {
+        // 仅渲染最近 60 条消息，避免历史消息过多时一次性构建数千个 GTK Widget 导致切换会话卡顿
+        const MAX_RENDERED_MSGS: usize = 60;
+        let start_idx = msgs.len().saturating_sub(MAX_RENDERED_MSGS);
+        let slice: Vec<ChatMessage> = msgs[start_idx..].to_vec();
+        drop(st);
+
+        for m in &slice {
+            let row_widget = self.build_message_row(m, &target, &self_nick);
+            self.widgets.msg_list.append(&row_widget);
+        }
+        let adj = self.widgets.msg_scroll.vadjustment();
+        adj.set_value(adj.upper());
+    }
+
+    fn append_single_message(self: &Rc<Self>, m: &ChatMessage) {
+        let (target, self_nick, was_empty_hint) = {
+            let st = self.state.borrow();
+            let target = st.current_chat.clone();
+            let self_nick = if st.nickname.trim().is_empty() {
+                "我".to_string()
+            } else {
+                st.nickname.clone()
+            };
+            let count = target
+                .key()
+                .and_then(|k| st.messages.get(k))
+                .map(|v| v.len())
+                .unwrap_or(0);
+            (target, self_nick, count <= 1)
+        };
+        if was_empty_hint {
+            clear_listbox(&self.widgets.msg_list);
+        }
+        let row_widget = self.build_message_row(m, &target, &self_nick);
+        self.widgets.msg_list.append(&row_widget);
+        let adj = self.widgets.msg_scroll.vadjustment();
+        adj.set_value(adj.upper());
+    }
+
+    fn build_message_row(
+        self: &Rc<Self>,
+        m: &ChatMessage,
+        target: &ChatTarget,
+        self_nick: &str,
+    ) -> gtk::Box {
+        let (sender_name, revoked_orig) = {
+            let st = self.state.borrow();
+            let name = if m.inbound {
                 if !m.sender_id.is_empty() {
                     st.peer(&m.sender_id)
                         .map(|p| p.nickname.clone())
@@ -3145,413 +3292,327 @@ impl AppCtx {
                         .unwrap_or_else(|| "好友".to_string())
                 }
             } else {
-                self_nick.clone()
+                self_nick.to_string()
             };
+            let orig = st.revoked_originals.get(&m.msg_id).cloned();
+            (name, orig)
+        };
 
-            // QQ 风格居中灰色撤回提示条（无头像、无聊天气泡；自己撤回时附带蓝色「重新编辑」按钮）
-            if m.revoked {
-                let revoke_row = gtk::Box::new(Orientation::Horizontal, 6);
-                revoke_row.set_halign(Align::Center);
-                revoke_row.set_margin_top(4);
-                revoke_row.set_margin_bottom(4);
-                revoke_row.add_css_class("qq-revoke-pill");
+        // QQ 风格居中灰色撤回提示条（无头像、无聊天气泡；自己撤回时附带蓝色「重新编辑」按钮）
+        if m.revoked {
+            let revoke_row = gtk::Box::new(Orientation::Horizontal, 6);
+            revoke_row.set_halign(Align::Center);
+            revoke_row.set_margin_top(4);
+            revoke_row.set_margin_bottom(4);
+            revoke_row.add_css_class("qq-revoke-pill");
 
-                let notice_text = if m.inbound {
-                    format!("\"{sender_name}\" 撤回了一条消息")
-                } else {
-                    "你撤回了一条消息".to_string()
-                };
-                let notice_lbl = gtk::Label::new(Some(&notice_text));
-                notice_lbl.add_css_class("caption");
-                notice_lbl.add_css_class("dim-label");
-                revoke_row.append(&notice_lbl);
-
-                if !m.inbound {
-                    if let Some(orig) = st.revoked_originals.get(&m.msg_id).cloned() {
-                        if !orig.is_empty() {
-                            let reedit_btn = gtk::Button::with_label("重新编辑");
-                            reedit_btn.add_css_class("flat");
-                            reedit_btn.add_css_class("qq-reedit-btn");
-                            reedit_btn.set_tooltip_text(Some("将撤回前的原文恢复到输入框重新编辑"));
-                            reedit_btn.connect_clicked(clone!(
-                                #[strong(rename_to = cx)]
-                                self,
-                                move |_| {
-                                    cx.widgets.input.buffer().set_text(&orig);
-                                    cx.widgets.input.grab_focus();
-                                }
-                            ));
-                            revoke_row.append(&reedit_btn);
-                        }
-                    }
-                }
-
-                self.widgets.msg_list.append(&revoke_row);
-                continue;
-            }
-
-            let read_suffix = if !m.inbound && !m.read_by.is_empty() {
-                if m.read_by.len() > 1 {
-                    format!(" · ✓ 已读({})", m.read_by.len())
-                } else {
-                    " · ✓ 已读".to_string()
-                }
+            let notice_text = if m.inbound {
+                format!("\"{sender_name}\" 撤回了一条消息")
             } else {
-                String::new()
+                "你撤回了一条消息".to_string()
             };
+            let notice_lbl = gtk::Label::new(Some(&notice_text));
+            notice_lbl.add_css_class("caption");
+            notice_lbl.add_css_class("dim-label");
+            revoke_row.append(&notice_lbl);
 
-            let pin_prefix = if m.pinned || m.text.starts_with("📌 ") {
-                "📌 [置顶] · "
-            } else {
-                ""
-            };
-            let edit_suffix = if m.edited_at > 0 || m.text.ends_with(" (已编辑)") {
-                " · (已编辑)"
-            } else {
-                ""
-            };
-            let meta_text = if m.inbound {
-                format!(
-                    "{}{}  {}{}",
-                    pin_prefix,
-                    sender_name,
-                    format_hhmm(m.ts),
-                    edit_suffix
-                )
-            } else {
-                format!(
-                    "{}{}{}{}",
-                    pin_prefix,
-                    format_hhmm(m.ts),
-                    read_suffix,
-                    edit_suffix
-                )
-            };
-            let meta_line = gtk::Label::new(Some(&meta_text));
-            meta_line.add_css_class("caption");
-            meta_line.add_css_class("dim-label");
-            meta_line.set_xalign(if m.inbound { 0.0 } else { 1.0 });
-
-            let bubble_card = gtk::Box::new(Orientation::Vertical, 6);
-            bubble_card.add_css_class(if m.inbound { "bubble-in" } else { "bubble-out" });
-            bubble_card.set_tooltip_text(Some(
-                "右键点击打开消息菜单（点赞 / 回复 / 复制 / 置顶 / 撤回）",
-            ));
-
-            let (clean_body, text_reactions) = crate::state::split_reactions(&m.text);
-            let reactions: Vec<String> = if !m.reactions.is_empty() {
-                m.reactions.keys().cloned().collect()
-            } else {
-                text_reactions
-            };
-            let (parsed_quote, body_only) = crate::state::split_quote(&clean_body);
-            let quoted_opt = if !m.reply_quote.is_empty() {
-                Some(m.reply_quote.clone())
-            } else {
-                parsed_quote
-            };
-
-            // QQ 气泡内嵌引用回复卡片
-            if let Some(quoted_str) = &quoted_opt {
-                let quote_box = gtk::Box::new(Orientation::Horizontal, 6);
-                quote_box.add_css_class(if m.inbound {
-                    "qq-quote-in"
-                } else {
-                    "qq-quote-out"
-                });
-                let quote_lbl = gtk::Label::new(Some(quoted_str));
-                quote_lbl.set_xalign(0.0);
-                quote_lbl.set_wrap(true);
-                quote_lbl.set_max_width_chars(48);
-                quote_lbl.add_css_class("caption");
-                quote_box.append(&quote_lbl);
-                bubble_card.append(&quote_box);
-            }
-
-            let has_inline_img = extract_inline_image_b64(&clean_body).is_some();
-            if let Some(b64) = extract_inline_image_b64(&clean_body) {
-                let bytes = glib::base64_decode(b64);
-                if !bytes.is_empty() {
-                    let gbytes = glib::Bytes::from_owned(bytes);
-                    if let Ok(texture) = gdk::Texture::from_bytes(&gbytes) {
-                        let pic = gtk::Picture::for_paintable(&texture);
-                        pic.set_can_shrink(true);
-                        pic.set_content_fit(gtk::ContentFit::Contain);
-                        pic.set_size_request(180, 130);
-                        bubble_card.append(&pic);
-                    }
-                }
-            }
-
-            let inline_audio_b64 = extract_inline_audio_b64(&body_only).map(|s| s.to_string());
-            let is_voice_msg = body_only.contains("🎤 [语音消息") || inline_audio_b64.is_some();
-            let display_body = if has_inline_img {
-                "🖼️ [图片]".to_string()
-            } else if let Some(idx) = body_only.find(" data:audio/") {
-                body_only[..idx].to_string()
-            } else {
-                body_only.clone()
-            };
-            let escaped = glib::markup_escape_text(&display_body).to_string();
-            let bubble = gtk::Label::new(None);
-            bubble.set_use_markup(true);
-            bubble.set_selectable(true);
-            bubble.set_label(&escaped);
-            bubble.set_wrap(true);
-            bubble.set_max_width_chars(56);
-            bubble.set_xalign(0.0);
-            bubble_card.append(&bubble);
-
-            // QQ 语音气泡播放按钮：调用本机 PipeWire / PulseAudio / ALSA 播放语音
-            if is_voice_msg {
-                let play_btn = gtk::Button::with_label("▶️ 点击播放语音");
-                play_btn.add_css_class("flat");
-                play_btn.add_css_class("qq-ctx-btn");
-                let audio_b64 = inline_audio_b64.clone();
-                let msg_id_for_play = m.msg_id.clone();
-                play_btn.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    move |btn| {
-                        btn.set_label("🔊 正在播放…");
-                        play_voice_message(&cx, &msg_id_for_play, audio_b64.as_deref());
-                        let btn_weak = btn.downgrade();
-                        glib::timeout_add_local_once(
-                            std::time::Duration::from_millis(1600),
-                            move || {
-                                if let Some(b) = btn_weak.upgrade() {
-                                    b.set_label("▶️ 点击播放语音");
-                                }
-                            },
-                        );
-                    }
-                ));
-                bubble_card.append(&play_btn);
-            }
-
-            // NTQQ 暗色等宽代码块卡片（支持 ```lang ... ```）
-            if !has_inline_img && body_only.contains("```") {
-                if let (Some(first), Some(last)) = (body_only.find("```"), body_only.rfind("```")) {
-                    if last > first + 3 {
-                        let inner = &body_only[first + 3..last];
-                        let code_str = inner
-                            .find('\n')
-                            .map(|nl| &inner[nl + 1..])
-                            .unwrap_or(inner)
-                            .trim();
-                        if !code_str.is_empty() {
-                            let code_lbl = gtk::Label::new(Some(code_str));
-                            code_lbl.set_xalign(0.0);
-                            code_lbl.set_selectable(true);
-                            code_lbl.set_wrap(true);
-                            code_lbl.add_css_class("monospace");
-                            code_lbl.add_css_class("qq-code-card");
-                            bubble_card.append(&code_lbl);
-                        }
-                    }
-                }
-            }
-
-            bubble_card.set_halign(if m.inbound { Align::Start } else { Align::End });
-
-            // 右键点击气泡弹出 QQ 风格悬浮操作菜单（6 枚快捷表情行 + 💬 回复 / 📋 复制 / 📌 置顶 / ↩️ 撤回）
-            if !m.msg_id.is_empty() {
-                let ctx_pop = gtk::Popover::new();
-                ctx_pop.set_has_arrow(true);
-                let menu_col = gtk::Box::new(Orientation::Vertical, 2);
-                menu_col.set_margin_top(4);
-                menu_col.set_margin_bottom(4);
-                menu_col.set_margin_start(4);
-                menu_col.set_margin_end(4);
-
-                let quick_emoji_row = gtk::Box::new(Orientation::Horizontal, 2);
-                for quick_emoji in ["👍", "❤️", "😂", "🔥", "🎉", "🚀"] {
-                    let mid_q = m.msg_id.clone();
-                    let tgt_q = target.clone();
-                    let em_q = quick_emoji.to_string();
-                    let q_btn = gtk::Button::with_label(quick_emoji);
-                    q_btn.add_css_class("flat");
-                    q_btn.connect_clicked(clone!(
-                        #[strong(rename_to = cx)]
-                        self,
-                        #[weak]
-                        ctx_pop,
-                        move |_| {
-                            ctx_pop.popdown();
-                            send_text_to_target(&cx, &tgt_q, &format!("/react {mid_q} {em_q}"));
-                        }
-                    ));
-                    quick_emoji_row.append(&q_btn);
-                }
-                menu_col.append(&quick_emoji_row);
-
-                let mid_react = m.msg_id.clone();
-                let tgt_react = target.clone();
-                let btn_react = gtk::Button::with_label("👍  点赞回应");
-                btn_react.add_css_class("flat");
-                btn_react.add_css_class("qq-ctx-btn");
-                btn_react.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    #[weak]
-                    ctx_pop,
-                    move |_| {
-                        ctx_pop.popdown();
-                        send_text_to_target(&cx, &tgt_react, &format!("/react {mid_react} 👍"));
-                    }
-                ));
-                menu_col.append(&btn_react);
-
-                let msg_clone = m.clone();
-                let sender_for_reply = sender_name.clone();
-                let body_for_reply = body_only.clone();
-                let btn_reply = gtk::Button::with_label("💬  引用回复");
-                btn_reply.add_css_class("flat");
-                btn_reply.add_css_class("qq-ctx-btn");
-                btn_reply.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    #[weak]
-                    ctx_pop,
-                    move |_| {
-                        ctx_pop.popdown();
-                        cx.state.borrow_mut().reply_target = Some(msg_clone.clone());
-                        cx.widgets
-                            .reply_label
-                            .set_text(&format!("回复 {}：{}", sender_for_reply, body_for_reply));
-                        cx.widgets.reply_bar.set_visible(true);
-                        cx.widgets.input.grab_focus();
-                    }
-                ));
-                menu_col.append(&btn_reply);
-
-                let copy_str = body_only.clone();
-                let btn_copy = gtk::Button::with_label("📋  复制文本");
-                btn_copy.add_css_class("flat");
-                btn_copy.add_css_class("qq-ctx-btn");
-                btn_copy.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    #[weak]
-                    ctx_pop,
-                    move |_| {
-                        ctx_pop.popdown();
-                        if let Some(display) = Display::default() {
-                            display.clipboard().set_text(&copy_str);
-                            cx.toast("已复制消息内容");
-                        }
-                    }
-                ));
-                menu_col.append(&btn_copy);
-
-                let mid_pin = m.msg_id.clone();
-                let tgt_pin = target.clone();
-                let btn_pin = gtk::Button::with_label("📌  置顶消息");
-                btn_pin.add_css_class("flat");
-                btn_pin.add_css_class("qq-ctx-btn");
-                btn_pin.connect_clicked(clone!(
-                    #[strong(rename_to = cx)]
-                    self,
-                    #[weak]
-                    ctx_pop,
-                    move |_| {
-                        ctx_pop.popdown();
-                        send_text_to_target(&cx, &tgt_pin, &format!("/pin {mid_pin}"));
-                    }
-                ));
-                menu_col.append(&btn_pin);
-
-                if !m.inbound {
-                    let mid_rev = m.msg_id.clone();
-                    let tgt_rev = target.clone();
-                    let btn_revoke = gtk::Button::with_label("↩️  撤回消息");
-                    btn_revoke.add_css_class("flat");
-                    btn_revoke.add_css_class("qq-ctx-btn");
-                    btn_revoke.connect_clicked(clone!(
-                        #[strong(rename_to = cx)]
-                        self,
-                        #[weak]
-                        ctx_pop,
-                        move |_| {
-                            ctx_pop.popdown();
-                            send_text_to_target(&cx, &tgt_rev, &format!("/revoke {mid_rev}"));
-                        }
-                    ));
-                    menu_col.append(&btn_revoke);
-                }
-
-                ctx_pop.set_child(Some(&menu_col));
-                ctx_pop.set_parent(&bubble_card);
-
-                let rclick = gtk::GestureClick::new();
-                rclick.set_button(3);
-                rclick.connect_pressed(move |_, _, _, _| {
-                    ctx_pop.popup();
-                });
-                bubble_card.add_controller(rclick);
-            }
-
-            let col = gtk::Box::new(Orientation::Vertical, 4);
-            col.append(&meta_line);
-            col.append(&bubble_card);
-
-            // 气泡下方：已触发的点赞/表情回应胶囊徽章行（仅在有人点赞时显示）
-            if !reactions.is_empty() {
-                let reactions_box = gtk::Box::new(Orientation::Horizontal, 4);
-                reactions_box.set_halign(if m.inbound { Align::Start } else { Align::End });
-                for emoji in &reactions {
-                    let pill = gtk::Button::with_label(&format!("{emoji} 1"));
-                    pill.add_css_class("flat");
-                    pill.add_css_class("qq-reaction-pill");
-                    pill.set_tooltip_text(Some("点击追加点赞回应"));
-                    if !m.msg_id.is_empty() {
-                        let mid_pill = m.msg_id.clone();
-                        let tgt_pill = target.clone();
-                        let emoji_pill = emoji.clone();
-                        pill.connect_clicked(clone!(
+            if !m.inbound {
+                if let Some(orig) = revoked_orig {
+                    if !orig.is_empty() {
+                        let reedit_btn = gtk::Button::with_label("重新编辑");
+                        reedit_btn.add_css_class("flat");
+                        reedit_btn.add_css_class("qq-reedit-btn");
+                        reedit_btn.set_tooltip_text(Some("将撤回前的原文恢复到输入框重新编辑"));
+                        reedit_btn.connect_clicked(clone!(
                             #[strong(rename_to = cx)]
                             self,
                             move |_| {
-                                send_text_to_target(
-                                    &cx,
-                                    &tgt_pill,
-                                    &format!("/react {mid_pill} {emoji_pill}"),
-                                );
+                                cx.widgets.input.buffer().set_text(&orig);
+                                cx.widgets.input.grab_focus();
                             }
                         ));
+                        revoke_row.append(&reedit_btn);
                     }
-                    reactions_box.append(&pill);
                 }
-                col.append(&reactions_box);
             }
-
-            let avatar = adw::Avatar::new(36, Some(&sender_name), true);
-            avatar.set_valign(Align::Start);
-
-            let row = gtk::Box::new(Orientation::Horizontal, 10);
-            row.set_margin_top(6);
-            row.set_margin_bottom(6);
-            row.set_margin_start(14);
-            row.set_margin_end(14);
-            if m.inbound {
-                row.set_halign(Align::Start);
-                row.append(&avatar);
-                row.append(&col);
-            } else {
-                row.set_halign(Align::End);
-                row.append(&col);
-                row.append(&avatar);
-            }
-            self.widgets.msg_list.append(&row);
+            return revoke_row;
         }
-        drop(st);
-        let adj = self.widgets.msg_scroll.vadjustment();
-        adj.set_value(adj.upper());
+
+        let read_suffix = if !m.inbound && !m.read_by.is_empty() {
+            if m.read_by.len() > 1 {
+                format!(" · ✓ 已读({})", m.read_by.len())
+            } else {
+                " · ✓ 已读".to_string()
+            }
+        } else {
+            String::new()
+        };
+
+        let pin_prefix = if m.pinned || m.text.starts_with("📌 ") {
+            "📌 [置顶] · "
+        } else {
+            ""
+        };
+        let edit_suffix = if m.edited_at > 0 || m.text.ends_with(" (已编辑)") {
+            " · (已编辑)"
+        } else {
+            ""
+        };
+        let meta_text = if m.inbound {
+            format!(
+                "{}{}  {}{}",
+                pin_prefix,
+                sender_name,
+                format_hhmm(m.ts),
+                edit_suffix
+            )
+        } else {
+            format!(
+                "{}{}{}{}",
+                pin_prefix,
+                format_hhmm(m.ts),
+                read_suffix,
+                edit_suffix
+            )
+        };
+        let meta_line = gtk::Label::new(Some(&meta_text));
+        meta_line.add_css_class("caption");
+        meta_line.add_css_class("dim-label");
+        meta_line.set_xalign(if m.inbound { 0.0 } else { 1.0 });
+
+        let bubble_card = gtk::Box::new(Orientation::Vertical, 6);
+        bubble_card.add_css_class(if m.inbound { "bubble-in" } else { "bubble-out" });
+        bubble_card.set_tooltip_text(Some(
+            "右键点击打开消息菜单（点赞 / 回复 / 复制 / 置顶 / 撤回）",
+        ));
+
+        let (clean_body, text_reactions) = crate::state::split_reactions(&m.text);
+        let reactions: Vec<String> = if !m.reactions.is_empty() {
+            m.reactions.keys().cloned().collect()
+        } else {
+            text_reactions
+        };
+        let (parsed_quote, body_only) = crate::state::split_quote(&clean_body);
+        let quoted_opt = if !m.reply_quote.is_empty() {
+            Some(m.reply_quote.clone())
+        } else {
+            parsed_quote
+        };
+
+        // QQ 气泡内嵌引用回复卡片
+        if let Some(quoted_str) = &quoted_opt {
+            let quote_box = gtk::Box::new(Orientation::Horizontal, 6);
+            quote_box.add_css_class(if m.inbound {
+                "qq-quote-in"
+            } else {
+                "qq-quote-out"
+            });
+            let quote_lbl = gtk::Label::new(Some(quoted_str));
+            quote_lbl.set_xalign(0.0);
+            quote_lbl.set_wrap(true);
+            quote_lbl.set_max_width_chars(48);
+            quote_lbl.add_css_class("caption");
+            quote_box.append(&quote_lbl);
+            bubble_card.append(&quote_box);
+        }
+
+        let has_inline_img = extract_inline_image_b64(&clean_body).is_some();
+        if let Some(b64) = extract_inline_image_b64(&clean_body) {
+            let cache_key = if !m.msg_id.is_empty() {
+                m.msg_id.clone()
+            } else {
+                format!("img:{}:{}", b64.len(), &b64[..b64.len().min(32)])
+            };
+            let tex_opt = {
+                if let Some(cached) = self.texture_cache.borrow().get(&cache_key) {
+                    Some(cached.clone())
+                } else {
+                    let bytes = glib::base64_decode(b64);
+                    if !bytes.is_empty() {
+                        let gbytes = glib::Bytes::from_owned(bytes);
+                        if let Ok(texture) = gdk::Texture::from_bytes(&gbytes) {
+                            self.texture_cache
+                                .borrow_mut()
+                                .insert(cache_key, texture.clone());
+                            Some(texture)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let Some(texture) = tex_opt {
+                let pic = gtk::Picture::for_paintable(&texture);
+                pic.set_can_shrink(true);
+                pic.set_content_fit(gtk::ContentFit::Contain);
+                pic.set_size_request(180, 130);
+                bubble_card.append(&pic);
+            }
+        }
+
+        let inline_audio_b64 = extract_inline_audio_b64(&body_only).map(|s| s.to_string());
+        let is_voice_msg = body_only.contains("🎤 [语音消息") || inline_audio_b64.is_some();
+        let display_body = if has_inline_img {
+            "🖼️ [图片]".to_string()
+        } else if let Some(idx) = body_only.find(" data:audio/") {
+            body_only[..idx].to_string()
+        } else {
+            body_only.clone()
+        };
+        let escaped = glib::markup_escape_text(&display_body).to_string();
+        let bubble = gtk::Label::new(None);
+        bubble.set_use_markup(true);
+        bubble.set_selectable(true);
+        bubble.set_label(&escaped);
+        bubble.set_wrap(true);
+        bubble.set_max_width_chars(56);
+        bubble.set_xalign(0.0);
+        bubble_card.append(&bubble);
+
+        // QQ 语音气泡播放按钮：调用本机 PipeWire / PulseAudio / ALSA 播放语音
+        if is_voice_msg {
+            let play_btn = gtk::Button::with_label("▶️ 点击播放语音");
+            play_btn.add_css_class("flat");
+            play_btn.add_css_class("qq-ctx-btn");
+            let audio_b64 = inline_audio_b64.clone();
+            let msg_id_for_play = m.msg_id.clone();
+            play_btn.connect_clicked(clone!(
+                #[strong(rename_to = cx)]
+                self,
+                move |btn| {
+                    btn.set_label("🔊 正在播放…");
+                    play_voice_message(&cx, &msg_id_for_play, audio_b64.as_deref());
+                    let btn_weak = btn.downgrade();
+                    glib::timeout_add_local_once(
+                        std::time::Duration::from_millis(1600),
+                        move || {
+                            if let Some(b) = btn_weak.upgrade() {
+                                b.set_label("▶️ 点击播放语音");
+                            }
+                        },
+                    );
+                }
+            ));
+            bubble_card.append(&play_btn);
+        }
+
+        // NTQQ 暗色等宽代码块卡片（支持 ```lang ... ```）
+        if !has_inline_img && body_only.contains("```") {
+            if let (Some(first), Some(last)) = (body_only.find("```"), body_only.rfind("```")) {
+                if last > first + 3 {
+                    let inner = &body_only[first + 3..last];
+                    let code_str = inner
+                        .find('\n')
+                        .map(|nl| &inner[nl + 1..])
+                        .unwrap_or(inner)
+                        .trim();
+                    if !code_str.is_empty() {
+                        let code_lbl = gtk::Label::new(Some(code_str));
+                        code_lbl.set_xalign(0.0);
+                        code_lbl.set_selectable(true);
+                        code_lbl.set_wrap(true);
+                        code_lbl.add_css_class("monospace");
+                        code_lbl.add_css_class("qq-code-card");
+                        bubble_card.append(&code_lbl);
+                    }
+                }
+            }
+        }
+
+        bubble_card.set_halign(if m.inbound { Align::Start } else { Align::End });
+
+        // 右键点击气泡按需懒加载弹出 QQ 风格操作菜单（避免每条消息预先创建 Popover + 11 个按钮并防止 GDK surface 泄漏）
+        if !m.msg_id.is_empty() {
+            let rclick = gtk::GestureClick::new();
+            rclick.set_button(3);
+            let msg_clone = m.clone();
+            let target_clone = target.clone();
+            let sender_for_reply = sender_name.clone();
+            let body_for_reply = display_body.clone();
+            let bubble_weak = bubble_card.downgrade();
+            rclick.connect_pressed(clone!(
+                #[strong(rename_to = cx)]
+                self,
+                move |_, _, _, _| {
+                    let Some(parent_box) = bubble_weak.upgrade() else {
+                        return;
+                    };
+                    show_message_context_popover(
+                        &cx,
+                        &parent_box,
+                        &msg_clone,
+                        &target_clone,
+                        &sender_for_reply,
+                        &body_for_reply,
+                    );
+                }
+            ));
+            bubble_card.add_controller(rclick);
+        }
+
+        let col = gtk::Box::new(Orientation::Vertical, 4);
+        col.append(&meta_line);
+        col.append(&bubble_card);
+
+        // 气泡下方：已触发的点赞/表情回应胶囊徽章行（仅在有人点赞时显示）
+        if !reactions.is_empty() {
+            let reactions_box = gtk::Box::new(Orientation::Horizontal, 4);
+            reactions_box.set_halign(if m.inbound { Align::Start } else { Align::End });
+            for emoji in &reactions {
+                let pill = gtk::Button::with_label(&format!("{emoji} 1"));
+                pill.add_css_class("flat");
+                pill.add_css_class("qq-reaction-pill");
+                pill.set_tooltip_text(Some("点击追加点赞回应"));
+                if !m.msg_id.is_empty() {
+                    let mid_pill = m.msg_id.clone();
+                    let tgt_pill = target.clone();
+                    let emoji_pill = emoji.clone();
+                    pill.connect_clicked(clone!(
+                        #[strong(rename_to = cx)]
+                        self,
+                        move |_| {
+                            send_text_to_target(
+                                &cx,
+                                &tgt_pill,
+                                &format!("/react {mid_pill} {emoji_pill}"),
+                            );
+                        }
+                    ));
+                }
+                reactions_box.append(&pill);
+            }
+            col.append(&reactions_box);
+        }
+
+        let avatar = adw::Avatar::new(36, Some(&sender_name), true);
+        avatar.set_valign(Align::Start);
+
+        let row = gtk::Box::new(Orientation::Horizontal, 10);
+        row.set_margin_top(6);
+        row.set_margin_bottom(6);
+        row.set_margin_start(14);
+        row.set_margin_end(14);
+        if m.inbound {
+            row.set_halign(Align::Start);
+            row.append(&avatar);
+            row.append(&col);
+        } else {
+            row.set_halign(Align::End);
+            row.append(&col);
+            row.append(&avatar);
+        }
+        row
     }
 
     fn render_transfers(self: &Rc<Self>) {
-        self.populate_transfer_listbox(&self.widgets.drawer_transfers_list);
-        self.populate_transfer_listbox(&self.widgets.transfers_list);
+        if self.widgets.right_drawer.is_visible() {
+            self.populate_transfer_listbox(&self.widgets.drawer_transfers_list);
+        }
+        if self.widgets.transfers_win.is_visible() {
+            self.populate_transfer_listbox(&self.widgets.transfers_list);
+        }
     }
 
     fn populate_transfer_listbox(self: &Rc<Self>, target_list: &gtk::ListBox) {
@@ -3867,20 +3928,185 @@ fn spawn_voice_recorder(wav_path: &std::path::Path) -> Option<std::process::Chil
         ),
     ];
     for (bin, args) in candidates {
-        if let Ok(mut child) = std::process::Command::new(bin)
+        if let Ok(child) = std::process::Command::new(bin)
             .args(*args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
         {
-            std::thread::sleep(std::time::Duration::from_millis(60));
-            if matches!(child.try_wait(), Ok(None)) {
-                return Some(child);
-            }
+            return Some(child);
         }
     }
     None
+}
+
+/// 按需构建并弹出右键气泡菜单（关闭后自动 unparent 释放 GDK Popover 资源）。
+fn show_message_context_popover(
+    ctx: &Rc<AppCtx>,
+    parent_box: &gtk::Box,
+    m: &ChatMessage,
+    target: &ChatTarget,
+    sender_for_reply: &str,
+    body_for_reply: &str,
+) {
+    let ctx_pop = gtk::Popover::new();
+    ctx_pop.set_has_arrow(true);
+    ctx_pop.set_autohide(true);
+    let menu_col = gtk::Box::new(Orientation::Vertical, 2);
+    menu_col.set_margin_top(4);
+    menu_col.set_margin_bottom(4);
+    menu_col.set_margin_start(4);
+    menu_col.set_margin_end(4);
+
+    let quick_emoji_row = gtk::Box::new(Orientation::Horizontal, 2);
+    for quick_emoji in ["👍", "❤️", "😂", "🔥", "🎉", "🚀"] {
+        let mid_q = m.msg_id.clone();
+        let tgt_q = target.clone();
+        let em_q = quick_emoji.to_string();
+        let q_btn = gtk::Button::with_label(quick_emoji);
+        q_btn.add_css_class("flat");
+        q_btn.connect_clicked(clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            #[weak]
+            ctx_pop,
+            move |_| {
+                ctx_pop.popdown();
+                send_text_to_target(&cx, &tgt_q, &format!("/react {mid_q} {em_q}"));
+            }
+        ));
+        quick_emoji_row.append(&q_btn);
+    }
+    menu_col.append(&quick_emoji_row);
+
+    let mid_react = m.msg_id.clone();
+    let tgt_react = target.clone();
+    let btn_react = gtk::Button::with_label("👍  点赞回应");
+    btn_react.add_css_class("flat");
+    btn_react.add_css_class("qq-ctx-btn");
+    btn_react.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        #[weak]
+        ctx_pop,
+        move |_| {
+            ctx_pop.popdown();
+            send_text_to_target(&cx, &tgt_react, &format!("/react {mid_react} 👍"));
+        }
+    ));
+    menu_col.append(&btn_react);
+
+    let msg_clone = m.clone();
+    let sender_str = sender_for_reply.to_string();
+    let body_str = body_for_reply.to_string();
+    let btn_reply = gtk::Button::with_label("💬  引用回复");
+    btn_reply.add_css_class("flat");
+    btn_reply.add_css_class("qq-ctx-btn");
+    btn_reply.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        #[weak]
+        ctx_pop,
+        move |_| {
+            ctx_pop.popdown();
+            cx.state.borrow_mut().reply_target = Some(msg_clone.clone());
+            cx.widgets
+                .reply_label
+                .set_text(&format!("回复 {}：{}", sender_str, body_str));
+            cx.widgets.reply_bar.set_visible(true);
+            cx.widgets.input.grab_focus();
+        }
+    ));
+    menu_col.append(&btn_reply);
+
+    let copy_str = body_for_reply.to_string();
+    let btn_copy = gtk::Button::with_label("📋  复制文本");
+    btn_copy.add_css_class("flat");
+    btn_copy.add_css_class("qq-ctx-btn");
+    btn_copy.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        #[weak]
+        ctx_pop,
+        move |_| {
+            ctx_pop.popdown();
+            if let Some(display) = Display::default() {
+                display.clipboard().set_text(&copy_str);
+                cx.toast("已复制消息内容");
+            }
+        }
+    ));
+    menu_col.append(&btn_copy);
+
+    let mid_pin = m.msg_id.clone();
+    let tgt_pin = target.clone();
+    let btn_pin = gtk::Button::with_label("📌  置顶消息");
+    btn_pin.add_css_class("flat");
+    btn_pin.add_css_class("qq-ctx-btn");
+    btn_pin.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        #[weak]
+        ctx_pop,
+        move |_| {
+            ctx_pop.popdown();
+            send_text_to_target(&cx, &tgt_pin, &format!("/pin {mid_pin}"));
+        }
+    ));
+    menu_col.append(&btn_pin);
+
+    if !m.inbound {
+        let mid_rev = m.msg_id.clone();
+        let tgt_rev = target.clone();
+        let btn_revoke = gtk::Button::with_label("↩️  撤回消息");
+        btn_revoke.add_css_class("flat");
+        btn_revoke.add_css_class("qq-ctx-btn");
+        btn_revoke.connect_clicked(clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            #[weak]
+            ctx_pop,
+            move |_| {
+                ctx_pop.popdown();
+                send_text_to_target(&cx, &tgt_rev, &format!("/revoke {mid_rev}"));
+            }
+        ));
+        menu_col.append(&btn_revoke);
+    }
+
+    ctx_pop.set_child(Some(&menu_col));
+    ctx_pop.set_parent(parent_box);
+    ctx_pop.connect_closed(|pop| {
+        pop.unparent();
+    });
+    ctx_pop.popup();
+}
+
+/// 格式化会话列表预览文案：剥离内联图片/音频 Base64 载荷并限制长度，避免 Pango 排版超大字符串卡顿。
+fn format_session_preview(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.contains("data:image/") {
+        return "🖼️ [图片]".to_string();
+    }
+    let clean = if let Some(idx) = trimmed.find(" data:audio/") {
+        &trimmed[..idx]
+    } else {
+        trimmed
+    };
+    let single_line = clean.lines().next().unwrap_or(clean);
+    let mut out: String = single_line.chars().take(64).collect();
+    if single_line.chars().count() > 64 {
+        out.push('…');
+    }
+    out
+}
+
+fn now_millis() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 /// 生成一段 16kHz 16-bit 单声道双音提示 WAV（当无物理麦克风或播放无内联音频的语音气泡时兜底）。

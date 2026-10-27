@@ -12,7 +12,7 @@
   <Identity
       Name="50B5921A.lan-chat"
       Publisher="CN=B072FED8-68F4-4903-9942-BB0A460B36EF"
-      Version="4.5.0.0" />
+      Version="4.5.1.0" />
 
   <Properties>
     <DisplayName>lan-chat</DisplayName>

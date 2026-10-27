@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.8.0](https://github.com/pandaymx/lanchat/compare/v4.7.0...v4.8.0) (2026-10-27)
+
+
+### Features
+
+* **core:** add real screen capture streaming pipeline and auto-clipboard sync ([1c5da0f](https://github.com/pandaymx/lanchat/commit/1c5da0f0c5d6d2e5e7cd1df14b63d0a209299960))
+
 ## [4.7.0](https://github.com/pandaymx/lanchat/compare/v4.6.1...v4.7.0) (2026-10-27)
 
 

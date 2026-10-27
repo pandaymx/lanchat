@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.6.1](https://github.com/pandaymx/lanchat/compare/v4.6.0...v4.6.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **discover:** add UDP broadcast beacon and auto-standby embedded hub ([2803aec](https://github.com/pandaymx/lanchat/commit/2803aec290243277c078349153bfc7fd931925dd))
+
 ## [4.6.0](https://github.com/pandaymx/lanchat/compare/v4.5.1...v4.6.0) (2026-10-27)
 
 

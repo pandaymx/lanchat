@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,17 +30,21 @@ var (
 
 // voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道实时语音房间（阶段四 v2.0）。
 type voiceSession struct {
-	mu         sync.Mutex
-	conn       net.PacketConn
-	localAddr  string
-	remoteAddr *net.UDPAddr
-	targetPeer string
-	targetGrp  string
-	state      string // "idle" | "calling" | "active"
-	seq        atomic.Uint32
-	framesIn   atomic.Uint64
-	framesOut  atomic.Uint64
-	onFrame    func(seq uint32, ts int64, pcm []byte)
+	mu           sync.Mutex
+	conn         net.PacketConn
+	localAddr    string
+	remoteAddr   *net.UDPAddr
+	targetPeer   string
+	targetGrp    string
+	state        string // "idle" | "calling" | "active"
+	seq          atomic.Uint32
+	framesIn     atomic.Uint64
+	framesOut    atomic.Uint64
+	onFrame      func(seq uint32, ts int64, pcm []byte)
+	audioStarted bool
+	stopAudioCh  chan struct{}
+	capCmd       *exec.Cmd
+	playCmd      *exec.Cmd
 }
 
 // StartVoiceCall 发起局域网实时语音呼叫（1:1 或 G2 语音频道），绑定本地 UDP 端口并通过信令下发邀约。
@@ -150,9 +156,13 @@ func (c *Client) ensureLocalVoiceUDP(to, group string) error {
 	}
 	c.mu.Unlock()
 
-	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	bindAddr := ":0"
+	if isGoTestBinary() {
+		bindAddr = "127.0.0.1:0"
+	}
+	pc, err := net.ListenPacket("udp", bindAddr)
 	if err != nil {
-		pc, err = net.ListenPacket("udp", ":0")
+		pc, err = net.ListenPacket("udp", "127.0.0.1:0")
 		if err != nil {
 			return err
 		}
@@ -169,11 +179,12 @@ func (c *Client) ensureLocalVoiceUDP(to, group string) error {
 	}
 
 	vs := &voiceSession{
-		conn:       pc,
-		localAddr:  localUDP,
-		targetPeer: to,
-		targetGrp:  group,
-		state:      "calling",
+		conn:        pc,
+		localAddr:   localUDP,
+		targetPeer:  to,
+		targetGrp:   group,
+		state:       "calling",
+		stopAudioCh: make(chan struct{}),
 	}
 	c.mu.Lock()
 	if c.voice != nil && c.voice.conn != nil {
@@ -184,8 +195,126 @@ func (c *Client) ensureLocalVoiceUDP(to, group string) error {
 	c.voice = vs
 	c.mu.Unlock()
 
+	if !isGoTestBinary() {
+		c.startVoiceAudioPipeline(vs)
+	}
 	go c.readVoiceLoop(vs)
 	return nil
+}
+
+func isGoTestBinary() bool {
+	if os.Getenv("LANCHAT_DISABLE_AUDIO") != "" {
+		return true
+	}
+	exe := filepath.Base(os.Args[0])
+	return strings.HasSuffix(exe, ".test") || strings.HasSuffix(exe, ".test.exe") || strings.Contains(exe, "_test")
+}
+
+func findRawAudioPlayerCmd() *exec.Cmd {
+	type cand struct {
+		bin  string
+		args []string
+	}
+	for _, c := range []cand{
+		{"pw-play", []string{"--rate=16000", "--channels=1", "--format=s16", "--raw", "-"}},
+		{"paplay", []string{"--raw", "--rate=16000", "--channels=1", "--format=s16le"}},
+		{"aplay", []string{"-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-"}},
+		{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "pipe:0"}},
+	} {
+		if path, err := exec.LookPath(c.bin); err == nil {
+			return exec.Command(path, c.args...)
+		}
+	}
+	return nil
+}
+
+func findRawAudioCaptureCmd() *exec.Cmd {
+	type cand struct {
+		bin  string
+		args []string
+	}
+	for _, c := range []cand{
+		{"pw-record", []string{"--rate=16000", "--channels=1", "--format=s16", "--raw", "-"}},
+		{"parec", []string{"--rate=16000", "--channels=1", "--format=s16le"}},
+		{"arecord", []string{"-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-"}},
+	} {
+		if path, err := exec.LookPath(c.bin); err == nil {
+			return exec.Command(path, c.args...)
+		}
+	}
+	return nil
+}
+
+func (c *Client) startVoiceAudioPipeline(vs *voiceSession) {
+	vs.mu.Lock()
+	if vs.audioStarted {
+		vs.mu.Unlock()
+		return
+	}
+	vs.audioStarted = true
+	stopCh := vs.stopAudioCh
+	vs.mu.Unlock()
+
+	// 1. 启动扬声器 PCM 播放管道（16kHz 16-bit mono）
+	if playCmd := findRawAudioPlayerCmd(); playCmd != nil {
+		if stdin, err := playCmd.StdinPipe(); err == nil {
+			if err := playCmd.Start(); err == nil {
+				playCh := make(chan []byte, 64)
+				vs.mu.Lock()
+				vs.playCmd = playCmd
+				if vs.onFrame == nil {
+					vs.onFrame = func(_ uint32, _ int64, pcm []byte) {
+						select {
+						case playCh <- pcm:
+						default:
+						}
+					}
+				}
+				vs.mu.Unlock()
+				go func() {
+					defer func() { _ = stdin.Close() }()
+					for {
+						select {
+						case <-stopCh:
+							return
+						case pcm := <-playCh:
+							if _, wErr := stdin.Write(pcm); wErr != nil {
+								return
+							}
+						}
+					}
+				}()
+			}
+		}
+	}
+
+	// 2. 启动麦克风 PCM 采集管道（20ms = 640B 帧，16kHz 16-bit mono）
+	if capCmd := findRawAudioCaptureCmd(); capCmd != nil {
+		if stdout, err := capCmd.StdoutPipe(); err == nil {
+			if err := capCmd.Start(); err == nil {
+				vs.mu.Lock()
+				vs.capCmd = capCmd
+				vs.mu.Unlock()
+				go func() {
+					frame := make([]byte, 640)
+					for {
+						select {
+						case <-stopCh:
+							return
+						default:
+						}
+						n, rErr := io.ReadFull(stdout, frame)
+						if n > 0 {
+							_ = c.SendVoiceFrame(frame[:n])
+						}
+						if rErr != nil {
+							return
+						}
+					}
+				}()
+			}
+		}
+	}
 }
 
 func (c *Client) readVoiceLoop(vs *voiceSession) {
@@ -265,8 +394,32 @@ func (c *Client) closeVoiceSession() {
 	vs := c.voice
 	c.voice = nil
 	c.mu.Unlock()
-	if vs != nil && vs.conn != nil {
-		_ = vs.conn.Close()
+	if vs == nil {
+		return
+	}
+	vs.mu.Lock()
+	stopCh := vs.stopAudioCh
+	vs.stopAudioCh = nil
+	capCmd := vs.capCmd
+	playCmd := vs.playCmd
+	vs.capCmd = nil
+	vs.playCmd = nil
+	conn := vs.conn
+	vs.mu.Unlock()
+
+	if stopCh != nil {
+		close(stopCh)
+	}
+	if capCmd != nil && capCmd.Process != nil {
+		_ = capCmd.Process.Kill()
+		_ = capCmd.Wait()
+	}
+	if playCmd != nil && playCmd.Process != nil {
+		_ = playCmd.Process.Kill()
+		_ = playCmd.Wait()
+	}
+	if conn != nil {
+		_ = conn.Close()
 	}
 }
 

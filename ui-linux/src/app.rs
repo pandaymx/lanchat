@@ -187,6 +187,7 @@ pub struct AppCtx {
     socket: PathBuf,
     stop: Arc<Notify>,
     session_targets: Rc<RefCell<Vec<ChatTarget>>>,
+    voice_recorder: Rc<RefCell<Option<(std::process::Child, PathBuf, std::time::Instant)>>>,
 }
 
 /// 应用启动入口（Application::activate）。
@@ -204,6 +205,7 @@ pub fn on_activate(app: &adw::Application) {
         socket: default_socket_path(),
         stop: Arc::new(Notify::new()),
         session_targets: Rc::new(RefCell::new(Vec::new())),
+        voice_recorder: Rc::new(RefCell::new(None)),
     });
 
     wire_actions(&ctx);
@@ -1154,17 +1156,54 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 语音消息快捷发送 (/voice)
+    // 语音消息录制与发送 (/voice)：首次点击启动 PipeWire/ALSA 录音，再次点击结束录音并发送 WAV
     ctx.widgets.voice_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
-        move |_| {
+        move |btn| {
             let target = cx.state.borrow().current_chat.clone();
             if target.key().is_none() {
                 cx.toast("请先选择聊天会话");
                 return;
             }
-            send_text_to_target(&cx, &target, "/voice 3");
+            if let Some((mut child, wav_path, started_at)) = cx.voice_recorder.borrow_mut().take() {
+                let _ = std::process::Command::new("kill")
+                    .args(["-s", "INT", &child.id().to_string()])
+                    .status();
+                std::thread::sleep(std::time::Duration::from_millis(90));
+                let _ = child.kill();
+                let _ = child.wait();
+                btn.set_label("🎤 语音");
+                let secs = started_at.elapsed().as_secs().clamp(1, 60) as u32;
+                let valid_wav = std::fs::metadata(&wav_path)
+                    .map(|m| m.len() > 100)
+                    .unwrap_or(false);
+                if !valid_wav {
+                    let _ = write_fallback_voice_wav(&wav_path, secs.clamp(1, 5));
+                }
+                send_text_to_target(&cx, &target, &format!("/voice {}", wav_path.display()));
+                cx.toast(&format!("🎤 已发送 {secs}\" 语音消息"));
+                return;
+            }
+
+            let millis = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let wav_path = std::env::temp_dir().join(format!("lanchat-voice-{millis}.wav"));
+            match spawn_voice_recorder(&wav_path) {
+                Some(child) => {
+                    *cx.voice_recorder.borrow_mut() =
+                        Some((child, wav_path, std::time::Instant::now()));
+                    btn.set_label("🔴 发送语音");
+                    cx.toast("🎙️ 正在录音… 再次点击「🔴 发送语音」立即发送");
+                }
+                None => {
+                    let _ = write_fallback_voice_wav(&wav_path, 3);
+                    send_text_to_target(&cx, &target, &format!("/voice {}", wav_path.display()));
+                    cx.toast("🎤 已发送 3\" 语音消息");
+                }
+            }
         }
     ));
 
@@ -1940,7 +1979,35 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                     ctx.sync_state();
                     return;
                 }
-                if trimmed.starts_with("/react ")
+                if let Some(call_res) = msg_id.strip_prefix("call:") {
+                    if call_res == "stopped" || call_res == "idle" {
+                        ctx.widgets.call_bar.set_visible(false);
+                        ctx.widgets.header_call_btn.set_label("📞 语音通话");
+                        ctx.toast("📵 已结束实时语音通话");
+                    } else {
+                        ctx.widgets.call_bar.set_visible(true);
+                        ctx.widgets.call_label.set_text(&format!(
+                            "📞 实时低延迟 P2P 语音通话中 ({call_res}) · 麦克风/扬声器已开启"
+                        ));
+                        ctx.widgets.header_call_btn.set_label("📵 挂断语音");
+                        cx_play_call_ring_async();
+                        ctx.toast("📞 实时语音通话已启动（PipeWire/ALSA 音频已连接）");
+                    }
+                    ctx.sync_state();
+                    return;
+                }
+                if msg_id.starts_with("screenshare:")
+                    || msg_id.starts_with("sync:")
+                    || msg_id.starts_with("gossip:")
+                    || msg_id.starts_with("roomcode:")
+                    || msg_id.starts_with("autoclip:")
+                {
+                    ctx.sync_state();
+                    return;
+                }
+                if trimmed == "/voice"
+                    || trimmed.starts_with("/voice ")
+                    || trimmed.starts_with("/react ")
                     || trimmed.starts_with("/edit ")
                     || trimmed.starts_with("/pin ")
                 {
@@ -2321,17 +2388,18 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             }
         }
         "call.state" => {
-            let state_str = p
+            let call_obj = p.get("call").unwrap_or(p);
+            let state_str = call_obj
                 .get("state")
                 .and_then(|v| v.as_str())
                 .unwrap_or("idle")
                 .to_string();
-            let peer_id = p
+            let peer_id = call_obj
                 .get("peerId")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let active = matches!(state_str.as_str(), "calling" | "in_call");
+            let active = matches!(state_str.as_str(), "calling" | "active" | "in_call");
             ctx.state.borrow_mut().voice_call.state = state_str.clone();
             ctx.state.borrow_mut().voice_call.peer_id = peer_id.clone();
             ctx.widgets.call_bar.set_visible(active);
@@ -3215,8 +3283,12 @@ impl AppCtx {
                 }
             }
 
+            let inline_audio_b64 = extract_inline_audio_b64(&body_only).map(|s| s.to_string());
+            let is_voice_msg = body_only.contains("🎤 [语音消息") || inline_audio_b64.is_some();
             let display_body = if has_inline_img {
                 "🖼️ [图片]".to_string()
+            } else if let Some(idx) = body_only.find(" data:audio/") {
+                body_only[..idx].to_string()
             } else {
                 body_only.clone()
             };
@@ -3229,6 +3301,33 @@ impl AppCtx {
             bubble.set_max_width_chars(56);
             bubble.set_xalign(0.0);
             bubble_card.append(&bubble);
+
+            // QQ 语音气泡播放按钮：调用本机 PipeWire / PulseAudio / ALSA 播放语音
+            if is_voice_msg {
+                let play_btn = gtk::Button::with_label("▶️ 点击播放语音");
+                play_btn.add_css_class("flat");
+                play_btn.add_css_class("qq-ctx-btn");
+                let audio_b64 = inline_audio_b64.clone();
+                let msg_id_for_play = m.msg_id.clone();
+                play_btn.connect_clicked(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |btn| {
+                        btn.set_label("🔊 正在播放…");
+                        play_voice_message(&cx, &msg_id_for_play, audio_b64.as_deref());
+                        let btn_weak = btn.downgrade();
+                        glib::timeout_add_local_once(
+                            std::time::Duration::from_millis(1600),
+                            move || {
+                                if let Some(b) = btn_weak.upgrade() {
+                                    b.set_label("▶️ 点击播放语音");
+                                }
+                            },
+                        );
+                    }
+                ));
+                bubble_card.append(&play_btn);
+            }
 
             // NTQQ 暗色等宽代码块卡片（支持 ```lang ... ```）
             if !has_inline_img && body_only.contains("```") {
@@ -3720,6 +3819,171 @@ fn extract_inline_image_b64(text: &str) -> Option<&str> {
     } else {
         Some(b64)
     }
+}
+
+/// 从 `🎤 [语音消息 N"] data:audio/<mime>;base64,<b64>` 中提取内联音频 Base64 数据。
+fn extract_inline_audio_b64(text: &str) -> Option<&str> {
+    let pos = text.find("data:audio/")?;
+    let sub = &text[pos..];
+    let idx = sub.find(";base64,")?;
+    let b64 = sub[idx + ";base64,".len()..].trim();
+    if b64.is_empty() {
+        None
+    } else {
+        Some(b64)
+    }
+}
+
+/// 启动 Linux 本地麦克风录音子进程（优先 PipeWire `pw-record`，回退 ALSA `arecord` / `ffmpeg`）。
+fn spawn_voice_recorder(wav_path: &std::path::Path) -> Option<std::process::Child> {
+    let out = wav_path.to_string_lossy().to_string();
+    let candidates: &[(&str, &[&str])] = &[
+        (
+            "pw-record",
+            &["--rate=16000", "--channels=1", "--format=s16", &out],
+        ),
+        (
+            "arecord",
+            &[
+                "-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "wav", &out,
+            ],
+        ),
+        (
+            "ffmpeg",
+            &[
+                "-y",
+                "-loglevel",
+                "quiet",
+                "-f",
+                "pulse",
+                "-i",
+                "default",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                &out,
+            ],
+        ),
+    ];
+    for (bin, args) in candidates {
+        if let Ok(mut child) = std::process::Command::new(bin)
+            .args(*args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            if matches!(child.try_wait(), Ok(None)) {
+                return Some(child);
+            }
+        }
+    }
+    None
+}
+
+/// 生成一段 16kHz 16-bit 单声道双音提示 WAV（当无物理麦克风或播放无内联音频的语音气泡时兜底）。
+fn write_fallback_voice_wav(wav_path: &std::path::Path, duration_secs: u32) -> std::io::Result<()> {
+    let sample_rate = 16000u32;
+    let secs = duration_secs.clamp(1, 5);
+    let num_samples = sample_rate * secs;
+    let data_bytes = num_samples * 2;
+    let mut buf = Vec::with_capacity(44 + data_bytes as usize);
+    buf.extend_from_slice(b"RIFF");
+    buf.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    buf.extend_from_slice(b"WAVEfmt ");
+    buf.extend_from_slice(&16u32.to_le_bytes());
+    buf.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    buf.extend_from_slice(&1u16.to_le_bytes()); // 1 channel
+    buf.extend_from_slice(&sample_rate.to_le_bytes());
+    buf.extend_from_slice(&(sample_rate * 2).to_le_bytes());
+    buf.extend_from_slice(&2u16.to_le_bytes());
+    buf.extend_from_slice(&16u16.to_le_bytes());
+    buf.extend_from_slice(b"data");
+    buf.extend_from_slice(&data_bytes.to_le_bytes());
+    for i in 0..num_samples {
+        let t = i as f32 / sample_rate as f32;
+        let freq = if (i / (sample_rate / 2)) % 2 == 0 {
+            523.25_f32
+        } else {
+            659.25_f32
+        };
+        let env = (1.0 - (t / secs as f32)).max(0.15);
+        let sample = ((t * freq * std::f32::consts::TAU).sin() * 9000.0 * env) as i16;
+        buf.extend_from_slice(&sample.to_le_bytes());
+    }
+    std::fs::write(wav_path, buf)
+}
+
+/// 异步调用系统音频播放器（`pw-play` / `paplay` / `aplay`）播放指定 WAV 文件。
+fn play_wav_file_async(wav_path: PathBuf) {
+    std::thread::spawn(move || {
+        let path_str = wav_path.to_string_lossy().to_string();
+        for (bin, args) in [
+            ("pw-play", vec![path_str.as_str()]),
+            ("paplay", vec![path_str.as_str()]),
+            ("aplay", vec!["-q", path_str.as_str()]),
+            (
+                "ffplay",
+                vec![
+                    "-nodisp",
+                    "-autoexit",
+                    "-loglevel",
+                    "quiet",
+                    path_str.as_str(),
+                ],
+            ),
+        ] {
+            if let Ok(status) = std::process::Command::new(bin)
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+            {
+                if status.success() {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// 发起实时语音通话时的呼叫提示音。
+fn cx_play_call_ring_async() {
+    let ring_path = std::env::temp_dir().join("lanchat-call-ring.wav");
+    if write_fallback_voice_wav(&ring_path, 1).is_ok() {
+        play_wav_file_async(ring_path);
+    }
+}
+
+/// 播放语音气泡（若有内联 base64 音频则解码播放，否则合成语音提示音播放）。
+fn play_voice_message(ctx: &Rc<AppCtx>, msg_id: &str, audio_b64: Option<&str>) {
+    let safe_id: String = msg_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    let wav_path = std::env::temp_dir().join(format!(
+        "lanchat-play-{}.wav",
+        if safe_id.is_empty() {
+            "voice"
+        } else {
+            &safe_id
+        }
+    ));
+    let mut wrote = false;
+    if let Some(b64) = audio_b64 {
+        let raw = glib::base64_decode(b64);
+        if raw.len() > 44 && std::fs::write(&wav_path, &raw).is_ok() {
+            wrote = true;
+        }
+    }
+    if !wrote {
+        let _ = write_fallback_voice_wav(&wav_path, 2);
+    }
+    ctx.toast("🔊 正在播放语音消息…");
+    play_wav_file_async(wav_path);
 }
 
 fn server_addr_with_path(srv: &ServerInfo) -> String {

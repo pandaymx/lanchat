@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.5.0](https://github.com/pandaymx/lanchat/compare/v4.4.0...v4.5.0) (2026-10-27)
+
+
+### Features
+
+* **ui-linux:** add native PipeWire/ALSA voice recording, playback, and UDP audio call bridge ([f272157](https://github.com/pandaymx/lanchat/commit/f2721576eaa2ce4293fcec4d9b9f269a369698bb))
+
 ## [4.4.0](https://github.com/pandaymx/lanchat/compare/v4.3.0...v4.4.0) (2026-10-27)
 
 

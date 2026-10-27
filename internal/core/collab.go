@@ -15,10 +15,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/discover"
 )
 
-var voicePacketMagic = []byte("LCTPVOICE\x02")
+var (
+	voicePacketMagic  = []byte("LCTPVOICE\x02")
+	screenPacketMagic = []byte("LCTPSCREEN\x01")
+)
 
 // voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道实时语音房间（阶段四 v2.0）。
 type voiceSession struct {
@@ -46,6 +50,7 @@ func (c *Client) StartVoiceCall(to, group string) (string, error) {
 			_ = c.sendControlText(to, group, "sys:call:offer:"+localAddr)
 		}
 	}
+	c.emitVoiceCallState()
 	return "call:calling:" + localAddr, nil
 }
 
@@ -61,6 +66,7 @@ func (c *Client) AcceptVoiceCall(to, group, remoteUDP string) (string, error) {
 			_ = c.sendControlText(to, group, "sys:call:accept:"+localAddr)
 		}
 	}
+	c.emitVoiceCallState()
 	return "call:active:" + localAddr, nil
 }
 
@@ -72,6 +78,7 @@ func (c *Client) StopVoiceCall(to, group string) error {
 			_ = c.sendControlText(to, group, "sys:call:hangup")
 		}
 	}
+	c.emitVoiceCallState()
 	return nil
 }
 
@@ -182,10 +189,22 @@ func (c *Client) ensureLocalVoiceUDP(to, group string) error {
 func (c *Client) readVoiceLoop(vs *voiceSession) {
 	buf := make([]byte, 64*1024)
 	headerLen := len(voicePacketMagic) + 12
+	screenMagicLen := len(screenPacketMagic)
 	for {
 		n, addr, err := vs.conn.ReadFrom(buf)
 		if err != nil {
 			return
+		}
+		if n > screenMagicLen && string(buf[:screenMagicLen]) == string(screenPacketMagic) {
+			frame := string(buf[screenMagicLen:n])
+			vs.mu.Lock()
+			peer := vs.targetPeer
+			grp := vs.targetGrp
+			vs.mu.Unlock()
+			c.recordScreenFrame(peer, grp, 15, frame)
+			c.listener().OnMessageReceived(peer, grp, "udp-screen", "SCREEN_FRAME", frame)
+			c.emitScreenShareFrame(peer, grp, 15, frame)
+			continue
 		}
 		if n <= headerLen || string(buf[:len(voicePacketMagic)]) != string(voicePacketMagic) {
 			continue
@@ -249,7 +268,7 @@ func (c *Client) closeVoiceSession() {
 	}
 }
 
-// StartScreenShare 开启局域网低延迟屏幕/窗口共享会话（阶段四 v2.0）。
+// StartScreenShare 开启局域网低延迟屏幕/窗口共享会话（阶段四 v2.0 / 契约 v1.2）。
 func (c *Client) StartScreenShare(to, group string, fps int) (string, error) {
 	if fps <= 0 || fps > 60 {
 		fps = 15
@@ -257,6 +276,8 @@ func (c *Client) StartScreenShare(to, group string, fps int) (string, error) {
 	c.mu.Lock()
 	c.screenSharing = true
 	c.screenShareFPS = fps
+	c.screenSharePeer = to
+	c.screenShareGroup = group
 	c.mu.Unlock()
 	if to != "" || group != "" {
 		if _, err := c.connectedConn(); err == nil {
@@ -266,11 +287,30 @@ func (c *Client) StartScreenShare(to, group string, fps int) (string, error) {
 	return fmt.Sprintf("screenshare:active:%dfps", fps), nil
 }
 
-// SendScreenFrame 发送一帧屏幕/窗口共享画面（data:image/jpeg;base64,...）。
+// SendScreenFrame 发送一帧屏幕/窗口共享画面（data:image/jpeg;base64,...）；
+// 若已建立实时 UDP 通道且单包 ≤60 KiB，优先走 UDP 数据面直传，否则回退信令控制帧（v3.1.0）。
 func (c *Client) SendScreenFrame(to, group, frameData string) error {
 	frameData = strings.TrimSpace(frameData)
 	if frameData == "" {
 		return errEmptyText
+	}
+	c.recordScreenFrame(to, group, 0, frameData)
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs != nil && len(frameData)+len(screenPacketMagic) <= 60*1024 {
+		vs.mu.Lock()
+		conn := vs.conn
+		raddr := vs.remoteAddr
+		vs.mu.Unlock()
+		if conn != nil && raddr != nil {
+			pkt := make([]byte, len(screenPacketMagic)+len(frameData))
+			copy(pkt, screenPacketMagic)
+			copy(pkt[len(screenPacketMagic):], frameData)
+			if _, err := conn.WriteTo(pkt, raddr); err == nil {
+				return nil
+			}
+		}
 	}
 	return c.sendControlText(to, group, "sys:screen:frame:"+frameData)
 }
@@ -280,6 +320,9 @@ func (c *Client) StopScreenShare(to, group string) error {
 	c.mu.Lock()
 	c.screenSharing = false
 	c.screenShareFPS = 0
+	c.screenSharePeer = ""
+	c.screenShareGroup = ""
+	c.latestScreenFrame = ""
 	c.mu.Unlock()
 	if to != "" || group != "" {
 		if _, err := c.connectedConn(); err == nil {
@@ -287,6 +330,84 @@ func (c *Client) StopScreenShare(to, group string) error {
 		}
 	}
 	return nil
+}
+
+func (c *Client) voiceCallSnapshotLocked() *appapi.VoiceCallState {
+	vs := c.voice
+	if vs == nil {
+		return nil
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	remote := ""
+	if vs.remoteAddr != nil {
+		remote = vs.remoteAddr.String()
+	}
+	return &appapi.VoiceCallState{
+		State:      vs.state,
+		PeerID:     vs.targetPeer,
+		GroupID:    vs.targetGrp,
+		LocalAddr:  vs.localAddr,
+		RemoteAddr: remote,
+		FramesIn:   int64(vs.framesIn.Load()),
+		FramesOut:  int64(vs.framesOut.Load()),
+	}
+}
+
+func (c *Client) screenShareSnapshotLocked() *appapi.ScreenShareState {
+	if !c.screenSharing && c.latestScreenFrame == "" {
+		return nil
+	}
+	return &appapi.ScreenShareState{
+		Active:      c.screenSharing,
+		PeerID:      c.screenSharePeer,
+		GroupID:     c.screenShareGroup,
+		FPS:         c.screenShareFPS,
+		LatestFrame: c.latestScreenFrame,
+	}
+}
+
+func (c *Client) recordScreenFrame(peer, group string, fps int, frame string) {
+	c.mu.Lock()
+	if peer != "" {
+		c.screenSharePeer = peer
+	}
+	if group != "" {
+		c.screenShareGroup = group
+	}
+	if fps > 0 {
+		c.screenShareFPS = fps
+	}
+	c.latestScreenFrame = frame
+	c.mu.Unlock()
+}
+
+func (c *Client) emitVoiceCallState() {
+	c.mu.Lock()
+	cb := c.cb
+	snap := c.voiceCallSnapshotLocked()
+	c.mu.Unlock()
+	if snap == nil {
+		snap = &appapi.VoiceCallState{State: "idle"}
+	}
+	if cl, ok := cb.(appapi.CollabListener); ok {
+		cl.OnVoiceCallState(*snap)
+	}
+}
+
+func (c *Client) emitScreenShareFrame(from, group string, fps int, frameData string) {
+	c.mu.Lock()
+	cb := c.cb
+	if fps <= 0 {
+		fps = c.screenShareFPS
+		if fps <= 0 {
+			fps = 15
+		}
+	}
+	c.mu.Unlock()
+	if cl, ok := cb.(appapi.CollabListener); ok {
+		cl.OnScreenShareFrame(from, group, fps, frameData)
+	}
 }
 
 // AddGossipEndpoints 向本地跨网段 / Tailscale Gossip 地址簿添加候选中心节点。

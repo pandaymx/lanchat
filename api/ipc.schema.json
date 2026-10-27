@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.1",
+  "schemaVersion": "1.2",
   "description": "LANChat daemon <-> 五端 UI 契约（JSON-RPC 2.0）。唯一真源为 internal/appapi；禁止任何端使用本文件之外的方法、事件或字段。",
   "transport": {
     "protocol": "jsonrpc-2.0",
@@ -26,7 +26,9 @@
           "peers": "Peer[]",
           "transfers": "Transfer[]",
           "channels": "Channel[]",
-          "messages": "ChatMessage[]?"
+          "messages": "ChatMessage[]?",
+          "voiceCall": "VoiceCallState?",
+          "screenShare": "ScreenShareState?"
         }
       }
     },
@@ -141,6 +143,17 @@
     },
     "channel.updated": {
       "payload": { "channels": "Channel[]" }
+    },
+    "call.state": {
+      "payload": { "call": "VoiceCallState" }
+    },
+    "screen.frame": {
+      "payload": {
+        "from": "string",
+        "group": "string?",
+        "fps": "int",
+        "frameData": "string"
+      }
     }
   },
   "enums": {
@@ -203,6 +216,22 @@
       "revoked": "bool?",
       "readBy": "string[]?",
       "ts": "int64"
+    },
+    "VoiceCallState": {
+      "state": "string",
+      "peerId": "string?",
+      "groupId": "string?",
+      "localAddr": "string?",
+      "remoteAddr": "string?",
+      "framesIn": "int64?",
+      "framesOut": "int64?"
+    },
+    "ScreenShareState": {
+      "active": "bool",
+      "peerId": "string?",
+      "groupId": "string?",
+      "fps": "int?",
+      "latestFrame": "string?"
     }
   }
 }

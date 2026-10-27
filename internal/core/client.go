@@ -67,18 +67,21 @@ type Client struct {
 
 	browser *discover.Browser
 
-	downloadDir    string
-	history        *historyStore
-	e2eeKey        string
-	casIndex       map[string]string
-	sharedClip     string
-	dnd            bool
-	unreadCounts   map[string]int
-	mentionCounts  map[string]int
-	voice          *voiceSession
-	screenSharing  bool
-	screenShareFPS int
-	gossipBook     *discover.GossipPeerBook
+	downloadDir       string
+	history           *historyStore
+	e2eeKey           string
+	casIndex          map[string]string
+	sharedClip        string
+	dnd               bool
+	unreadCounts      map[string]int
+	mentionCounts     map[string]int
+	voice             *voiceSession
+	screenSharing     bool
+	screenShareFPS    int
+	screenSharePeer   string
+	screenShareGroup  string
+	latestScreenFrame string
+	gossipBook        *discover.GossipPeerBook
 
 	cb appapi.Listener
 
@@ -218,14 +221,16 @@ func (c *Client) GetState() appapi.State {
 	}
 
 	return appapi.State{
-		Conn:      c.connState,
-		Server:    c.server,
-		SelfID:    c.selfID,
-		Nickname:  c.nickname,
-		Peers:     peers,
-		Transfers: transfers,
-		Channels:  channels,
-		Messages:  c.history.snapshot(),
+		Conn:        c.connState,
+		Server:      c.server,
+		SelfID:      c.selfID,
+		Nickname:    c.nickname,
+		Peers:       peers,
+		Transfers:   transfers,
+		Channels:    channels,
+		Messages:    c.history.snapshot(),
+		VoiceCall:   c.voiceCallSnapshotLocked(),
+		ScreenShare: c.screenShareSnapshotLocked(),
 	}
 }
 

@@ -293,10 +293,12 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			remoteUDP := strings.TrimSpace(strings.TrimPrefix(rest, "accept:"))
 			if remoteUDP != "" {
 				c.setVoiceRemoteUDP(remoteUDP)
+				c.emitVoiceCallState()
 				c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL", "📞 [对方已接听实时语音] "+remoteUDP)
 			}
 		case rest == "hangup":
 			c.closeVoiceSession()
+			c.emitVoiceCallState()
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL", "📞 [实时语音通话已结束]")
 		}
 		return true
@@ -306,11 +308,27 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		switch {
 		case strings.HasPrefix(rest, "start:"):
 			fps := strings.TrimSpace(strings.TrimPrefix(rest, "start:"))
+			fpsNum, _ := strconv.Atoi(fps)
+			if fpsNum <= 0 {
+				fpsNum = 15
+			}
+			c.mu.Lock()
+			c.screenSharing = true
+			c.screenShareFPS = fpsNum
+			c.screenSharePeer = env.From
+			c.screenShareGroup = env.Group
+			c.mu.Unlock()
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_SHARE", "🖥️ [屏幕共享已开启 "+fps+"fps]")
 		case strings.HasPrefix(rest, "frame:"):
 			frame := strings.TrimSpace(strings.TrimPrefix(rest, "frame:"))
+			c.recordScreenFrame(env.From, env.Group, 0, frame)
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_FRAME", frame)
+			c.emitScreenShareFrame(env.From, env.Group, 0, frame)
 		case rest == "stop":
+			c.mu.Lock()
+			c.screenSharing = false
+			c.latestScreenFrame = ""
+			c.mu.Unlock()
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_SHARE", "🖥️ [屏幕共享已结束]")
 		}
 		return true

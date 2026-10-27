@@ -113,16 +113,38 @@ type ChatMessage struct {
 	TS         int64               `json:"ts"`
 }
 
+// VoiceCallState 描述当前局域网实时语音呼叫状态（契约 v1.2）。
+type VoiceCallState struct {
+	State      string `json:"state"`
+	PeerID     string `json:"peerId,omitempty"`
+	GroupID    string `json:"groupId,omitempty"`
+	LocalAddr  string `json:"localAddr,omitempty"`
+	RemoteAddr string `json:"remoteAddr,omitempty"`
+	FramesIn   int64  `json:"framesIn,omitempty"`
+	FramesOut  int64  `json:"framesOut,omitempty"`
+}
+
+// ScreenShareState 描述当前局域网屏幕共享状态（契约 v1.2）。
+type ScreenShareState struct {
+	Active      bool   `json:"active"`
+	PeerID      string `json:"peerId,omitempty"`
+	GroupID     string `json:"groupId,omitempty"`
+	FPS         int    `json:"fps,omitempty"`
+	LatestFrame string `json:"latestFrame,omitempty"`
+}
+
 // State GetState 返回的全量快照。
 type State struct {
-	Conn      ConnState     `json:"conn"`
-	Server    string        `json:"server,omitempty"`
-	SelfID    string        `json:"selfId,omitempty"`
-	Nickname  string        `json:"nickname"`
-	Peers     []Peer        `json:"peers"`
-	Transfers []Transfer    `json:"transfers"`
-	Channels  []Channel     `json:"channels"`
-	Messages  []ChatMessage `json:"messages,omitempty"`
+	Conn        ConnState         `json:"conn"`
+	Server      string            `json:"server,omitempty"`
+	SelfID      string            `json:"selfId,omitempty"`
+	Nickname    string            `json:"nickname"`
+	Peers       []Peer            `json:"peers"`
+	Transfers   []Transfer        `json:"transfers"`
+	Channels    []Channel         `json:"channels"`
+	Messages    []ChatMessage     `json:"messages,omitempty"`
+	VoiceCall   *VoiceCallState   `json:"voiceCall,omitempty"`
+	ScreenShare *ScreenShareState `json:"screenShare,omitempty"`
 }
 
 // API 是 daemon 暴露给各端 UI 的全部方法（对齐方案 §12.1）。
@@ -201,4 +223,11 @@ type Listener interface {
 // 当消息因点赞回应、二次编辑、置顶、撤回或已读回执发生变化时，下发完整结构化 ChatMessage（对应 msg.updated）。
 type MessageUpdateListener interface {
 	OnMessageUpdated(msg ChatMessage)
+}
+
+// CollabListener 是可选的实时音视频协作事件回调接口（契约 v1.2）：
+// 承载结构化语音呼叫状态更新（call.state）与屏幕共享帧流（screen.frame）。
+type CollabListener interface {
+	OnVoiceCallState(call VoiceCallState)
+	OnScreenShareFrame(from, group string, fps int, frameData string)
 }

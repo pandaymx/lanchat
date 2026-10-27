@@ -12,6 +12,7 @@ type eventBridge struct {
 var (
 	_ appapi.Listener              = eventBridge{}
 	_ appapi.MessageUpdateListener = eventBridge{}
+	_ appapi.CollabListener        = eventBridge{}
 )
 
 func (e eventBridge) OnConnChanged(state appapi.ConnState, reason string) {
@@ -80,4 +81,19 @@ func (e eventBridge) OnChannelUpdated(channels []appapi.Channel) {
 	e.srv.broadcast("channel.updated", struct {
 		Channels []appapi.Channel `json:"channels"`
 	}{Channels: channels})
+}
+
+func (e eventBridge) OnVoiceCallState(call appapi.VoiceCallState) {
+	e.srv.broadcast("call.state", struct {
+		Call appapi.VoiceCallState `json:"call"`
+	}{Call: call})
+}
+
+func (e eventBridge) OnScreenShareFrame(from, group string, fps int, frameData string) {
+	e.srv.broadcast("screen.frame", struct {
+		From      string `json:"from"`
+		Group     string `json:"group,omitempty"`
+		FPS       int    `json:"fps"`
+		FrameData string `json:"frameData"`
+	}{From: from, Group: group, FPS: fps, FrameData: frameData})
 }

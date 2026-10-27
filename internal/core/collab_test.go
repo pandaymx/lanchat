@@ -55,6 +55,25 @@ func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
 		t.Fatal("timed out waiting for UDP voice frame")
 	}
 
+	// 验证契约 v1.2 UDP 屏幕帧直传与 State 快照
+	sampleScreen := "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/"
+	if err := alice.SendScreenFrame("bob", "", sampleScreen); err != nil {
+		t.Fatalf("SendScreenFrame over UDP: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if st := bob.GetState(); st.ScreenShare != nil && st.ScreenShare.LatestFrame == sampleScreen {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if st := bob.GetState(); st.ScreenShare == nil || st.ScreenShare.LatestFrame != sampleScreen {
+		t.Fatalf("bob ScreenShare state = %+v, want latestFrame=%q", st.ScreenShare, sampleScreen)
+	}
+	if st := alice.GetState(); st.VoiceCall == nil || st.VoiceCall.State != "active" {
+		t.Fatalf("alice VoiceCall state = %+v, want active", st.VoiceCall)
+	}
+
 	_ = alice.StopVoiceCall("", "")
 	if st := alice.VoiceCallStatus(); st != "idle" {
 		t.Fatalf("VoiceCallStatus after stop = %q, want idle", st)

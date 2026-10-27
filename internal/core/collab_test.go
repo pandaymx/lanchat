@@ -2,6 +2,8 @@ package core
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -127,5 +129,41 @@ func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
 	anRes, err := alice.SendText("", "/annotate 0.42,0.75 请检查此函数", "")
 	if err != nil || anRes != "annotate:0.42,0.75" {
 		t.Fatalf("unexpected annotate result: %q, err=%v", anRes, err)
+	}
+
+	// 验证 v3.4.0 多维本地加密全文检索与 P2P 文件夹增量去重同步
+	alice.history.append(appapi.ChatMessage{
+		ID:     "m-code-1",
+		From:   "alice",
+		To:     "bob",
+		Type:   "text",
+		Text:   "```go\nfunc main() {}\n```",
+		Pinned: true,
+		TS:     3000,
+	})
+	codeHits := alice.SearchHistory("from:alice type:code main", "")
+	if len(codeHits) != 1 || codeHits[0].ID != "m-code-1" {
+		t.Fatalf("SearchHistory(from:alice type:code main) = %+v, want m-code-1", codeHits)
+	}
+	pinHits := alice.SearchHistory("type:pin since:2500", "")
+	if len(pinHits) != 1 || pinHits[0].ID != "m-code-1" {
+		t.Fatalf("SearchHistory(type:pin since:2500) = %+v, want m-code-1", pinHits)
+	}
+
+	syncDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(syncDir, "doc1.txt"), []byte("hello-v1"), 0o600)
+	_ = os.WriteFile(filepath.Join(syncDir, "doc2.txt"), []byte("world-v1"), 0o600)
+	fs1, err := alice.SendText("", "/foldersync "+syncDir, "")
+	if err != nil || fs1 != "foldersync:queued:2" {
+		t.Fatalf("first /foldersync = %q, err=%v, want foldersync:queued:2", fs1, err)
+	}
+	fs2, err := alice.SendText("", "/foldersync "+syncDir, "")
+	if err != nil || fs2 != "foldersync:queued:0" {
+		t.Fatalf("second unchanged /foldersync = %q, err=%v, want foldersync:queued:0", fs2, err)
+	}
+	_ = os.WriteFile(filepath.Join(syncDir, "doc2.txt"), []byte("world-v2-modified"), 0o600)
+	fs3, err := alice.SendText("", "/foldersync "+syncDir, "")
+	if err != nil || fs3 != "foldersync:queued:1" {
+		t.Fatalf("third modified /foldersync = %q, err=%v, want foldersync:queued:1", fs3, err)
 	}
 }

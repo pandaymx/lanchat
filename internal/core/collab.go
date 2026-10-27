@@ -1,8 +1,10 @@
 package core
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -628,6 +630,17 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 			}
 		}
 		return fmt.Sprintf("annotate:%.2f,%.2f", normX, normY), true, nil
+
+	case strings.HasPrefix(trimmed, "/foldersync "):
+		dirPath := strings.TrimSpace(strings.TrimPrefix(trimmed, "/foldersync "))
+		if dirPath == "" {
+			return "", true, errEmptyPath
+		}
+		synced, err := c.SyncFolderWithPeer(to, group, dirPath)
+		if err != nil {
+			return "", true, err
+		}
+		return fmt.Sprintf("foldersync:queued:%d", synced), true, nil
 	}
 	return "", false, nil
 }
@@ -714,4 +727,59 @@ func (c *Client) SyncHistoryWithPeer(to, group string, sinceTs int64) (int, erro
 		}
 	}
 	return len(msgs), nil
+}
+
+// SyncFolderWithPeer 扫描本地目录并基于 SHA-256 CAS 索引执行增量去重同步，仅向目标设备/群组推送新增或变更的文件（v3.4.0）。
+func (c *Client) SyncFolderWithPeer(to, group, dirPath string) (int, error) {
+	dirPath = strings.TrimSpace(dirPath)
+	if dirPath == "" {
+		return 0, errEmptyPath
+	}
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		return 0, err
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("not a directory: %s", dirPath)
+	}
+	var changedFiles []string
+	walkErr := filepath.WalkDir(dirPath, func(p string, d os.DirEntry, wErr error) error {
+		if wErr != nil || d.IsDir() || !d.Type().IsRegular() {
+			return nil
+		}
+		rel, rErr := filepath.Rel(dirPath, p)
+		if rErr != nil {
+			rel = filepath.Base(p)
+		}
+		raw, readErr := os.ReadFile(p)
+		if readErr != nil {
+			return nil
+		}
+		sum := sha256.Sum256(raw)
+		digest := hex.EncodeToString(sum[:])
+		manifestKey := "foldersync:" + filepath.ToSlash(rel)
+
+		c.mu.Lock()
+		prevDigest := c.casIndex[manifestKey]
+		if prevDigest == digest {
+			c.mu.Unlock()
+			return nil
+		}
+		c.casIndex[manifestKey] = digest
+		c.mu.Unlock()
+
+		changedFiles = append(changedFiles, p)
+		return nil
+	})
+	if walkErr != nil {
+		return 0, walkErr
+	}
+	for _, fpath := range changedFiles {
+		if group != "" {
+			_, _ = c.OfferFileToGroup(group, fpath)
+		} else if to != "" {
+			_, _ = c.OfferFile(to, fpath)
+		}
+	}
+	return len(changedFiles), nil
 }

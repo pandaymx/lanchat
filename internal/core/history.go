@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -645,12 +646,34 @@ func populateStructuredFields(m *appapi.ChatMessage) {
 	}
 }
 
-// search 在本地历史中按关键字（大小写不敏感）与可选会话 ID 检索未撤回消息。
+// search 在本地历史中按多维过滤条件（from:<peer>、type:image|voice|code|pin、since:<ts>）及关键字（大小写不敏感）与可选会话 ID 检索未撤回消息（v3.4.0）。
 func (h *historyStore) search(query, convID string) []appapi.ChatMessage {
-	q := strings.ToLower(strings.TrimSpace(query))
-	if q == "" {
+	rawTokens := strings.Fields(strings.TrimSpace(query))
+	if len(rawTokens) == 0 {
 		return nil
 	}
+	var (
+		fromFilter string
+		typeFilter string
+		sinceTS    int64
+		keywords   []string
+	)
+	for _, tk := range rawTokens {
+		lower := strings.ToLower(tk)
+		switch {
+		case strings.HasPrefix(lower, "from:"):
+			fromFilter = strings.TrimPrefix(lower, "from:")
+		case strings.HasPrefix(lower, "type:"):
+			typeFilter = strings.TrimPrefix(lower, "type:")
+		case strings.HasPrefix(lower, "since:"):
+			if v, err := strconv.ParseInt(strings.TrimPrefix(lower, "since:"), 10, 64); err == nil && v > 0 {
+				sinceTS = v
+			}
+		default:
+			keywords = append(keywords, lower)
+		}
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var out []appapi.ChatMessage
@@ -661,7 +684,42 @@ func (h *historyStore) search(query, convID string) []appapi.ChatMessage {
 		if convID != "" && m.Group != convID && m.From != convID && m.To != convID {
 			continue
 		}
-		if strings.Contains(strings.ToLower(m.Text), q) {
+		if fromFilter != "" && !strings.Contains(strings.ToLower(m.From), fromFilter) {
+			continue
+		}
+		if sinceTS > 0 && m.TS < sinceTS {
+			continue
+		}
+		lowerText := strings.ToLower(m.Text)
+		lowerMime := strings.ToLower(m.MediaMime)
+		if typeFilter != "" {
+			switch typeFilter {
+			case "image", "img", "photo":
+				if !strings.HasPrefix(lowerMime, "image/") && !strings.Contains(lowerText, "data:image/") {
+					continue
+				}
+			case "voice", "audio":
+				if !strings.HasPrefix(lowerMime, "audio/") && !strings.Contains(lowerText, "data:audio/") && !strings.Contains(m.Text, "[语音") {
+					continue
+				}
+			case "code":
+				if !strings.Contains(m.Text, "```") {
+					continue
+				}
+			case "pin", "pinned":
+				if !m.Pinned && !strings.HasPrefix(m.Text, "📌 [置顶]") {
+					continue
+				}
+			}
+		}
+		matchedAll := true
+		for _, kw := range keywords {
+			if !strings.Contains(lowerText, kw) && !strings.Contains(strings.ToLower(m.ReplyQuote), kw) {
+				matchedAll = false
+				break
+			}
+		}
+		if matchedAll {
 			out = append(out, m)
 		}
 	}

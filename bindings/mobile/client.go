@@ -205,6 +205,11 @@ func (c *Client) SyncHistory(to string, group string, sinceTs int64) (int, error
 	return c.core.SyncHistoryWithPeer(to, group, sinceTs)
 }
 
+// SyncFolder 扫描本地文件夹并执行 P2P 增量块去重同步（v3.4.0）。
+func (c *Client) SyncFolder(to string, group string, dirPath string) (int, error) {
+	return c.core.SyncFolderWithPeer(to, group, dirPath)
+}
+
 // TriggerMeshFailover 手动触发中心节点故障自愈选举与重连（v3.0.0）。
 func (c *Client) TriggerMeshFailover() (string, error) {
 	return c.core.TriggerMeshFailover()

@@ -147,6 +147,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0"
                                Text="{Binding Chat.VoiceCallStatusText, FallbackValue=📞 实时 P2P 语音通话进行中}"
@@ -155,11 +156,20 @@
                                Foreground="#047857"
                                VerticalAlignment="Center" />
                     <Button Grid.Column="1"
-                            Content="📵 挂断"
+                            Content="🟢 接听"
                             FontSize="11"
-                            Padding="8,2"
+                            Padding="10,2"
                             CornerRadius="6"
-                            Command="{Binding Chat.ToggleVoiceCallCommand}" />
+                            Background="#10B981"
+                            Foreground="White"
+                            Visibility="{Binding Chat.IsIncomingCallRinging, Converter={StaticResource BoolToVisibilityConverter}}"
+                            Command="{Binding Chat.AcceptIncomingCallCommand}" />
+                    <Button Grid.Column="2"
+                            Content="🔴 挂断"
+                            FontSize="11"
+                            Padding="10,2"
+                            CornerRadius="6"
+                            Command="{Binding Chat.RejectOrHangupCallCommand}" />
                 </Grid>
             </Border>
 

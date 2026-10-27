@@ -99,6 +99,7 @@ func (c *Client) offerGroupInbound(env *protocol.Envelope) {
 		return
 	}
 	g.emitPending()
+	c.notifyDesktopEvent("📦 收到群文件分发邀约", c.peerNicknameOrID(env.From)+" 在群内分享文件："+p.Name, false)
 }
 
 // respondGroupFile 接收方接受：创建块源与传输、回报 GROUP_JOIN、启动 swarm。

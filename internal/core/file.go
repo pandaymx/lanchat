@@ -273,6 +273,7 @@ func (c *Client) offerInbound(env *protocol.Envelope) {
 	}
 	// pending 进度事件让 UI 弹出「接收 / 另存为」。
 	c.listener().OnTransferProgress(t.snapshot())
+	c.notifyDesktopEvent("📁 收到文件传输请求", c.peerNicknameOrID(env.From)+" 发来文件："+p.Name, false)
 }
 
 // errString 提取错误短原因。

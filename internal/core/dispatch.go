@@ -288,8 +288,8 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		case strings.HasPrefix(rest, "offer:"):
 			remoteUDP := strings.TrimSpace(strings.TrimPrefix(rest, "offer:"))
 			if remoteUDP != "" {
-				_, _ = c.AcceptVoiceCall(env.From, env.Group, remoteUDP)
-				c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL", "📞 [实时语音通话已接通] "+remoteUDP)
+				c.onIncomingVoiceCallOffer(env.From, env.Group, remoteUDP)
+				c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL_OFFER", "📞 [语音来电响铃] "+remoteUDP)
 			}
 		case strings.HasPrefix(rest, "accept:"):
 			remoteUDP := strings.TrimSpace(strings.TrimPrefix(rest, "accept:"))
@@ -543,5 +543,21 @@ func (c *Client) recordInboundUnread(from, group, text string, mentions []string
 	}
 	if mentioned {
 		c.mentionCounts[key]++
+	}
+	sender := from
+	if p, ok := c.peers[from]; ok && strings.TrimSpace(p.Nickname) != "" {
+		sender = p.Nickname
+	}
+	dnd := c.dnd
+	if !dnd {
+		title := "💬 新消息 · " + sender
+		if mentioned {
+			title = "🔔 [有人@我] " + sender
+		}
+		preview := text
+		if len(preview) > 80 {
+			preview = preview[:80] + "…"
+		}
+		go c.notifyDesktopEvent(title, preview, mentioned)
 	}
 }

@@ -146,7 +146,10 @@ struct Widgets {
     pinned_bar: gtk::Box,
     pinned_label: gtk::Label,
     call_bar: gtk::Box,
+    call_avatar: adw::Avatar,
     call_label: gtk::Label,
+    call_accept_btn: gtk::Button,
+    call_reject_btn: gtk::Button,
     screen_bar: gtk::Box,
     screen_pic: gtk::Picture,
     screen_annotate_btn: gtk::Button,
@@ -198,6 +201,11 @@ pub struct AppCtx {
 
 /// 应用启动入口（Application::activate）。
 pub fn on_activate(app: &adw::Application) {
+    if let Some(existing_win) = app.windows().first() {
+        existing_win.set_visible(true);
+        existing_win.present();
+        return;
+    }
     load_css();
 
     let (ui_tx, ui_rx) = async_channel::unbounded::<UiEvent>();
@@ -553,14 +561,25 @@ fn build_ui(app: &adw::Application) -> Widgets {
     pinned_bar.set_visible(false);
     pinned_bar.append(&pinned_label);
 
+    let call_avatar = adw::Avatar::new(26, Some("语音来电"), true);
     let call_label = gtk::Label::new(Some("📞 实时低延迟 P2P 语音通话中"));
     call_label.set_xalign(0.0);
     call_label.set_hexpand(true);
     call_label.add_css_class("caption-heading");
+    let call_accept_btn = gtk::Button::with_label("🟢 接听");
+    call_accept_btn.add_css_class("suggested-action");
+    call_accept_btn.add_css_class("caption");
+    call_accept_btn.set_visible(false);
+    let call_reject_btn = gtk::Button::with_label("🔴 挂断");
+    call_reject_btn.add_css_class("destructive-action");
+    call_reject_btn.add_css_class("caption");
     let call_bar = gtk::Box::new(Orientation::Horizontal, 8);
     call_bar.add_css_class("qq-call-banner");
     call_bar.set_visible(false);
+    call_bar.append(&call_avatar);
     call_bar.append(&call_label);
+    call_bar.append(&call_accept_btn);
+    call_bar.append(&call_reject_btn);
 
     let screen_title = gtk::Label::new(Some("🖥️ 实时屏幕共享舞台 · 支持激光笔坐标批注"));
     screen_title.set_xalign(0.0);
@@ -887,7 +906,10 @@ fn build_ui(app: &adw::Application) -> Widgets {
         pinned_bar,
         pinned_label,
         call_bar,
+        call_avatar,
         call_label,
+        call_accept_btn,
+        call_reject_btn,
         screen_bar,
         screen_pic,
         screen_annotate_btn,
@@ -1461,7 +1483,58 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 顶部实时语音通话快捷按钮
+    // 顶部实时语音通话快捷按钮 + 来电响铃横幅「🟢 接听」「🔴 挂断」按钮（v4.9.0）
+    ctx.widgets.call_accept_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let (peer_id, group_id) = {
+                let st = cx.state.borrow();
+                (
+                    st.voice_call.peer_id.clone(),
+                    st.voice_call.group_id.clone(),
+                )
+            };
+            let target = if !group_id.is_empty() {
+                ChatTarget::Channel(group_id)
+            } else if !peer_id.is_empty() {
+                ChatTarget::Peer(peer_id)
+            } else {
+                cx.state.borrow().current_chat.clone()
+            };
+            if target.key().is_some() {
+                cx.select_chat_target(target.clone());
+                send_text_to_target(&cx, &target, "/call accept");
+                cx.toast("🟢 已接听实时语音通话，建立双向 UDP 音频流");
+            }
+        }
+    ));
+    ctx.widgets.call_reject_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let (peer_id, group_id) = {
+                let st = cx.state.borrow();
+                (
+                    st.voice_call.peer_id.clone(),
+                    st.voice_call.group_id.clone(),
+                )
+            };
+            let target = if !group_id.is_empty() {
+                ChatTarget::Channel(group_id)
+            } else if !peer_id.is_empty() {
+                ChatTarget::Peer(peer_id)
+            } else {
+                cx.state.borrow().current_chat.clone()
+            };
+            if target.key().is_some() {
+                send_text_to_target(&cx, &target, "/call hangup");
+            }
+            cx.widgets.call_bar.set_visible(false);
+            cx.widgets.header_call_btn.set_label("📞 语音通话");
+            cx.toast("🔴 已挂断实时语音通话");
+        }
+    ));
     ctx.widgets.header_call_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -1951,7 +2024,18 @@ fn wire_window_lifecycle(ctx: &Rc<AppCtx>) {
     ctx.widgets.window.connect_close_request(clone!(
         #[strong(rename_to = cx)]
         ctx,
-        move |_| {
+        move |win| {
+            // 已连接中心节点时关闭主窗口自动最小化到后台/托盘常驻，保持 daemon 与消息/来电监听在线（v4.9.0）
+            if cx.state.borrow().conn == ConnState::Connected {
+                win.set_visible(false);
+                notify_desktop_if_background(
+                    &cx,
+                    "LANChat 后台常驻运行中",
+                    "主窗口已最小化到后台，收到新消息、文件或语音来电将立即唤醒提醒。",
+                    false,
+                );
+                return glib::Propagation::Stop;
+            }
             cx.stop.notify_waiters();
             if let Some(ipc) = cx.ipc.borrow().clone() {
                 ipc.shutdown();
@@ -1959,6 +2043,33 @@ fn wire_window_lifecycle(ctx: &Rc<AppCtx>) {
             glib::Propagation::Proceed
         }
     ));
+}
+
+fn notify_desktop_if_background(ctx: &Rc<AppCtx>, title: &str, body: &str, urgent: bool) {
+    if ctx.state.borrow().dnd_enabled {
+        return;
+    }
+    let is_bg = !ctx.widgets.window.is_active() || !ctx.widgets.window.is_visible();
+    if !is_bg && !urgent {
+        return;
+    }
+    if let Some(app) = ctx.widgets.window.application() {
+        let notif = gio::Notification::new(title);
+        notif.set_body(Some(body));
+        if urgent {
+            notif.set_priority(gio::NotificationPriority::Urgent);
+        }
+        app.send_notification(Some("lanchat-event"), &notif);
+    }
+    let title_owned = title.to_string();
+    let body_owned = body.to_string();
+    std::thread::spawn(move || {
+        let urgency = if urgent { "critical" } else { "normal" };
+        let _ = std::process::Command::new("notify-send")
+            .args(["-a", "LANChat", "-u", urgency, &title_owned, &body_owned])
+            .status();
+    });
+    cx_play_call_ring_async();
 }
 
 // ---------- 事件处理 ----------
@@ -2084,6 +2195,16 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
                         ctx.toast("📞 实时语音通话已启动（PipeWire/ALSA 音频已连接）");
                     }
                     ctx.sync_state();
+                    return;
+                }
+                if msg_id == "dnd:on" || msg_id == "dnd:off" {
+                    let on = msg_id == "dnd:on";
+                    ctx.state.borrow_mut().dnd_enabled = on;
+                    ctx.toast(if on {
+                        "🔕 已开启免打扰模式 (/dnd on)"
+                    } else {
+                        "🔔 已关闭免打扰模式 (/dnd off)"
+                    });
                     return;
                 }
                 if msg_id.starts_with("screenshare:")
@@ -2414,11 +2535,29 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             };
             ctx.state.borrow_mut().push_message(new_msg.clone());
             let is_current = ctx.state.borrow().current_chat.key() == Some(conv_key.as_str());
-            if is_current {
+            let is_focused = ctx.widgets.window.is_active() && ctx.widgets.window.is_visible();
+            if is_current && is_focused {
                 ctx.state.borrow_mut().mark_conv_seen(&conv_key);
                 ctx.append_single_message(&new_msg);
             } else {
-                ctx.toast("收到新消息");
+                if is_current {
+                    ctx.append_single_message(&new_msg);
+                } else {
+                    ctx.toast("收到新消息");
+                }
+                let sender_name = ctx
+                    .state
+                    .borrow()
+                    .peer(&from)
+                    .map(|p| p.nickname.clone())
+                    .unwrap_or_else(|| from.clone());
+                let is_mention = new_msg.text.contains('@');
+                let notif_title = if is_mention {
+                    format!("🔔 [有人@我] {sender_name}")
+                } else {
+                    format!("💬 新消息 · {sender_name}")
+                };
+                notify_desktop_if_background(ctx, &notif_title, &new_msg.text, is_mention);
             }
             ctx.render_roster();
         }
@@ -2427,8 +2566,21 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .get("transfer")
                 .and_then(|v| serde_json::from_value::<Transfer>(v.clone()).ok())
             {
+                let is_new_inbound_pending = t.direction
+                    == crate::models::TransferDirection::Inbound
+                    && t.state == crate::models::TransferState::Pending
+                    && !ctx.state.borrow().transfers.iter().any(|x| x.id == t.id);
                 let is_active = t.state == crate::models::TransferState::Active;
+                let file_name = t.name.clone();
                 ctx.state.borrow_mut().upsert_transfer(t);
+                if is_new_inbound_pending {
+                    notify_desktop_if_background(
+                        ctx,
+                        "📁 收到文件传输请求",
+                        &format!("对方发来文件：{file_name}"),
+                        false,
+                    );
+                }
                 let now_ms = now_millis();
                 if !is_active || now_ms.saturating_sub(ctx.last_transfer_render_ms.get()) >= 100 {
                     ctx.last_transfer_render_ms.set(now_ms);
@@ -2516,18 +2668,24 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let active = matches!(state_str.as_str(), "calling" | "active" | "in_call");
-            ctx.state.borrow_mut().voice_call.state = state_str.clone();
-            ctx.state.borrow_mut().voice_call.peer_id = peer_id.clone();
-            ctx.widgets.call_bar.set_visible(active);
-            if active {
-                ctx.widgets.call_label.set_text(&format!(
-                    "📞 实时低延迟语音通话中 ({state_str}) · {peer_id}"
-                ));
-                ctx.widgets.header_call_btn.set_label("📵 挂断语音");
-            } else {
-                ctx.widgets.header_call_btn.set_label("📞 语音通话");
+            let group_id = call_obj
+                .get("groupId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let remote_addr = call_obj
+                .get("remoteAddr")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            {
+                let mut st = ctx.state.borrow_mut();
+                st.voice_call.state = state_str.clone();
+                st.voice_call.peer_id = peer_id.clone();
+                st.voice_call.group_id = group_id;
+                st.voice_call.remote_addr = remote_addr;
             }
+            update_voice_call_banner(ctx);
         }
         "screen.frame" => {
             let frame = p
@@ -2738,6 +2896,57 @@ fn respond_transfer(ctx: &Rc<AppCtx>, id: &str, accept: bool, dest: String) {
 
 // ---------- 渲染（Linux QQ 风格） ----------
 
+fn update_voice_call_banner(ctx: &Rc<AppCtx>) {
+    let (state_str, peer_id, caller_name) = {
+        let st = ctx.state.borrow();
+        let pid = st.voice_call.peer_id.clone();
+        let cname = st
+            .peer(&pid)
+            .map(|p| p.nickname.clone())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| {
+                if pid.is_empty() {
+                    "局域网对端".to_string()
+                } else {
+                    pid.clone()
+                }
+            });
+        (st.voice_call.state.clone(), pid, cname)
+    };
+    ctx.widgets.call_avatar.set_text(Some(&caller_name));
+    if state_str == "ringing" {
+        ctx.widgets.call_bar.set_visible(true);
+        ctx.widgets.call_accept_btn.set_visible(true);
+        ctx.widgets.call_reject_btn.set_visible(true);
+        ctx.widgets.call_label.set_text(&format!(
+            "🔔 [来电响铃] {caller_name} 邀请你进行实时语音通话"
+        ));
+        ctx.widgets.header_call_btn.set_label("📵 挂断语音");
+        if !ctx.widgets.window.is_visible() {
+            ctx.widgets.window.set_visible(true);
+            ctx.widgets.window.present();
+        }
+        notify_desktop_if_background(
+            ctx,
+            "📞 局域网实时语音来电",
+            &format!("{caller_name} ({peer_id}) 发起实时低延迟语音通话"),
+            true,
+        );
+    } else if matches!(state_str.as_str(), "calling" | "active" | "in_call") {
+        ctx.widgets.call_bar.set_visible(true);
+        ctx.widgets.call_accept_btn.set_visible(false);
+        ctx.widgets.call_reject_btn.set_visible(true);
+        ctx.widgets.call_label.set_text(&format!(
+            "📞 实时低延迟语音通话中 ({state_str}) · {caller_name}"
+        ));
+        ctx.widgets.header_call_btn.set_label("📵 挂断语音");
+    } else {
+        ctx.widgets.call_bar.set_visible(false);
+        ctx.widgets.call_accept_btn.set_visible(false);
+        ctx.widgets.header_call_btn.set_label("📞 语音通话");
+    }
+}
+
 fn update_screen_canvas(ctx: &Rc<AppCtx>, frame: &str) {
     let trimmed = frame.trim();
     if trimmed.is_empty() {
@@ -2758,6 +2967,7 @@ fn update_screen_canvas(ctx: &Rc<AppCtx>, frame: &str) {
 }
 
 fn render_all(ctx: &Rc<AppCtx>, was_connected: bool) {
+    update_voice_call_banner(ctx);
     let screen_frame = {
         let st = ctx.state.borrow();
         if st.screen_share.active && !st.screen_share.latest_frame.is_empty() {

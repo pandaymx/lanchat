@@ -38,6 +38,7 @@ var (
 	screenCaptureProvider  func(seq int) ([]byte, error)
 	clipboardReadProvider  func() (string, error)
 	clipboardWriteProvider func(text string) error
+	desktopNotifyProvider  func(title, body string, urgent bool)
 )
 
 // voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道实时语音房间（阶段四 v2.0）。
@@ -76,10 +77,37 @@ func (c *Client) StartVoiceCall(to, group string) (string, error) {
 
 // AcceptVoiceCall 接听对端实时语音呼叫，记录对端 UDP 端点并回传本机 UDP 端点。
 func (c *Client) AcceptVoiceCall(to, group, remoteUDP string) (string, error) {
+	c.mu.Lock()
+	if c.voice != nil {
+		c.voice.mu.Lock()
+		if to == "" {
+			to = c.voice.targetPeer
+		}
+		if group == "" {
+			group = c.voice.targetGrp
+		}
+		if strings.TrimSpace(remoteUDP) == "" && c.voice.remoteAddr != nil {
+			remoteUDP = c.voice.remoteAddr.String()
+		}
+		c.voice.mu.Unlock()
+	}
+	c.mu.Unlock()
+
 	if err := c.ensureLocalVoiceUDP(to, group); err != nil {
 		return "", err
 	}
-	c.setVoiceRemoteUDP(remoteUDP)
+	if strings.TrimSpace(remoteUDP) != "" {
+		c.setVoiceRemoteUDP(remoteUDP)
+	} else {
+		c.mu.Lock()
+		vs := c.voice
+		c.mu.Unlock()
+		if vs != nil {
+			vs.mu.Lock()
+			vs.state = "active"
+			vs.mu.Unlock()
+		}
+	}
 	localAddr := c.voiceLocalAddr()
 	if to != "" || group != "" {
 		if _, err := c.connectedConn(); err == nil {
@@ -90,8 +118,47 @@ func (c *Client) AcceptVoiceCall(to, group, remoteUDP string) (string, error) {
 	return "call:active:" + localAddr, nil
 }
 
-// StopVoiceCall 挂断当前实时语音通话并释放本地 UDP 套接字。
+// onIncomingVoiceCallOffer 处理对端发来的 sys:call:offer:<remoteUDP>，进入响铃待接听状态（"ringing"）并触发系统来电通知（v4.9.0）。
+func (c *Client) onIncomingVoiceCallOffer(from, group, remoteUDP string) {
+	if err := c.ensureLocalVoiceUDP(from, group); err != nil {
+		return
+	}
+	uaddr, _ := net.ResolveUDPAddr("udp", strings.TrimSpace(remoteUDP))
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs != nil {
+		vs.mu.Lock()
+		vs.targetPeer = from
+		vs.targetGrp = group
+		if uaddr != nil {
+			vs.remoteAddr = uaddr
+		}
+		vs.state = "ringing"
+		vs.mu.Unlock()
+	}
+	c.emitVoiceCallState()
+	c.notifyDesktopEvent(
+		"📞 局域网实时语音来电",
+		fmt.Sprintf("%s 邀请你进行实时低延迟语音通话", c.peerNicknameOrID(from)),
+		true,
+	)
+}
+
+// StopVoiceCall 挂断或拒接当前实时语音通话并释放本地 UDP 套接字。
 func (c *Client) StopVoiceCall(to, group string) error {
+	c.mu.Lock()
+	if c.voice != nil {
+		c.voice.mu.Lock()
+		if to == "" {
+			to = c.voice.targetPeer
+		}
+		if group == "" {
+			group = c.voice.targetGrp
+		}
+		c.voice.mu.Unlock()
+	}
+	c.mu.Unlock()
 	c.closeVoiceSession()
 	if to != "" || group != "" {
 		if _, err := c.connectedConn(); err == nil {
@@ -1098,13 +1165,13 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 	case trimmed == "/call" || strings.HasPrefix(trimmed, "/call ") || trimmed == "/voiceroom" || strings.HasPrefix(trimmed, "/voiceroom "):
 		arg := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "/voiceroom"), "/call"))
 		switch {
-		case arg == "stop" || arg == "hangup" || arg == "leave":
+		case arg == "stop" || arg == "hangup" || arg == "leave" || arg == "reject":
 			_ = c.StopVoiceCall(to, group)
 			return "call:stopped", true, nil
 		case arg == "status":
 			return "call:" + c.VoiceCallStatus(), true, nil
-		case strings.HasPrefix(arg, "accept "):
-			remote := strings.TrimSpace(strings.TrimPrefix(arg, "accept "))
+		case arg == "accept" || strings.HasPrefix(arg, "accept "):
+			remote := strings.TrimSpace(strings.TrimPrefix(arg, "accept"))
 			res, err := c.AcceptVoiceCall(to, group, remote)
 			return res, true, err
 		default:
@@ -1473,4 +1540,84 @@ func (c *Client) RunNetworkDiagnostics() string {
 		"netdiag:conn=%s server=%s peers=%d transfers=%d cas=%d voice=%s screen=%s overlay=%d gossip=%d",
 		state, addr, peersCount, transfersCount, casCount, voiceStatus, screenStatus, len(overlays), len(gossip),
 	)
+}
+
+func (c *Client) peerNicknameOrID(peerID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if p, ok := c.peers[peerID]; ok && strings.TrimSpace(p.Nickname) != "" {
+		return p.Nickname
+	}
+	if peerID == "" {
+		return "未知联系人"
+	}
+	return peerID
+}
+
+// notifyDesktopEvent 在非免打扰模式下触发跨平台原生系统通知与提示音（v4.9.0）。
+func (c *Client) notifyDesktopEvent(title, body string, urgent bool) {
+	if c.IsDND() {
+		return
+	}
+	title = strings.TrimSpace(title)
+	body = strings.TrimSpace(body)
+	if title == "" && body == "" {
+		return
+	}
+	collabProviderMu.RLock()
+	hook := desktopNotifyProvider
+	collabProviderMu.RUnlock()
+	if hook != nil {
+		hook(title, body, urgent)
+		return
+	}
+	if isGoTestBinary() {
+		return
+	}
+	go sendOSDesktopNotification(title, body, urgent)
+}
+
+func sendOSDesktopNotification(title, body string, urgent bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2000*time.Millisecond)
+	defer cancel()
+
+	switch runtime.GOOS {
+	case "linux":
+		urgency := "normal"
+		if urgent {
+			urgency = "critical"
+		}
+		if p, err := exec.LookPath("notify-send"); err == nil {
+			_ = exec.CommandContext(ctx, p, "-a", "LANChat", "-u", urgency, title, body).Run()
+		}
+		if p, err := exec.LookPath("canberra-gtk-play"); err == nil {
+			soundID := "message-new-instant"
+			if urgent {
+				soundID = "phone-incoming-call"
+			}
+			_ = exec.CommandContext(ctx, p, "-i", soundID).Run()
+		}
+	case "darwin":
+		if p, err := exec.LookPath("osascript"); err == nil {
+			safeTitle := strings.ReplaceAll(title, `"`, `\"`)
+			safeBody := strings.ReplaceAll(body, `"`, `\"`)
+			script := fmt.Sprintf(`display notification "%s" with title "%s" sound name "Glass"`, safeBody, safeTitle)
+			_ = exec.CommandContext(ctx, p, "-e", script).Run()
+		}
+	case "windows":
+		if p, err := exec.LookPath("powershell"); err == nil {
+			safeTitle := strings.ReplaceAll(title, `'`, `''`)
+			safeBody := strings.ReplaceAll(body, `'`, `''`)
+			psScript := fmt.Sprintf(
+				`Add-Type -AssemblyName System.Windows.Forms; `+
+					`$n = New-Object System.Windows.Forms.NotifyIcon; `+
+					`$n.Icon = [System.Drawing.SystemIcons]::Information; `+
+					`$n.Visible = $true; `+
+					`$n.ShowBalloonTip(3000, '%s', '%s', [System.Windows.Forms.ToolTipIcon]::Info); `+
+					`Start-Sleep -Milliseconds 300; $n.Dispose()`,
+				safeTitle, safeBody,
+			)
+			_ = exec.CommandContext(ctx, p, "-NoProfile", "-NonInteractive", "-Command", psScript).Run()
+		}
+	}
 }

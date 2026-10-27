@@ -30,6 +30,9 @@ public sealed partial class ChatViewModel : ViewModelBase
     private bool _isInVoiceCall;
 
     [ObservableProperty]
+    private bool _isIncomingCallRinging;
+
+    [ObservableProperty]
     private bool _isScreenSharing;
 
     [ObservableProperty]
@@ -58,7 +61,7 @@ public sealed partial class ChatViewModel : ViewModelBase
     }
 
     /// <summary>是否展示 NTQQ 顶部实时语音通话状态栏。</summary>
-    public bool HasVoiceCallBanner => IsInVoiceCall || !string.IsNullOrWhiteSpace(VoiceCallStatusText);
+    public bool HasVoiceCallBanner => IsInVoiceCall || IsIncomingCallRinging || !string.IsNullOrWhiteSpace(VoiceCallStatusText);
 
     /// <summary>是否展示 NTQQ 顶部实时屏幕共享画布舞台。</summary>
     public bool HasScreenShareStage => IsScreenSharing || !string.IsNullOrWhiteSpace(ScreenShareFrameSource);
@@ -656,10 +659,14 @@ public sealed partial class ChatViewModel : ViewModelBase
     {
         if (voiceCall is not null)
         {
-            IsInVoiceCall = voiceCall.State is "calling" or "in_call";
-            VoiceCallStatusText = IsInVoiceCall
-                ? $"📞 实时语音通话中 · 收发帧 {voiceCall.FramesIn}/{voiceCall.FramesOut}"
-                : "";
+            IsIncomingCallRinging = voiceCall.State == "ringing";
+            IsInVoiceCall = voiceCall.State is "calling" or "active" or "in_call";
+            var callerName = ResolvePeer(voiceCall.PeerId ?? "")?.Nickname ?? voiceCall.PeerId ?? "局域网对端";
+            VoiceCallStatusText = IsIncomingCallRinging
+                ? $"🔔 [来电响铃] {callerName} 邀请你进行实时语音通话"
+                : (IsInVoiceCall
+                    ? $"📞 实时语音通话中 · 收发帧 {voiceCall.FramesIn}/{voiceCall.FramesOut}"
+                    : "");
         }
         if (screenShare is not null)
         {
@@ -678,10 +685,14 @@ public sealed partial class ChatViewModel : ViewModelBase
         var callElem = parameters.TryGetProperty("call", out var c) && c.ValueKind == JsonValueKind.Object ? c : parameters;
         var state = callElem.TryGetProperty("state", out var s) ? s.GetString() ?? "idle" : "idle";
         var peerId = callElem.TryGetProperty("peerId", out var p) ? p.GetString() ?? "" : "";
+        var callerName = ResolvePeer(peerId)?.Nickname ?? peerId;
+        IsIncomingCallRinging = state == "ringing";
         IsInVoiceCall = state is "calling" or "active" or "in_call";
-        VoiceCallStatusText = IsInVoiceCall
-            ? $"📞 正在与 {(ResolvePeer(peerId)?.Nickname ?? peerId)} 实时低延迟语音通话 ({state})"
-            : "";
+        VoiceCallStatusText = IsIncomingCallRinging
+            ? $"🔔 [来电响铃] {callerName} 邀请你进行实时低延迟语音通话"
+            : (IsInVoiceCall
+                ? $"📞 正在与 {callerName} 实时低延迟语音通话 ({state})"
+                : "");
         NotifyCollabBannerChanged();
     }
 
@@ -1144,7 +1155,33 @@ public sealed partial class ChatViewModel : ViewModelBase
     private void NotifyCollabBannerChanged()
     {
         OnPropertyChanged(nameof(HasVoiceCallBanner));
+        OnPropertyChanged(nameof(IsIncomingCallRinging));
         OnPropertyChanged(nameof(HasScreenShareStage));
+    }
+
+    [RelayCommand]
+    public async Task AcceptIncomingCallAsync()
+    {
+        IsIncomingCallRinging = false;
+        IsInVoiceCall = true;
+        var prevDraft = Draft;
+        Draft = "/call accept";
+        await SendAsync();
+        Draft = prevDraft;
+        NotifyCollabBannerChanged();
+    }
+
+    [RelayCommand]
+    public async Task RejectOrHangupCallAsync()
+    {
+        IsIncomingCallRinging = false;
+        IsInVoiceCall = false;
+        VoiceCallStatusText = "";
+        var prevDraft = Draft;
+        Draft = "/call hangup";
+        await SendAsync();
+        Draft = prevDraft;
+        NotifyCollabBannerChanged();
     }
 
     /// <summary>v3.0/v4.8: 屏幕共享激光笔批注（/annotate x,y note）。</summary>

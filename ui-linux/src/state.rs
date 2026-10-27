@@ -64,6 +64,7 @@ pub struct AppState {
     pub nav_tab: NavTab,
     pub search_filter: String,
     pub e2ee_enabled: bool,
+    pub dnd_enabled: bool,
     /// msg_id → 撤回前保存的原始可编辑消息正文（用于点击「重新编辑」恢复到输入框）。
     pub revoked_originals: HashMap<String, String>,
     /// 当前正在引用回复的目标消息（用于输入框上方 QQ 引用回复预览条）。

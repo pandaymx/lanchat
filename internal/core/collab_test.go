@@ -292,3 +292,70 @@ func TestScreenCapturePipelineAndAutoClipboardDaemon(t *testing.T) {
 		t.Fatal("expected inbound sys:clip: to write to system clipboard")
 	}
 }
+
+func TestIncomingCallRingingBannerAndDesktopNotifications(t *testing.T) {
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	defer bob.Close()
+
+	type notifEvent struct {
+		title  string
+		body   string
+		urgent bool
+	}
+	notifCh := make(chan notifEvent, 8)
+	collabProviderMu.Lock()
+	desktopNotifyProvider = func(title, body string, urgent bool) {
+		select {
+		case notifCh <- notifEvent{title: title, body: body, urgent: urgent}:
+		default:
+		}
+	}
+	collabProviderMu.Unlock()
+	defer func() {
+		collabProviderMu.Lock()
+		desktopNotifyProvider = nil
+		collabProviderMu.Unlock()
+	}()
+
+	resA, err := alice.StartVoiceCall("bob", "")
+	if err != nil {
+		t.Fatalf("alice StartVoiceCall: %v", err)
+	}
+	aliceUDP := strings.TrimPrefix(resA, "call:calling:")
+
+	// 模拟 Bob 收到 Alice 的 sys:call:offer:<aliceUDP>，应进入 ringing 状态并触发紧急来电桌面通知
+	bob.handleInboundControlText(&protocol.Envelope{ID: "call-offer-1", From: "alice"}, "sys:call:offer:"+aliceUDP)
+
+	stBob := bob.GetState()
+	if stBob.VoiceCall == nil || stBob.VoiceCall.State != "ringing" || stBob.VoiceCall.PeerID != "alice" {
+		t.Fatalf("bob VoiceCall state after offer = %+v, want state=ringing peerId=alice", stBob.VoiceCall)
+	}
+	select {
+	case ev := <-notifCh:
+		if !ev.urgent || !strings.Contains(ev.title, "语音来电") {
+			t.Fatalf("unexpected desktop notification for incoming call: %+v", ev)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected urgent desktop notification on incoming voice call")
+	}
+
+	// Bob 点击横幅「🟢 接听」(/call accept)，自动使用缓存的 remoteUDP 建立双向音频流并切换为 active
+	accRes, err := bob.SendText("alice", "/call accept", "")
+	if err != nil || !strings.HasPrefix(accRes, "call:active:") {
+		t.Fatalf("bob /call accept = %q, err=%v, want call:active:...", accRes, err)
+	}
+	if st := bob.GetState(); st.VoiceCall == nil || st.VoiceCall.State != "active" {
+		t.Fatalf("bob VoiceCall state after accept = %+v, want active", st.VoiceCall)
+	}
+
+	// 验证免打扰 (/dnd on) 抑制桌面通知
+	bob.SetDND(true)
+	bob.notifyDesktopEvent("不应弹出的通知", "DND 模式下静音", false)
+	select {
+	case ev := <-notifCh:
+		t.Fatalf("expected no notification when DND is enabled, got %+v", ev)
+	default:
+	}
+}

@@ -20,6 +20,14 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
         Title = "LANChat 局域网即时通信";
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1180, 760));
+        AppWindow.Closing += (_, args) =>
+        {
+            if (_shell is { IsConnected: true })
+            {
+                args.Cancel = true;
+                AppWindow.Hide();
+            }
+        };
     }
 
     /// <summary>绑定 Shell 并导航到登录页。</summary>

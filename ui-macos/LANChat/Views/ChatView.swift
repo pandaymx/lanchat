@@ -141,12 +141,44 @@ struct ChatView: View {
                 Divider()
             }
 
-            if inVoiceCall || (store.voiceCall?.state == "in_call" || store.voiceCall?.state == "calling") {
-                HStack(spacing: 8) {
-                    Text("📞 实时低延迟 P2P 语音通话进行中")
+            if inVoiceCall || ["ringing", "calling", "active", "in_call"].contains(store.voiceCall?.state ?? "") {
+                let isRinging = store.voiceCall?.state == "ringing"
+                let callerId = store.voiceCall?.peerId ?? peer.id
+                let callerTitle = store.peerNickname(for: callerId)
+                HStack(spacing: 10) {
+                    QQAvatar(key: callerId, title: callerTitle, size: 26, status: "online")
+                    Text(isRinging
+                         ? "🔔 [来电响铃] \(callerTitle) 邀请你进行实时低延迟语音通话"
+                         : "📞 实时低延迟 P2P 语音通话进行中 · \(callerTitle)")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(QQPalette.onlineGreen)
                     Spacer()
+                    if isRinging {
+                        Button {
+                            inVoiceCall = true
+                            Task { await store.sendText(to: callerId, text: "/call accept") }
+                        } label: {
+                            Text("🟢 接听")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(QQPalette.onlineGreen))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button {
+                        inVoiceCall = false
+                        Task { await store.sendText(to: callerId, text: "/call hangup") }
+                    } label: {
+                        Text("🔴 挂断")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.red.opacity(0.85)))
+                    }
+                    .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)

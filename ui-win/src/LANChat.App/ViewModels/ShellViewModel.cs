@@ -193,6 +193,12 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
                 var haveBitmap = parameters.TryGetProperty("haveBitmap", out var hb) ? hb.GetString() ?? "" : "";
                 _ui.Post(() => Transfers.ApplyGroupMatrix(matrixTransferId, haveBitmap));
                 break;
+            case "call.state":
+                _ui.Post(() => Chat.HandleCallStateChanged(parameters));
+                break;
+            case "screen.frame":
+                _ui.Post(() => Chat.HandleScreenFrameReceived(parameters));
+                break;
         }
     }
 
@@ -215,6 +221,7 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
             Transfers.ReplaceTransfers(state.Transfers);
             ApplyChannels(state.Channels);
             Chat.ApplyHistory(state.Messages);
+            Chat.ApplyCollabState(state.VoiceCall, state.ScreenShare);
             Login.Initialize(state);
         });
     }

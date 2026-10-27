@@ -22,7 +22,29 @@ public sealed record HistoryMessage
     public IReadOnlyList<string> ReadBy { get; init; } = [];
 }
 
-/// <summary>GetState 返回的全量快照（schema State）。</summary>
+/// <summary>契约 v1.2 实时语音通话状态快照（schema VoiceCallState）。</summary>
+public sealed record VoiceCallState
+{
+    public string State { get; init; } = "idle";
+    public string? PeerId { get; init; }
+    public string? GroupId { get; init; }
+    public string? LocalAddr { get; init; }
+    public string? RemoteAddr { get; init; }
+    public long FramesIn { get; init; }
+    public long FramesOut { get; init; }
+}
+
+/// <summary>契约 v1.2 实时屏幕共享状态快照（schema ScreenShareState）。</summary>
+public sealed record ScreenShareState
+{
+    public bool Active { get; init; }
+    public string? PeerId { get; init; }
+    public string? GroupId { get; init; }
+    public int Fps { get; init; }
+    public string? LatestFrame { get; init; }
+}
+
+/// <summary>GetState 返回的全量快照（schema State v1.2）。</summary>
 public sealed record State
 {
     public ConnState Conn { get; init; }
@@ -33,4 +55,6 @@ public sealed record State
     public IReadOnlyList<Transfer> Transfers { get; init; } = [];
     public IReadOnlyList<Channel> Channels { get; init; } = [];
     public IReadOnlyList<HistoryMessage> Messages { get; init; } = [];
+    public VoiceCallState? VoiceCall { get; init; }
+    public ScreenShareState? ScreenShare { get; init; }
 }

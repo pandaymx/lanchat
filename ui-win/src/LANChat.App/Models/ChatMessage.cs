@@ -78,10 +78,47 @@ public sealed record ChatMessage
     public string FormattedTime => Timestamp.ToLocalTime().ToString("HH:mm");
 
     /// <summary>消息气泡顶部发送者与时间栏（自己发送的消息仅展示时间与已读状态，避免重复显示“我”）。</summary>
-    public string HeaderText =>
-        IsSelf
-            ? (IsRead ? $"{FormattedTime} · ✓ 已读" : FormattedTime)
-            : $"{FromName}  {FormattedTime}";
+    public string HeaderText
+    {
+        get
+        {
+            var pinPrefix = Pinned || Text.StartsWith("📌 ", StringComparison.Ordinal) ? "📌 [置顶] · " : "";
+            var editSuffix = EditedAt > 0 || Text.EndsWith(" (已编辑)", StringComparison.Ordinal) ? " · (已编辑)" : "";
+            return IsSelf
+                ? $"{pinPrefix}{(IsRead ? $"{FormattedTime} · ✓ 已读" : FormattedTime)}{editSuffix}"
+                : $"{pinPrefix}{FromName}  {FormattedTime}{editSuffix}";
+        }
+    }
+
+    /// <summary>是否包含三反引号（```）代码块卡片。</summary>
+    public bool HasCodeBlock =>
+        !Revoked &&
+        !HasInlineImage &&
+        BodyText.Contains("```", StringComparison.Ordinal);
+
+    /// <summary>提取代码块正文用于 NTQQ 暗色等宽代码卡片展示。</summary>
+    public string CodeBlockText
+    {
+        get
+        {
+            if (!HasCodeBlock)
+            {
+                return "";
+            }
+            var first = BodyText.IndexOf("```", StringComparison.Ordinal);
+            var last = BodyText.LastIndexOf("```", StringComparison.Ordinal);
+            if (first >= 0 && last > first + 3)
+            {
+                var inner = BodyText[(first + 3)..last];
+                var nl = inner.IndexOf('\n');
+                return (nl >= 0 ? inner[(nl + 1)..] : inner).Trim();
+            }
+            return BodyText;
+        }
+    }
+
+    /// <summary>是否为内联 P2P 文件传输卡片消息（Type == "file"）。</summary>
+    public bool IsFileCard => !Revoked && Type == "file";
 
     /// <summary>是否已被对端读取。</summary>
     public bool IsRead => IsSelf && !Revoked && ReadBy.Count > 0;

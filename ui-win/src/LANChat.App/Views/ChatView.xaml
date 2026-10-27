@@ -9,6 +9,7 @@
           Drop="ChatView_Drop">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
@@ -86,6 +87,20 @@
                             CornerRadius="6"
                             IsEnabled="{Binding Chat.CanSend}"
                             Command="{Binding Chat.ToggleScreenShareCommand}" />
+                    <Button Content="🔄 漫游同步"
+                            FontSize="12"
+                            Padding="10,4"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="向对端请求离线缺失消息增量漫游同步 (/sync)"
+                            IsEnabled="{Binding Chat.CanSend}"
+                            Command="{Binding Chat.SyncHistoryCommand}" />
+                    <Button Content="📡 诊断雷达"
+                            FontSize="12"
+                            Padding="10,4"
+                            CornerRadius="6"
+                            ToolTipService.ToolTip="局域网全链路 RTT / 吞吐 / 拓扑诊断雷达 (/netdiag)"
+                            IsEnabled="{Binding Chat.CanSend}"
+                            Command="{Binding Chat.RunNetDiagCommand}" />
                     <Button Content="📁 发送文件"
                             FontSize="12"
                             Padding="10,4"
@@ -108,8 +123,90 @@
             </Grid>
         </Border>
 
+        <!-- 次顶栏：NTQQ 置顶消息横幅 + 实时语音通话栏 + 实时屏幕共享舞台（v1.2 协同套件） -->
+        <StackPanel Grid.Row="1">
+            <Border Background="#FFFBEB"
+                    BorderBrush="#FDE68A"
+                    BorderThickness="0,0,0,1"
+                    Padding="16,6"
+                    Visibility="{Binding Chat.HasPinnedBanner, Converter={StaticResource BoolToVisibilityConverter}}">
+                <TextBlock Text="{Binding Chat.PinnedBannerText}"
+                           FontSize="12"
+                           FontWeight="SemiBold"
+                           Foreground="#B45309"
+                           MaxLines="1"
+                           TextTrimming="CharacterEllipsis" />
+            </Border>
+
+            <Border Background="#ECFDF5"
+                    BorderBrush="#A7F3D0"
+                    BorderThickness="0,0,0,1"
+                    Padding="16,6"
+                    Visibility="{Binding Chat.HasVoiceCallBanner, Converter={StaticResource BoolToVisibilityConverter}}">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding Chat.VoiceCallStatusText, FallbackValue=📞 实时 P2P 语音通话进行中}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="#047857"
+                               VerticalAlignment="Center" />
+                    <Button Grid.Column="1"
+                            Content="📵 挂断"
+                            FontSize="11"
+                            Padding="8,2"
+                            CornerRadius="6"
+                            Command="{Binding Chat.ToggleVoiceCallCommand}" />
+                </Grid>
+            </Border>
+
+            <Border Background="#111827"
+                    Padding="16,10"
+                    Visibility="{Binding Chat.HasScreenShareStage, Converter={StaticResource BoolToVisibilityConverter}}">
+                <StackPanel Spacing="8">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="🖥️ 实时屏幕共享画布 · 支持激光笔坐标批注"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="White"
+                                   VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                            <Button Content="📍 激光批注"
+                                    FontSize="11"
+                                    Padding="8,3"
+                                    CornerRadius="6"
+                                    Background="#0099FF"
+                                    Foreground="White"
+                                    Command="{Binding Chat.AnnotateScreenCommand}" />
+                            <Button Content="⏹ 结束投屏"
+                                    FontSize="11"
+                                    Padding="8,3"
+                                    CornerRadius="6"
+                                    Command="{Binding Chat.ToggleScreenShareCommand}" />
+                        </StackPanel>
+                    </Grid>
+                    <Border Background="#1F2937"
+                            CornerRadius="8"
+                            MaxHeight="220"
+                            HorizontalAlignment="Stretch">
+                        <Image Source="{Binding Chat.ScreenShareFrameSource}"
+                               Stretch="Uniform"
+                               MaxHeight="210" />
+                    </Border>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
         <!-- 中部：NTQQ 聊天气泡流（左收白底卡片 + 36x36 圆形头像；右发 #0099FF 蓝底白字 + 36x36 头像 + 已读/回复/撤回） -->
-        <ListView Grid.Row="1"
+        <ListView Grid.Row="2"
                   ItemsSource="{Binding Chat.Messages}"
                   SelectionMode="None"
                   Padding="18,12">
@@ -248,6 +345,18 @@
                                                    Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
                                                    IsTextSelectionEnabled="True"
                                                    TextWrapping="Wrap" />
+                                        <!-- NTQQ 暗色等宽代码块卡片 -->
+                                        <Border Background="#1E293B"
+                                                CornerRadius="6"
+                                                Padding="10,8"
+                                                Visibility="{Binding HasCodeBlock, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <TextBlock Text="{Binding CodeBlockText}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="12"
+                                                       Foreground="#E2E8F0"
+                                                       IsTextSelectionEnabled="True"
+                                                       TextWrapping="Wrap" />
+                                        </Border>
                                     </StackPanel>
                                 </Border>
                                 <!-- 气泡下方的点赞/表情回应胶囊徽章（仅当有人点赞时显示） -->
@@ -347,6 +456,18 @@
                                                    Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
                                                    IsTextSelectionEnabled="True"
                                                    TextWrapping="Wrap" />
+                                        <!-- NTQQ 暗色等宽代码块卡片 -->
+                                        <Border Background="#1E293B"
+                                                CornerRadius="6"
+                                                Padding="10,8"
+                                                Visibility="{Binding HasCodeBlock, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <TextBlock Text="{Binding CodeBlockText}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="12"
+                                                       Foreground="#E2E8F0"
+                                                       IsTextSelectionEnabled="True"
+                                                       TextWrapping="Wrap" />
+                                        </Border>
                                     </StackPanel>
                                 </Border>
                                 <!-- 气泡下方的点赞/表情回应胶囊徽章（仅当有人点赞时显示） -->
@@ -386,7 +507,7 @@
         </ListView>
 
         <!-- 底部：NTQQ 一体化消息编辑器（顶部引用条 + 无边框图标工具栏 + 多行输入区 + 右下角 QQ 蓝「发送」按钮） -->
-        <Border Grid.Row="2"
+        <Border Grid.Row="3"
                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="0,1,0,0">

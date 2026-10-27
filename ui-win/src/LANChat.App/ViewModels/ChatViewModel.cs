@@ -33,9 +33,35 @@ public sealed partial class ChatViewModel : ViewModelBase
     private bool _isScreenSharing;
 
     [ObservableProperty]
+    private string _voiceCallStatusText = "";
+
+    [ObservableProperty]
+    private string _screenShareFrameSource = "";
+
+    [ObservableProperty]
     private ChatMessage? _replyingTo;
 
     public ObservableCollection<ChatMessage> Messages { get; } = [];
+
+    /// <summary>当前会话是否存在置顶消息横幅（NTQQ 顶部黄色/浅蓝置顶条）。</summary>
+    public bool HasPinnedBanner => !string.IsNullOrWhiteSpace(PinnedBannerText);
+
+    /// <summary>当前会话最新置顶消息摘要文案。</summary>
+    public string PinnedBannerText
+    {
+        get
+        {
+            var pinned = Messages.LastOrDefault(m =>
+                !m.Revoked && (m.Pinned || m.Text.StartsWith("📌 ", StringComparison.Ordinal)));
+            return pinned is null ? "" : $"📌 [置顶] {pinned.FromName}：{pinned.BodyText}";
+        }
+    }
+
+    /// <summary>是否展示 NTQQ 顶部实时语音通话状态栏。</summary>
+    public bool HasVoiceCallBanner => IsInVoiceCall || !string.IsNullOrWhiteSpace(VoiceCallStatusText);
+
+    /// <summary>是否展示 NTQQ 顶部实时屏幕共享画布舞台。</summary>
+    public bool HasScreenShareStage => IsScreenSharing || !string.IsNullOrWhiteSpace(ScreenShareFrameSource);
 
     public ObservableCollection<string> CurrentMembers { get; } = [];
 
@@ -162,6 +188,7 @@ public sealed partial class ChatViewModel : ViewModelBase
         Messages.Clear();
         if (key is null)
         {
+            NotifyPinnedBannerChanged();
             return;
         }
 
@@ -172,6 +199,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                 Messages.Add(message);
             }
         }
+        NotifyPinnedBannerChanged();
     }
 
     [RelayCommand]
@@ -592,7 +620,52 @@ public sealed partial class ChatViewModel : ViewModelBase
         });
     }
 
-    /// <summary>进度通知：pending inbound 时触发接收确认弹窗。</summary>
+    /// <summary>同步 GetState 返回的契约 v1.2 语音与投屏状态。</summary>
+    public void ApplyCollabState(VoiceCallState? voiceCall, ScreenShareState? screenShare)
+    {
+        if (voiceCall is not null)
+        {
+            IsInVoiceCall = voiceCall.State is "calling" or "in_call";
+            VoiceCallStatusText = IsInVoiceCall
+                ? $"📞 实时语音通话中 · 收发帧 {voiceCall.FramesIn}/{voiceCall.FramesOut}"
+                : "";
+        }
+        if (screenShare is not null)
+        {
+            IsScreenSharing = screenShare.Active;
+            if (!string.IsNullOrWhiteSpace(screenShare.LatestFrame))
+            {
+                ScreenShareFrameSource = screenShare.LatestFrame!;
+            }
+        }
+        NotifyCollabBannerChanged();
+    }
+
+    /// <summary>处理契约 v1.2 call.state 通知。</summary>
+    public void HandleCallStateChanged(JsonElement parameters)
+    {
+        var state = parameters.TryGetProperty("state", out var s) ? s.GetString() ?? "idle" : "idle";
+        var peerId = parameters.TryGetProperty("peerId", out var p) ? p.GetString() ?? "" : "";
+        IsInVoiceCall = state is "calling" or "in_call";
+        VoiceCallStatusText = IsInVoiceCall
+            ? $"📞 正在与 {(ResolvePeer(peerId)?.Nickname ?? peerId)} 实时低延迟语音通话 ({state})"
+            : "";
+        NotifyCollabBannerChanged();
+    }
+
+    /// <summary>处理契约 v1.2 screen.frame 通知。</summary>
+    public void HandleScreenFrameReceived(JsonElement parameters)
+    {
+        var frame = parameters.TryGetProperty("frame", out var f) ? f.GetString() ?? "" : "";
+        if (!string.IsNullOrWhiteSpace(frame))
+        {
+            ScreenShareFrameSource = frame;
+            IsScreenSharing = true;
+            NotifyCollabBannerChanged();
+        }
+    }
+
+    /// <summary>进度通知：pending inbound 时触发接收确认弹窗，并在会话流内插入/更新 QQ 风格文件卡片消息。</summary>
     public void HandleTransferProgress(Transfer transfer)
     {
         if (transfer.Direction == TransferDirection.Inbound &&
@@ -600,6 +673,21 @@ public sealed partial class ChatViewModel : ViewModelBase
         {
             IncomingFileOffer?.Invoke(transfer);
         }
+
+        var pathBadge = transfer.PathType == PathType.Relay ? "⚠ AES-GCM 加密中继" : "⚡ P2P 高速直连";
+        var dirLabel = transfer.Direction == TransferDirection.Inbound ? "📥 收到文件" : "📤 发送文件";
+        var pct = transfer.Size > 0 ? Math.Clamp((int)(transfer.Transferred * 100 / transfer.Size), 0, 100) : 0;
+        var senderName = ResolvePeer(transfer.PeerId)?.Nickname ?? transfer.PeerId;
+        AppendMessage(new ChatMessage
+        {
+            MsgId = $"file-{transfer.Id}",
+            FromId = transfer.PeerId,
+            FromName = transfer.Direction == TransferDirection.Outbound ? "我" : senderName,
+            GroupId = string.IsNullOrEmpty(transfer.GroupId) ? null : transfer.GroupId,
+            Text = $"{dirLabel}：{transfer.Name}\n📊 进度 {pct}% · {pathBadge} · 状态 {transfer.State}",
+            Type = "file",
+            IsSelf = transfer.Direction == TransferDirection.Outbound,
+        });
     }
 
     public void HandleTransferFailed(string transferId, string reason)
@@ -815,6 +903,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                     existingIdx < Messages.Count)
                 {
                     Messages[existingIdx] = merged;
+                    NotifyPinnedBannerChanged();
                 }
                 return;
             }
@@ -824,6 +913,7 @@ public sealed partial class ChatViewModel : ViewModelBase
         if ((CurrentChannel?.Id ?? CurrentPeer?.Id) is string currentKey && currentKey == key)
         {
             Messages.Add(message);
+            NotifyPinnedBannerChanged();
         }
     }
 
@@ -854,6 +944,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                     if ((CurrentChannel?.Id ?? CurrentPeer?.Id) == key && i < Messages.Count)
                     {
                         Messages[i] = updated;
+                        NotifyPinnedBannerChanged();
                     }
                 }
             }
@@ -878,6 +969,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                     if ((CurrentChannel?.Id ?? CurrentPeer?.Id) == key && i < Messages.Count)
                     {
                         Messages[i] = updated;
+                        NotifyPinnedBannerChanged();
                     }
                 }
             }
@@ -910,6 +1002,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                     if ((CurrentChannel?.Id ?? CurrentPeer?.Id) == key && i < Messages.Count)
                     {
                         Messages[i] = updated;
+                        NotifyPinnedBannerChanged();
                     }
                 }
             }
@@ -982,9 +1075,75 @@ public sealed partial class ChatViewModel : ViewModelBase
         OnPropertyChanged(nameof(ReplyTargetSummary));
     }
 
-    partial void OnIsInVoiceCallChanged(bool value) => OnPropertyChanged(nameof(VoiceCallButtonText));
+    partial void OnIsInVoiceCallChanged(bool value)
+    {
+        OnPropertyChanged(nameof(VoiceCallButtonText));
+        NotifyCollabBannerChanged();
+    }
 
-    partial void OnIsScreenSharingChanged(bool value) => OnPropertyChanged(nameof(ScreenShareButtonText));
+    partial void OnIsScreenSharingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ScreenShareButtonText));
+        if (!value)
+        {
+            ScreenShareFrameSource = "";
+        }
+        NotifyCollabBannerChanged();
+    }
+
+    private void NotifyPinnedBannerChanged()
+    {
+        OnPropertyChanged(nameof(HasPinnedBanner));
+        OnPropertyChanged(nameof(PinnedBannerText));
+    }
+
+    private void NotifyCollabBannerChanged()
+    {
+        OnPropertyChanged(nameof(HasVoiceCallBanner));
+        OnPropertyChanged(nameof(HasScreenShareStage));
+    }
+
+    /// <summary>v3.0/v4.0: 屏幕共享激光笔批注（/annotate x y note）。</summary>
+    [RelayCommand]
+    public async Task AnnotateScreenAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        Draft = "/annotate 0.5 0.5 重点关注此处";
+        await SendAsync();
+        Draft = prevDraft;
+    }
+
+    /// <summary>v3.0/v4.0: P2P 离线历史消息漫游同步（/sync）。</summary>
+    [RelayCommand]
+    public async Task SyncHistoryAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        Draft = "/sync 50";
+        await SendAsync();
+        Draft = prevDraft;
+    }
+
+    /// <summary>v3.0/v4.0: 局域网全链路诊断雷达（/netdiag）。</summary>
+    [RelayCommand]
+    public async Task RunNetDiagAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        var prevDraft = Draft;
+        Draft = "/netdiag";
+        await SendAsync();
+        Draft = prevDraft;
+    }
 
     [RelayCommand]
     public async Task ToggleScreenShareAsync()

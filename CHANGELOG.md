@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.9.0](https://github.com/pandaymx/lanchat/compare/v4.8.0...v4.9.0) (2026-10-27)
+
+
+### Features
+
+* **ui-linux:** add incoming call banner, native desktop notifications, and background residency ([ccfb8f6](https://github.com/pandaymx/lanchat/commit/ccfb8f61a26c9518a47c9877f0de314ebe49d755))
+
 ## [4.8.0](https://github.com/pandaymx/lanchat/compare/v4.7.0...v4.8.0) (2026-10-27)
 
 

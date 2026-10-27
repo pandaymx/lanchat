@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.0](https://github.com/pandaymx/lanchat/compare/v4.0.0...v4.1.0) (2026-10-27)
+
+
+### Features
+
+* **ui-win:** upgrade Windows client to NTQQ 9.x collab stage and contract v1.2 ([0791318](https://github.com/pandaymx/lanchat/commit/0791318175c6e208f3b4cecff0aad3b4ce1ee97e))
+
 ## [4.0.0](https://github.com/pandaymx/lanchat/compare/v3.4.0...v4.0.0) (2026-10-27)
 
 

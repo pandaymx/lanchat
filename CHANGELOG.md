@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1](https://github.com/pandaymx/lanchat/compare/v3.0.0...v3.0.1) (2026-10-27)
+
+
+### Bug Fixes
+
+* **ci:** resolve golangci-lint unused helper and macOS async call errors ([17006e9](https://github.com/pandaymx/lanchat/commit/17006e959e1dff2758ede377c8394950649726ca))
+
 ## [3.0.0](https://github.com/pandaymx/lanchat/compare/v2.4.0...v3.0.0) (2026-10-26)
 
 

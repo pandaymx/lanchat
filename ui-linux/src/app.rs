@@ -1535,10 +1535,34 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             if target.key().is_none() {
                 return;
             }
-            send_text_to_target(&cx, &target, "/annotate 0.5 0.5 重点关注此处");
+            send_text_to_target(&cx, &target, "/annotate 0.5,0.5 重点关注此处");
             cx.toast("📍 已发送屏幕共享激光笔坐标批注");
         }
     ));
+
+    // 点击实时投屏画面直接发送归一化坐标激光笔红点批注（v4.8.0）
+    let screen_click = gtk::GestureClick::new();
+    screen_click.connect_released(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_, _, x, y| {
+            let target = cx.state.borrow().current_chat.clone();
+            if target.key().is_none() {
+                return;
+            }
+            let w = cx.widgets.screen_pic.width().max(1) as f64;
+            let h = cx.widgets.screen_pic.height().max(1) as f64;
+            let norm_x = (x / w).clamp(0.0, 1.0);
+            let norm_y = (y / h).clamp(0.0, 1.0);
+            send_text_to_target(
+                &cx,
+                &target,
+                &format!("/annotate {norm_x:.3},{norm_y:.3} 🔴 激光笔点击批注"),
+            );
+            cx.toast(&format!("📍 激光笔红点批注 ({norm_x:.2}, {norm_y:.2})"));
+        }
+    ));
+    ctx.widgets.screen_pic.add_controller(screen_click);
 
     // 顶部频道邀请 & 退出快捷按钮
     ctx.widgets.header_invite_btn.connect_clicked(clone!(
@@ -2317,7 +2341,16 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
                 .to_string();
             let msg_type = p.get("type").and_then(|v| v.as_str()).unwrap_or("text");
             if msg_type == "SCREEN_FRAME" {
+                if let Some(frame) = p.get("text").and_then(|v| v.as_str()) {
+                    update_screen_canvas(ctx, frame);
+                }
                 return;
+            }
+            if msg_type == "SCREEN_SHARE" {
+                let txt = p.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if txt.contains("已结束") {
+                    update_screen_canvas(ctx, "");
+                }
             }
             if msg_type == "MSG_REVOKE" || msg_type == "MSG_BURN" {
                 if ctx.state.borrow_mut().revoke_message(&msg_id) {
@@ -2329,6 +2362,12 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             if msg_type == "CLIP_SYNC" {
                 let clip_text = p.get("text").and_then(|v| v.as_str()).unwrap_or("");
                 if !clip_text.is_empty() {
+                    let raw_clip = clip_text
+                        .strip_prefix("📋 [剪贴板已同步] ")
+                        .unwrap_or(clip_text);
+                    if let Some(display) = Display::default() {
+                        display.clipboard().set_text(raw_clip);
+                    }
                     ctx.toast(clip_text);
                 }
                 return;
@@ -2491,18 +2530,12 @@ fn handle_notification(ctx: &Rc<AppCtx>, n: Notification) {
             }
         }
         "screen.frame" => {
-            if let Some(frame) = p.get("frame").and_then(|v| v.as_str()) {
-                if let Some(b64) = extract_inline_image_b64(frame) {
-                    let bytes = glib::base64_decode(b64);
-                    if !bytes.is_empty() {
-                        let gbytes = glib::Bytes::from_owned(bytes);
-                        if let Ok(texture) = gdk::Texture::from_bytes(&gbytes) {
-                            ctx.widgets.screen_pic.set_paintable(Some(&texture));
-                            ctx.widgets.screen_bar.set_visible(true);
-                        }
-                    }
-                }
-            }
+            let frame = p
+                .get("frameData")
+                .or_else(|| p.get("frame"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            update_screen_canvas(ctx, frame);
         }
         other => tracing::debug!("未处理通知：{other}"),
     }
@@ -2705,7 +2738,39 @@ fn respond_transfer(ctx: &Rc<AppCtx>, id: &str, accept: bool, dest: String) {
 
 // ---------- 渲染（Linux QQ 风格） ----------
 
+fn update_screen_canvas(ctx: &Rc<AppCtx>, frame: &str) {
+    let trimmed = frame.trim();
+    if trimmed.is_empty() {
+        ctx.widgets.screen_bar.set_visible(false);
+        ctx.widgets.header_screen_btn.set_label("🖥️ 屏幕投屏");
+        return;
+    }
+    if let Some(b64) = extract_inline_image_b64(trimmed) {
+        let bytes = glib::base64_decode(b64);
+        if !bytes.is_empty() {
+            let gbytes = glib::Bytes::from_owned(bytes);
+            if let Ok(texture) = gdk::Texture::from_bytes(&gbytes) {
+                ctx.widgets.screen_pic.set_paintable(Some(&texture));
+                ctx.widgets.screen_bar.set_visible(true);
+            }
+        }
+    }
+}
+
 fn render_all(ctx: &Rc<AppCtx>, was_connected: bool) {
+    let screen_frame = {
+        let st = ctx.state.borrow();
+        if st.screen_share.active && !st.screen_share.latest_frame.is_empty() {
+            Some(st.screen_share.latest_frame.clone())
+        } else if !st.screen_share.active {
+            Some(String::new())
+        } else {
+            None
+        }
+    };
+    if let Some(f) = screen_frame {
+        update_screen_canvas(ctx, &f);
+    }
     let nick = {
         let st = ctx.state.borrow();
         if st.nickname.trim().is_empty() {

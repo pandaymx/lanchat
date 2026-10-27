@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
+	"github.com/pandaymx/lanchat/internal/protocol"
 )
 
 func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
@@ -186,5 +187,108 @@ func TestVoiceCallUDPStreamingAndGossip(t *testing.T) {
 	diagRes, err := alice.SendText("", "/netdiag", "")
 	if err != nil || !strings.HasPrefix(diagRes, "netdiag:conn=") {
 		t.Fatalf("/netdiag = %q, err=%v", diagRes, err)
+	}
+}
+
+func TestScreenCapturePipelineAndAutoClipboardDaemon(t *testing.T) {
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	defer bob.Close()
+
+	// 1. 建立 Alice <-> Bob UDP 通道并验证 StartScreenShare 后台抓屏推流管线自动推送 LCTPSCREEN 帧
+	resA, err := alice.StartVoiceCall("bob", "")
+	if err != nil {
+		t.Fatalf("StartVoiceCall: %v", err)
+	}
+	aliceUDP := strings.TrimPrefix(resA, "call:calling:")
+	resB, err := bob.AcceptVoiceCall("alice", "", aliceUDP)
+	if err != nil {
+		t.Fatalf("AcceptVoiceCall: %v", err)
+	}
+	bobUDP := strings.TrimPrefix(resB, "call:active:")
+	alice.setVoiceRemoteUDP(bobUDP)
+
+	collabProviderMu.Lock()
+	screenCaptureProvider = func(seq int) ([]byte, error) {
+		return renderSyntheticScreenJPEG(seq), nil
+	}
+	collabProviderMu.Unlock()
+	defer func() {
+		collabProviderMu.Lock()
+		screenCaptureProvider = nil
+		collabProviderMu.Unlock()
+	}()
+
+	if _, err := alice.StartScreenShare("bob", "", 20); err != nil {
+		t.Fatalf("StartScreenShare: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	var receivedFrame string
+	for time.Now().Before(deadline) {
+		if st := bob.GetState(); st.ScreenShare != nil && strings.HasPrefix(st.ScreenShare.LatestFrame, "data:image/jpeg;base64,") {
+			receivedFrame = st.ScreenShare.LatestFrame
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if receivedFrame == "" {
+		t.Fatal("timed out waiting for automatic screen capture frame over UDP")
+	}
+	if err := alice.StopScreenShare("bob", ""); err != nil {
+		t.Fatalf("StopScreenShare: %v", err)
+	}
+	if st := alice.GetState(); st.ScreenShare != nil && st.ScreenShare.Active {
+		t.Fatalf("expected alice ScreenShare inactive after StopScreenShare, got %+v", st.ScreenShare)
+	}
+
+	// 2. 验证后台剪贴板双向自动同步守护协程（SHA-256 哈希去重 + 远端自动写入系统剪贴板）
+	var (
+		clipMu     = make(chan string, 4)
+		mockSource = "LANChat-AutoClip-Payload-v4.8.0"
+	)
+	collabProviderMu.Lock()
+	clipboardReadProvider = func() (string, error) {
+		return mockSource, nil
+	}
+	clipboardWriteProvider = func(text string) error {
+		select {
+		case clipMu <- text:
+		default:
+		}
+		return nil
+	}
+	collabProviderMu.Unlock()
+	defer func() {
+		collabProviderMu.Lock()
+		clipboardReadProvider = nil
+		clipboardWriteProvider = nil
+		collabProviderMu.Unlock()
+	}()
+
+	alice.SetAutoClipboardTarget(true, "bob", "")
+	defer alice.SetAutoClipboard(false)
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if alice.LastClipboard() == mockSource {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := alice.LastClipboard(); got != mockSource {
+		t.Fatalf("alice LastClipboard() = %q, want %q", got, mockSource)
+	}
+
+	// 模拟 Bob 收到 sys:clip: 控制帧，应自动写入本机系统剪贴板并更新哈希防回环
+	bob.handleInboundControlText(&protocol.Envelope{ID: "clip-1", From: "alice"}, "sys:clip:"+mockSource)
+	select {
+	case written := <-clipMu:
+		if written != mockSource {
+			t.Fatalf("clipboardWriteProvider wrote %q, want %q", written, mockSource)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected inbound sys:clip: to write to system clipboard")
 	}
 }

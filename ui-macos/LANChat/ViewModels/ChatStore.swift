@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// 中央状态：持有 daemon + IPC，聚合连接态 / 在线表 / 传输 / 聊天消息，
@@ -73,8 +74,9 @@ final class ChatStore: ObservableObject {
         let groupId: String; let transferId: String; let haveBitmap: Data
     }
     private struct ChannelsParams: Decodable { let channels: [Channel] }
+    private struct CallStateParams: Decodable { let call: VoiceCallState? }
     private struct ScreenFrameParams: Decodable {
-        let from: String?; let group: String?; let frame: String; let ts: Int64?
+        let from: String?; let group: String?; let frameData: String?; let frame: String?; let fps: Int?
     }
 
     private func handle(method: String, params: Data) {
@@ -102,9 +104,19 @@ final class ChatStore: ObservableObject {
             }
         case "msg.received":
             if let p = try? decoder.decode(MsgParams.self, from: params) {
+                if p.type == "SCREEN_FRAME" {
+                    latestScreenFrame = p.text.isEmpty ? nil : p.text
+                    return
+                }
                 if p.type == "MSG_REVOKE" || p.type == "MSG_BURN" {
                     revokeMessage(id: p.msgId)
                 } else if p.type == "CLIP_SYNC" {
+                    let prefix = "📋 [剪贴板已同步] "
+                    let rawClip = p.text.hasPrefix(prefix) ? String(p.text.dropFirst(prefix.count)) : p.text
+                    if !rawClip.isEmpty {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(rawClip, forType: .string)
+                    }
                     return
                 } else if p.type == "MSG_READ" {
                     markMessageRead(id: p.msgId, readerId: p.from)
@@ -144,12 +156,15 @@ final class ChatStore: ObservableObject {
                 channels = p.channels
             }
         case "call.state":
-            if let p = try? decoder.decode(VoiceCallState.self, from: params) {
+            if let wrapped = try? decoder.decode(CallStateParams.self, from: params), let call = wrapped.call {
+                voiceCall = call
+            } else if let p = try? decoder.decode(VoiceCallState.self, from: params) {
                 voiceCall = p
             }
         case "screen.frame":
             if let p = try? decoder.decode(ScreenFrameParams.self, from: params) {
-                latestScreenFrame = p.frame
+                let f = (p.frameData ?? p.frame ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                latestScreenFrame = f.isEmpty ? nil : f
             }
         default:
             break

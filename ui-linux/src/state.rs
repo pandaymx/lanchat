@@ -89,12 +89,8 @@ impl AppState {
         self.peers = s.peers;
         self.transfers = s.transfers;
         self.channels = s.channels;
-        if let Some(vc) = s.voice_call {
-            self.voice_call = vc;
-        }
-        if let Some(ss) = s.screen_share {
-            self.screen_share = ss;
-        }
+        self.voice_call = s.voice_call.unwrap_or_default();
+        self.screen_share = s.screen_share.unwrap_or_default();
         for m in s.messages {
             self.apply_history_message(m);
         }

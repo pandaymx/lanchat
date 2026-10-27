@@ -199,7 +199,8 @@
                             HorizontalAlignment="Stretch">
                         <Image Source="{Binding Chat.ScreenShareFrameSource}"
                                Stretch="Uniform"
-                               MaxHeight="210" />
+                               MaxHeight="210"
+                               Tapped="ScreenShareImage_Tapped" />
                     </Border>
                 </StackPanel>
             </Border>

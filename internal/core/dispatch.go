@@ -266,7 +266,9 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		if clipBody != "" {
 			c.mu.Lock()
 			c.sharedClip = clipBody
+			c.lastClipHash = hashClipboardText(clipBody)
 			c.mu.Unlock()
+			_ = writeSystemClipboardText(clipBody)
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "CLIP_SYNC", "📋 [剪贴板已同步] "+clipBody)
 		}
 		return true
@@ -332,6 +334,7 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			c.screenSharing = false
 			c.latestScreenFrame = ""
 			c.mu.Unlock()
+			c.emitScreenShareFrame(env.From, env.Group, 0, "")
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_SHARE", "🖥️ [屏幕共享已结束]")
 		}
 		return true

@@ -129,6 +129,7 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		c.mu.Lock()
 		c.sharedClip = clipText
+		c.lastClipHash = hashClipboardText(clipText)
 		c.mu.Unlock()
 		if err := c.sendControlText(to, group, "sys:clip:"+clipText); err != nil {
 			return "", err

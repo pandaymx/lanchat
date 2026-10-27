@@ -76,6 +76,10 @@ type Client struct {
 	casIndex          map[string]string
 	sharedClip        string
 	autoClipboard     bool
+	autoClipStop      chan struct{}
+	autoClipPeer      string
+	autoClipGroup     string
+	lastClipHash      string
 	dnd               bool
 	unreadCounts      map[string]int
 	mentionCounts     map[string]int
@@ -85,6 +89,7 @@ type Client struct {
 	screenSharePeer   string
 	screenShareGroup  string
 	latestScreenFrame string
+	screenStop        chan struct{}
 	gossipBook        *discover.GossipPeerBook
 
 	cb appapi.Listener
@@ -198,6 +203,8 @@ func (c *Client) Close() {
 			g.teardown()
 		}
 		c.closeVoiceSession()
+		c.stopScreenShareLoop()
+		c.stopAutoClipboardLoop()
 		if conn != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 		}

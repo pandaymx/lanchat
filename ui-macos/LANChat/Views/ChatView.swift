@@ -154,15 +154,15 @@ struct ChatView: View {
                 Divider()
             }
 
-            if isScreenSharing, let frameStr = store.latestScreenFrame, !frameStr.isEmpty {
-                VStack(spacing: 6) {
+            if let frameStr = store.latestScreenFrame, !frameStr.isEmpty {
+                VStack(spacing: 8) {
                     HStack {
-                        Text("🖥️ 实时屏幕共享舞台 · 支持激光笔坐标批注")
+                        Text("🖥️ 实时屏幕共享舞台 · 点击画面发送激光笔红点批注")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(.white)
                         Spacer()
                         Button {
-                            Task { await store.sendText(to: peer.id, text: "/annotate 0.5 0.5 重点关注此处") }
+                            Task { await store.sendText(to: peer.id, text: "/annotate 0.5,0.5 重点关注此处") }
                         } label: {
                             Text("📍 激光批注")
                                 .font(.system(size: 11, weight: .semibold))
@@ -172,6 +172,16 @@ struct ChatView: View {
                                 .background(Capsule().fill(QQPalette.qqBlue))
                         }
                         .buttonStyle(.plain)
+                    }
+                    if let nsImg = decodeDataURIImage(frameStr) {
+                        Image(nsImage: nsImg)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 190)
+                            .cornerRadius(8)
+                            .onTapGesture {
+                                Task { await store.sendText(to: peer.id, text: "/annotate 0.500,0.500 🔴 激光笔点击批注") }
+                            }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -913,13 +923,7 @@ struct BubbleRow: View {
     }
 
     private func inlineNSImage(from raw: String) -> NSImage? {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        let clean = trimmed.hasPrefix("[表情] ") ? String(trimmed.dropFirst(5)) : trimmed
-        guard clean.hasPrefix("data:image/"),
-              let range = clean.range(of: ";base64,") else { return nil }
-        let b64 = String(clean[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let data = Data(base64Encoded: b64) else { return nil }
-        return NSImage(data: data)
+        decodeDataURIImage(raw)
     }
 
     @ViewBuilder
@@ -1123,4 +1127,14 @@ struct StickerPickerPopover: View {
         .padding(14)
         .frame(width: 280)
     }
+}
+
+func decodeDataURIImage(_ raw: String) -> NSImage? {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    let clean = trimmed.hasPrefix("[表情] ") ? String(trimmed.dropFirst(5)) : trimmed
+    guard clean.hasPrefix("data:image/"),
+          let range = clean.range(of: ";base64,") else { return nil }
+    let b64 = String(clean[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let data = Data(base64Encoded: b64) else { return nil }
+    return NSImage(data: data)
 }

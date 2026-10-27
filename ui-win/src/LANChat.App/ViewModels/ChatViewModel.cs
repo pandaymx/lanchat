@@ -593,8 +593,35 @@ public sealed partial class ChatViewModel : ViewModelBase
             return;
         }
 
+        if (type == "SCREEN_FRAME")
+        {
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                ScreenShareFrameSource = text;
+                IsScreenSharing = true;
+                NotifyCollabBannerChanged();
+            }
+            return;
+        }
+
         if (type == "CLIP_SYNC")
         {
+            var rawClip = text.StartsWith("📋 [剪贴板已同步] ", StringComparison.Ordinal)
+                ? text["📋 [剪贴板已同步] ".Length..]
+                : text;
+            if (!string.IsNullOrEmpty(rawClip))
+            {
+                try
+                {
+                    var pkg = new Windows.ApplicationModel.DataTransfer.DataPackage();
+                    pkg.SetText(rawClip);
+                    Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(pkg);
+                }
+                catch
+                {
+                    // 后台剪贴板异常忽略
+                }
+            }
             return;
         }
 
@@ -648,9 +675,10 @@ public sealed partial class ChatViewModel : ViewModelBase
     /// <summary>处理契约 v1.2 call.state 通知。</summary>
     public void HandleCallStateChanged(JsonElement parameters)
     {
-        var state = parameters.TryGetProperty("state", out var s) ? s.GetString() ?? "idle" : "idle";
-        var peerId = parameters.TryGetProperty("peerId", out var p) ? p.GetString() ?? "" : "";
-        IsInVoiceCall = state is "calling" or "in_call";
+        var callElem = parameters.TryGetProperty("call", out var c) && c.ValueKind == JsonValueKind.Object ? c : parameters;
+        var state = callElem.TryGetProperty("state", out var s) ? s.GetString() ?? "idle" : "idle";
+        var peerId = callElem.TryGetProperty("peerId", out var p) ? p.GetString() ?? "" : "";
+        IsInVoiceCall = state is "calling" or "active" or "in_call";
         VoiceCallStatusText = IsInVoiceCall
             ? $"📞 正在与 {(ResolvePeer(peerId)?.Nickname ?? peerId)} 实时低延迟语音通话 ({state})"
             : "";
@@ -660,11 +688,19 @@ public sealed partial class ChatViewModel : ViewModelBase
     /// <summary>处理契约 v1.2 screen.frame 通知。</summary>
     public void HandleScreenFrameReceived(JsonElement parameters)
     {
-        var frame = parameters.TryGetProperty("frame", out var f) ? f.GetString() ?? "" : "";
+        var frame = parameters.TryGetProperty("frameData", out var fd)
+            ? fd.GetString() ?? ""
+            : (parameters.TryGetProperty("frame", out var f) ? f.GetString() ?? "" : "");
         if (!string.IsNullOrWhiteSpace(frame))
         {
             ScreenShareFrameSource = frame;
             IsScreenSharing = true;
+            NotifyCollabBannerChanged();
+        }
+        else
+        {
+            ScreenShareFrameSource = "";
+            IsScreenSharing = false;
             NotifyCollabBannerChanged();
         }
     }
@@ -1111,16 +1147,24 @@ public sealed partial class ChatViewModel : ViewModelBase
         OnPropertyChanged(nameof(HasScreenShareStage));
     }
 
-    /// <summary>v3.0/v4.0: 屏幕共享激光笔批注（/annotate x y note）。</summary>
+    /// <summary>v3.0/v4.8: 屏幕共享激光笔批注（/annotate x,y note）。</summary>
     [RelayCommand]
     public async Task AnnotateScreenAsync()
+    {
+        await AnnotateScreenAtAsync(0.5, 0.5);
+    }
+
+    /// <summary>v4.8: 点击投屏画面按归一化坐标发送激光笔红点批注。</summary>
+    public async Task AnnotateScreenAtAsync(double normX, double normY)
     {
         if (!CanSend)
         {
             return;
         }
+        var x = Math.Clamp(normX, 0.0, 1.0);
+        var y = Math.Clamp(normY, 0.0, 1.0);
         var prevDraft = Draft;
-        Draft = "/annotate 0.5 0.5 重点关注此处";
+        Draft = $"/annotate {x:F3},{y:F3} 🔴 激光笔点击批注";
         await SendAsync();
         Draft = prevDraft;
     }

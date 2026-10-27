@@ -175,6 +175,17 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private async void ScreenShareImage_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (_shell is not null && sender is FrameworkElement elem)
+        {
+            var pt = e.GetPosition(elem);
+            var w = Math.Max(1.0, elem.ActualWidth);
+            var h = Math.Max(1.0, elem.ActualHeight);
+            await _shell.Chat.AnnotateScreenAtAsync(pt.X / w, pt.Y / h);
+        }
+    }
+
     private void SearchMessagesButton_Click(object sender, RoutedEventArgs e)
     {
         if (_shell is not null && !string.IsNullOrWhiteSpace(SearchHistoryBox.Text))

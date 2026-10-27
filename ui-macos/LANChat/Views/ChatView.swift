@@ -214,10 +214,10 @@ struct ChatView: View {
                 Button {
                     if inVoiceCall {
                         inVoiceCall = false
-                        store.sendText(to: peer.id, text: "/call stop")
+                        Task { await store.sendText(to: peer.id, text: "/call stop") }
                     } else {
                         inVoiceCall = true
-                        store.sendText(to: peer.id, text: "/call start")
+                        Task { await store.sendText(to: peer.id, text: "/call start") }
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -237,10 +237,10 @@ struct ChatView: View {
                 Button {
                     if isScreenSharing {
                         isScreenSharing = false
-                        store.sendText(to: peer.id, text: "/screenshare stop")
+                        Task { await store.sendText(to: peer.id, text: "/screenshare stop") }
                     } else {
                         isScreenSharing = true
-                        store.sendText(to: peer.id, text: "/screenshare start 15")
+                        Task { await store.sendText(to: peer.id, text: "/screenshare start 15") }
                     }
                 } label: {
                     HStack(spacing: 4) {

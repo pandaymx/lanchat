@@ -414,11 +414,7 @@ func (h *historyStore) decryptChannelPending(channelID, chKey string) []appapi.C
 	return updated
 }
 
-// react 为指定消息添加表情回应并持久化（M20 / 契约 v1.1 结构化 Reactions）。
-func (h *historyStore) react(msgID, emoji string) (appapi.ChatMessage, bool) {
-	return h.reactBy(msgID, "", emoji)
-}
-
+// reactBy 为指定消息添加表情回应并持久化（M20 / 契约 v1.1 结构化 Reactions）。
 func (h *historyStore) reactBy(msgID, actorID, emoji string) (appapi.ChatMessage, bool) {
 	emoji = strings.TrimSpace(emoji)
 	if msgID == "" || emoji == "" {

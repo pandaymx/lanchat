@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/pandaymx/lanchat/compare/v3.4.0...v4.0.0) (2026-10-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** upgrade to v4.0.0 with Ed25519 zero-trust node admission certificates and LAN diagnostics radar
+
+### Features
+
+* **core:** add Ed25519 zero-trust node certificates and LAN link diagnostics ([f37e3c8](https://github.com/pandaymx/lanchat/commit/f37e3c8f24001bbf3cd0634827ac6e540383af41))
+
 ## [3.4.0](https://github.com/pandaymx/lanchat/compare/v3.3.0...v3.4.0) (2026-10-27)
 
 

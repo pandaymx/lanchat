@@ -1,8 +1,10 @@
 package discover
 
 import (
+	"context"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/brutella/dnssd"
 )
@@ -172,5 +174,32 @@ func TestIPLess(t *testing.T) {
 	}
 	if ipLess(net.ParseIP("10.0.0.1"), net.ParseIP("10.0.0.1")) {
 		t.Error("相等 IP 不应为 less")
+	}
+}
+
+// TestUDPBeaconAdvertiseAndProbe 验证 UDP 广播/单播发现响应器在 mDNS 5353 被占用时仍能可靠发现节点。
+func TestUDPBeaconAdvertiseAndProbe(t *testing.T) {
+	adv, err := NewAdvertiser(17878, ServerMeta{
+		Version: "1",
+		Path:    "/lanchat",
+		Name:    "BeaconNode",
+		Auth:    "none",
+		ID:      "beacon-srv-1",
+	})
+	if err != nil {
+		t.Fatalf("NewAdvertiser failed: %v", err)
+	}
+	defer adv.Close()
+
+	srvs := ProbeUDP(context.Background(), 180*time.Millisecond)
+	var found bool
+	for _, s := range srvs {
+		if s.ID == "beacon-srv-1" && s.Port == 17878 && s.Name == "BeaconNode" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected beacon-srv-1 in ProbeUDP results, got %+v", srvs)
 	}
 }

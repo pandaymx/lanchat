@@ -53,6 +53,7 @@ func NewClient(nickname string, osName string, downloadDir string, listener List
 		Nickname:    nickname,
 		OS:          osName,
 		DownloadDir: downloadDir,
+		AutoStandby: true,
 	})
 	c.SetListener(&listenerBridge{out: listener})
 	return &Client{core: c}

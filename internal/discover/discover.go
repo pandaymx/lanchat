@@ -55,16 +55,20 @@ func (m ServerMeta) toText() map[string]string {
 	}
 }
 
-// Advertiser 封装服务端 mDNS 注册。
+// Advertiser 封装服务端 mDNS 注册与 UDP 局域网广播发现响应器。
 type Advertiser struct {
-	resp   dnssd.Responder
-	handle dnssd.ServiceHandle
-	cancel context.CancelFunc
+	resp     dnssd.Responder
+	handle   dnssd.ServiceHandle
+	cancel   context.CancelFunc
+	closeUDP func()
 }
 
-// NewAdvertiser 在所有活动多播网卡上注册一个 _lanchat 服务实例。
+// NewAdvertiser 在所有活动多播网卡上注册一个 _lanchat 服务实例，并同步启动 UDP 广播发现响应器。
 // Close 时注销。
 func NewAdvertiser(port int, meta ServerMeta) (*Advertiser, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	closeUDP := startUDPBeacon(ctx, port, meta)
+
 	instance := "lanchat-" + shortInstance(meta)
 	// 仅在真实局域网网卡上注册，避免多网卡 probe 洪泛拖垮 responder；
 	// 若一张 LAN 网卡都识别不到，留空让库回退到默认（全部多播网卡）。
@@ -78,22 +82,24 @@ func NewAdvertiser(port int, meta ServerMeta) (*Advertiser, error) {
 		Ifaces: ifaces,
 	})
 	if err != nil {
+		cancel()
+		closeUDP()
 		return nil, err
 	}
 
 	resp, err := dnssd.NewResponder()
 	if err != nil {
-		return nil, err
+		// 若 5353 端口被系统其他进程独占导致 dnssd 初始化失败，仍保留 UDP Beacon 可用
+		return &Advertiser{cancel: cancel, closeUDP: closeUDP}, nil
 	}
 	handle, err := resp.Add(svc)
 	if err != nil {
-		return nil, err
+		return &Advertiser{cancel: cancel, closeUDP: closeUDP}, nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = resp.Respond(ctx) }()
 
-	return &Advertiser{resp: resp, handle: handle, cancel: cancel}, nil
+	return &Advertiser{resp: resp, handle: handle, cancel: cancel, closeUDP: closeUDP}, nil
 }
 
 // Close 注销服务并停止响应（幂等由 context 与 Remove 语义保证）。
@@ -101,8 +107,15 @@ func (a *Advertiser) Close() {
 	if a == nil {
 		return
 	}
-	a.cancel()
-	a.resp.Remove(a.handle)
+	if a.cancel != nil {
+		a.cancel()
+	}
+	if a.closeUDP != nil {
+		a.closeUDP()
+	}
+	if a.resp != nil && a.handle != nil {
+		a.resp.Remove(a.handle)
+	}
 }
 
 // shortInstance 生成实例名后缀：优先用元数据 ID，其次名称，最后兜底 host。

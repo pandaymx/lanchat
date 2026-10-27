@@ -42,6 +42,7 @@ func main() {
 		Nickname:    *nickname,
 		OS:          runtime.GOOS,
 		DownloadDir: *downloadDir,
+		AutoStandby: true,
 	})
 	defer client.Close()
 

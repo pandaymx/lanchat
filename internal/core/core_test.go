@@ -1703,4 +1703,15 @@ func TestM32AndM33DNDUnreadAndUpdateApply(t *testing.T) {
 	if len(arm64Cands) == 0 || arm64Cands[0] != "LANChat-9.9.0-windows-arm64-Sideload.msix" {
 		t.Fatalf("unexpected windows-arm64 candidates: %v", arm64Cands)
 	}
+
+	// 4. 验证 AutoStandby 模式下 BrowseServers 在全网无外部节点时自动拉起本机待命节点并可直接连接
+	standbyClient := New(Options{Nickname: "StandbyUser", AutoStandby: true, DownloadDir: t.TempDir()})
+	t.Cleanup(standbyClient.Close)
+	discovered := standbyClient.BrowseServers()
+	if len(discovered) == 0 {
+		t.Fatal("expected AutoStandby BrowseServers() to return at least 1 server")
+	}
+	if err := standbyClient.Connect(discovered[0].Addr, testPSK); err != nil {
+		t.Fatalf("Connect to auto-standby server failed: %v", err)
+	}
 }

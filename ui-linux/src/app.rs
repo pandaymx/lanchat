@@ -956,6 +956,9 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         #[strong(rename_to = cx)]
         ctx,
         move |_| {
+            cx.widgets
+                .login_status
+                .set_text("正在扫描局域网与 Tailscale 节点…");
             trigger_browse(&cx);
         }
     ));
@@ -1964,14 +1967,23 @@ fn handle_event(ctx: &Rc<AppCtx>, event: UiEvent) {
             Ok(servers) => {
                 let n = servers.len();
                 if let Some(first) = servers.first() {
-                    if ctx.widgets.addr_row.text().trim().is_empty() {
+                    let cur_addr = ctx.widgets.addr_row.text();
+                    if cur_addr.trim().is_empty() || cur_addr.trim().eq_ignore_ascii_case("auto") {
                         ctx.widgets.addr_row.set_text(&server_addr_with_path(first));
                     }
                 }
                 ctx.state.borrow_mut().discovered = servers;
                 ctx.render_discovered();
                 if n > 0 {
+                    ctx.widgets.login_status.set_text(&format!(
+                        "已自动发现 {n} 个可用局域网中心节点，可直接点击下方按钮登录"
+                    ));
                     ctx.toast(&format!("发现 {n} 个局域网中心节点"));
+                } else {
+                    ctx.widgets
+                        .login_status
+                        .set_text("暂未发现外部节点，点击下方按钮将自动在本机自举中心节点");
+                    ctx.toast("暂未发现外部节点，直接点击连接可自动自举");
                 }
             }
             Err(e) => {

@@ -46,7 +46,8 @@ func (c *Client) Connect(addr, psk string) error {
 	}
 	isAuto := trimmedAddr == "" || strings.EqualFold(trimmedAddr, "auto")
 	isLocal := strings.EqualFold(trimmedAddr, "local")
-	c.autoMode = isAuto || isLocal
+	isSelfEmbedded := !isAuto && !isLocal && c.embeddedStop != nil && isSameServerAddr(trimmedAddr, c.embeddedAddr)
+	c.autoMode = isAuto || isLocal || isSelfEmbedded
 	c.psk = psk
 	if !isAuto && !isLocal {
 		c.addr = normalizeAddr(trimmedAddr)
@@ -61,9 +62,14 @@ func (c *Client) Connect(addr, psk string) error {
 	)
 	if isAuto {
 		s, err = c.establishAuto(c.runCtx, psk)
-	} else if isLocal {
-		var bootAddr string
-		bootAddr, err = c.startEmbeddedServer(psk)
+	} else if isLocal || isSelfEmbedded {
+		c.mu.Lock()
+		needRestart := c.embeddedStop == nil || c.embeddedPSK != psk || c.embeddedAddr == ""
+		bootAddr := c.embeddedAddr
+		c.mu.Unlock()
+		if needRestart {
+			bootAddr, err = c.startEmbeddedServer(psk)
+		}
 		if err == nil {
 			c.mu.Lock()
 			c.addr = normalizeAddr(bootAddr)
@@ -114,6 +120,23 @@ func (c *Client) establishAuto(ctx context.Context, psk string) (*session, error
 	servers := c.BrowseServers()
 	for _, srv := range servers {
 		if strings.TrimSpace(srv.Addr) == "" {
+			continue
+		}
+		c.mu.Lock()
+		isSelf := c.embeddedStop != nil && srv.ID == "auto-"+c.deviceID
+		needRestart := isSelf && c.embeddedPSK != psk
+		c.mu.Unlock()
+		if needRestart {
+			if bootAddr, err := c.startEmbeddedServer(psk); err == nil {
+				c.mu.Lock()
+				c.addr = normalizeAddr(bootAddr)
+				c.psk = psk
+				c.leaderID = "auto-" + c.deviceID
+				c.mu.Unlock()
+				if s, err := c.establish(ctx); err == nil {
+					return s, nil
+				}
+			}
 			continue
 		}
 		candAddr := normalizeAddr(srv.Addr)
@@ -560,8 +583,8 @@ func normalizeAddr(addr string) string {
 	return addr
 }
 
-// startEmbeddedServer 在本机全网卡随机端口启动内嵌信令与中继服务器，
-// 自动启动 mDNS 广播并随 c.runCtx 生命周期自动关停（M13/M14）。
+// startEmbeddedServer 在本机全网卡启动内嵌信令与中继服务器，
+// 自动启动 mDNS 与 UDP 广播发现响应器，并随 c.runCtx 生命周期自动关停（M13/M14）。
 func (c *Client) startEmbeddedServer(psk string) (string, error) {
 	c.mu.Lock()
 	if c.embeddedStop != nil {
@@ -570,6 +593,7 @@ func (c *Client) startEmbeddedServer(psk string) (string, error) {
 	}
 	nick := c.nickname
 	devID := c.deviceID
+	preferFixedPort := c.autoStandby
 	c.mu.Unlock()
 
 	authMode := "none"
@@ -588,10 +612,22 @@ func (c *Client) startEmbeddedServer(psk string) (string, error) {
 		if h, _, err := net.SplitHostPort(cands[0]); err == nil && h != "" {
 			relayHost = h
 		}
+	} else if overCands := discover.OverlayCandidateAddrs(0); len(overCands) > 0 {
+		if h, _, err := net.SplitHostPort(overCands[0]); err == nil && h != "" {
+			relayHost = h
+		}
+	}
+
+	listenAddr := ":0"
+	if preferFixedPort {
+		if ln, err := net.Listen("tcp", ":7878"); err == nil {
+			_ = ln.Close()
+			listenAddr = ":7878"
+		}
 	}
 
 	srv, err := server.New(server.Options{
-		Listen:            ":0",
+		Listen:            listenAddr,
 		Path:              "/lanchat",
 		AuthMode:          authMode,
 		PSKHash:           pskHash,
@@ -608,6 +644,7 @@ func (c *Client) startEmbeddedServer(psk string) (string, error) {
 	srvID := "auto-" + devID
 	srvCtx, srvCancel := context.WithCancel(c.runCtx)
 	c.mu.Lock()
+	c.embeddedPSK = psk
 	c.embeddedStop = func() {
 		unregisterEmbeddedServer(srvID)
 		srvCancel()
@@ -629,6 +666,10 @@ func (c *Client) startEmbeddedServer(psk string) (string, error) {
 		}
 
 		advAddr := net.JoinHostPort(relayHost, portStr)
+		c.mu.Lock()
+		c.embeddedAddr = advAddr
+		c.mu.Unlock()
+
 		registerEmbeddedServer(appapi.Server{
 			Name:     nick,
 			ID:       srvID,
@@ -658,4 +699,22 @@ func (c *Client) startEmbeddedServer(psk string) (string, error) {
 		srvCancel()
 		return "", c.runCtx.Err()
 	}
+}
+
+func isSameServerAddr(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	na := normalizeAddr(a)
+	nb := normalizeAddr(b)
+	if na == nb {
+		return true
+	}
+	_, portB, err := net.SplitHostPort(b)
+	if err == nil && portB != "" {
+		if na == normalizeAddr(net.JoinHostPort("127.0.0.1", portB)) {
+			return true
+		}
+	}
+	return false
 }

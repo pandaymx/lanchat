@@ -53,8 +53,11 @@ type Client struct {
 	identityPub  string
 	peerPubs     map[string]string
 	autoMode     bool
+	autoStandby  bool
 	leaderID     string
 	embeddedStop context.CancelFunc
+	embeddedPSK  string
+	embeddedAddr string
 	convergeMu   sync.Mutex
 
 	peers           map[string]appapi.Peer
@@ -115,6 +118,9 @@ type Options struct {
 	OS string
 	// DownloadDir 默认下载目录；空表示不预设（RespondFile 时须显式给 dest）。
 	DownloadDir string
+	// AutoStandby 启用后，当 BrowseServers 扫描局域网未发现任何外部节点时，
+	// 自动在本机拉起待命内嵌中心节点并广播 UDP/mDNS，使登录页与同网段其他设备立即可发现。
+	AutoStandby bool
 	// Listener 事件回调；为空时事件被丢弃。
 	Listener appapi.Listener
 }
@@ -133,6 +139,7 @@ func New(opts Options) *Client {
 		nickname:        nick,
 		os:              opts.OS,
 		downloadDir:     opts.DownloadDir,
+		autoStandby:     opts.AutoStandby,
 		history:         newHistoryStore(opts.DownloadDir, histKey),
 		e2eeKey:         strings.TrimSpace(os.Getenv("LANCHAT_E2EE_KEY")),
 		casIndex:        map[string]string{},

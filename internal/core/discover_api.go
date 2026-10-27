@@ -58,8 +58,9 @@ func snapshotEmbeddedServers() []appapi.Server {
 	return live
 }
 
-// BrowseServers 返回当前 mDNS 浏览到的中心节点，并合并内嵌自举节点与 LANCHAT_STATIC_SERVERS
-// 配置的跨网段静态候选中心节点；首次调用时懒启动常驻浏览。
+// BrowseServers 返回当前 mDNS + UDP 广播发现到的中心节点，并合并内嵌自举节点与
+// LANCHAT_STATIC_SERVERS / Gossip 配置的跨网段候选中心节点；
+// 当 AutoStandby 开启且全网尚未发现任何存活节点时，自动在本机拉起待命内嵌节点。
 func (c *Client) BrowseServers() []appapi.Server {
 	c.mu.Lock()
 	b := c.browser
@@ -67,6 +68,8 @@ func (c *Client) BrowseServers() []appapi.Server {
 		b = discover.NewBrowser()
 		c.browser = b
 	}
+	autoStandby := c.autoStandby
+	psk := c.psk
 	c.mu.Unlock()
 
 	if c.browserStarted.CompareAndSwap(false, true) {
@@ -74,32 +77,40 @@ func (c *Client) BrowseServers() []appapi.Server {
 	}
 
 	entries := b.Snapshot()
-	seenAddr := make(map[string]bool, len(entries))
-	seenID := make(map[string]bool, len(entries))
-	out := make([]appapi.Server, 0, len(entries))
-	for _, s := range entries {
-		srv := toAPIServer(s)
-		if srv.Addr != "" {
-			seenAddr[srv.Addr] = true
+	seenAddr := make(map[string]bool, len(entries)+4)
+	seenID := make(map[string]bool, len(entries)+4)
+	out := make([]appapi.Server, 0, len(entries)+4)
+	addSrv := func(srv appapi.Server) {
+		if srv.Addr == "" {
+			return
 		}
+		if seenAddr[srv.Addr] || (srv.ID != "" && seenID[srv.ID]) {
+			return
+		}
+		seenAddr[srv.Addr] = true
 		if srv.ID != "" {
 			seenID[srv.ID] = true
 		}
 		out = append(out, srv)
 	}
 
+	for _, s := range entries {
+		addSrv(toAPIServer(s))
+	}
+
 	for _, s := range snapshotEmbeddedServers() {
-		if !seenAddr[s.Addr] && (s.ID == "" || !seenID[s.ID]) {
-			seenAddr[s.Addr] = true
-			if s.ID != "" {
-				seenID[s.ID] = true
-			}
-			out = append(out, s)
+		addSrv(s)
+	}
+
+	gossipEps := c.GossipEndpoints()
+	if autoStandby {
+		for _, s := range discover.ProbeUDP(c.runCtx, 180*time.Millisecond, gossipEps...) {
+			addSrv(toAPIServer(s))
 		}
 	}
 
 	staticRaw := os.Getenv("LANCHAT_STATIC_SERVERS")
-	if gossipEps := c.GossipEndpoints(); len(gossipEps) > 0 {
+	if len(gossipEps) > 0 {
 		if staticRaw != "" {
 			staticRaw += "," + strings.Join(gossipEps, ",")
 		} else {
@@ -107,14 +118,70 @@ func (c *Client) BrowseServers() []appapi.Server {
 		}
 	}
 	for _, s := range probeStaticServers(staticRaw) {
-		if !seenAddr[s.Addr] {
-			seenAddr[s.Addr] = true
-			out = append(out, s)
+		addSrv(s)
+	}
+
+	if autoStandby {
+		for _, hp := range []string{"127.0.0.1:7878", "127.0.0.1:19090"} {
+			if srv, ok := probeHTTPStatusOnly(hp); ok {
+				addSrv(srv)
+			}
+		}
+	}
+
+	// 若处于生产客户端模式（autoStandby）且局域网尚未发现任何中心节点，自动在本机拉起待命内嵌节点
+	if len(out) == 0 && autoStandby {
+		c.mu.Lock()
+		noEmbedded := c.embeddedStop == nil
+		c.mu.Unlock()
+		if noEmbedded {
+			if _, err := c.startEmbeddedServer(psk); err == nil {
+				for _, s := range snapshotEmbeddedServers() {
+					addSrv(s)
+				}
+			}
 		}
 	}
 
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+func probeHTTPStatusOnly(hostPort string) (appapi.Server, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	client := &http.Client{Timeout: 150 * time.Millisecond}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+hostPort+"/api/status", nil)
+	if err != nil {
+		return appapi.Server{}, false
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return appapi.Server{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return appapi.Server{}, false
+	}
+	var st statusProbeResponse
+	if json.NewDecoder(resp.Body).Decode(&st) != nil {
+		return appapi.Server{}, false
+	}
+	ver := st.ProtocolVersion
+	if ver == "" {
+		ver = protocol.ProtocolVersion
+	}
+	auth := st.AuthMode
+	if auth == "" {
+		auth = "none"
+	}
+	return appapi.Server{
+		Name:     "本机中心节点 (" + hostPort + ")",
+		ID:       "local-" + hostPort,
+		Addr:     hostPort,
+		Version:  ver,
+		AuthMode: auth,
+	}, true
 }
 
 // toAPIServer 把 discover 记录映射为契约结构；地址取首个 IPv4:Port。

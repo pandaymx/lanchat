@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.2.0](https://github.com/pandaymx/lanchat/compare/v6.1.0...v6.2.0) (2026-10-28)
+
+
+### Features
+
+* **core:** add screen share laser dot overlay and desktop history/edit UI ([da577ad](https://github.com/pandaymx/lanchat/commit/da577ada1084e1d298c1661c710173f1c699cc46))
+
 ## [6.1.0](https://github.com/pandaymx/lanchat/compare/v6.0.1...v6.1.0) (2026-10-28)
 
 

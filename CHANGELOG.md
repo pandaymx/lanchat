@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.0.2](https://github.com/pandaymx/lanchat/compare/v7.0.1...v7.0.2) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ui-ios:** align gomobile Swift method selectors for contract v1.5 ([d9fd1e9](https://github.com/pandaymx/lanchat/commit/d9fd1e9b5021267691009593ec8d336d81e82822))
+
 ## [7.0.1](https://github.com/pandaymx/lanchat/compare/v7.0.0...v7.0.1) (2026-10-28)
 
 

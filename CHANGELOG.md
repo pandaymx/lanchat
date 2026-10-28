@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.0.1](https://github.com/pandaymx/lanchat/compare/v6.0.0...v6.0.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ui-win:** resolve ChatViewModel helper references and SyncFolderAsync ([d4276e7](https://github.com/pandaymx/lanchat/commit/d4276e77fe86b1e04acb3aa0550912d4aa44fe71))
+
 ## [6.0.0](https://github.com/pandaymx/lanchat/compare/v5.3.0...v6.0.0) (2026-10-28)
 
 

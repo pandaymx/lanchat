@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.0](https://github.com/pandaymx/lanchat/compare/v5.2.0...v5.3.0) (2026-10-28)
+
+
+### Features
+
+* **core:** add cross-platform audio pipeline, jitter buffer, and UDP relay fallback ([9c4f5cb](https://github.com/pandaymx/lanchat/commit/9c4f5cbefb9c5cf4669b4f7d9c847847d881a560))
+
 ## [5.2.0](https://github.com/pandaymx/lanchat/compare/v5.1.0...v5.2.0) (2026-10-28)
 
 

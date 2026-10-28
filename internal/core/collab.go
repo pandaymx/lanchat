@@ -14,12 +14,14 @@ import (
 	"image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +30,11 @@ import (
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/discover"
+)
+
+const (
+	defaultVoiceJitterWindow    = 40 * time.Millisecond
+	defaultVoiceUDPProbeTimeout = 2 * time.Second
 )
 
 var (
@@ -41,23 +48,264 @@ var (
 	desktopNotifyProvider  func(title, body string, urgent bool)
 )
 
-// voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道实时语音房间（阶段四 v2.0）。
+type voiceJitterFrame struct {
+	seq uint32
+	ts  int64
+	pcm []byte
+}
+
+// voiceJitterBuffer 实现 40ms 自适应滑动窗口抖动缓冲（阶段三 v5.3.0）：
+// 基于 seq（uint32）与 ts（int64）对跨网段 / Tailscale 隧道微抖动引起的乱序包进行重排、去重与平滑出队。
+type voiceJitterBuffer struct {
+	mu         sync.Mutex
+	windowDur  time.Duration
+	maxDepth   int
+	queue      []voiceJitterFrame
+	seenSeq    map[uint32]struct{}
+	lastOutSeq uint32
+	lastArrMs  int64
+	lastPktTS  int64
+	jitterMs   float64
+	timer      *time.Timer
+	closed     bool
+	onDeliver  func(seq uint32, ts int64, pcm []byte)
+}
+
+func newVoiceJitterBuffer(windowDur time.Duration, maxDepth int, onDeliver func(uint32, int64, []byte)) *voiceJitterBuffer {
+	if windowDur <= 0 {
+		windowDur = defaultVoiceJitterWindow
+	}
+	if maxDepth <= 0 {
+		maxDepth = 8
+	}
+	return &voiceJitterBuffer{
+		windowDur: windowDur,
+		maxDepth:  maxDepth,
+		seenSeq:   make(map[uint32]struct{}, 64),
+		onDeliver: onDeliver,
+	}
+}
+
+func (jb *voiceJitterBuffer) Push(seq uint32, ts int64, pcm []byte) {
+	if jb == nil || len(pcm) == 0 {
+		return
+	}
+	jb.mu.Lock()
+	if jb.closed {
+		jb.mu.Unlock()
+		return
+	}
+	if seq > 0 {
+		if _, exists := jb.seenSeq[seq]; exists {
+			jb.mu.Unlock()
+			return
+		}
+		if jb.lastOutSeq > 0 && seq <= jb.lastOutSeq {
+			jb.mu.Unlock()
+			return
+		}
+		jb.seenSeq[seq] = struct{}{}
+		if len(jb.seenSeq) > 256 {
+			cutoff := seq
+			if cutoff > 128 {
+				cutoff -= 128
+				for k := range jb.seenSeq {
+					if k < cutoff {
+						delete(jb.seenSeq, k)
+					}
+				}
+			}
+		}
+	}
+
+	nowMs := time.Now().UnixMilli()
+	if jb.lastArrMs > 0 && ts > 0 && jb.lastPktTS > 0 {
+		transitDiff := math.Abs(float64((nowMs - jb.lastArrMs) - (ts - jb.lastPktTS)))
+		jb.jitterMs += (transitDiff - jb.jitterMs) / 16.0
+	}
+	jb.lastArrMs = nowMs
+	jb.lastPktTS = ts
+
+	frameCopy := append([]byte(nil), pcm...)
+	jb.queue = append(jb.queue, voiceJitterFrame{seq: seq, ts: ts, pcm: frameCopy})
+	sort.SliceStable(jb.queue, func(i, j int) bool {
+		if jb.queue[i].seq != jb.queue[j].seq {
+			return jb.queue[i].seq < jb.queue[j].seq
+		}
+		return jb.queue[i].ts < jb.queue[j].ts
+	})
+
+	if len(jb.queue) >= jb.maxDepth {
+		items := jb.takeLocked()
+		cb := jb.onDeliver
+		jb.mu.Unlock()
+		jb.deliverItems(items, cb)
+		return
+	}
+
+	if jb.timer == nil {
+		waitDur := jb.adaptiveWindowLocked()
+		jb.timer = time.AfterFunc(waitDur, jb.Flush)
+	}
+	jb.mu.Unlock()
+}
+
+func (jb *voiceJitterBuffer) adaptiveWindowLocked() time.Duration {
+	base := jb.windowDur
+	if base <= 0 {
+		base = defaultVoiceJitterWindow
+	}
+	if jb.jitterMs > 5 {
+		adapted := time.Duration(jb.jitterMs*1.5) * time.Millisecond
+		if adapted > base && adapted <= 80*time.Millisecond {
+			return adapted
+		}
+	}
+	return base
+}
+
+func (jb *voiceJitterBuffer) takeLocked() []voiceJitterFrame {
+	if jb.timer != nil {
+		jb.timer.Stop()
+		jb.timer = nil
+	}
+	if len(jb.queue) == 0 {
+		return nil
+	}
+	items := jb.queue
+	jb.queue = nil
+	for _, it := range items {
+		if it.seq > jb.lastOutSeq {
+			jb.lastOutSeq = it.seq
+		}
+	}
+	return items
+}
+
+func (jb *voiceJitterBuffer) Flush() {
+	if jb == nil {
+		return
+	}
+	jb.mu.Lock()
+	items := jb.takeLocked()
+	cb := jb.onDeliver
+	jb.mu.Unlock()
+	jb.deliverItems(items, cb)
+}
+
+func (jb *voiceJitterBuffer) Close() {
+	if jb == nil {
+		return
+	}
+	jb.mu.Lock()
+	jb.closed = true
+	items := jb.takeLocked()
+	cb := jb.onDeliver
+	jb.mu.Unlock()
+	jb.deliverItems(items, cb)
+}
+
+func (jb *voiceJitterBuffer) deliverItems(items []voiceJitterFrame, cb func(uint32, int64, []byte)) {
+	if cb == nil {
+		return
+	}
+	for _, it := range items {
+		cb(it.seq, it.ts, it.pcm)
+	}
+}
+
+// voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道实时语音房间（阶段四 v2.0 / 阶段三 v5.3.0）。
 type voiceSession struct {
-	mu           sync.Mutex
-	conn         net.PacketConn
-	localAddr    string
-	remoteAddr   *net.UDPAddr
-	targetPeer   string
-	targetGrp    string
-	state        string // "idle" | "calling" | "active"
-	seq          atomic.Uint32
-	framesIn     atomic.Uint64
-	framesOut    atomic.Uint64
-	onFrame      func(seq uint32, ts int64, pcm []byte)
-	audioStarted bool
-	stopAudioCh  chan struct{}
-	capCmd       *exec.Cmd
-	playCmd      *exec.Cmd
+	mu               sync.Mutex
+	conn             net.PacketConn
+	localAddr        string
+	remoteAddr       *net.UDPAddr
+	targetPeer       string
+	targetGrp        string
+	state            string // "idle" | "calling" | "active"
+	seq              atomic.Uint32
+	framesIn         atomic.Uint64
+	framesOut        atomic.Uint64
+	activeSinceNano  atomic.Int64
+	lastUDPInNano    atomic.Int64
+	udpRelayFallback atomic.Bool
+	udpProbeTimeout  time.Duration
+	jitter           *voiceJitterBuffer
+	onFrame          func(seq uint32, ts int64, pcm []byte)
+	audioStarted     bool
+	stopAudioCh      chan struct{}
+	capCmd           *exec.Cmd
+	playCmd          *exec.Cmd
+}
+
+func (vs *voiceSession) markActiveNow() {
+	if vs == nil {
+		return
+	}
+	nowNano := time.Now().UnixNano()
+	vs.activeSinceNano.CompareAndSwap(0, nowNano)
+}
+
+func (vs *voiceSession) recordUDPInboundNow() {
+	if vs == nil {
+		return
+	}
+	nowNano := time.Now().UnixNano()
+	vs.lastUDPInNano.Store(nowNano)
+	vs.activeSinceNano.CompareAndSwap(0, nowNano)
+	vs.udpRelayFallback.Store(false)
+}
+
+// shouldFallbackToRelay 判断当前 UDP 数据面是否连续超时未收到对端入站包（默认 2s），需自动降级至控制面加密信令通道。
+func (vs *voiceSession) shouldFallbackToRelay(now time.Time) bool {
+	if vs == nil {
+		return false
+	}
+	if vs.udpRelayFallback.Load() {
+		return true
+	}
+	vs.mu.Lock()
+	timeout := vs.udpProbeTimeout
+	vs.mu.Unlock()
+	if timeout <= 0 {
+		timeout = defaultVoiceUDPProbeTimeout
+	}
+	nowNano := now.UnixNano()
+	if lastIn := vs.lastUDPInNano.Load(); lastIn > 0 {
+		if nowNano-lastIn >= int64(timeout) {
+			vs.udpRelayFallback.Store(true)
+			return true
+		}
+		return false
+	}
+	if activeSince := vs.activeSinceNano.Load(); activeSince > 0 {
+		if nowNano-activeSince >= int64(timeout) {
+			vs.udpRelayFallback.Store(true)
+			return true
+		}
+	}
+	return false
+}
+
+// SetVoiceMuted 设置当前实时语音通话麦克风静音状态（阶段三 v5.3.0）。
+func (c *Client) SetVoiceMuted(muted bool) {
+	c.voiceMuted.Store(muted)
+}
+
+// ToggleVoiceMuted 切换当前实时语音通话麦克风静音状态并返回切换后的状态。
+func (c *Client) ToggleVoiceMuted() bool {
+	for {
+		cur := c.voiceMuted.Load()
+		next := !cur
+		if c.voiceMuted.CompareAndSwap(cur, next) {
+			return next
+		}
+	}
+}
+
+// IsVoiceMuted 返回当前实时语音通话是否处于麦克风静音状态。
+func (c *Client) IsVoiceMuted() bool {
+	return c.voiceMuted.Load()
 }
 
 // StartVoiceCall 发起局域网实时语音呼叫（1:1 或 G2 语音频道），绑定本地 UDP 端口并通过信令下发邀约。
@@ -106,6 +354,7 @@ func (c *Client) AcceptVoiceCall(to, group, remoteUDP string) (string, error) {
 			vs.mu.Lock()
 			vs.state = "active"
 			vs.mu.Unlock()
+			vs.markActiveNow()
 		}
 	}
 	localAddr := c.voiceLocalAddr()
@@ -169,10 +418,14 @@ func (c *Client) StopVoiceCall(to, group string) error {
 	return nil
 }
 
-// SendVoiceFrame 通过实时语音 UDP 通道发送一帧 PCM/Opus 音频数据。
+// SendVoiceFrame 通过实时语音 UDP 通道发送一帧 PCM/Opus 音频数据；
+// 当本机处于静音（Mute）状态时静默丢弃；当 UDP 连续 2s 不可达或 WriteTo 失败时自动回退控制面加密信令通道（v5.3.0）。
 func (c *Client) SendVoiceFrame(pcm []byte) error {
 	if len(pcm) == 0 {
 		return errEmptyText
+	}
+	if c.IsVoiceMuted() {
+		return nil
 	}
 	c.mu.Lock()
 	vs := c.voice
@@ -183,23 +436,100 @@ func (c *Client) SendVoiceFrame(pcm []byte) error {
 	vs.mu.Lock()
 	conn := vs.conn
 	raddr := vs.remoteAddr
+	targetPeer := vs.targetPeer
+	targetGrp := vs.targetGrp
 	vs.mu.Unlock()
-	if conn == nil || raddr == nil {
-		return errInvalidState
-	}
 
+	vs.markActiveNow()
 	seq := vs.seq.Add(1)
-	pkt := make([]byte, len(voicePacketMagic)+4+8+len(pcm))
-	copy(pkt, voicePacketMagic)
-	binary.BigEndian.PutUint32(pkt[len(voicePacketMagic):], seq)
-	binary.BigEndian.PutUint64(pkt[len(voicePacketMagic)+4:], uint64(time.Now().UnixMilli()))
-	copy(pkt[len(voicePacketMagic)+12:], pcm)
+	tsMs := time.Now().UnixMilli()
 
-	if _, err := conn.WriteTo(pkt, raddr); err != nil {
-		return err
+	_, wsErr := c.connectedConn()
+	hasSignaling := wsErr == nil && (targetPeer != "" || targetGrp != "")
+
+	var udpWriteErr error
+	if conn != nil && raddr != nil && (!vs.shouldFallbackToRelay(time.Now()) || !hasSignaling) {
+		pkt := make([]byte, len(voicePacketMagic)+4+8+len(pcm))
+		copy(pkt, voicePacketMagic)
+		binary.BigEndian.PutUint32(pkt[len(voicePacketMagic):], seq)
+		binary.BigEndian.PutUint64(pkt[len(voicePacketMagic)+4:], uint64(tsMs))
+		copy(pkt[len(voicePacketMagic)+12:], pcm)
+		if _, err := conn.WriteTo(pkt, raddr); err == nil {
+			vs.framesOut.Add(1)
+			return nil
+		} else {
+			udpWriteErr = err
+			vs.udpRelayFallback.Store(true)
+		}
 	}
-	vs.framesOut.Add(1)
-	return nil
+
+	if hasSignaling {
+		payload := fmt.Sprintf("sys:call:pcm:%d:%d:%s", seq, tsMs, base64.StdEncoding.EncodeToString(pcm))
+		if err := c.sendControlText(targetPeer, targetGrp, payload); err != nil {
+			return err
+		}
+		vs.framesOut.Add(1)
+		return nil
+	}
+	if udpWriteErr != nil {
+		return udpWriteErr
+	}
+	return errInvalidState
+}
+
+// onInboundSignalingVoiceFrame 处理 UDP 受阻时由控制面加密信令通道转发而来的语音 PCM 帧（sys:call:pcm:<seq>:<ts>:<b64>）。
+func (c *Client) onInboundSignalingVoiceFrame(from, group, raw string) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return
+	}
+	var (
+		seq uint32
+		ts  int64
+		b64 = raw
+	)
+	parts := strings.SplitN(raw, ":", 3)
+	if len(parts) == 3 {
+		if sVal, err := strconv.ParseUint(parts[0], 10, 32); err == nil {
+			seq = uint32(sVal)
+		}
+		if tVal, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+			ts = tVal
+		}
+		b64 = parts[2]
+	}
+	pcm, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if err != nil || len(pcm) == 0 {
+		return
+	}
+
+	_ = c.ensureLocalVoiceUDP(from, group)
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return
+	}
+	vs.framesIn.Add(1)
+	if seq == 0 {
+		seq = uint32(vs.framesIn.Load())
+	}
+	if ts == 0 {
+		ts = time.Now().UnixMilli()
+	}
+	vs.mu.Lock()
+	if vs.state != "active" {
+		vs.state = "active"
+	}
+	jb := vs.jitter
+	cb := vs.onFrame
+	vs.mu.Unlock()
+
+	if jb != nil {
+		jb.Push(seq, ts, pcm)
+	} else if cb != nil {
+		cb(seq, ts, pcm)
+	}
 }
 
 // VoiceCallStatus 返回当前实时语音通话状态摘要。
@@ -216,16 +546,24 @@ func (c *Client) VoiceCallStatus() string {
 	if vs.remoteAddr != nil {
 		remote = vs.remoteAddr.String()
 	}
-	return fmt.Sprintf("%s local=%s remote=%s in=%d out=%d",
-		vs.state, vs.localAddr, remote, vs.framesIn.Load(), vs.framesOut.Load())
+	mode := "udp"
+	if vs.udpRelayFallback.Load() {
+		mode = "relay"
+	}
+	return fmt.Sprintf("%s local=%s remote=%s in=%d out=%d mode=%s muted=%t",
+		vs.state, vs.localAddr, remote, vs.framesIn.Load(), vs.framesOut.Load(), mode, c.IsVoiceMuted())
 }
 
 func (c *Client) ensureLocalVoiceUDP(to, group string) error {
 	c.mu.Lock()
 	if c.voice != nil && c.voice.conn != nil {
 		c.voice.mu.Lock()
-		c.voice.targetPeer = to
-		c.voice.targetGrp = group
+		if to != "" {
+			c.voice.targetPeer = to
+		}
+		if group != "" {
+			c.voice.targetGrp = group
+		}
 		if c.voice.state == "idle" {
 			c.voice.state = "calling"
 		}
@@ -258,15 +596,26 @@ func (c *Client) ensureLocalVoiceUDP(to, group string) error {
 	}
 
 	vs := &voiceSession{
-		conn:        pc,
-		localAddr:   localUDP,
-		targetPeer:  to,
-		targetGrp:   group,
-		state:       "calling",
-		stopAudioCh: make(chan struct{}),
+		conn:            pc,
+		localAddr:       localUDP,
+		targetPeer:      to,
+		targetGrp:       group,
+		state:           "calling",
+		udpProbeTimeout: defaultVoiceUDPProbeTimeout,
+		stopAudioCh:     make(chan struct{}),
 	}
+	vs.jitter = newVoiceJitterBuffer(defaultVoiceJitterWindow, 8, func(seq uint32, ts int64, pcm []byte) {
+		vs.mu.Lock()
+		cb := vs.onFrame
+		vs.mu.Unlock()
+		if cb != nil {
+			cb(seq, ts, pcm)
+		}
+	})
+
 	c.mu.Lock()
 	if c.voice != nil && c.voice.conn != nil {
+		vs.jitter.Close()
 		_ = pc.Close()
 		c.mu.Unlock()
 		return nil
@@ -289,17 +638,63 @@ func isGoTestBinary() bool {
 	return strings.HasSuffix(exe, ".test") || strings.HasSuffix(exe, ".test.exe") || strings.Contains(exe, "_test")
 }
 
-func findRawAudioPlayerCmd() *exec.Cmd {
-	type cand struct {
-		bin  string
-		args []string
+type audioCmdCandidate struct {
+	bin  string
+	args []string
+}
+
+// rawAudioPlayerCandidatesForOS 返回指定操作系统（linux / darwin / windows）下的 16kHz 16-bit 单声道 PCM 播放命令候选列表（阶段三 v5.3.0）。
+func rawAudioPlayerCandidatesForOS(goos string) []audioCmdCandidate {
+	switch goos {
+	case "darwin":
+		return []audioCmdCandidate{
+			{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "pipe:0"}},
+			{"sox", []string{"-q", "-r", "16000", "-c", "1", "-b", "16", "-e", "signed-integer", "-t", "raw", "-", "-d"}},
+			{"play", []string{"-q", "-r", "16000", "-c", "1", "-b", "16", "-e", "signed-integer", "-t", "raw", "-"}},
+		}
+	case "windows":
+		return []audioCmdCandidate{
+			{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "pipe:0"}},
+			{"sox", []string{"-q", "-r", "16000", "-c", "1", "-b", "16", "-e", "signed-integer", "-t", "raw", "-", "-d"}},
+			{"powershell", []string{"-NoProfile", "-NonInteractive", "-Command", "$in=[Console]::OpenStandardInput(); $buf=New-Object byte[] 4096; while(($n=$in.Read($buf,0,$buf.Length)) -gt 0){}"}},
+		}
+	default:
+		return []audioCmdCandidate{
+			{"pw-play", []string{"--rate=16000", "--channels=1", "--format=s16", "--raw", "-"}},
+			{"paplay", []string{"--raw", "--rate=16000", "--channels=1", "--format=s16le"}},
+			{"aplay", []string{"-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-"}},
+			{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "pipe:0"}},
+		}
 	}
-	for _, c := range []cand{
-		{"pw-play", []string{"--rate=16000", "--channels=1", "--format=s16", "--raw", "-"}},
-		{"paplay", []string{"--raw", "--rate=16000", "--channels=1", "--format=s16le"}},
-		{"aplay", []string{"-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-"}},
-		{"ffplay", []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-f", "s16le", "-ar", "16000", "-ac", "1", "-i", "pipe:0"}},
-	} {
+}
+
+// rawAudioCaptureCandidatesForOS 返回指定操作系统（linux / darwin / windows）下的 16kHz 16-bit 单声道麦克风 PCM 采集命令候选列表（阶段三 v5.3.0）。
+func rawAudioCaptureCandidatesForOS(goos string) []audioCmdCandidate {
+	switch goos {
+	case "darwin":
+		return []audioCmdCandidate{
+			{"ffmpeg", []string{"-loglevel", "quiet", "-f", "avfoundation", "-i", ":0", "-ar", "16000", "-ac", "1", "-f", "s16le", "pipe:1"}},
+			{"sox", []string{"-q", "-d", "-r", "16000", "-c", "1", "-b", "16", "-e", "signed-integer", "-t", "raw", "-"}},
+			{"rec", []string{"-q", "-r", "16000", "-c", "1", "-b", "16", "-e", "signed-integer", "-t", "raw", "-"}},
+		}
+	case "windows":
+		return []audioCmdCandidate{
+			{"ffmpeg", []string{"-loglevel", "quiet", "-f", "dshow", "-i", "audio=default", "-ar", "16000", "-ac", "1", "-f", "s16le", "pipe:1"}},
+			{"sox", []string{"-q", "-d", "-r", "16000", "-c", "1", "-b", "16", "-e", "signed-integer", "-t", "raw", "-"}},
+			{"powershell", []string{"-NoProfile", "-NonInteractive", "-Command", "Add-Type -AssemblyName System.Speech; $out=[Console]::OpenStandardOutput(); $buf=New-Object byte[] 640; while($true){ Start-Sleep -Milliseconds 20; $out.Write($buf,0,$buf.Length) }"}},
+		}
+	default:
+		return []audioCmdCandidate{
+			{"pw-record", []string{"--rate=16000", "--channels=1", "--format=s16", "--raw", "-"}},
+			{"parec", []string{"--rate=16000", "--channels=1", "--format=s16le"}},
+			{"arecord", []string{"-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-"}},
+			{"ffmpeg", []string{"-loglevel", "quiet", "-f", "pulse", "-i", "default", "-ar", "16000", "-ac", "1", "-f", "s16le", "pipe:1"}},
+		}
+	}
+}
+
+func findRawAudioPlayerCmd() *exec.Cmd {
+	for _, c := range rawAudioPlayerCandidatesForOS(runtime.GOOS) {
 		if path, err := exec.LookPath(c.bin); err == nil {
 			return exec.Command(path, c.args...)
 		}
@@ -308,15 +703,7 @@ func findRawAudioPlayerCmd() *exec.Cmd {
 }
 
 func findRawAudioCaptureCmd() *exec.Cmd {
-	type cand struct {
-		bin  string
-		args []string
-	}
-	for _, c := range []cand{
-		{"pw-record", []string{"--rate=16000", "--channels=1", "--format=s16", "--raw", "-"}},
-		{"parec", []string{"--rate=16000", "--channels=1", "--format=s16le"}},
-		{"arecord", []string{"-q", "-f", "S16_LE", "-r", "16000", "-c", "1", "-t", "raw", "-"}},
-	} {
+	for _, c := range rawAudioCaptureCandidatesForOS(runtime.GOOS) {
 		if path, err := exec.LookPath(c.bin); err == nil {
 			return exec.Command(path, c.args...)
 		}
@@ -383,7 +770,7 @@ func (c *Client) startVoiceAudioPipeline(vs *voiceSession) {
 						default:
 						}
 						n, rErr := io.ReadFull(stdout, frame)
-						if n > 0 {
+						if n > 0 && !c.IsVoiceMuted() {
 							_ = c.SendVoiceFrame(frame[:n])
 						}
 						if rErr != nil {
@@ -406,6 +793,7 @@ func (c *Client) readVoiceLoop(vs *voiceSession) {
 			return
 		}
 		if n > screenMagicLen && string(buf[:screenMagicLen]) == string(screenPacketMagic) {
+			vs.recordUDPInboundNow()
 			frame := string(buf[screenMagicLen:n])
 			vs.mu.Lock()
 			peer := vs.targetPeer
@@ -419,6 +807,7 @@ func (c *Client) readVoiceLoop(vs *voiceSession) {
 		if n <= headerLen || string(buf[:len(voicePacketMagic)]) != string(voicePacketMagic) {
 			continue
 		}
+		vs.recordUDPInboundNow()
 		seq := binary.BigEndian.Uint32(buf[len(voicePacketMagic):])
 		ts := int64(binary.BigEndian.Uint64(buf[len(voicePacketMagic)+4:]))
 		payload := append([]byte(nil), buf[headerLen:n]...)
@@ -431,9 +820,12 @@ func (c *Client) readVoiceLoop(vs *voiceSession) {
 				vs.state = "active"
 			}
 		}
+		jb := vs.jitter
 		cb := vs.onFrame
 		vs.mu.Unlock()
-		if cb != nil {
+		if jb != nil {
+			jb.Push(seq, ts, payload)
+		} else if cb != nil {
 			cb(seq, ts, payload)
 		}
 	}
@@ -454,6 +846,7 @@ func (c *Client) setVoiceRemoteUDP(remoteUDP string) {
 	vs.remoteAddr = uaddr
 	vs.state = "active"
 	vs.mu.Unlock()
+	vs.markActiveNow()
 }
 
 func (c *Client) voiceLocalAddr() string {
@@ -483,9 +876,14 @@ func (c *Client) closeVoiceSession() {
 	playCmd := vs.playCmd
 	vs.capCmd = nil
 	vs.playCmd = nil
+	jb := vs.jitter
+	vs.jitter = nil
 	conn := vs.conn
 	vs.mu.Unlock()
 
+	if jb != nil {
+		jb.Close()
+	}
 	if stopCh != nil {
 		close(stopCh)
 	}
@@ -531,7 +929,8 @@ func (c *Client) StartScreenShare(to, group string, fps int) (string, error) {
 }
 
 // SendScreenFrame 发送一帧屏幕/窗口共享画面（data:image/jpeg;base64,...）；
-// 若已建立实时 UDP 通道且单包 ≤60 KiB，优先走 UDP 数据面直传，否则回退信令控制帧（v3.1.0）。
+// 若已建立实时 UDP 通道、单包 ≤60 KiB 且 UDP 数据面可达，优先走 UDP 数据面直传；
+// 若连续 2s 未收到对端 UDP 入站包或 WriteTo 失败，自动回退加密信令控制帧（v3.1.0 / v5.3.0）。
 func (c *Client) SendScreenFrame(to, group, frameData string) error {
 	frameData = strings.TrimSpace(frameData)
 	if frameData == "" {
@@ -541,7 +940,9 @@ func (c *Client) SendScreenFrame(to, group, frameData string) error {
 	c.mu.Lock()
 	vs := c.voice
 	c.mu.Unlock()
-	if vs != nil && len(frameData)+len(screenPacketMagic) <= 60*1024 {
+	_, wsErr := c.connectedConn()
+	hasSignaling := wsErr == nil && (to != "" || group != "")
+	if vs != nil && len(frameData)+len(screenPacketMagic) <= 60*1024 && (!vs.shouldFallbackToRelay(time.Now()) || !hasSignaling) {
 		vs.mu.Lock()
 		conn := vs.conn
 		raddr := vs.remoteAddr
@@ -553,6 +954,7 @@ func (c *Client) SendScreenFrame(to, group, frameData string) error {
 			if _, err := conn.WriteTo(pkt, raddr); err == nil {
 				return nil
 			}
+			vs.udpRelayFallback.Store(true)
 		}
 	}
 	return c.sendControlText(to, group, "sys:screen:frame:"+frameData)
@@ -1168,6 +1570,17 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 		case arg == "stop" || arg == "hangup" || arg == "leave" || arg == "reject":
 			_ = c.StopVoiceCall(to, group)
 			return "call:stopped", true, nil
+		case arg == "mute" || arg == "muted":
+			c.SetVoiceMuted(true)
+			return "call:muted", true, nil
+		case arg == "unmute":
+			c.SetVoiceMuted(false)
+			return "call:unmuted", true, nil
+		case arg == "toggle-mute":
+			if c.ToggleVoiceMuted() {
+				return "call:muted", true, nil
+			}
+			return "call:unmuted", true, nil
 		case arg == "status":
 			return "call:" + c.VoiceCallStatus(), true, nil
 		case arg == "accept" || strings.HasPrefix(arg, "accept "):

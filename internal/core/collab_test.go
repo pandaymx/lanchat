@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -357,5 +358,172 @@ func TestIncomingCallRingingBannerAndDesktopNotifications(t *testing.T) {
 	case ev := <-notifCh:
 		t.Fatalf("expected no notification when DND is enabled, got %+v", ev)
 	default:
+	}
+}
+
+func TestVoiceJitterBufferOutOfOrderAndCrossPlatformAudioCandidates(t *testing.T) {
+	// 1. 验证 Linux / macOS / Windows 16kHz 16-bit 单声道采集与播放管线候选命令完备性
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		capCands := rawAudioCaptureCandidatesForOS(goos)
+		playCands := rawAudioPlayerCandidatesForOS(goos)
+		if len(capCands) < 2 {
+			t.Fatalf("expected >=2 audio capture candidates for %s, got %d", goos, len(capCands))
+		}
+		if len(playCands) < 2 {
+			t.Fatalf("expected >=2 audio player candidates for %s, got %d", goos, len(playCands))
+		}
+	}
+
+	// 2. 验证 40ms 自适应 Jitter Buffer 乱序包重排、重复包去重与过期包丢弃
+	type deliveredFrame struct {
+		seq uint32
+		ts  int64
+		pcm string
+	}
+	outCh := make(chan deliveredFrame, 16)
+	jb := newVoiceJitterBuffer(35*time.Millisecond, 8, func(seq uint32, ts int64, pcm []byte) {
+		outCh <- deliveredFrame{seq: seq, ts: ts, pcm: string(pcm)}
+	})
+	defer jb.Close()
+
+	// 模拟乱序到达：seq=4, seq=2, seq=1, seq=2(重复), seq=3
+	jb.Push(4, 1060, []byte("frame-4"))
+	jb.Push(2, 1020, []byte("frame-2"))
+	jb.Push(1, 1000, []byte("frame-1"))
+	jb.Push(2, 1020, []byte("frame-2-dup"))
+	jb.Push(3, 1040, []byte("frame-3"))
+
+	wantSeqs := []uint32{1, 2, 3, 4}
+	wantPayloads := []string{"frame-1", "frame-2", "frame-3", "frame-4"}
+	for i, wantSeq := range wantSeqs {
+		select {
+		case got := <-outCh:
+			if got.seq != wantSeq || got.pcm != wantPayloads[i] {
+				t.Fatalf("jitter buffer item[%d] = (seq=%d, pcm=%q), want (seq=%d, pcm=%q)",
+					i, got.seq, got.pcm, wantSeq, wantPayloads[i])
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("timed out waiting for jitter buffer item[%d] (want seq=%d)", i, wantSeq)
+		}
+	}
+
+	// 已播放序列号之前的迟到旧包（seq=2）应被丢弃
+	jb.Push(2, 1020, []byte("frame-2-stale"))
+	jb.Flush()
+	select {
+	case unexpected := <-outCh:
+		t.Fatalf("expected stale seq=2 to be dropped, got %+v", unexpected)
+	default:
+	}
+
+	// 3. 验证通话静音（Mute）切换
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	if _, err := alice.StartVoiceCall("bob", ""); err != nil {
+		t.Fatalf("StartVoiceCall: %v", err)
+	}
+	resMute, err := alice.SendText("bob", "/call mute", "")
+	if err != nil || resMute != "call:muted" || !alice.IsVoiceMuted() {
+		t.Fatalf("/call mute = %q, err=%v, muted=%v", resMute, err, alice.IsVoiceMuted())
+	}
+	// 静音状态下调用 SendVoiceFrame 应静默丢弃且不递增 framesOut
+	if err := alice.SendVoiceFrame([]byte{0x11, 0x22}); err != nil {
+		t.Fatalf("SendVoiceFrame while muted returned err: %v", err)
+	}
+	if st := alice.GetState(); st.VoiceCall != nil && st.VoiceCall.FramesOut != 0 {
+		t.Fatalf("expected 0 framesOut while muted, got %d", st.VoiceCall.FramesOut)
+	}
+	resUnmute, err := alice.SendText("bob", "/call unmute", "")
+	if err != nil || resUnmute != "call:unmuted" || alice.IsVoiceMuted() {
+		t.Fatalf("/call unmute = %q, err=%v, muted=%v", resUnmute, err, alice.IsVoiceMuted())
+	}
+}
+
+func TestVoiceAndScreenUDPBlockedAutoFallbackToSignalingRelay(t *testing.T) {
+	url := startServer(t)
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	t.Cleanup(alice.Close)
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	t.Cleanup(bob.Close)
+
+	if err := alice.Connect(url, testPSK); err != nil {
+		t.Fatalf("alice Connect: %v", err)
+	}
+	if err := bob.Connect(url, testPSK); err != nil {
+		t.Fatalf("bob Connect: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return len(alice.GetState().Peers) == 1 })
+	waitFor(t, 2*time.Second, func() bool { return len(bob.GetState().Peers) == 1 })
+
+	bobID := bob.selfIDValue()
+	aliceID := alice.selfIDValue()
+
+	// Bob 准备接收语音帧（经由 Jitter Buffer）
+	receivedPCM := make(chan []byte, 4)
+	if err := bob.ensureLocalVoiceUDP(aliceID, ""); err != nil {
+		t.Fatalf("bob ensureLocalVoiceUDP: %v", err)
+	}
+	bob.voice.mu.Lock()
+	bob.voice.onFrame = func(_ uint32, _ int64, pcm []byte) {
+		select {
+		case receivedPCM <- pcm:
+		default:
+		}
+	}
+	bob.voice.mu.Unlock()
+
+	// Alice 发起呼叫，但将远端 UDP 指向不可达黑洞端口，并模拟已连续 2 秒未收到任何 UDP 入站包
+	if _, err := alice.StartVoiceCall(bobID, ""); err != nil {
+		t.Fatalf("alice StartVoiceCall: %v", err)
+	}
+	// 分配一个立即关闭的本地 UDP 端口充当防火墙阻断的黑洞地址
+	blackholePC, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket blackhole: %v", err)
+	}
+	blackholeAddr := blackholePC.LocalAddr().String()
+	_ = blackholePC.Close()
+
+	alice.setVoiceRemoteUDP(blackholeAddr)
+	alice.voice.activeSinceNano.Store(time.Now().Add(-2500 * time.Millisecond).UnixNano())
+
+	// 1. Alice 发送语音帧：检测到连续 >2s 未收到 UDP 入站包，自动回退至控制面加密信令通道转发
+	wantPCM := []byte("fallback-pcm-over-signaling-v5.3.0")
+	if err := alice.SendVoiceFrame(wantPCM); err != nil {
+		t.Fatalf("alice SendVoiceFrame fallback: %v", err)
+	}
+	if !strings.Contains(alice.VoiceCallStatus(), "mode=relay") {
+		t.Fatalf("expected alice VoiceCallStatus to report mode=relay, got %q", alice.VoiceCallStatus())
+	}
+
+	select {
+	case got := <-receivedPCM:
+		if !bytes.Equal(got, wantPCM) {
+			t.Fatalf("bob received fallback PCM = %q, want %q", got, wantPCM)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for voice frame over signaling relay fallback")
+	}
+
+	// 2. Alice 发送投屏帧：同样自动跳过黑洞 UDP 通道并经由加密信令送达 Bob
+	wantScreen := "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/relay-fallback"
+	if err := alice.SendScreenFrame(bobID, "", wantScreen); err != nil {
+		t.Fatalf("alice SendScreenFrame fallback: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if st := bob.GetState(); st.ScreenShare != nil && st.ScreenShare.LatestFrame == wantScreen {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if st := bob.GetState(); st.ScreenShare == nil || st.ScreenShare.LatestFrame != wantScreen {
+		t.Fatalf("bob ScreenShare after UDP fallback = %+v, want %q", st.ScreenShare, wantScreen)
+	}
+
+	// 3. 当对端真实 UDP 包恢复到达时，自动解除降级并切回 mode=udp
+	alice.voice.recordUDPInboundNow()
+	if !strings.Contains(alice.VoiceCallStatus(), "mode=udp") {
+		t.Fatalf("expected alice VoiceCallStatus to recover to mode=udp after inbound UDP, got %q", alice.VoiceCallStatus())
 	}
 }

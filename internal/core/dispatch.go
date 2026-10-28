@@ -302,6 +302,8 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			c.closeVoiceSession()
 			c.emitVoiceCallState()
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL", "📞 [实时语音通话已结束]")
+		case strings.HasPrefix(rest, "pcm:"):
+			c.onInboundSignalingVoiceFrame(env.From, env.Group, strings.TrimPrefix(rest, "pcm:"))
 		}
 		return true
 

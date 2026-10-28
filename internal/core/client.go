@@ -84,6 +84,7 @@ type Client struct {
 	unreadCounts      map[string]int
 	mentionCounts     map[string]int
 	voice             *voiceSession
+	voiceMuted        atomic.Bool
 	screenSharing     bool
 	screenShareFPS    int
 	screenSharePeer   string

@@ -492,6 +492,21 @@ struct ChatView: View {
                     .padding()
                 } else {
                     LazyVStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Spacer()
+                            Button {
+                                let beforeTS = Int64(thread.first?.timestamp.timeIntervalSince1970 ?? 0)
+                                Task { _ = await store.getHistoryPage(convID: peer.id, beforeTS: beforeTS, limit: 30) }
+                            } label: {
+                                Text("📜 加载更早历史消息")
+                                    .font(.system(size: 11.5))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 3)
+                            }
+                            .buttonStyle(.plain)
+                            Spacer()
+                        }
                         ForEach(thread) { msg in
                             BubbleRow(
                                 message: msg,
@@ -500,6 +515,11 @@ struct ChatView: View {
                                 senderKey: msg.inbound ? peer.id : (store.selfId.isEmpty ? "self" : store.selfId),
                                 onReply: { target in
                                     replyingTo = target
+                                },
+                                onEdit: { target in
+                                    promptMacEditMessage(initialText: target.text) { newText in
+                                        Task { await store.editMessageRpc(to: peer.id, msgID: target.id, newText: newText) }
+                                    }
                                 },
                                 onRevoke: { target in
                                     Task { await store.revokeMessageRpc(to: peer.id, msgID: target.id) }
@@ -799,6 +819,7 @@ struct BubbleRow: View {
     var senderName: String? = nil
     var senderKey: String? = nil
     var onReply: ((ChatMessage) -> Void)? = nil
+    var onEdit: ((ChatMessage) -> Void)? = nil
     var onRevoke: ((ChatMessage) -> Void)? = nil
     var onMarkRead: ((ChatMessage) -> Void)? = nil
     var onReact: ((ChatMessage) -> Void)? = nil
@@ -906,6 +927,11 @@ struct BubbleRow: View {
                                 }
                             }
                             Divider()
+                            if isSelf, let onEdit {
+                                Button("✏️ 编辑消息") {
+                                    onEdit(message)
+                                }
+                            }
                             if isSelf, let onRevoke {
                                 Button("↩️ 撤回消息") {
                                     onRevoke(message)
@@ -1168,4 +1194,22 @@ func decodeDataURIImage(_ raw: String) -> NSImage? {
     let b64 = String(clean[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
     guard let data = Data(base64Encoded: b64) else { return nil }
     return NSImage(data: data)
+}
+
+func promptMacEditMessage(initialText: String, onSave: @escaping (String) -> Void) {
+    let alert = NSAlert()
+    alert.messageText = "✏️ 二次编辑消息"
+    alert.informativeText = "修改后将实时同步给对端或群组成员："
+    alert.addButton(withTitle: "保存修改")
+    alert.addButton(withTitle: "取消")
+    let inputField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+    let clean = Formatters.splitQuote(Formatters.splitReactions(initialText).body).body
+    inputField.stringValue = clean
+    alert.accessoryView = inputField
+    if alert.runModal() == .alertFirstButtonReturn {
+        let trimmed = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            onSave(trimmed)
+        }
+    }
 }

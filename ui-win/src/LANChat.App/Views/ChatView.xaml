@@ -221,6 +221,18 @@
                   ItemsSource="{Binding Chat.Messages}"
                   SelectionMode="None"
                   Padding="18,12">
+            <ListView.Header>
+                <Button Content="📜 加载更早历史消息"
+                        FontSize="11.5"
+                        Padding="12,3"
+                        CornerRadius="12"
+                        HorizontalAlignment="Center"
+                        Margin="0,0,0,6"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                        Click="LoadHistoryPageButton_Click" />
+            </ListView.Header>
             <ListView.ItemContainerStyle>
                 <Style TargetType="ListViewItem">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
@@ -424,6 +436,9 @@
                                                             Tag="{Binding}"
                                                             Click="PinMenuFlyoutItem_Click" />
                                             <MenuFlyoutSeparator />
+                                            <MenuFlyoutItem Text="✏️ 编辑消息"
+                                                            Tag="{Binding}"
+                                                            Click="EditMenuFlyoutItem_Click" />
                                             <MenuFlyoutItem Text="↩️ 撤回消息"
                                                             Tag="{Binding}"
                                                             Click="RevokeMenuFlyoutItem_Click" />

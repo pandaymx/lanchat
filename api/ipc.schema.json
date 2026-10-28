@@ -307,7 +307,11 @@
       "peerId": "string?",
       "groupId": "string?",
       "fps": "int?",
-      "latestFrame": "string?"
+      "latestFrame": "string?",
+      "annotX": "float64?",
+      "annotY": "float64?",
+      "annotNote": "string?",
+      "annotTs": "int64?"
     }
   }
 }

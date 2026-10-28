@@ -124,13 +124,17 @@ type VoiceCallState struct {
 	FramesOut  int64  `json:"framesOut,omitempty"`
 }
 
-// ScreenShareState 描述当前局域网屏幕共享状态（契约 v1.2）。
+// ScreenShareState 描述当前局域网屏幕共享状态（契约 v1.2 / v6.2.0 激光笔红点坐标叠加）。
 type ScreenShareState struct {
-	Active      bool   `json:"active"`
-	PeerID      string `json:"peerId,omitempty"`
-	GroupID     string `json:"groupId,omitempty"`
-	FPS         int    `json:"fps,omitempty"`
-	LatestFrame string `json:"latestFrame,omitempty"`
+	Active      bool    `json:"active"`
+	PeerID      string  `json:"peerId,omitempty"`
+	GroupID     string  `json:"groupId,omitempty"`
+	FPS         int     `json:"fps,omitempty"`
+	LatestFrame string  `json:"latestFrame,omitempty"`
+	AnnotX      float64 `json:"annotX,omitempty"`
+	AnnotY      float64 `json:"annotY,omitempty"`
+	AnnotNote   string  `json:"annotNote,omitempty"`
+	AnnotTS     int64   `json:"annotTs,omitempty"`
 }
 
 // State GetState 返回的全量快照。

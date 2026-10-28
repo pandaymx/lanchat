@@ -799,9 +799,9 @@ func (c *Client) readVoiceLoop(vs *voiceSession) {
 			peer := vs.targetPeer
 			grp := vs.targetGrp
 			vs.mu.Unlock()
-			c.recordScreenFrame(peer, grp, 15, frame)
-			c.listener().OnMessageReceived(peer, grp, "udp-screen", "SCREEN_FRAME", frame)
-			c.emitScreenShareFrame(peer, grp, 15, frame)
+			composed := c.recordScreenFrame(peer, grp, 15, frame)
+			c.listener().OnMessageReceived(peer, grp, "udp-screen", "SCREEN_FRAME", composed)
+			c.emitScreenShareFrame(peer, grp, 15, composed)
 			continue
 		}
 		if n <= headerLen || string(buf[:len(voicePacketMagic)]) != string(voicePacketMagic) {
@@ -974,7 +974,12 @@ func (c *Client) StopScreenShare(to, group string) error {
 	c.screenShareFPS = 0
 	c.screenSharePeer = ""
 	c.screenShareGroup = ""
+	c.rawScreenFrame = ""
 	c.latestScreenFrame = ""
+	c.screenAnnotX = 0
+	c.screenAnnotY = 0
+	c.screenAnnotNote = ""
+	c.screenAnnotTS = 0
 	c.mu.Unlock()
 	if to != "" || group != "" {
 		if _, err := c.connectedConn(); err == nil {
@@ -1078,6 +1083,9 @@ func captureDesktopJPEGDataURI(seq int) (string, error) {
 }
 
 func captureOSDesktopBytes() ([]byte, error) {
+	if isGoTestBinary() {
+		return nil, fmt.Errorf("desktop capture disabled in go test binary")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 
@@ -1217,7 +1225,7 @@ func normalizeScreenJPEGBytes(raw []byte) []byte {
 }
 
 func renderSyntheticScreenJPEG(seq int) []byte {
-	const w, h = 320, 180
+	const w, h = 120, 68
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	offset := (seq * 12) % w
 	for y := 0; y < h; y++ {
@@ -1225,18 +1233,18 @@ func renderSyntheticScreenJPEG(seq int) []byte {
 			r := uint8((x + offset) % 256)
 			g := uint8((y * 255) / h)
 			b := uint8(140)
-			if y < 24 {
+			if y < 12 {
 				r, g, b = 0, 153, 255
 			}
 			img.SetRGBA(x, y, color.RGBA{R: r, G: g, B: b, A: 255})
 		}
 	}
 	var buf bytes.Buffer
-	_ = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 60})
+	_ = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 45})
 	return buf.Bytes()
 }
 
-// SendScreenAnnotation 在局域网屏幕共享会话中发送归一化坐标激光笔/画笔批注（v3.3.0）。
+// SendScreenAnnotation 在局域网屏幕共享会话中发送归一化坐标激光笔/画笔批注（v3.3.0 / v6.2.0 实时红点画布叠加）。
 func (c *Client) SendScreenAnnotation(to, group string, normX, normY float64, note string) error {
 	if normX < 0 {
 		normX = 0
@@ -1249,8 +1257,183 @@ func (c *Client) SendScreenAnnotation(to, group string, normX, normY float64, no
 		normY = 1
 	}
 	note = strings.TrimSpace(note)
+	c.applyScreenAnnotation(to, group, normX, normY, note)
 	payload := fmt.Sprintf("sys:screen:annot:%.3f,%.3f:%s", normX, normY, note)
 	return c.sendControlText(to, group, payload)
+}
+
+func (c *Client) onInboundScreenAnnotation(from, group, rawAnnot string) {
+	normX, normY, note, ok := parseScreenAnnotationPayload(rawAnnot)
+	if !ok {
+		return
+	}
+	c.applyScreenAnnotation(from, group, normX, normY, note)
+}
+
+func parseScreenAnnotationPayload(raw string) (float64, float64, string, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, 0, "", false
+	}
+	coordsPart := raw
+	note := ""
+	if idx := strings.IndexByte(raw, ':'); idx >= 0 {
+		coordsPart = raw[:idx]
+		note = strings.TrimSpace(raw[idx+1:])
+	}
+	xy := strings.Split(coordsPart, ",")
+	if len(xy) != 2 {
+		return 0, 0, "", false
+	}
+	nx, errX := strconv.ParseFloat(strings.TrimSpace(xy[0]), 64)
+	ny, errY := strconv.ParseFloat(strings.TrimSpace(xy[1]), 64)
+	if errX != nil || errY != nil {
+		return 0, 0, "", false
+	}
+	if nx < 0 {
+		nx = 0
+	} else if nx > 1 {
+		nx = 1
+	}
+	if ny < 0 {
+		ny = 0
+	} else if ny > 1 {
+		ny = 1
+	}
+	return nx, ny, note, true
+}
+
+func (c *Client) applyScreenAnnotation(peer, group string, normX, normY float64, note string) {
+	nowMS := time.Now().UnixMilli()
+	c.mu.Lock()
+	if peer != "" && c.screenSharePeer == "" {
+		c.screenSharePeer = peer
+	}
+	if group != "" && c.screenShareGroup == "" {
+		c.screenShareGroup = group
+	}
+	c.screenAnnotX = normX
+	c.screenAnnotY = normY
+	c.screenAnnotNote = note
+	c.screenAnnotTS = nowMS
+	rawFrame := c.rawScreenFrame
+	if rawFrame == "" {
+		rawFrame = c.latestScreenFrame
+		c.rawScreenFrame = rawFrame
+	}
+	fps := c.screenShareFPS
+	targetPeer := c.screenSharePeer
+	targetGrp := c.screenShareGroup
+	composed := ""
+	if rawFrame != "" {
+		composed = overlayLaserAnnotationOnJPEG(rawFrame, normX, normY)
+		c.latestScreenFrame = composed
+	}
+	c.mu.Unlock()
+
+	if composed != "" {
+		c.emitScreenShareFrame(targetPeer, targetGrp, fps, composed)
+	}
+}
+
+// overlayLaserAnnotationOnJPEG 在 Base64 Data URI 图像帧的归一化坐标 (normX, normY) 处绘制醒目激光笔红点与光晕外环（阶段二 v6.2.0）。
+func overlayLaserAnnotationOnJPEG(frameDataURI string, normX, normY float64) string {
+	trimmed := strings.TrimSpace(frameDataURI)
+	if !strings.HasPrefix(trimmed, "data:image/") {
+		return frameDataURI
+	}
+	b64Idx := strings.Index(trimmed, ";base64,")
+	if b64Idx < 0 {
+		return frameDataURI
+	}
+	b64Raw := strings.TrimSpace(trimmed[b64Idx+len(";base64,"):])
+	if b64Raw == "" {
+		return frameDataURI
+	}
+	imgBytes, err := base64.StdEncoding.DecodeString(b64Raw)
+	if err != nil || len(imgBytes) < 16 {
+		return frameDataURI
+	}
+	srcImg, _, err := image.Decode(bytes.NewReader(imgBytes))
+	if err != nil {
+		return frameDataURI
+	}
+	bounds := srcImg.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w <= 0 || h <= 0 {
+		return frameDataURI
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			dst.Set(x, y, srcImg.At(bounds.Min.X+x, bounds.Min.Y+y))
+		}
+	}
+	cx := int(normX * float64(w-1))
+	cy := int(normY * float64(h-1))
+	if cx < 0 {
+		cx = 0
+	} else if cx >= w {
+		cx = w - 1
+	}
+	if cy < 0 {
+		cy = 0
+	} else if cy >= h {
+		cy = h - 1
+	}
+	rOuter := w / 22
+	if h/22 < rOuter {
+		rOuter = h / 22
+	}
+	if rOuter < 7 {
+		rOuter = 7
+	}
+	rInner := rOuter / 2
+	if rInner < 3 {
+		rInner = 3
+	}
+	rCore := rInner / 2
+	if rCore < 1 {
+		rCore = 1
+	}
+	rOuterSq := rOuter * rOuter
+	rInnerSq := rInner * rInner
+	rCoreSq := rCore * rCore
+	for dy := -rOuter; dy <= rOuter; dy++ {
+		py := cy + dy
+		if py < 0 || py >= h {
+			continue
+		}
+		for dx := -rOuter; dx <= rOuter; dx++ {
+			px := cx + dx
+			if px < 0 || px >= w {
+				continue
+			}
+			distSq := dx*dx + dy*dy
+			if distSq > rOuterSq {
+				continue
+			}
+			switch {
+			case distSq <= rCoreSq:
+				dst.SetRGBA(px, py, color.RGBA{R: 255, G: 245, B: 245, A: 255})
+			case distSq <= rInnerSq:
+				dst.SetRGBA(px, py, color.RGBA{R: 255, G: 36, B: 36, A: 255})
+			default:
+				orig := dst.RGBAAt(px, py)
+				dst.SetRGBA(px, py, color.RGBA{
+					R: uint8((int(orig.R) + 255*2) / 3),
+					G: uint8(int(orig.G) / 3),
+					B: uint8(int(orig.B) / 3),
+					A: 255,
+				})
+			}
+		}
+	}
+	var out bytes.Buffer
+	if err := jpeg.Encode(&out, dst, &jpeg.Options{Quality: 70}); err != nil {
+		return frameDataURI
+	}
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(out.Bytes())
 }
 
 // SetAutoClipboard 开启或关闭跨设备剪贴板自动监听同步模式（v3.3.0 / v4.8.0 后台自动同步守护协程）。
@@ -1484,7 +1667,7 @@ func (c *Client) voiceCallSnapshotLocked() *appapi.VoiceCallState {
 }
 
 func (c *Client) screenShareSnapshotLocked() *appapi.ScreenShareState {
-	if !c.screenSharing && c.latestScreenFrame == "" {
+	if !c.screenSharing && c.latestScreenFrame == "" && c.screenAnnotTS == 0 {
 		return nil
 	}
 	return &appapi.ScreenShareState{
@@ -1493,10 +1676,14 @@ func (c *Client) screenShareSnapshotLocked() *appapi.ScreenShareState {
 		GroupID:     c.screenShareGroup,
 		FPS:         c.screenShareFPS,
 		LatestFrame: c.latestScreenFrame,
+		AnnotX:      c.screenAnnotX,
+		AnnotY:      c.screenAnnotY,
+		AnnotNote:   c.screenAnnotNote,
+		AnnotTS:     c.screenAnnotTS,
 	}
 }
 
-func (c *Client) recordScreenFrame(peer, group string, fps int, frame string) {
+func (c *Client) recordScreenFrame(peer, group string, fps int, frame string) string {
 	c.mu.Lock()
 	if peer != "" {
 		c.screenSharePeer = peer
@@ -1507,8 +1694,14 @@ func (c *Client) recordScreenFrame(peer, group string, fps int, frame string) {
 	if fps > 0 {
 		c.screenShareFPS = fps
 	}
-	c.latestScreenFrame = frame
+	c.rawScreenFrame = frame
+	composed := frame
+	if c.screenAnnotTS > 0 && time.Now().UnixMilli()-c.screenAnnotTS <= 5000 {
+		composed = overlayLaserAnnotationOnJPEG(frame, c.screenAnnotX, c.screenAnnotY)
+	}
+	c.latestScreenFrame = composed
 	c.mu.Unlock()
+	return composed
 }
 
 func (c *Client) emitVoiceCallState() {

@@ -1986,12 +1986,12 @@ fn invoke_react_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str, emo
     }
 }
 
-#[allow(dead_code)]
 fn invoke_edit_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str, new_text: &str) {
     let (to, group) = resolve_target_to_group(target);
     let mid = msg_id.to_string();
     let txt = new_text.to_string();
     if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
         crate::spawn_rt(async move {
             let body = serde_json::json!({
                 "to": to,
@@ -2000,8 +2000,41 @@ fn invoke_edit_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str, new_
                 "newText": txt,
             });
             let _ = ipc.invoke("EditMessage", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
         });
     }
+}
+
+fn prompt_edit_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str, current_body: &str) {
+    let entry = gtk::Entry::new();
+    entry.set_text(current_body);
+    entry.set_placeholder_text(Some("输入修改后的消息内容…"));
+    let dialog = adw::AlertDialog::new(Some("✏️ 二次编辑消息"), None);
+    dialog.set_extra_child(Some(&entry));
+    dialog.add_responses(&[("cancel", "取消"), ("ok", "保存修改")]);
+    dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+    dialog.set_close_response("cancel");
+    let tgt = target.clone();
+    let mid = msg_id.to_string();
+    dialog.choose(
+        &ctx.widgets.window,
+        None::<&gio::Cancellable>,
+        clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            #[strong]
+            entry,
+            move |response| {
+                if response == "ok" {
+                    let trimmed = entry.text().trim().to_string();
+                    if !trimmed.is_empty() {
+                        invoke_edit_message(&cx, &tgt, &mid, &trimmed);
+                        cx.toast("✏️ 已同步二次编辑");
+                    }
+                }
+            }
+        ),
+    );
 }
 
 fn invoke_pin_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str) {
@@ -2057,10 +2090,10 @@ fn invoke_set_dnd(ctx: &Rc<AppCtx>, enabled: bool) {
     }
 }
 
-#[allow(dead_code)]
 fn invoke_get_history_page(ctx: &Rc<AppCtx>, conv_id: &str, before_ts: i64, limit: i32) {
     let cid = conv_id.to_string();
     if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
         crate::spawn_rt(async move {
             let body = serde_json::json!({
                 "convID": cid,
@@ -2068,6 +2101,7 @@ fn invoke_get_history_page(ctx: &Rc<AppCtx>, conv_id: &str, before_ts: i64, limi
                 "limit": limit,
             });
             let _ = ipc.invoke("GetHistoryPage", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
         });
     }
 }
@@ -3813,7 +3847,25 @@ impl AppCtx {
         const MAX_RENDERED_MSGS: usize = 60;
         let start_idx = msgs.len().saturating_sub(MAX_RENDERED_MSGS);
         let slice: Vec<ChatMessage> = msgs[start_idx..].to_vec();
+        let before_ts = slice.first().map(|m| m.ts).unwrap_or(0);
+        let conv_key_for_page = conv_key.clone();
         drop(st);
+
+        let load_more_btn = gtk::Button::with_label("📜 加载更早历史消息");
+        load_more_btn.add_css_class("flat");
+        load_more_btn.add_css_class("caption");
+        load_more_btn.set_halign(Align::Center);
+        load_more_btn.set_margin_top(6);
+        load_more_btn.set_margin_bottom(4);
+        load_more_btn.connect_clicked(clone!(
+            #[strong(rename_to = cx)]
+            self,
+            move |_| {
+                invoke_get_history_page(&cx, &conv_key_for_page, before_ts, 30);
+                cx.toast("📜 已请求加载更早历史消息");
+            }
+        ));
+        self.widgets.msg_list.append(&load_more_btn);
 
         for m in &slice {
             let row_widget = self.build_message_row(m, &target, &self_nick);
@@ -4645,6 +4697,24 @@ fn show_message_context_popover(
     menu_col.append(&btn_pin);
 
     if !m.inbound {
+        let mid_edit = m.msg_id.clone();
+        let tgt_edit = target.clone();
+        let body_edit = body_for_reply.to_string();
+        let btn_edit = gtk::Button::with_label("✏️  编辑消息");
+        btn_edit.add_css_class("flat");
+        btn_edit.add_css_class("qq-ctx-btn");
+        btn_edit.connect_clicked(clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            #[weak]
+            ctx_pop,
+            move |_| {
+                ctx_pop.popdown();
+                prompt_edit_message(&cx, &tgt_edit, &mid_edit, &body_edit);
+            }
+        ));
+        menu_col.append(&btn_edit);
+
         let mid_rev = m.msg_id.clone();
         let tgt_rev = target.clone();
         let btn_revoke = gtk::Button::with_label("↩️  撤回消息");

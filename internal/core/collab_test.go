@@ -527,3 +527,60 @@ func TestVoiceAndScreenUDPBlockedAutoFallbackToSignalingRelay(t *testing.T) {
 		t.Fatalf("expected alice VoiceCallStatus to recover to mode=udp after inbound UDP, got %q", alice.VoiceCallStatus())
 	}
 }
+
+func TestScreenShareLaserDotOverlayAndStateSnapshot(t *testing.T) {
+	url := startServer(t)
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	t.Cleanup(alice.Close)
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	t.Cleanup(bob.Close)
+
+	if err := alice.Connect(url, testPSK); err != nil {
+		t.Fatalf("alice Connect: %v", err)
+	}
+	if err := bob.Connect(url, testPSK); err != nil {
+		t.Fatalf("bob Connect: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return len(alice.GetState().Peers) == 1 })
+	waitFor(t, 2*time.Second, func() bool { return len(bob.GetState().Peers) == 1 })
+
+	bobID := bob.selfIDValue()
+	aliceID := alice.selfIDValue()
+
+	if _, err := alice.StartScreenShare(bobID, "", 15); err != nil {
+		t.Fatalf("alice StartScreenShare: %v", err)
+	}
+	rawFrameURI, err := captureDesktopJPEGDataURI(1)
+	if err != nil || rawFrameURI == "" {
+		t.Fatalf("captureDesktopJPEGDataURI: %v", err)
+	}
+	if err := alice.SendScreenFrame(bobID, "", rawFrameURI); err != nil {
+		t.Fatalf("alice SendScreenFrame: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		st := bob.GetState()
+		return st.ScreenShare != nil && st.ScreenShare.LatestFrame != ""
+	})
+
+	// Bob 点击投屏画面发送归一化激光笔红点批注 (0.35, 0.65)
+	if err := bob.SendScreenAnnotation(aliceID, "", 0.35, 0.65, "请看这里"); err != nil {
+		t.Fatalf("bob SendScreenAnnotation: %v", err)
+	}
+
+	// 验证 Alice 与 Bob 的 ScreenShareState 均实时同步激光笔坐标与红点叠加后的 JPEG 画面
+	waitFor(t, 2*time.Second, func() bool {
+		st := alice.GetState()
+		return st.ScreenShare != nil && st.ScreenShare.AnnotTS > 0
+	})
+	aliceSS := alice.GetState().ScreenShare
+	if aliceSS == nil || aliceSS.AnnotX != 0.35 || aliceSS.AnnotY != 0.65 || aliceSS.AnnotNote != "请看这里" {
+		t.Fatalf("alice ScreenShare annotation state = %+v", aliceSS)
+	}
+	if aliceSS.LatestFrame == rawFrameURI {
+		t.Fatal("expected alice LatestFrame to have laser dot overlaid onto JPEG")
+	}
+	bobSS := bob.GetState().ScreenShare
+	if bobSS == nil || bobSS.AnnotX != 0.35 || bobSS.AnnotY != 0.65 || bobSS.LatestFrame == rawFrameURI {
+		t.Fatalf("bob ScreenShare annotation state = %+v", bobSS)
+	}
+}

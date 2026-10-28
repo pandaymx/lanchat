@@ -325,16 +325,22 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_SHARE", "🖥️ [屏幕共享已开启 "+fps+"fps]")
 		case strings.HasPrefix(rest, "frame:"):
 			frame := strings.TrimSpace(strings.TrimPrefix(rest, "frame:"))
-			c.recordScreenFrame(env.From, env.Group, 0, frame)
-			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_FRAME", frame)
-			c.emitScreenShareFrame(env.From, env.Group, 0, frame)
+			composed := c.recordScreenFrame(env.From, env.Group, 0, frame)
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_FRAME", composed)
+			c.emitScreenShareFrame(env.From, env.Group, 0, composed)
 		case strings.HasPrefix(rest, "annot:"):
 			annot := strings.TrimSpace(strings.TrimPrefix(rest, "annot:"))
+			c.onInboundScreenAnnotation(env.From, env.Group, annot)
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_ANNOT", "📍 [屏幕批注 "+annot+"]")
 		case rest == "stop":
 			c.mu.Lock()
 			c.screenSharing = false
+			c.rawScreenFrame = ""
 			c.latestScreenFrame = ""
+			c.screenAnnotX = 0
+			c.screenAnnotY = 0
+			c.screenAnnotNote = ""
+			c.screenAnnotTS = 0
 			c.mu.Unlock()
 			c.emitScreenShareFrame(env.From, env.Group, 0, "")
 			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "SCREEN_SHARE", "🖥️ [屏幕共享已结束]")

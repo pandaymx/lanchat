@@ -140,6 +140,43 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private async void EditMenuFlyoutItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is null || sender is not MenuFlyoutItem { Tag: ChatMessage msg })
+        {
+            return;
+        }
+        var editBox = new TextBox
+        {
+            Text = msg.BodyText,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            PlaceholderText = "输入修改后的消息内容…",
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "✏️ 二次编辑消息",
+            Content = editBox,
+            PrimaryButtonText = "保存修改",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Primary,
+        };
+        var result = await dialog.ShowAsync();
+        if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(editBox.Text))
+        {
+            await _shell.Chat.EditMessageByUiAsync(msg, editBox.Text.Trim());
+        }
+    }
+
+    private async void LoadHistoryPageButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_shell is not null)
+        {
+            await _shell.Chat.LoadMoreHistoryPageAsync(30);
+        }
+    }
+
     private async void VoiceButton_Click(object sender, RoutedEventArgs e)
     {
         if (_shell is not null)

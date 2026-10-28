@@ -89,7 +89,12 @@ type Client struct {
 	screenShareFPS    int
 	screenSharePeer   string
 	screenShareGroup  string
+	rawScreenFrame    string
 	latestScreenFrame string
+	screenAnnotX      float64
+	screenAnnotY      float64
+	screenAnnotNote   string
+	screenAnnotTS     int64
 	screenStop        chan struct{}
 	gossipBook        *discover.GossipPeerBook
 

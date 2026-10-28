@@ -326,6 +326,21 @@ struct BroadcastChatView: View {
                     .padding()
                 } else {
                     LazyVStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Spacer()
+                            Button {
+                                let beforeTS = Int64(thread.first?.timestamp.timeIntervalSince1970 ?? 0)
+                                Task { _ = await store.getHistoryPage(convID: broadcastKey, beforeTS: beforeTS, limit: 30) }
+                            } label: {
+                                Text("📜 加载更早历史消息")
+                                    .font(.system(size: 11.5))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 3)
+                            }
+                            .buttonStyle(.plain)
+                            Spacer()
+                        }
                         ForEach(thread) { msg in
                             BubbleRow(
                                 message: msg,
@@ -334,6 +349,11 @@ struct BroadcastChatView: View {
                                 senderKey: msg.inbound ? msg.peerId : (store.selfId.isEmpty ? "self" : store.selfId),
                                 onReply: { target in
                                     replyingTo = target
+                                },
+                                onEdit: { target in
+                                    promptMacEditMessage(initialText: target.text) { newText in
+                                        Task { await store.editMessageRpc(group: broadcastKey, msgID: target.id, newText: newText) }
+                                    }
                                 },
                                 onRevoke: { target in
                                     Task { await store.revokeMessageRpc(group: broadcastKey, msgID: target.id) }
@@ -893,6 +913,21 @@ struct ChannelChatView: View {
                     .padding()
                 } else {
                     LazyVStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Spacer()
+                            Button {
+                                let beforeTS = Int64(thread.first?.timestamp.timeIntervalSince1970 ?? 0)
+                                Task { _ = await store.getHistoryPage(convID: channelID, beforeTS: beforeTS, limit: 30) }
+                            } label: {
+                                Text("📜 加载更早历史消息")
+                                    .font(.system(size: 11.5))
+                                    .foregroundColor(.secondary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 3)
+                            }
+                            .buttonStyle(.plain)
+                            Spacer()
+                        }
                         ForEach(thread) { msg in
                             BubbleRow(
                                 message: msg,
@@ -901,6 +936,11 @@ struct ChannelChatView: View {
                                 senderKey: msg.inbound ? msg.peerId : (store.selfId.isEmpty ? "self" : store.selfId),
                                 onReply: { target in
                                     replyingTo = target
+                                },
+                                onEdit: { target in
+                                    promptMacEditMessage(initialText: target.text) { newText in
+                                        Task { await store.editMessageRpc(group: channelID, msgID: target.id, newText: newText) }
+                                    }
                                 },
                                 onRevoke: { target in
                                     Task { await store.revokeMessageRpc(group: channelID, msgID: target.id) }

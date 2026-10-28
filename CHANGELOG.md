@@ -1,5 +1,16 @@
 # Changelog
 
+## [7.0.0](https://github.com/pandaymx/lanchat/compare/v6.3.0...v7.0.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **appapi:** upgrade IPC contract schema to v1.5 with 42 explicit RPC methods across all 6 endpoints.
+
+### Features
+
+* **appapi:** upgrade contract to v1.5 with 42 structured RPC methods ([623f70c](https://github.com/pandaymx/lanchat/commit/623f70c0693460a4ffbafbc5aeeaf721aa67de16))
+
 ## [6.3.0](https://github.com/pandaymx/lanchat/compare/v6.2.0...v6.3.0) (2026-10-28)
 
 

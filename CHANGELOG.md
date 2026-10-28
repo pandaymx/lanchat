@@ -1,5 +1,12 @@
 # Changelog
 
+## [6.1.0](https://github.com/pandaymx/lanchat/compare/v6.0.1...v6.1.0) (2026-10-28)
+
+
+### Features
+
+* **ui-android:** add mobile v1.4 message edit, history pagination, and voice mute UI ([59cef95](https://github.com/pandaymx/lanchat/commit/59cef95699d00a58e595862d627b42f9472732d1))
+
 ## [6.0.1](https://github.com/pandaymx/lanchat/compare/v6.0.0...v6.0.1) (2026-10-28)
 
 

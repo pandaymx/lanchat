@@ -389,13 +389,8 @@ class AppViewModel : ViewModel() {
 
     fun silentUpdate(customProxy: String = "", checkOnly: Boolean = false) {
         val proxyArg = customProxy.trim()
-        val cmd = when {
-            checkOnly -> "/update check"
-            proxyArg.isEmpty() -> "/update"
-            else -> "/update $proxyArg"
-        }
         launchOp {
-            val res = engine.sendText(to = "", text = cmd, group = "")
+            val res = engine.checkSilentUpdate(proxy = proxyArg, download = !checkOnly)
             val summary = res.removePrefix("update:")
             val apkPath = if (!checkOnly && summary.contains("-> ")) {
                 summary.substringAfterLast("-> ").substringBefore(" |").trim().takeIf {
@@ -565,6 +560,36 @@ class AppViewModel : ViewModel() {
                 }
                 state.copy(messagesByConversation = convs)
             }
+        }
+    }
+
+    fun verifyPeerFingerprint(peerID: String) {
+        launchOp {
+            val fp = engine.verifyPeerFingerprint(peerID).removePrefix("fp:")
+            _ui.update { it.copy(error = "🛡️ 安全码指纹核验：$fp") }
+        }
+    }
+
+    fun sendBurnMessage(to: String, group: String = "", text: String, ttlSec: Long = 10L) {
+        launchOp {
+            engine.sendBurnMessage(to, group, text, ttlSec)
+            refresh()
+        }
+    }
+
+    fun syncHistoryWithPeer(to: String, group: String = "", sinceTS: Long = 0L) {
+        launchOp {
+            val count = engine.syncHistoryWithPeer(to, group, sinceTS)
+            _ui.update { it.copy(error = "🔄 已触发多端加密历史漫游同步（补齐 $count 条记录）") }
+            refresh()
+        }
+    }
+
+    fun setBandwidthLimit(limitMBps: Double) {
+        launchOp {
+            engine.setBandwidthLimit(limitMBps)
+            val msg = if (limitMBps <= 0) "⚡ 已解除 P2P 带宽限速" else "⚡ 带宽限速已设为 $limitMBps MB/s"
+            _ui.update { it.copy(error = msg) }
         }
     }
 

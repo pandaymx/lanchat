@@ -361,7 +361,7 @@ struct ChatView: View {
             }
 
             Button {
-                store.sendText(to: peer.id, text: "/sync")
+                store.syncHistoryWithPeer(to: peer.id)
             } label: {
                 Text("🔄 同步")
                     .font(.caption2.weight(.semibold))
@@ -569,7 +569,7 @@ struct ChatView: View {
                 }
 
                 Button {
-                    store.sendText(to: peer.id, text: "/fingerprint")
+                    store.verifyPeerFingerprint(peerID: peer.id)
                 } label: {
                     Text("🛡️ 安全码")
                         .font(.caption2.weight(.semibold))

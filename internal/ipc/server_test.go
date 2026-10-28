@@ -201,6 +201,33 @@ func (s *stubAPI) GetHistoryPage(convID string, beforeTS int64, limit int) []app
 	return s.state.Messages
 }
 
+func (s *stubAPI) VerifyPeerFingerprint(peerID string) string {
+	s.gotName = peerID
+	return "fp:AAAA-BBBB/CCCC-DDDD"
+}
+
+func (s *stubAPI) SendBurnMessage(to, group, text string, ttlSec int) (string, error) {
+	s.gotName = text
+	return s.sendTextID, s.sendTextErr
+}
+
+func (s *stubAPI) SyncHistoryWithPeer(to, group string, sinceTS int64) (int, error) {
+	s.gotName = to + ":" + group
+	return 5, nil
+}
+
+func (s *stubAPI) SetBandwidthLimit(limitMBps float64) string {
+	if limitMBps <= 0 {
+		return "bwlimit:off"
+	}
+	return "bwlimit:50.0MB/s"
+}
+
+func (s *stubAPI) CheckSilentUpdate(proxy string, download bool) (string, error) {
+	s.gotName = proxy
+	return "update:当前已是最新版本", nil
+}
+
 // startServer 在临时本地传输（Unix socket / 命名管道）上启动服务端，
 // 返回服务端与客户端连接。
 func startServer(t *testing.T, api appapi.API) (*Server, net.Conn) {
@@ -746,6 +773,29 @@ func TestServerClose(t *testing.T) {
 	buf := make([]byte, 16)
 	if _, err := c.Read(buf); err == nil {
 		t.Fatal("期望连接被关闭")
+	}
+}
+
+func TestContractV15SystemMethods(t *testing.T) {
+	api := &stubAPI{}
+	srv, c := startServer(t, api)
+	defer srv.Close()
+	defer c.Close()
+
+	for _, tc := range []struct {
+		method string
+		params interface{}
+	}{
+		{"VerifyPeerFingerprint", map[string]interface{}{"peerID": "peer-99"}},
+		{"SendBurnMessage", map[string]interface{}{"to": "peer-99", "group": "", "text": "top secret", "ttlSec": 10}},
+		{"SyncHistoryWithPeer", map[string]interface{}{"to": "peer-99", "group": "", "sinceTS": 0}},
+		{"SetBandwidthLimit", map[string]interface{}{"limitMBps": 25.5}},
+		{"CheckSilentUpdate", map[string]interface{}{"proxy": "https://ghfast.top", "download": false}},
+	} {
+		resp := call(t, c, tc.method, tc.params)
+		if resp.Error != nil {
+			t.Fatalf("%s 意外错误: %v", tc.method, resp.Error)
+		}
 	}
 }
 

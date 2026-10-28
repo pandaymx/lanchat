@@ -56,15 +56,20 @@ var handlers = map[string]handler{
 			Report string `json:"report"`
 		}{Report: api.RunNetworkDiagnostics()}, nil
 	},
-	"RevokeMessage":    hRevokeMessage,
-	"ReactMessage":     hReactMessage,
-	"EditMessage":      hEditMessage,
-	"PinMessage":       hPinMessage,
-	"MarkMessageRead":  hMarkMessageRead,
-	"SetSessionE2EE":   hSetSessionE2EE,
-	"SetAutoClipboard": hSetAutoClipboard,
-	"SetDND":           hSetDND,
-	"GetHistoryPage":   hGetHistoryPage,
+	"RevokeMessage":         hRevokeMessage,
+	"ReactMessage":          hReactMessage,
+	"EditMessage":           hEditMessage,
+	"PinMessage":            hPinMessage,
+	"MarkMessageRead":       hMarkMessageRead,
+	"SetSessionE2EE":        hSetSessionE2EE,
+	"SetAutoClipboard":      hSetAutoClipboard,
+	"SetDND":                hSetDND,
+	"GetHistoryPage":        hGetHistoryPage,
+	"VerifyPeerFingerprint": hVerifyPeerFingerprint,
+	"SendBurnMessage":       hSendBurnMessage,
+	"SyncHistoryWithPeer":   hSyncHistoryWithPeer,
+	"SetBandwidthLimit":     hSetBandwidthLimit,
+	"CheckSilentUpdate":     hCheckSilentUpdate,
 }
 
 // decodeParams 解码 params 并在失败时返回 invalid params 错误。
@@ -626,4 +631,104 @@ func hGetHistoryPage(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr)
 		}
 	}
 	return api.GetHistoryPage(p.ConvID, p.BeforeTS, p.Limit), nil
+}
+
+type verifyPeerFingerprintParams struct {
+	PeerID string `json:"peerID"`
+}
+
+func hVerifyPeerFingerprint(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p verifyPeerFingerprintParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[verifyPeerFingerprintParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	return struct {
+		Fingerprint string `json:"fingerprint"`
+	}{Fingerprint: api.VerifyPeerFingerprint(p.PeerID)}, nil
+}
+
+type sendBurnMessageParams struct {
+	To     string `json:"to"`
+	Group  string `json:"group"`
+	Text   string `json:"text"`
+	TTLSec int    `json:"ttlSec"`
+}
+
+func hSendBurnMessage(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[sendBurnMessageParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	id, err := api.SendBurnMessage(p.To, p.Group, p.Text, p.TTLSec)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		MsgID string `json:"msgID"`
+	}{MsgID: id}, nil
+}
+
+type syncHistoryWithPeerParams struct {
+	To      string `json:"to"`
+	Group   string `json:"group"`
+	SinceTS int64  `json:"sinceTS"`
+}
+
+func hSyncHistoryWithPeer(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p syncHistoryWithPeerParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[syncHistoryWithPeerParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	synced, err := api.SyncHistoryWithPeer(p.To, p.Group, p.SinceTS)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Synced int `json:"synced"`
+	}{Synced: synced}, nil
+}
+
+type setBandwidthLimitParams struct {
+	LimitMBps float64 `json:"limitMBps"`
+}
+
+func hSetBandwidthLimit(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[setBandwidthLimitParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: api.SetBandwidthLimit(p.LimitMBps)}, nil
+}
+
+type checkSilentUpdateParams struct {
+	Proxy    string `json:"proxy"`
+	Download bool   `json:"download"`
+}
+
+func hCheckSilentUpdate(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p checkSilentUpdateParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[checkSilentUpdateParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	status, err := api.CheckSilentUpdate(p.Proxy, p.Download)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: status}, nil
 }

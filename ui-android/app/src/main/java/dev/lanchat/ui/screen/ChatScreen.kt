@@ -183,6 +183,7 @@ fun ChatScreen(
         onPinMessage = { msgId -> vm.pinMessage(peer.id, msgID = msgId) },
         onSetSessionE2EE = { secret -> vm.setSessionE2EE(secret) },
         onLoadHistoryPage = { beforeTs -> vm.getHistoryPage(peer.id, beforeTS = beforeTs, limit = 50L) },
+        onSyncHistory = { vm.syncHistoryWithPeer(peer.id) },
         onBack = onBack,
         onSend = { vm.sendText(peer.id, it) },
         onAttach = { path -> vm.offerFile(peer.id, path) },
@@ -244,6 +245,7 @@ fun ChannelChatScreen(
         onPinMessage = { msgId -> vm.pinMessage("", group = channel.id, msgID = msgId) },
         onSetSessionE2EE = { secret -> vm.setSessionE2EE(secret) },
         onLoadHistoryPage = { beforeTs -> vm.getHistoryPage(channel.id, beforeTS = beforeTs, limit = 50L) },
+        onSyncHistory = { vm.syncHistoryWithPeer("", group = channel.id) },
         onBack = onBack,
         onSend = { vm.sendChannelText(channel.id, it) },
         onAttach = { path -> vm.offerFileToChannel(channel.id, path) },
@@ -318,6 +320,7 @@ private fun ConversationScaffold(
     onPinMessage: (String) -> Unit = {},
     onSetSessionE2EE: (String) -> Unit = {},
     onLoadHistoryPage: (Long) -> Unit = {},
+    onSyncHistory: () -> Unit = {},
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onAttach: (String) -> Unit,
@@ -1370,7 +1373,7 @@ private fun ConversationScaffold(
                 showSearchDialog = false
             },
             onSyncHistory = {
-                onSend("/sync")
+                onSyncHistory()
                 showSearchDialog = false
             },
         )

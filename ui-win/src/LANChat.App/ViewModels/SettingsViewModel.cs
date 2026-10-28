@@ -67,16 +67,16 @@ public sealed partial class SettingsViewModel : ViewModelBase
         SaveDownloadDir();
     }
 
-    /// <summary>通过国内加速代理链检测最新 Release 版本（不打开浏览器）。</summary>
+    /// <summary>通过国内加速代理链检测最新 Release 版本（不打开浏览器，契约 v1.5 CheckSilentUpdate RPC）。</summary>
     [RelayCommand]
     private async Task CheckUpdateAsync()
     {
         PostUpdateStatus("正在通过国内加速节点检测最新版本…");
         try
         {
-            var res = await _services.Ipc.InvokeAsync("SendText", new { to = "", text = "/update check", group = "" });
-            var msgId = res.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
-            var summary = msgId.StartsWith("update:", StringComparison.Ordinal) ? msgId[7..] : msgId;
+            var res = await _services.Ipc.InvokeAsync("CheckSilentUpdate", new { proxy = UpdateProxy.Trim(), download = false });
+            var raw = res.TryGetProperty("summary", out var prop) ? prop.GetString() ?? "" : "";
+            var summary = raw.StartsWith("update:", StringComparison.Ordinal) ? raw[7..] : raw;
             PostUpdateStatus(summary);
             PostStatus(summary);
         }
@@ -86,18 +86,17 @@ public sealed partial class SettingsViewModel : ViewModelBase
         }
     }
 
-    /// <summary>通过国内加速代理链静默下载最新安装包到本地下载目录（无需调用浏览器）。</summary>
+    /// <summary>通过国内加速代理链静默下载最新安装包到本地下载目录（无需调用浏览器，契约 v1.5 CheckSilentUpdate RPC）。</summary>
     [RelayCommand]
     private async Task SilentDownloadUpdateAsync()
     {
         var proxyArg = UpdateProxy.Trim();
-        var cmd = string.IsNullOrEmpty(proxyArg) ? "/update" : $"/update {proxyArg}";
         PostUpdateStatus("正在通过国内加速代理静默下载最新安装包（免浏览器）…");
         try
         {
-            var res = await _services.Ipc.InvokeAsync("SendText", new { to = "", text = cmd, group = "" });
-            var msgId = res.TryGetProperty("msgID", out var id) ? id.GetString() ?? "" : "";
-            var summary = msgId.StartsWith("update:", StringComparison.Ordinal) ? msgId[7..] : msgId;
+            var res = await _services.Ipc.InvokeAsync("CheckSilentUpdate", new { proxy = proxyArg, download = true });
+            var raw = res.TryGetProperty("summary", out var prop) ? prop.GetString() ?? "" : "";
+            var summary = raw.StartsWith("update:", StringComparison.Ordinal) ? raw[7..] : raw;
             PostUpdateStatus(summary);
             PostStatus(summary);
         }

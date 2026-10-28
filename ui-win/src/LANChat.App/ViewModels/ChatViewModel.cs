@@ -995,17 +995,68 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
     }
 
-    /// <summary>M15: 核验当前会话 X25519 安全码指纹 (/fingerprint)。</summary>
+    /// <summary>M15 / v7.0: 核验当前会话 X25519 安全码指纹（VerifyPeerFingerprint RPC）。</summary>
     public async Task VerifyFingerprintAsync()
     {
         if (!CanSend)
         {
             return;
         }
-        var prevDraft = Draft;
-        Draft = "/fingerprint";
-        await SendAsync();
-        Draft = prevDraft;
+        var peerId = CurrentPeer?.Id ?? CurrentChannel?.Id ?? "";
+        try
+        {
+            var res = await _services.Ipc.InvokeAsync("VerifyPeerFingerprint", new { peerID = peerId });
+            var fp = res.TryGetProperty("fingerprint", out var prop) ? prop.GetString() ?? "" : "";
+            if (!string.IsNullOrEmpty(fp))
+            {
+                AppendSystemMessage($"🛡️ 安全码指纹核验：{fp}");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"安全码核验失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>v7.0: 发送阅后即焚加密消息（SendBurnMessage RPC）。</summary>
+    public async Task SendBurnMessageByUiAsync(string text, int ttlSec = 10)
+    {
+        if (!CanSend || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+        var (to, grp) = ResolveCollabTarget();
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("SendBurnMessage", new
+            {
+                to,
+                group = grp,
+                text = text.Trim(),
+                ttlSec,
+            });
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"发送阅后即焚失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>v7.0: 动态设置全局 P2P 传输带宽限速（SetBandwidthLimit RPC）。</summary>
+    public async Task SetBandwidthLimitByUiAsync(double limitMBps)
+    {
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("SetBandwidthLimit", new
+            {
+                limitMBps,
+            });
+            AppendSystemMessage(limitMBps <= 0 ? "⚡ 已解除 P2P 传输带宽限速" : $"⚡ 已将 P2P 传输带宽限速设为 {limitMBps:F1} MB/s");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"设置带宽限速失败：{ex.Message}");
+        }
     }
 
     /// <summary>M17: 快捷发送语音消息 (/voice)。</summary>
@@ -1384,7 +1435,7 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
     }
 
-    /// <summary>v3.0/v4.0: P2P 离线历史消息漫游同步（/sync）。</summary>
+    /// <summary>v3.0/v4.0/v7.0: P2P 离线历史消息漫游同步（SyncHistoryWithPeer RPC）。</summary>
     [RelayCommand]
     public async Task SyncHistoryAsync()
     {
@@ -1392,10 +1443,21 @@ public sealed partial class ChatViewModel : ViewModelBase
         {
             return;
         }
-        var prevDraft = Draft;
-        Draft = "/sync 50";
-        await SendAsync();
-        Draft = prevDraft;
+        var (to, grp) = ResolveCollabTarget();
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("SyncHistoryWithPeer", new
+            {
+                to,
+                group = grp,
+                sinceTS = 0L,
+            });
+            AppendSystemMessage("🔄 已触发 P2P 加密历史漫游增量同步");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"历史漫游同步失败：{ex.Message}");
+        }
     }
 
     /// <summary>v5.0: 增量块去重目录同步（SyncFolder RPC）。</summary>

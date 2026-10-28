@@ -10,6 +10,7 @@
     "ChannelJoin",
     "ChannelLeave",
     "ChannelList",
+    "CheckSilentUpdate",
     "Connect",
     "EditMessage",
     "GetHistoryPage",
@@ -26,10 +27,12 @@
     "ResumeFile",
     "RevokeMessage",
     "RunNetworkDiagnostics",
+    "SendBurnMessage",
     "SendScreenAnnotation",
     "SendSticker",
     "SendText",
     "SetAutoClipboard",
+    "SetBandwidthLimit",
     "SetDND",
     "SetNickname",
     "SetSessionE2EE",
@@ -38,6 +41,8 @@
     "StopScreenShare",
     "StopVoiceCall",
     "SyncFolder",
+    "SyncHistoryWithPeer",
+    "VerifyPeerFingerprint",
     "VerifyTrustCert"
   ]
 }

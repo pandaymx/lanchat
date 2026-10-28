@@ -238,6 +238,17 @@ type API interface {
 	SetDND(enabled bool)
 	// GetHistoryPage 按会话 ID 与游标时间戳分页拉取本地加密历史消息（契约 v1.4）。
 	GetHistoryPage(convID string, beforeTS int64, limit int) []ChatMessage
+
+	// VerifyPeerFingerprint 核验本机与指定对端的 X25519 TOFU 安全码指纹（契约 v1.5）。
+	VerifyPeerFingerprint(peerID string) string
+	// SendBurnMessage 发送阅后即焚定时销毁消息（契约 v1.5）。
+	SendBurnMessage(to, group, text string, ttlSec int) (msgID string, err error)
+	// SyncHistoryWithPeer 向目标节点或频道发起离线加密历史漫游增量同步（契约 v1.5）。
+	SyncHistoryWithPeer(to, group string, sinceTS int64) (synced int, err error)
+	// SetBandwidthLimit 设置全局文件传输带宽限速（MB/s，<=0 表示不限速，契约 v1.5）。
+	SetBandwidthLimit(limitMBps float64) string
+	// CheckSilentUpdate 通过国内加速代理链检查或静默下载最新安装包（契约 v1.5）。
+	CheckSilentUpdate(proxy string, download bool) (status string, err error)
 }
 
 // Listener 是 core → UI 的事件回调集合（notification）。

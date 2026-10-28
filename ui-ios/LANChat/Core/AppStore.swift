@@ -68,23 +68,19 @@ final class AppStore: ObservableObject {
 
     func checkAndSilentUpdate(customProxy: String = "", checkOnly: Bool = false) {
         let proxyArg = customProxy.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cmd: String
         if checkOnly {
-            cmd = "/update check"
             updateStatus = "正在通过国内加速节点检查最新版本…"
         } else if proxyArg.isEmpty {
-            cmd = "/update"
             updateStatus = "正在通过国内加速代理静默下载更新包（免浏览器）…"
         } else {
-            cmd = "/update \(proxyArg)"
             updateStatus = "正在通过 \(proxyArg) 静默下载更新包…"
         }
         run {
-            let msgId = try await self.engine.sendText(to: "", text: cmd)
-            if msgId.hasPrefix("update:") {
-                self.updateStatus = String(msgId.dropFirst(7))
+            let summary = try await self.engine.checkSilentUpdate(proxy: proxyArg, download: !checkOnly)
+            if summary.hasPrefix("update:") {
+                self.updateStatus = String(summary.dropFirst(7))
             } else {
-                self.updateStatus = msgId
+                self.updateStatus = summary
             }
             await self.refresh()
         }
@@ -408,6 +404,34 @@ final class AppStore: ObservableObject {
             for m in page {
                 self.appendMessage(m)
             }
+        }
+    }
+
+    func verifyPeerFingerprint(peerID: String) {
+        run {
+            let raw = try await self.engine.verifyPeerFingerprint(peerID: peerID)
+            let fp = raw.hasPrefix("fp:") ? String(raw.dropFirst(3)) : raw
+            self.error = "🛡️ 安全码指纹核验：\(fp)"
+        }
+    }
+
+    func sendBurnMessage(to: String, group: String = "", text: String, ttlSec: Int = 10) {
+        run {
+            _ = try await self.engine.sendBurnMessage(to: to, group: group, text: text, ttlSec: ttlSec)
+            await self.refresh()
+        }
+    }
+
+    func syncHistoryWithPeer(to: String, group: String = "", sinceTS: Int64 = 0) {
+        run {
+            _ = try await self.engine.syncHistoryWithPeer(to: to, group: group, sinceTS: sinceTS)
+            await self.refresh()
+        }
+    }
+
+    func setBandwidthLimit(_ limitMBps: Double) {
+        run {
+            try await self.engine.setBandwidthLimit(limitMBps)
         }
     }
 

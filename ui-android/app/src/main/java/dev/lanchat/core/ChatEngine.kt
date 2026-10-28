@@ -222,6 +222,32 @@ class ChatEngine {
             raw.toJsonArray().toMessageList(selfId)
         }
 
+    // ---- 契约 v1.5 系统与高级消息显式 RPC 绑定方法 ----
+
+    suspend fun verifyPeerFingerprint(peerID: String): String =
+        ioOp { requireClient().verifyPeerFingerprint(peerID) }
+
+    suspend fun sendBurnMessage(
+        to: String,
+        group: String = "",
+        text: String,
+        ttlSec: Long = 10L,
+    ): String =
+        ioOp { requireClient().sendBurnMessage(to, group, text, ttlSec) }
+
+    suspend fun syncHistoryWithPeer(
+        to: String,
+        group: String = "",
+        sinceTS: Long = 0L,
+    ): Long =
+        ioOp { requireClient().syncHistoryWithPeer(to, group, sinceTS) }
+
+    suspend fun setBandwidthLimit(limitMBps: Double): Unit =
+        ioOp { requireClient().setBandwidthLimit(limitMBps) }
+
+    suspend fun checkSilentUpdate(proxy: String = "", download: Boolean = false): String =
+        ioOp { requireClient().checkSilentUpdate(proxy, download) }
+
     private suspend fun <T> ioOp(block: () -> T): T =
         withContext(Dispatchers.IO) {
             try {

@@ -325,6 +325,51 @@ final class ChatEngine {
         }
     }
 
+    // MARK: - 契约 v1.5 系统与高级消息显式 RPC 绑定方法
+
+    @discardableResult
+    func verifyPeerFingerprint(peerID: String) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let fp = c.verifyPeerFingerprint(peerID, error: &err)
+            if let err { throw err }
+            return fp
+        }
+    }
+
+    @discardableResult
+    func sendBurnMessage(to: String, group: String = "", text: String, ttlSec: Int = 10) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let msgID = c.sendBurnMessage(to, group: group, text: text, ttlSec: ttlSec, error: &err)
+            if let err { throw err }
+            return msgID
+        }
+    }
+
+    @discardableResult
+    func syncHistoryWithPeer(to: String, group: String = "", sinceTS: Int64 = 0) async throws -> Int {
+        try await runOnIOThrowing { c in
+            var synced: Int = 0
+            try c.syncHistoryWithPeer(to, group: group, sinceTS: sinceTS, ret0_: &synced)
+            return synced
+        }
+    }
+
+    func setBandwidthLimit(_ limitMBps: Double) async throws {
+        try await runOnIOThrowing { try $0.setBandwidthLimit(limitMBps) }
+    }
+
+    @discardableResult
+    func checkSilentUpdate(proxy: String = "", download: Bool = false) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let summary = c.checkSilentUpdate(proxy, download: download, error: &err)
+            if let err { throw err }
+            return summary
+        }
+    }
+
     // MARK: - 线程包装
 
     private func runOnIO<T>(_ block: @escaping @Sendable (LCMobileClient) -> T) async -> T {

@@ -472,6 +472,48 @@ func (c *Client) GetHistoryPage(convID string, beforeTS int64, limit int) []appa
 	return c.HistoryPage(convID, beforeTS, limit)
 }
 
+// VerifyPeerFingerprint 核验本机与指定对端的 X25519 TOFU 安全码指纹（契约 v1.5）。
+func (c *Client) VerifyPeerFingerprint(peerID string) string {
+	selfFP := c.Fingerprint()
+	peerFP := c.PeerFingerprint(strings.TrimSpace(peerID))
+	ret := "fp:" + selfFP
+	if peerFP != "" {
+		ret += "/" + peerFP
+	}
+	return ret
+}
+
+// SendBurnMessage 发送阅后即焚定时销毁消息（契约 v1.5）。
+func (c *Client) SendBurnMessage(to, group, text string, ttlSec int) (string, error) {
+	body := strings.TrimSpace(text)
+	if body == "" {
+		return "", errEmptyText
+	}
+	if ttlSec <= 0 {
+		ttlSec = 10
+	}
+	return c.SendText(to, fmt.Sprintf("/burn %ds %s", ttlSec, body), group)
+}
+
+// SetBandwidthLimit 设置全局文件传输带宽限速（MB/s，<=0 表示不限速，契约 v1.5）。
+func (c *Client) SetBandwidthLimit(limitMBps float64) string {
+	if limitMBps <= 0 {
+		transfer.SetBandwidthLimitBps(0)
+		return "bwlimit:off"
+	}
+	transfer.SetBandwidthLimitBps(int64(limitMBps * 1024 * 1024))
+	return fmt.Sprintf("bwlimit:%.1fMB/s", limitMBps)
+}
+
+// CheckSilentUpdate 通过国内加速代理链检查或静默下载最新安装包（契约 v1.5）。
+func (c *Client) CheckSilentUpdate(proxy string, download bool) (string, error) {
+	res, err := c.CheckAndDownloadUpdate(c.runCtx, !download, strings.TrimSpace(proxy))
+	if err != nil {
+		return "", err
+	}
+	return "update:" + res.Summary, nil
+}
+
 // SearchHistory 在本地历史消息中按关键字（与可选会话 ID）检索未撤回消息。
 func (c *Client) SearchHistory(query, convID string) []appapi.ChatMessage {
 	return c.history.search(query, convID)

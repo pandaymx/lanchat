@@ -1305,7 +1305,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 安全码指纹核验 (/fingerprint)
+    // 安全码指纹核验 (VerifyPeerFingerprint RPC)
     ctx.widgets.fingerprint_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -1315,7 +1315,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 cx.toast("请先选择聊天会话");
                 return;
             }
-            send_text_to_target(&cx, &target, "/fingerprint");
+            invoke_verify_peer_fingerprint(&cx, &target);
         }
     ));
 
@@ -1612,7 +1612,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 cx.toast("请先选择联系人或频道");
                 return;
             }
-            send_text_to_target(&cx, &target, "/sync");
+            invoke_sync_history_with_peer(&cx, &target, 0);
             cx.toast("🔄 已触发个人多端加密历史漫游增量同步");
         }
     ));
@@ -2106,6 +2106,116 @@ fn invoke_get_history_page(ctx: &Rc<AppCtx>, conv_id: &str, before_ts: i64, limi
     }
 }
 
+fn invoke_verify_peer_fingerprint(ctx: &Rc<AppCtx>, target: &ChatTarget) {
+    let Some(key) = target.key().map(|s| s.to_string()) else {
+        return;
+    };
+    let group = if target.is_channel() {
+        key.clone()
+    } else {
+        String::new()
+    };
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        let peer_id = key.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "peerID": peer_id });
+            let res = ipc
+                .invoke("VerifyPeerFingerprint", Some(&body))
+                .await
+                .and_then(|v| {
+                    v.get("fingerprint")
+                        .and_then(|f| f.as_str())
+                        .map(|s| format!("fp:{s}"))
+                        .ok_or_else(|| anyhow::anyhow!("响应缺少 fingerprint"))
+                });
+            let _ = tx.try_send(UiEvent::TextSent(
+                key,
+                group,
+                "VerifyPeerFingerprint".to_string(),
+                res,
+            ));
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_send_burn_message(ctx: &Rc<AppCtx>, target: &ChatTarget, text: &str, ttl_sec: i32) {
+    let (to, group) = resolve_target_to_group(target);
+    let txt = text.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "to": to,
+                "group": group,
+                "text": txt,
+                "ttlSec": ttl_sec,
+            });
+            let _ = ipc.invoke("SendBurnMessage", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_sync_history_with_peer(ctx: &Rc<AppCtx>, target: &ChatTarget, since_ts: i64) {
+    let (to, group) = resolve_target_to_group(target);
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "to": to,
+                "group": group,
+                "sinceTS": since_ts,
+            });
+            let _ = ipc.invoke("SyncHistoryWithPeer", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_set_bandwidth_limit(ctx: &Rc<AppCtx>, limit_mbps: f64) {
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "limitMBps": limit_mbps });
+            let _ = ipc.invoke("SetBandwidthLimit", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_check_silent_update(ctx: &Rc<AppCtx>, proxy: &str, download: bool) {
+    let proxy_owned = proxy.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "proxy": proxy_owned,
+                "download": download,
+            });
+            let res = ipc
+                .invoke("CheckSilentUpdate", Some(&body))
+                .await
+                .and_then(|v| {
+                    v.get("summary")
+                        .and_then(|s| s.as_str())
+                        .map(|s| {
+                            if s.starts_with("update:") {
+                                s.to_string()
+                            } else {
+                                format!("update:{s}")
+                            }
+                        })
+                        .ok_or_else(|| anyhow::anyhow!("响应缺少 summary"))
+                });
+            let _ = tx.try_send(UiEvent::TextSent(
+                "*".to_string(),
+                "*".to_string(),
+                "CheckSilentUpdate".to_string(),
+                res,
+            ));
+        });
+    }
+}
+
 fn send_sticker_code(ctx: &Rc<AppCtx>, sticker: &str) {
     let target = ctx.state.borrow().current_chat.clone();
     let Some(key) = target.key().map(|s| s.to_string()) else {
@@ -2252,40 +2362,12 @@ fn prompt_silent_update(ctx: &Rc<AppCtx>) {
             move |response| {
                 if response == "check" || response == "download" {
                     let proxy = entry.text().trim().to_string();
-                    let cmd = if response == "check" {
-                        "/update check".to_string()
-                    } else if proxy.is_empty() {
-                        "/update".to_string()
-                    } else {
-                        format!("/update {proxy}")
-                    };
                     cx.toast(if response == "check" {
                         "正在通过国内加速节点检查最新版本…"
                     } else {
                         "正在通过国内加速代理后台静默下载更新包…"
                     });
-                    if let Some(ipc) = cx.ipc.borrow().clone() {
-                        let params = SendTextParams {
-                            to: String::new(),
-                            text: cmd.clone(),
-                            group: Some(String::new()),
-                        };
-                        let tx = cx.ui_tx.clone();
-                        crate::spawn_rt(async move {
-                            let res = ipc.invoke("SendText", Some(&params)).await.and_then(|v| {
-                                v.get("msgID")
-                                    .and_then(|m| m.as_str())
-                                    .map(|s| s.to_string())
-                                    .ok_or_else(|| anyhow::anyhow!("响应缺少 msgID"))
-                            });
-                            let _ = tx.try_send(UiEvent::TextSent(
-                                "*".to_string(),
-                                "*".to_string(),
-                                cmd,
-                                res,
-                            ));
-                        });
-                    }
+                    invoke_check_silent_update(&cx, &proxy, response == "download");
                 }
             }
         ),

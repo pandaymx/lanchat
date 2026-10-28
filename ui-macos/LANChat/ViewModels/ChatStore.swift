@@ -786,25 +786,73 @@ final class ChatStore: ObservableObject {
         return []
     }
 
+    private struct FingerprintResult: Decodable { let fingerprint: String }
+    private struct SyncedResult: Decodable { let synced: Int }
+    private struct SummaryResult: Decodable { let summary: String }
+
+    func verifyPeerFingerprintRpc(peerID: String) async {
+        do {
+            let r = try await ipc.call("VerifyPeerFingerprint", params: ["peerID": peerID], as: FingerprintResult.self)
+            let fp = r.fingerprint.hasPrefix("fp:") ? String(r.fingerprint.dropFirst(3)) : r.fingerprint
+            self.error = "🛡️ 安全码指纹核验：\(fp)"
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func sendBurnMessageRpc(to: String = "", group: String = "", text: String, ttlSec: Int = 10) async {
+        do {
+            _ = try await ipc.call(
+                "SendBurnMessage",
+                params: ["to": to, "group": group, "text": text, "ttlSec": ttlSec],
+                as: MsgIDResult.self
+            )
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func syncHistoryWithPeerRpc(to: String = "", group: String = "", sinceTS: Int64 = 0) async {
+        do {
+            _ = try await ipc.call(
+                "SyncHistoryWithPeer",
+                params: ["to": to, "group": group, "sinceTS": sinceTS],
+                as: SyncedResult.self
+            )
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func setBandwidthLimitRpc(limitMBps: Double) async {
+        do {
+            _ = try await ipc.call("SetBandwidthLimit", params: ["limitMBps": limitMBps])
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     func checkAndSilentUpdate(customProxy: String = "", checkOnly: Bool = false) async {
         let proxyArg = customProxy.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cmd: String
         if checkOnly {
-            cmd = "/update check"
             updateStatus = "正在通过国内加速节点检查最新版本…"
         } else if proxyArg.isEmpty {
-            cmd = "/update"
             updateStatus = "正在通过国内加速代理静默下载最新安装包（免浏览器）…"
         } else {
-            cmd = "/update \(proxyArg)"
             updateStatus = "正在通过 \(proxyArg) 静默下载最新安装包…"
         }
         do {
-            let r = try await ipc.call("SendText", params: ["to": "", "text": cmd, "group": ""], as: MsgIDResult.self)
-            if r.msgID.hasPrefix("update:") {
-                updateStatus = String(r.msgID.dropFirst(7))
+            let r = try await ipc.call(
+                "CheckSilentUpdate",
+                params: ["proxy": proxyArg, "download": !checkOnly],
+                as: SummaryResult.self
+            )
+            if r.summary.hasPrefix("update:") {
+                updateStatus = String(r.summary.dropFirst(7))
             } else {
-                updateStatus = r.msgID
+                updateStatus = r.summary
             }
             await refreshState()
         } catch {

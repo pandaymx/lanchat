@@ -256,6 +256,31 @@ func (c *Client) SyncHistory(to string, group string, sinceTs int64) (int, error
 	return c.core.SyncHistoryWithPeer(to, group, sinceTs)
 }
 
+// SyncHistoryWithPeer 向目标节点或频道发起离线加密历史漫游增量同步（契约 v1.5）。
+func (c *Client) SyncHistoryWithPeer(to string, group string, sinceTS int64) (int, error) {
+	return c.core.SyncHistoryWithPeer(to, group, sinceTS)
+}
+
+// VerifyPeerFingerprint 核验本机与指定对端的 X25519 TOFU 安全码指纹（契约 v1.5）。
+func (c *Client) VerifyPeerFingerprint(peerID string) string {
+	return c.core.VerifyPeerFingerprint(peerID)
+}
+
+// SendBurnMessage 发送阅后即焚定时销毁消息（契约 v1.5）。
+func (c *Client) SendBurnMessage(to string, group string, text string, ttlSec int) (string, error) {
+	return c.core.SendBurnMessage(to, group, text, ttlSec)
+}
+
+// SetBandwidthLimit 设置全局文件传输带宽限速（MB/s，<=0 表示不限速，契约 v1.5）。
+func (c *Client) SetBandwidthLimit(limitMBps float64) string {
+	return c.core.SetBandwidthLimit(limitMBps)
+}
+
+// CheckSilentUpdate 通过国内加速代理链检查或静默下载最新安装包（契约 v1.5）。
+func (c *Client) CheckSilentUpdate(proxy string, download bool) (string, error) {
+	return c.core.CheckSilentUpdate(proxy, download)
+}
+
 // SyncFolder 扫描本地文件夹并执行 P2P 增量块去重同步（v3.4.0 / 契约 v1.3）。
 func (c *Client) SyncFolder(to string, group string, dirPath string) (int, error) {
 	return c.core.SyncFolder(to, group, dirPath)

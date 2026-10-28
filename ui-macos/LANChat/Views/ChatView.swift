@@ -362,7 +362,7 @@ struct ChatView: View {
                 .help("开启或停止局域网 P2P 屏幕共享 (StartScreenShare / StopScreenShare)")
 
                 Button {
-                    Task { await store.sendText(to: peer.id, text: "/sync 50") }
+                    Task { await store.syncHistoryWithPeerRpc(to: peer.id) }
                 } label: {
                     HStack(spacing: 4) {
                         Text("🔄 漫游同步")
@@ -376,7 +376,7 @@ struct ChatView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help("向对端请求离线缺失消息增量漫游同步 (/sync)")
+                .help("向对端请求离线缺失消息增量漫游同步 (SyncHistoryWithPeer)")
 
                 Button {
                     pickAndOffer()
@@ -615,7 +615,7 @@ struct ChatView: View {
                 }
 
                 Button {
-                    Task { await store.sendText(to: peer.id, text: "/sync 50") }
+                    Task { await store.syncHistoryWithPeerRpc(to: peer.id) }
                 } label: {
                     HStack(spacing: 4) {
                         Text("🔄 漫游同步")
@@ -629,7 +629,7 @@ struct ChatView: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .help("向对端请求离线缺失消息增量漫游同步 (/sync)")
+                .help("向对端请求离线缺失消息增量漫游同步 (SyncHistoryWithPeer)")
 
                 Button {
                     pickAndOffer()
@@ -684,7 +684,7 @@ struct ChatView: View {
                 .help("切换端到端加密会话状态")
 
                 Button {
-                    Task { await store.sendText(to: peer.id, text: "/fingerprint") }
+                    Task { await store.verifyPeerFingerprintRpc(peerID: peer.id) }
                 } label: {
                     Text("🛡️ 安全码")
                         .font(.system(size: 12, weight: .medium))
@@ -693,7 +693,7 @@ struct ChatView: View {
                         .padding(.vertical, 4)
                 }
                 .buttonStyle(.plain)
-                .help("核验 X25519 端到端安全码指纹 (/fingerprint)")
+                .help("核验 X25519 端到端安全码指纹 (VerifyPeerFingerprint)")
 
                 Button {
                     showSearchBar.toggle()

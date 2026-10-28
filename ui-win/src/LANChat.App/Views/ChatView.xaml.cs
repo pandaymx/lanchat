@@ -389,7 +389,9 @@ public sealed partial class ChatView : UserControl
         if (_shell?.Chat.CanSend == true && e.DataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = Windows.ApplicationModel.DataTransfer.DataPackageOperation.Copy;
-            e.DragUIOverride.Caption = "松开鼠标直传文件或文件夹";
+            e.DragUIOverride.Caption = e.Modifiers.HasFlag(Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Shift)
+                ? "松开鼠标增量同步文件夹 (SyncFolder)"
+                : "松开鼠标直传文件或文件夹 (.lanchat-dir.tar.gz)";
         }
     }
 
@@ -403,12 +405,20 @@ public sealed partial class ChatView : UserControl
         {
             return;
         }
+        var shiftSync = e.Modifiers.HasFlag(Windows.ApplicationModel.DataTransfer.DragDrop.DragDropModifiers.Shift);
         var items = await e.DataView.GetStorageItemsAsync();
         foreach (var item in items)
         {
             if (!string.IsNullOrEmpty(item.Path))
             {
-                await _shell.Chat.OfferFileAsync(item.Path);
+                if (shiftSync && item is Windows.Storage.IStorageFolder)
+                {
+                    await _shell.Chat.SyncFolderAsync(item.Path);
+                }
+                else
+                {
+                    await _shell.Chat.OfferFileAsync(item.Path);
+                }
             }
         }
     }
@@ -424,7 +434,7 @@ public sealed partial class ChatView : UserControl
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = "接收文件",
+            Title = transfer.IsFolderBundle ? "📁 接收文件夹（自动解包还原）" : "接收文件",
             Content = $"{transfer.Name}（{FormatSize(transfer.Size)}）\n是否接收并选择保存位置？",
             PrimaryButtonText = "接收",
             CloseButtonText = "拒绝",

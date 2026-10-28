@@ -68,6 +68,7 @@ struct Transfer: Codable, Identifiable, Hashable {
     }
 
     var isIncoming: Bool { direction == "inbound" }
+    var isFolderBundle: Bool { name.lowercased().hasSuffix(".lanchat-dir.tar.gz") }
 }
 
 struct Channel: Codable, Identifiable, Hashable {

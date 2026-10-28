@@ -614,14 +614,14 @@ struct ChatView: View {
                 Button {
                     pickAndOffer()
                 } label: {
-                    Text("📁 发送文件")
+                    Text("📁 发送文件/目录")
                         .font(.system(size: 12, weight: .medium))
                         .foregroundColor(.primary.opacity(0.85))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                 }
                 .buttonStyle(.plain)
-                .help("发送文件或文件夹")
+                .help("发送文件或文件夹（目录自动流式打包为 .lanchat-dir.tar.gz 并在接收端自动解包还原）")
 
                 Button {
                     pasteOrSyncClipboard()

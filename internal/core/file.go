@@ -16,7 +16,8 @@ import (
 	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
-// OfferFile 发起 1:1 文件发送：打开文件 → 计算 SHA-256 → 监听 P2P → FILE_OFFER。
+// OfferFile 发起 1:1 文件或文件夹发送（v5.2.0：若 path 为目录则自动流式打包为 <dirname>.lanchat-dir.tar.gz）
+// → 计算 SHA-256 → 监听 P2P → FILE_OFFER。
 func (c *Client) OfferFile(to, path string) (string, error) {
 	if to == "" {
 		return "", errPeerNotFound
@@ -273,7 +274,13 @@ func (c *Client) offerInbound(env *protocol.Envelope) {
 	}
 	// pending 进度事件让 UI 弹出「接收 / 另存为」。
 	c.listener().OnTransferProgress(t.snapshot())
-	c.notifyDesktopEvent("📁 收到文件传输请求", c.peerNicknameOrID(env.From)+" 发来文件："+p.Name, false)
+	title := "📁 收到文件传输请求"
+	label := "发来文件：" + p.Name
+	if IsDirectoryBundleName(p.Name) {
+		title = "📁 收到文件夹直传请求"
+		label = "发来文件夹：" + p.Name
+	}
+	c.notifyDesktopEvent(title, c.peerNicknameOrID(env.From)+" "+label, false)
 }
 
 // errString 提取错误短原因。

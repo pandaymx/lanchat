@@ -10,9 +10,9 @@ import (
 	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
-// OfferFileToGroup 发起群组文件 1:N 发送：打开文件 → SHA-256 → 监听块端口
-// → GROUP_OFFER（携带块候选与一次性 token）。成员经 GROUP_JOIN 回报候选后
-// 由 groupTask 重建 swarm 并供块。返回本次分发 ID。
+// OfferFileToGroup 发起群组文件或文件夹 1:N 发送（v5.2.0：支持目录自动流式生成 .lanchat-dir.tar.gz）：
+// 打开文件 → SHA-256 → 监听块端口 → GROUP_OFFER（携带块候选与一次性 token）。
+// 成员经 GROUP_JOIN 回报候选后由 groupTask 重建 swarm 并供块。返回本次分发 ID。
 func (c *Client) OfferFileToGroup(group, path string) (string, error) {
 	if group == "" {
 		return "", errPeerNotFound
@@ -99,7 +99,13 @@ func (c *Client) offerGroupInbound(env *protocol.Envelope) {
 		return
 	}
 	g.emitPending()
-	c.notifyDesktopEvent("📦 收到群文件分发邀约", c.peerNicknameOrID(env.From)+" 在群内分享文件："+p.Name, false)
+	title := "📦 收到群文件分发邀约"
+	label := "在群内分享文件：" + p.Name
+	if IsDirectoryBundleName(p.Name) {
+		title = "📁 收到群文件夹分发邀约"
+		label = "在群内分享文件夹：" + p.Name
+	}
+	c.notifyDesktopEvent(title, c.peerNicknameOrID(env.From)+" "+label, false)
 }
 
 // respondGroupFile 接收方接受：创建块源与传输、回报 GROUP_JOIN、启动 swarm。

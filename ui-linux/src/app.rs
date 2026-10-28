@@ -1358,7 +1358,31 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 发送整个文件夹（M28）
+    // 拖拽文件或文件夹到主窗口一键直传（v5.2.0）
+    let drop_target = gtk::DropTarget::new(gio::File::static_type(), gtk::gdk::DragAction::COPY);
+    drop_target.connect_drop(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_, value, _, _| {
+            if let Ok(file) = value.get::<gio::File>() {
+                if let Some(path) = file.path() {
+                    let target = cx.state.borrow().current_chat.clone();
+                    if target.key().is_none() {
+                        cx.toast("请先选择联系人或频道后再拖入文件/文件夹");
+                        return false;
+                    }
+                    let path_str = path.to_string_lossy().to_string();
+                    offer_path_to_target(&cx, &target, path_str.clone());
+                    cx.toast(&format!("📁 已发起拖拽直传：{}", path_str));
+                    return true;
+                }
+            }
+            false
+        }
+    ));
+    ctx.widgets.window.add_controller(drop_target);
+
+    // 发送整个文件夹（M28 / v5.2.0 流式 .lanchat-dir.tar.gz 直传）
     ctx.widgets.folder_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -1381,12 +1405,8 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                         if let Ok(folder) = res {
                             if let Some(path) = folder.path() {
                                 let path_str = path.to_string_lossy().to_string();
-                                send_text_to_target(
-                                    &cx,
-                                    &target,
-                                    &format!("/senddir {}", path_str),
-                                );
-                                cx.toast(&format!("已发起文件夹流式传输：{}", path_str));
+                                offer_path_to_target(&cx, &target, path_str.clone());
+                                cx.toast(&format!("📁 已发起文件夹流式直传：{}", path_str));
                             }
                         }
                     }
@@ -1750,6 +1770,42 @@ fn trigger_browse(ctx: &Rc<AppCtx>) {
                 .and_then(|v| serde_json::from_value::<Vec<ServerInfo>>(v).map_err(Into::into));
             let _ = tx.try_send(UiEvent::Discovered(res));
         });
+    }
+}
+
+fn offer_path_to_target(ctx: &Rc<AppCtx>, target: &ChatTarget, path: String) {
+    let Some(key) = target.key().map(|s| s.to_string()) else {
+        return;
+    };
+    let is_channel = target.is_channel();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        if is_channel {
+            let params = OfferGroupParams { group: key, path };
+            crate::spawn_rt(async move {
+                let r = ipc
+                    .invoke("OfferFileToGroup", Some(&params))
+                    .await
+                    .and_then(|v| {
+                        v.get("transferID")
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.to_string())
+                            .ok_or_else(|| anyhow::anyhow!("响应缺少 transferID"))
+                    });
+                let _ = tx.try_send(UiEvent::OfferSent(r));
+            });
+        } else {
+            let params = OfferParams { to: key, path };
+            crate::spawn_rt(async move {
+                let r = ipc.invoke("OfferFile", Some(&params)).await.and_then(|v| {
+                    v.get("transferID")
+                        .and_then(|t| t.as_str())
+                        .map(|s| s.to_string())
+                        .ok_or_else(|| anyhow::anyhow!("响应缺少 transferID"))
+                });
+                let _ = tx.try_send(UiEvent::OfferSent(r));
+            });
+        }
     }
 }
 
@@ -4071,11 +4127,23 @@ impl AppCtx {
                 meta.append(&matrix_badge);
             }
 
+            let is_dir_bundle = t.name.ends_with(".lanchat-dir.tar.gz") || t.name.ends_with(".zip");
+            let icon_prefix = if is_dir_bundle {
+                "📁 文件夹"
+            } else {
+                "📄"
+            };
             let name_label = gtk::Label::builder()
                 .label(if t.kind == crate::models::PathKind::Channel {
-                    format!("📄 {} · #{} · {}", t.direction.label(), t.group_id, t.name)
+                    format!(
+                        "{} {} · #{} · {}",
+                        icon_prefix,
+                        t.direction.label(),
+                        t.group_id,
+                        t.name
+                    )
                 } else {
-                    format!("📄 {} · {}", t.direction.label(), t.name)
+                    format!("{} {} · {}", icon_prefix, t.direction.label(), t.name)
                 })
                 .halign(Align::Start)
                 .ellipsize(gtk::pango::EllipsizeMode::Middle)

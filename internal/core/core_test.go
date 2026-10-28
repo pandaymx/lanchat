@@ -1,6 +1,8 @@
 package core
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -674,8 +676,8 @@ func TestM11bDirectoryZipAndClipboardTransfer(t *testing.T) {
 		t.Fatalf("openFileInfo dir: %v", err)
 	}
 	_ = zipInfo.file.Close()
-	if zipInfo.name != "project-docs.zip" || zipInfo.size <= 0 {
-		t.Fatalf("unexpected zip fileInfo: %+v", zipInfo)
+	if zipInfo.name != "project-docs.lanchat-dir.tar.gz" || zipInfo.size <= 0 {
+		t.Fatalf("unexpected tar.gz fileInfo: %+v", zipInfo)
 	}
 
 	clipURI := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -1713,5 +1715,182 @@ func TestM32AndM33DNDUnreadAndUpdateApply(t *testing.T) {
 	}
 	if err := standbyClient.Connect(discovered[0].Addr, testPSK); err != nil {
 		t.Fatalf("Connect to auto-standby server failed: %v", err)
+	}
+}
+
+// TestDirectoryTarGzUnicastAndGroupSwarmAutoUnpack 验证 v5.2.0 文件夹一键直传（.lanchat-dir.tar.gz 流式归档、
+// 自动过滤 .git/node_modules/target 缓存目录、1:1 直传及 1:N 群组 Swarm 分发自动解包还原）。
+func TestDirectoryTarGzUnicastAndGroupSwarmAutoUnpack(t *testing.T) {
+	wsURL := startServer(t)
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	dirC := t.TempDir()
+
+	srcDir := filepath.Join(dirA, "workspace-v52")
+	for _, sub := range []string{
+		"src/pkg",
+		"empty-dir",
+		".git/objects",
+		"node_modules/left-pad",
+		"target/debug",
+	} {
+		if err := os.MkdirAll(filepath.Join(srcDir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "src", "pkg", "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "build.sh"), []byte("#!/bin/sh\necho v5.2.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, ".git", "objects", "blob"), []byte("git-blob"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "node_modules", "left-pad", "index.js"), []byte("module.exports={}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "target", "debug", "app"), []byte("bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	a := New(Options{Nickname: "Alice", DownloadDir: dirA})
+	t.Cleanup(a.Close)
+	b := New(Options{Nickname: "Bob", DownloadDir: dirB})
+	t.Cleanup(b.Close)
+	c := New(Options{Nickname: "Carol", DownloadDir: dirC})
+	t.Cleanup(c.Close)
+
+	for _, cli := range []*Client{a, b, c} {
+		if err := cli.Connect(wsURL, testPSK); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bID := b.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(a.GetState().Peers) == 2 && len(b.GetState().Peers) == 2 && len(c.GetState().Peers) == 2
+	})
+
+	// 1. 1:1 OfferFile 直接传入文件夹路径
+	tid1, err := a.OfferFile(bID, srcDir)
+	if err != nil || tid1 == "" {
+		t.Fatalf("OfferFile directory failed: tid=%q err=%v", tid1, err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(b.GetState().Transfers) == 1
+	})
+	tr1 := b.GetState().Transfers[0]
+	if tr1.Name != "workspace-v52.lanchat-dir.tar.gz" || !IsDirectoryBundleName(tr1.Name) {
+		t.Fatalf("expected .lanchat-dir.tar.gz transfer name, got %q", tr1.Name)
+	}
+
+	destArchiveB := filepath.Join(dirB, tr1.Name)
+	if err := b.RespondFile(tid1, true, destArchiveB); err != nil {
+		t.Fatalf("RespondFile 1:1 dir failed: %v", err)
+	}
+	waitFor(t, 3*time.Second, func() bool {
+		trs := b.GetState().Transfers
+		return len(trs) == 1 && trs[0].State == appapi.TransferDone
+	})
+
+	unpackedB := filepath.Join(dirB, "workspace-v52")
+	gotMain, err := os.ReadFile(filepath.Join(unpackedB, "src", "pkg", "main.go"))
+	if err != nil || string(gotMain) != "package main\n" {
+		t.Fatalf("unpacked 1:1 main.go mismatch: err=%v got=%q", err, string(gotMain))
+	}
+	if st, err := os.Stat(filepath.Join(unpackedB, "empty-dir")); err != nil || !st.IsDir() {
+		t.Fatalf("expected empty-dir unpacked, err=%v", err)
+	}
+	for _, filtered := range []string{".git", "node_modules", "target"} {
+		if _, err := os.Stat(filepath.Join(unpackedB, filtered)); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be filtered out from bundle, stat err=%v", filtered, err)
+		}
+	}
+
+	// 2. 1:N OfferFileToGroup 群组 Swarm 广播文件夹
+	tidGrp, err := a.OfferFileToGroup("*", srcDir)
+	if err != nil || tidGrp == "" {
+		t.Fatalf("OfferFileToGroup directory failed: tid=%q err=%v", tidGrp, err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, tr := range c.GetState().Transfers {
+			if tr.ID == tidGrp {
+				return true
+			}
+		}
+		return false
+	})
+	destArchiveC := filepath.Join(dirC, "workspace-v52.lanchat-dir.tar.gz")
+	if err := c.RespondFile(tidGrp, true, destArchiveC); err != nil {
+		t.Fatalf("RespondFile group dir failed: %v", err)
+	}
+	unpackedC := filepath.Join(dirC, "workspace-v52")
+	waitFor(t, 4*time.Second, func() bool {
+		_, err := os.Stat(filepath.Join(unpackedC, "build.sh"))
+		return err == nil
+	})
+	gotScript, err := os.ReadFile(filepath.Join(unpackedC, "build.sh"))
+	if err != nil || string(gotScript) != "#!/bin/sh\necho v5.2.0\n" {
+		t.Fatalf("unpacked group build.sh mismatch: err=%v got=%q", err, string(gotScript))
+	}
+}
+
+// TestDirectoryTarGzPathTraversalAndSymlinkProtection 验证 v5.2.0 .lanchat-dir.tar.gz 自动解包对 .. 路径穿越与非法符号链接的拦截。
+func TestDirectoryTarGzPathTraversalAndSymlinkProtection(t *testing.T) {
+	workDir := t.TempDir()
+
+	// 1. 构造含 ../ 路径穿越条目的恶意 .lanchat-dir.tar.gz
+	evilTraversal := filepath.Join(workDir, "evil-traversal.lanchat-dir.tar.gz")
+	func() {
+		f, err := os.Create(evilTraversal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = f.Close() }()
+		gw := gzip.NewWriter(f)
+		gw.Comment = dirBundleCommentPrefix + "evil-traversal"
+		tw := tar.NewWriter(gw)
+		body := []byte("pwned")
+		_ = tw.WriteHeader(&tar.Header{
+			Typeflag: tar.TypeReg,
+			Name:     "../../escaped.txt",
+			Size:     int64(len(body)),
+			Mode:     0o644,
+		})
+		_, _ = tw.Write(body)
+		_ = tw.Close()
+		_ = gw.Close()
+	}()
+
+	if _, matched, err := maybeUnpackDirectoryBundle(evilTraversal); !matched || err == nil {
+		t.Fatalf("expected path traversal tar.gz to be rejected, matched=%v err=%v", matched, err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "..", "escaped.txt")); !os.IsNotExist(err) {
+		t.Fatal("path traversal file must not be written")
+	}
+
+	// 2. 构造含符号链接 (TypeSymlink) 的恶意 .lanchat-dir.tar.gz
+	evilSymlink := filepath.Join(workDir, "evil-symlink.lanchat-dir.tar.gz")
+	func() {
+		f, err := os.Create(evilSymlink)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = f.Close() }()
+		gw := gzip.NewWriter(f)
+		gw.Comment = dirBundleCommentPrefix + "evil-symlink"
+		tw := tar.NewWriter(gw)
+		_ = tw.WriteHeader(&tar.Header{
+			Typeflag: tar.TypeSymlink,
+			Name:     "link-out",
+			Linkname: "/etc/passwd",
+			Mode:     0o777,
+		})
+		_ = tw.Close()
+		_ = gw.Close()
+	}()
+
+	if _, matched, err := maybeUnpackDirectoryBundle(evilSymlink); !matched || err == nil {
+		t.Fatalf("expected symlink tar.gz to be rejected, matched=%v err=%v", matched, err)
 	}
 }

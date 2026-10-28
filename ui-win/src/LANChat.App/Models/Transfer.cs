@@ -29,16 +29,20 @@ public sealed record Transfer
     /// <summary>是否为 P2P 直连路径（非中继）。</summary>
     public bool IsDirect => !ViaRelay;
 
+    /// <summary>是否为文件夹流式归档包 (.lanchat-dir.tar.gz)。</summary>
+    public bool IsFolderBundle =>
+        Name.EndsWith(".lanchat-dir.tar.gz", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>传输方向徽章。</summary>
     public string DirectionBadgeText => Direction == TransferDirection.Inbound ? "⬇ 接收" : "⬆ 发送";
 
     /// <summary>传输类型徽章。</summary>
-    public string KindBadgeText => Kind switch
+    public string KindBadgeText => (IsFolderBundle ? "📁 文件夹 · " : "") + (Kind switch
     {
         PathKind.Swarm => "G1 广播",
         PathKind.Channel => "G2 频道",
         _ => "P2P",
-    };
+    });
 
     /// <summary>已传字节与总大小文案。</summary>
     public string FormattedSizeProgress =>

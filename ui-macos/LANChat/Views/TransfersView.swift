@@ -227,6 +227,18 @@ private struct TransferRow: View {
                         .lineLimit(1)
 
                     HStack(spacing: 5) {
+                        if transfer.isFolderBundle {
+                            Text("📁 文件夹")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(QQPalette.qqBlue)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule()
+                                        .fill(QQPalette.qqBlue.opacity(0.14))
+                                )
+                        }
+
                         if let scope = scopeBadge {
                             Text(scope)
                                 .font(.system(size: 10, weight: .medium))

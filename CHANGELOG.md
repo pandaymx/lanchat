@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.2.0](https://github.com/pandaymx/lanchat/compare/v5.1.0...v5.2.0) (2026-10-28)
+
+
+### Features
+
+* **core:** add streaming tar.gz directory transfer and safe auto-unpack ([0a75907](https://github.com/pandaymx/lanchat/commit/0a759071d6cb3ce154ceb4b09e079a1f969ce4c3))
+
 ## [5.1.0](https://github.com/pandaymx/lanchat/compare/v5.0.0...v5.1.0) (2026-10-28)
 
 

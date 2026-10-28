@@ -14,7 +14,10 @@ struct ChannelChatView: View {
     @State private var showSearchBar = false
     @State private var searchQuery = ""
     @State private var e2eeEnabled = false
+    @State private var callMuted = false
     @State private var replyingTo: ChatMessage?
+    @State private var editingMessage: ChatMessage?
+    @State private var editDraft = ""
     @State private var showMembers = false
 
     private var isBroadcastGroup: Bool {
@@ -76,6 +79,8 @@ struct ChannelChatView: View {
                     Spacer()
                     if isRinging {
                         Button {
+                            callMuted = false
+                            store.setVoiceMuted(false)
                             store.acceptVoiceCall(
                                 to: callerId,
                                 group: live.id,
@@ -89,8 +94,22 @@ struct ChannelChatView: View {
                                 .padding(.vertical, 4)
                                 .background(QQTheme.onlineGreen, in: Capsule())
                         }
+                    } else {
+                        Button {
+                            callMuted.toggle()
+                            store.setVoiceMuted(callMuted)
+                        } label: {
+                            Text(callMuted ? "🎙️ 开麦" : "🔇 静音")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(QQTheme.qqBlue)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(QQTheme.qqBlue.opacity(0.14), in: Capsule())
+                        }
                     }
                     Button {
+                        callMuted = false
+                        store.setVoiceMuted(false)
                         store.stopVoiceCall(to: callerId, group: live.id)
                     } label: {
                         Text("🔴 挂断")
@@ -115,6 +134,20 @@ struct ChannelChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
+                        if let firstMsg = thread.first {
+                            Button {
+                                let beforeMs = Int64(firstMsg.timestamp.timeIntervalSince1970 * 1000.0)
+                                store.getHistoryPage(convID: live.id, beforeTS: beforeMs, limit: 50)
+                            } label: {
+                                Text("📜 加载更早历史消息")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(QQTheme.qqBlue)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 4)
+                                    .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
                         ForEach(thread) { msg in
                             ChannelBubble(
                                 message: msg,
@@ -127,6 +160,10 @@ struct ChannelChatView: View {
                                 },
                                 onReact: {
                                     store.reactMessage(to: "", group: live.id, msgID: msg.id, emoji: "👍")
+                                },
+                                onEdit: {
+                                    editDraft = QQTheme.extractEditableOriginal(msg.text)
+                                    editingMessage = msg
                                 },
                                 onPin: {
                                     store.pinMessage(to: "", group: live.id, msgID: msg.id)
@@ -197,6 +234,24 @@ struct ChannelChatView: View {
                 showStickerFilePicker = false
             }
             .ignoresSafeArea()
+        }
+        .alert("✏️ 编辑已发送消息", isPresented: Binding(
+            get: { editingMessage != nil },
+            set: { if !$0 { editingMessage = nil } }
+        )) {
+            TextField("修改消息内容", text: $editDraft)
+            Button("保存修改") {
+                if let target = editingMessage {
+                    let trimmed = editDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        store.editMessage(to: "", group: live.id, msgID: target.id, newText: trimmed)
+                    }
+                }
+                editingMessage = nil
+            }
+            Button("取消", role: .cancel) {
+                editingMessage = nil
+            }
         }
         .onChange(of: store.isMember(live)) { isMember in
             // 退出自定义频道后自动返回列表（全员广播群 group="*" 常驻不退出）。
@@ -511,6 +566,7 @@ private struct ChannelBubble: View {
     var onRevoke: (() -> Void)? = nil
     var onMarkRead: (() -> Void)? = nil
     var onReact: (() -> Void)? = nil
+    var onEdit: (() -> Void)? = nil
     var onPin: (() -> Void)? = nil
     var onReEdit: ((String) -> Void)? = nil
 
@@ -523,6 +579,7 @@ private struct ChannelBubble: View {
             onRevoke: onRevoke,
             onMarkRead: onMarkRead,
             onReact: onReact,
+            onEdit: onEdit,
             onPin: onPin,
             onReEdit: onReEdit
         )

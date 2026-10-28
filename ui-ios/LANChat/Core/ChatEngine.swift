@@ -226,6 +226,10 @@ final class ChatEngine {
         try await runOnIOThrowing { try $0.stopVoiceCall(to, group: group) }
     }
 
+    func setVoiceMuted(_ muted: Bool) async {
+        await runOnIO { $0.setVoiceMuted(muted) }
+    }
+
     @discardableResult
     func startScreenShare(to: String, group: String = "", fps: Int = 15) async throws -> String {
         try await runOnIOThrowing { c in

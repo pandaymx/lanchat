@@ -14,8 +14,11 @@ struct ChatView: View {
     @State private var searchQuery = ""
     @State private var e2eeEnabled = false
     @State private var inVoiceCall = false
+    @State private var callMuted = false
     @State private var isScreenSharing = false
     @State private var replyingTo: ChatMessage?
+    @State private var editingMessage: ChatMessage?
+    @State private var editDraft = ""
 
     private var thread: [ChatMessage] {
         let all = store.messagesByPeer[peer.id] ?? []
@@ -81,6 +84,8 @@ struct ChatView: View {
                     if isRinging {
                         Button {
                             inVoiceCall = true
+                            callMuted = false
+                            store.setVoiceMuted(false)
                             store.acceptVoiceCall(
                                 to: callerId,
                                 remoteUDP: store.voiceCall?.remoteAddr ?? ""
@@ -93,9 +98,23 @@ struct ChatView: View {
                                 .padding(.vertical, 4)
                                 .background(QQTheme.onlineGreen, in: Capsule())
                         }
+                    } else {
+                        Button {
+                            callMuted.toggle()
+                            store.setVoiceMuted(callMuted)
+                        } label: {
+                            Text(callMuted ? "🎙️ 开麦" : "🔇 静音")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(QQTheme.qqBlue)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(QQTheme.qqBlue.opacity(0.14), in: Capsule())
+                        }
                     }
                     Button {
                         inVoiceCall = false
+                        callMuted = false
+                        store.setVoiceMuted(false)
                         store.stopVoiceCall(to: callerId)
                     } label: {
                         Text("🔴 挂断")
@@ -185,6 +204,20 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 12) {
+                        if let firstMsg = thread.first {
+                            Button {
+                                let beforeMs = Int64(firstMsg.timestamp.timeIntervalSince1970 * 1000.0)
+                                store.getHistoryPage(convID: peer.id, beforeTS: beforeMs, limit: 50)
+                            } label: {
+                                Text("📜 加载更早历史消息")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(QQTheme.qqBlue)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 4)
+                                    .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
                         ForEach(thread) { msg in
                             BubbleRow(
                                 message: msg,
@@ -199,6 +232,10 @@ struct ChatView: View {
                                 },
                                 onReact: {
                                     store.reactMessage(to: peer.id, msgID: msg.id, emoji: "👍")
+                                },
+                                onEdit: {
+                                    editDraft = QQTheme.extractEditableOriginal(msg.text)
+                                    editingMessage = msg
                                 },
                                 onPin: {
                                     store.pinMessage(to: peer.id, msgID: msg.id)
@@ -252,6 +289,24 @@ struct ChatView: View {
                 showStickerFilePicker = false
             }
             .ignoresSafeArea()
+        }
+        .alert("✏️ 编辑已发送消息", isPresented: Binding(
+            get: { editingMessage != nil },
+            set: { if !$0 { editingMessage = nil } }
+        )) {
+            TextField("修改消息内容", text: $editDraft)
+            Button("保存修改") {
+                if let target = editingMessage {
+                    let trimmed = editDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty {
+                        store.editMessage(to: peer.id, msgID: target.id, newText: trimmed)
+                    }
+                }
+                editingMessage = nil
+            }
+            Button("取消", role: .cancel) {
+                editingMessage = nil
+            }
         }
     }
 
@@ -611,6 +666,7 @@ struct BubbleRow: View {
     var onRevoke: (() -> Void)? = nil
     var onMarkRead: (() -> Void)? = nil
     var onReact: (() -> Void)? = nil
+    var onEdit: (() -> Void)? = nil
     var onPin: (() -> Void)? = nil
     var onReEdit: ((String) -> Void)? = nil
 
@@ -773,6 +829,11 @@ struct BubbleRow: View {
                                 Label("✓ 标为已读", systemImage: "checkmark.circle")
                             }
                         } else {
+                            if let onEdit {
+                                Button(action: onEdit) {
+                                    Label("✏️ 编辑消息", systemImage: "pencil")
+                                }
+                            }
                             Button(role: .destructive) {
                                 onRevoke?()
                             } label: {

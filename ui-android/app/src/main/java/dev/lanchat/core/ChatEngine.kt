@@ -156,6 +156,9 @@ class ChatEngine {
     suspend fun stopVoiceCall(to: String, group: String = ""): Unit =
         ioOp { requireClient().stopVoiceCall(to, group) }
 
+    suspend fun setVoiceMuted(muted: Boolean): Unit =
+        ioOp { requireClient().setVoiceMuted(muted) }
+
     suspend fun startScreenShare(to: String, group: String = "", fps: Long = 15L): String =
         ioOp { requireClient().startScreenShare(to, group, fps) }
 

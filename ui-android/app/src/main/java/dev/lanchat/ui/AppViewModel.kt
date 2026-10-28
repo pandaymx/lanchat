@@ -35,6 +35,8 @@ data class AppUi(
     val screenFramesByConversation: Map<String, String> = emptyMap(),
     val voiceCall: VoiceCallState? = null,
     val screenShare: ScreenShareState? = null,
+    val autoClipboard: Boolean = false,
+    val dndEnabled: Boolean = false,
     val discoveredServers: List<ServerInfo> = emptyList(),
     val pendingInstallApkPath: String? = null,
     val busy: Boolean = false,
@@ -442,6 +444,12 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun setVoiceMuted(muted: Boolean) {
+        launchOp {
+            engine.setVoiceMuted(muted)
+        }
+    }
+
     fun startScreenShare(to: String, group: String = "", fps: Long = 15L) {
         launchOp {
             engine.startScreenShare(to, group, fps)
@@ -526,12 +534,24 @@ class AppViewModel : ViewModel() {
     fun setAutoClipboard(enabled: Boolean) {
         launchOp {
             engine.setAutoClipboard(enabled)
+            _ui.update {
+                it.copy(
+                    autoClipboard = enabled,
+                    error = if (enabled) "📋 已开启跨设备剪贴板自动同步" else "📋 已关闭跨设备剪贴板自动同步",
+                )
+            }
         }
     }
 
     fun setDND(enabled: Boolean) {
         launchOp {
             engine.setDND(enabled)
+            _ui.update {
+                it.copy(
+                    dndEnabled = enabled,
+                    error = if (enabled) "🔕 已开启全局免打扰模式" else "🔔 已关闭全局免打扰模式",
+                )
+            }
         }
     }
 

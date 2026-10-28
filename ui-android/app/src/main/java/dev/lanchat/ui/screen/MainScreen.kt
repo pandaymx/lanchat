@@ -44,6 +44,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -439,6 +440,10 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
     if (showNicknameDialog) {
         EditNicknameDialog(
             currentNickname = state.nickname,
+            autoClipboard = state.autoClipboard,
+            dndEnabled = state.dndEnabled,
+            onToggleAutoClipboard = { vm.setAutoClipboard(it) },
+            onToggleDnd = { vm.setDND(it) },
             onDismiss = { showNicknameDialog = false },
             onConfirm = { newName ->
                 vm.setNickname(newName)
@@ -488,21 +493,49 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
 @Composable
 private fun EditNicknameDialog(
     currentNickname: String,
+    autoClipboard: Boolean = false,
+    dndEnabled: Boolean = false,
+    onToggleAutoClipboard: (Boolean) -> Unit = {},
+    onToggleDnd: (Boolean) -> Unit = {},
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
     var name by remember { mutableStateOf(currentNickname) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("修改个人昵称") },
+        title = { Text("个人资料与偏好设置") },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { Text("昵称") },
-                placeholder = { Text("输入局域网显示昵称") },
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    singleLine = true,
+                    label = { Text("昵称") },
+                    placeholder = { Text("输入局域网显示昵称") },
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("📋 跨设备剪贴板自动同步", fontSize = 13.sp)
+                    Switch(
+                        checked = autoClipboard,
+                        onCheckedChange = onToggleAutoClipboard,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("🔕 全局免打扰模式 (DND)", fontSize = 13.sp)
+                    Switch(
+                        checked = dndEnabled,
+                        onCheckedChange = onToggleDnd,
+                    )
+                }
+            }
         },
         confirmButton = {
             TextButton(

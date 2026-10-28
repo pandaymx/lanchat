@@ -15,6 +15,8 @@ final class AppStore: ObservableObject {
     @Published var voiceCall: VoiceCallState? = nil
     @Published var screenShare: ScreenShareState? = nil
     @Published var screenFramesByConversation: [String: String] = [:]
+    @Published var autoClipboard: Bool = false
+    @Published var dndEnabled: Bool = false
     @Published var updateStatus: String = "内置国内加速节点：ghfast.top · gh-proxy.com · ghproxy.net · mirror.ghproxy.com · ghps.cc"
     @Published var busy = false
     @Published var error: String?
@@ -310,6 +312,12 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func setVoiceMuted(_ muted: Bool) {
+        Task {
+            await self.engine.setVoiceMuted(muted)
+        }
+    }
+
     func startScreenShare(to: String, group: String = "", fps: Int = 15) {
         run {
             _ = try await self.engine.startScreenShare(to: to, group: group, fps: fps)
@@ -381,12 +389,14 @@ final class AppStore: ObservableObject {
     }
 
     func setAutoClipboard(_ enabled: Bool) {
+        autoClipboard = enabled
         Task {
             await self.engine.setAutoClipboard(enabled)
         }
     }
 
     func setDND(_ enabled: Bool) {
+        dndEnabled = enabled
         Task {
             await self.engine.setDND(enabled)
         }

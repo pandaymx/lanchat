@@ -206,6 +206,16 @@ func (c *Client) VoiceCallStatus() string {
 	return c.core.VoiceCallStatus()
 }
 
+// SetVoiceMuted 设置实时语音通话麦克风静音状态（v6.1.0）。
+func (c *Client) SetVoiceMuted(muted bool) {
+	c.core.SetVoiceMuted(muted)
+}
+
+// IsVoiceMuted 返回当前实时语音通话是否处于静音状态（v6.1.0）。
+func (c *Client) IsVoiceMuted() bool {
+	return c.core.IsVoiceMuted()
+}
+
 // StartScreenShare 开启局域网 P2P 屏幕共享。
 func (c *Client) StartScreenShare(target string, group string, fps int) (string, error) {
 	return c.core.StartScreenShare(target, group, fps)

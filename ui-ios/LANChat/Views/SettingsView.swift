@@ -18,7 +18,10 @@ struct SettingsView: View {
                         // 1. 个人资料与本机昵称卡片
                         profileCard
 
-                        // 2. 节点与连接状态卡片
+                        // 2. 跨设备剪贴板与全局免打扰卡片
+                        preferencesCard
+
+                        // 3. 节点与连接状态卡片
                         connectionCard
 
                         // 3. 沙盒下载目录卡片
@@ -89,6 +92,37 @@ struct SettingsView: View {
                         .background(QQTheme.qqBlue, in: Capsule())
                 }
             }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+    }
+
+    private var preferencesCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("会话同步与免打扰设置", systemImage: "slider.horizontal.3")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+
+            Toggle(isOn: Binding(
+                get: { store.autoClipboard },
+                set: { store.setAutoClipboard($0) }
+            )) {
+                Text("📋 跨设备剪贴板自动同步")
+                    .font(.footnote.weight(.medium))
+            }
+            .tint(QQTheme.qqBlue)
+
+            Toggle(isOn: Binding(
+                get: { store.dndEnabled },
+                set: { store.setDND($0) }
+            )) {
+                Text("🔕 全局免打扰模式 (DND)")
+                    .font(.footnote.weight(.medium))
+            }
+            .tint(QQTheme.qqBlue)
         }
         .padding(16)
         .background(

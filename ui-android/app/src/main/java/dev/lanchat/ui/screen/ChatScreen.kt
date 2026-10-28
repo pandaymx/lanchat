@@ -170,6 +170,7 @@ fun ChatScreen(
             vm.acceptVoiceCall(callerId.ifEmpty { peer.id }, remoteUDP = remoteUDP)
         },
         onStopVoiceCall = { callerId -> vm.stopVoiceCall(callerId.ifEmpty { peer.id }) },
+        onSetVoiceMuted = { muted -> vm.setVoiceMuted(muted) },
         onStartScreenShare = { vm.startScreenShare(peer.id, fps = 15L) },
         onStopScreenShare = { vm.stopScreenShare(peer.id) },
         onAnnotateScreen = { nx, ny, note ->
@@ -178,8 +179,10 @@ fun ChatScreen(
         onRevokeMessage = { msgId -> vm.revokeMessage(peer.id, msgID = msgId) },
         onMarkMessageRead = { msgId -> vm.markMessageRead(peer.id, msgID = msgId) },
         onReactMessage = { msgId, emoji -> vm.reactMessage(peer.id, msgID = msgId, emoji = emoji) },
+        onEditMessage = { msgId, newText -> vm.editMessage(peer.id, msgID = msgId, newText = newText) },
         onPinMessage = { msgId -> vm.pinMessage(peer.id, msgID = msgId) },
         onSetSessionE2EE = { secret -> vm.setSessionE2EE(secret) },
+        onLoadHistoryPage = { beforeTs -> vm.getHistoryPage(peer.id, beforeTS = beforeTs, limit = 50L) },
         onBack = onBack,
         onSend = { vm.sendText(peer.id, it) },
         onAttach = { path -> vm.offerFile(peer.id, path) },
@@ -228,6 +231,7 @@ fun ChannelChatScreen(
             vm.acceptVoiceCall(callerId, group = channel.id, remoteUDP = remoteUDP)
         },
         onStopVoiceCall = { callerId -> vm.stopVoiceCall(callerId, group = channel.id) },
+        onSetVoiceMuted = { muted -> vm.setVoiceMuted(muted) },
         onStartScreenShare = { vm.startScreenShare("", group = channel.id, fps = 15L) },
         onStopScreenShare = { vm.stopScreenShare("", group = channel.id) },
         onAnnotateScreen = { nx, ny, note ->
@@ -236,8 +240,10 @@ fun ChannelChatScreen(
         onRevokeMessage = { msgId -> vm.revokeMessage("", group = channel.id, msgID = msgId) },
         onMarkMessageRead = { msgId -> vm.markMessageRead("", group = channel.id, msgID = msgId) },
         onReactMessage = { msgId, emoji -> vm.reactMessage("", group = channel.id, msgID = msgId, emoji = emoji) },
+        onEditMessage = { msgId, newText -> vm.editMessage("", group = channel.id, msgID = msgId, newText = newText) },
         onPinMessage = { msgId -> vm.pinMessage("", group = channel.id, msgID = msgId) },
         onSetSessionE2EE = { secret -> vm.setSessionE2EE(secret) },
+        onLoadHistoryPage = { beforeTs -> vm.getHistoryPage(channel.id, beforeTS = beforeTs, limit = 50L) },
         onBack = onBack,
         onSend = { vm.sendChannelText(channel.id, it) },
         onAttach = { path -> vm.offerFileToChannel(channel.id, path) },
@@ -301,14 +307,17 @@ private fun ConversationScaffold(
     onStartVoiceCall: () -> Unit = {},
     onAcceptVoiceCall: (String, String) -> Unit = { _, _ -> },
     onStopVoiceCall: (String) -> Unit = {},
+    onSetVoiceMuted: (Boolean) -> Unit = {},
     onStartScreenShare: () -> Unit = {},
     onStopScreenShare: () -> Unit = {},
     onAnnotateScreen: (Double, Double, String) -> Unit = { _, _, _ -> },
     onRevokeMessage: (String) -> Unit = {},
     onMarkMessageRead: (String) -> Unit = {},
     onReactMessage: (String, String) -> Unit = { _, _ -> },
+    onEditMessage: (String, String) -> Unit = { _, _ -> },
     onPinMessage: (String) -> Unit = {},
     onSetSessionE2EE: (String) -> Unit = {},
+    onLoadHistoryPage: (Long) -> Unit = {},
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onAttach: (String) -> Unit,
@@ -324,6 +333,7 @@ private fun ConversationScaffold(
     val clipboard = LocalClipboardManager.current
     var input by remember { mutableStateOf("") }
     var replyTarget by remember { mutableStateOf<ChatMessage?>(null) }
+    var editTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var showStickerPanel by remember { mutableStateOf(false) }
     var showVoicePanel by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
@@ -786,7 +796,10 @@ private fun ConversationScaffold(
                                 }
                             } else {
                                 OutlinedButton(
-                                    onClick = { callMuted = !callMuted },
+                                    onClick = {
+                                        callMuted = !callMuted
+                                        onSetVoiceMuted(callMuted)
+                                    },
                                     shape = RoundedCornerShape(16.dp),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                                     modifier = Modifier.height(28.dp),
@@ -801,6 +814,7 @@ private fun ConversationScaffold(
                                 onClick = {
                                     inVoiceCall = false
                                     callMuted = false
+                                    onSetVoiceMuted(false)
                                     onStopVoiceCall(callerId)
                                 },
                                 shape = RoundedCornerShape(16.dp),
@@ -922,6 +936,23 @@ private fun ConversationScaffold(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (messages.isNotEmpty()) {
+                    item(key = "history-load-more") {
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            OutlinedButton(
+                                onClick = { onLoadHistoryPage(messages.first().timestamp) },
+                                shape = RoundedCornerShape(50),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp),
+                            ) {
+                                Text("📜 加载更早历史消息", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
                 items(messages, key = { it.msgId }) { message ->
                     MessageBubbleRow(
                         message = message,
@@ -937,6 +968,7 @@ private fun ConversationScaffold(
                         onRevoke = { onRevokeMessage(message.msgId) },
                         onMarkRead = { onMarkMessageRead(message.msgId) },
                         onReact = { onReactMessage(message.msgId, "👍") },
+                        onEdit = { editTarget = message },
                         onPin = { onPinMessage(message.msgId) },
                         onReEdit = { original ->
                             val clean = Conversations.extractEditableOriginal(original)
@@ -1343,6 +1375,48 @@ private fun ConversationScaffold(
             },
         )
     }
+
+    val activeEdit = editTarget
+    if (activeEdit != null) {
+        EditMessageDialog(
+            initialText = Conversations.extractEditableOriginal(activeEdit.text),
+            onDismiss = { editTarget = null },
+            onConfirm = { newText ->
+                onEditMessage(activeEdit.msgId, newText)
+                editTarget = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun EditMessageDialog(
+    initialText: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var draft by remember(initialText) { mutableStateOf(initialText) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("✏️ 编辑已发送消息") },
+        text = {
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                maxLines = 4,
+                label = { Text("修改消息内容") },
+            )
+        },
+        confirmButton = {
+            TextButton(
+                enabled = draft.isNotBlank(),
+                onClick = { onConfirm(draft.trim()) },
+            ) { Text("保存修改") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.dialog_cancel)) }
+        },
+    )
 }
 
 @Composable
@@ -1379,6 +1453,7 @@ private fun MessageBubbleRow(
     onRevoke: () -> Unit,
     onMarkRead: () -> Unit,
     onReact: () -> Unit = {},
+    onEdit: () -> Unit = {},
     onPin: () -> Unit = {},
     onReEdit: (String) -> Unit = {},
     onCopy: (String) -> Unit = {},
@@ -1743,6 +1818,13 @@ private fun MessageBubbleRow(
                             },
                         )
                         if (!message.inbound) {
+                            DropdownMenuItem(
+                                text = { Text("✏️ 编辑消息") },
+                                onClick = {
+                                    showMenu = false
+                                    onEdit()
+                                },
+                            )
                             DropdownMenuItem(
                                 text = { Text("↩️ 撤回消息") },
                                 onClick = {

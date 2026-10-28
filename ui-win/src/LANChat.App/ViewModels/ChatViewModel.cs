@@ -841,7 +841,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                 msgID = message.MsgId,
                 emoji,
             });
-            ApplyReaction(message.MsgId, emoji);
+            UpdateMessageDisplay(message.MsgId, m => m.Text.Contains($" [{emoji}]", StringComparison.Ordinal) ? m.Text : $"{m.Text} [{emoji}]");
         }
         catch (Exception ex)
         {
@@ -866,7 +866,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                 msgID = message.MsgId,
                 newText = trimmed,
             });
-            ApplyEdit(message.MsgId, $"{trimmed} (已编辑)");
+            UpdateMessageDisplay(message.MsgId, _ => $"{trimmed} (已编辑)");
         }
         catch (Exception ex)
         {
@@ -889,7 +889,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                 group = CurrentChannel?.Id ?? "",
                 msgID = message.MsgId,
             });
-            ApplyPin(message.MsgId);
+            UpdateMessageDisplay(message.MsgId, m => m.Text.StartsWith("📌 ", StringComparison.Ordinal) ? m.Text : $"📌 {m.Text}");
         }
         catch (Exception ex)
         {
@@ -912,7 +912,7 @@ public sealed partial class ChatViewModel : ViewModelBase
                 group = CurrentChannel?.Id ?? "",
                 msgID = message.MsgId,
             });
-            MarkMessageRead(message.MsgId);
+            MarkRead(message.MsgId, SelfId);
         }
         catch (Exception ex)
         {
@@ -1409,6 +1409,9 @@ public sealed partial class ChatViewModel : ViewModelBase
             dirPath,
         });
     }
+
+    /// <summary>v5.2: 拖拽或选取目录触发增量同步。</summary>
+    public Task SyncFolderAsync(string dirPath) => SyncFolderExplicitAsync(dirPath);
 
     /// <summary>v5.0: 签发与校验零信任节点准入证书（IssueTrustCert / VerifyTrustCert RPC）。</summary>
     public async Task<string> IssueAndVerifyTrustCertAsync(string subject, string org)

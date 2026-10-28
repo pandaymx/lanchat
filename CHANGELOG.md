@@ -1,5 +1,21 @@
 # Changelog
 
+## [6.0.0](https://github.com/pandaymx/lanchat/compare/v5.3.0...v6.0.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **appapi:** upgrade to v6.0.0 with IPC contract v1.4 (37 methods) adding explicit RPC methods for message interactions (RevokeMessage, ReactMessage, EditMessage, PinMessage, MarkMessageRead) and session security controls (SetSessionE2EE, SetAutoClipboard, SetDND, GetHistoryPage)
+
+### Features
+
+* **appapi:** upgrade contract to v1.4 with structured message RPCs ([ca6d384](https://github.com/pandaymx/lanchat/commit/ca6d3841d678c5dff099028f8e805a3a31f18dd7))
+
+
+### Bug Fixes
+
+* **core:** remove unused packDirectoryToZip helper ([6c12cc2](https://github.com/pandaymx/lanchat/commit/6c12cc29c11e282a82bb7d08da08a177ce50ace6))
+
 ## [5.3.0](https://github.com/pandaymx/lanchat/compare/v5.2.0...v5.3.0) (2026-10-28)
 
 

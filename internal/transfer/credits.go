@@ -1,5 +1,7 @@
 package transfer
 
+import "time"
+
 // 信用窗口与分片大小（方案 §5.3/§15）。
 const (
 	// MinCreditBytes 初始窗口大小 1 MiB。
@@ -9,6 +11,51 @@ const (
 	// ChunkSize 每次 DATA 携带 1 MiB。
 	ChunkSize = 1 << 20
 )
+
+// RecommendStreamCount 根据探测到的链路 RTT 与文件大小自适应推荐并发 TCP 流数（阶段三 v6.3.0）：
+//   - 小文件（< 4 MiB）：单流直传，避免多流建连开销；
+//   - 物理局域网低延迟（RTT <= 2ms）：中文件 2 流，大文件（>= 32 MiB）4 流；
+//   - Tailscale / 跨网段中延迟（2ms < RTT <= 25ms）：中文件 4 流，大文件 6 流以充分填满 BDP 管道；
+//   - 高延迟跨地域隧道（RTT > 25ms）：大文件扩展至 8 流。
+func RecommendStreamCount(rtt time.Duration, fileSize int64) int {
+	if fileSize < 4<<20 {
+		return 1
+	}
+	large := fileSize >= 32<<20
+	switch {
+	case rtt <= 2*time.Millisecond:
+		if large {
+			return 4
+		}
+		return 2
+	case rtt <= 25*time.Millisecond:
+		if large {
+			return 6
+		}
+		return 4
+	default:
+		if large {
+			return 8
+		}
+		return 4
+	}
+}
+
+// AdaptiveCreditWindow 根据实时 RTT 与吞吐率估算带宽时延积（2 * BDP），
+// 在 [MinCreditBytes, MaxCreditBytes] 区间内动态计算最优接收信用窗口（阶段三 v6.3.0）。
+func AdaptiveCreditWindow(rtt time.Duration, throughputBps int64) int64 {
+	if rtt <= 0 || throughputBps <= 0 {
+		return MinCreditBytes
+	}
+	bdp := int64(float64(throughputBps) * rtt.Seconds() * 2.0)
+	if bdp < MinCreditBytes {
+		return MinCreditBytes
+	}
+	if bdp > MaxCreditBytes {
+		return MaxCreditBytes
+	}
+	return bdp
+}
 
 // creditWindow 维护发送侧「已发送未确认」字节窗口。
 //

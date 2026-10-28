@@ -23,10 +23,14 @@ func maxActiveSeeds(n int) int {
 	return c
 }
 
+// EndgameRemainingBlocks 定义触发 Endgame 尾块并发抢占的剩余缺失块阈值（阶段三 v6.3.0）。
+const EndgameRemainingBlocks = 2
+
 // Swarm 是一次文件 1:N 分发中单个节点（成员）的运行时状态。
 //
 // 源节点（source=true）持有全部块并供块；接收节点用位图记录进度，按
-// rarest-first 向当前可得的种子请求缺失块，收齐后自动升级为 seeder。
+// rarest-first 向当前可得的种子请求缺失块，并在剩余块数 <= EndgameRemainingBlocks 时
+// 自动进入 Endgame 尾块并发抢占模式，收齐后自动升级为 seeder。
 // 所有方法并发安全；消息通过 HandleMsg 进入、Transport 发出。
 type Swarm struct {
 	groupID    string
@@ -38,10 +42,13 @@ type Swarm struct {
 	tr   Transport
 	sink EventSink
 
-	mu      sync.Mutex
-	blocks  int
-	have    *bitmap
-	members map[string]*member
+	mu        sync.Mutex
+	blocks    int
+	have      *bitmap
+	members   map[string]*member
+	inflight  map[int]map[string]bool
+	peerLoad  map[string]int
+	inEndgame bool
 }
 
 // NewSource 构造发送方（最初唯一 seeder）节点。recipients 为接收成员 ID。
@@ -74,8 +81,10 @@ func NewReceiver(groupID, transferID, selfID string, src BlockSource, participan
 	s := &Swarm{
 		groupID: groupID, transferID: transferID, selfID: selfID,
 		src: src, tr: tr, sink: sink,
-		have:    newBitmap(src.BlockCount()),
-		members: make(map[string]*member, len(participants)),
+		have:     newBitmap(src.BlockCount()),
+		members:  make(map[string]*member, len(participants)),
+		inflight: make(map[int]map[string]bool),
+		peerLoad: make(map[string]int, len(participants)),
 	}
 	s.blocks = src.BlockCount()
 	for _, id := range participants {
@@ -247,6 +256,7 @@ func (s *Swarm) handleBlock(msg Msg) {
 
 	s.mu.Lock()
 	s.have.set(idx)
+	delete(s.inflight, idx)
 	if m, ok := s.members[msg.From]; ok {
 		m.have.set(idx)
 	}
@@ -304,9 +314,49 @@ func (s *Swarm) promoteSeeder() {
 	s.emitMatrix()
 }
 
-// requestNext 按 rarest-first 选择一个缺失块，并向持有它的种子发起请求。
-// 简化版稀缺统计：仅统计当前成员位图中各缺失块的持有者数，取最少者；
-// 同稀缺度取最小下标，保证调度确定性。每个节点同时只挂一个在途请求。
+// IsEndgame 返回当前接收节点是否已进入 Endgame 尾块并发抢占阶段（阶段三 v6.3.0）。
+func (s *Swarm) IsEndgame() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inEndgame
+}
+
+// RarityRanking 返回当前缺失且至少有 1 个持有者的块下标列表，按 Rarest-First（持有者数升序，同稀缺度按块下标升序）排列（阶段三 v6.3.0）。
+func (s *Swarm) RarityRanking() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	missing := s.have.missing(s.blocks)
+	counts := make(map[int]int, len(missing))
+	var ranked []int
+	for _, idx := range missing {
+		c := 0
+		for _, m := range s.members {
+			if m.have.has(idx) {
+				c++
+			}
+		}
+		if c > 0 {
+			counts[idx] = c
+			ranked = append(ranked, idx)
+		}
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		ci, cj := counts[ranked[i]], counts[ranked[j]]
+		if ci != cj {
+			return ci < cj
+		}
+		return ranked[i] < ranked[j]
+	})
+	return ranked
+}
+
+type blockReq struct {
+	to  string
+	idx int
+}
+
+// requestNext 按 rarest-first 选择缺失块并结合种子负载均衡（peerLoad）发起请求；
+// 当剩余缺失块数 <= EndgameRemainingBlocks 时自动激活 Endgame 模式，向所有可用持有者并发抢占尾块（阶段三 v6.3.0）。
 func (s *Swarm) requestNext() {
 	s.mu.Lock()
 	if s.source {
@@ -318,37 +368,91 @@ func (s *Swarm) requestNext() {
 		s.mu.Unlock()
 		return
 	}
-	// holders[block] = 当前持有该块、可供请求的成员 ID 列表。
+	if s.inflight == nil {
+		s.inflight = make(map[int]map[string]bool)
+	}
+	if s.peerLoad == nil {
+		s.peerLoad = make(map[string]int)
+	}
+
+	// holders[block] = 当前持有该块的成员 ID 列表，按 (peerLoad, id) 升序排列以均衡多个 seeder 负载。
 	holders := make(map[int][]string, len(missing))
+	var ranked []int
 	for _, idx := range missing {
+		var hs []string
 		for _, m := range s.members {
 			if m.have.has(idx) {
-				holders[idx] = append(holders[idx], m.id)
+				hs = append(hs, m.id)
 			}
 		}
-	}
-	best := -1
-	bestHolders := -1
-	for _, idx := range missing {
-		h := len(holders[idx])
-		if h == 0 {
-			continue
+		if len(hs) > 0 {
+			sort.Slice(hs, func(i, j int) bool {
+				li, lj := s.peerLoad[hs[i]], s.peerLoad[hs[j]]
+				if li != lj {
+					return li < lj
+				}
+				return hs[i] < hs[j]
+			})
+			holders[idx] = hs
+			ranked = append(ranked, idx)
 		}
-		if best == -1 || h < bestHolders || (h == bestHolders && idx < best) {
-			best = idx
-			bestHolders = h
-		}
 	}
-	var target string
-	if best >= 0 {
-		target = holders[best][0]
+	if len(ranked) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	sort.Slice(ranked, func(i, j int) bool {
+		hi, hj := len(holders[ranked[i]]), len(holders[ranked[j]])
+		if hi != hj {
+			return hi < hj
+		}
+		return ranked[i] < ranked[j]
+	})
+
+	var reqs []blockReq
+	if len(missing) <= EndgameRemainingBlocks && s.blocks > EndgameRemainingBlocks {
+		enteringEndgame := !s.inEndgame
+		s.inEndgame = true
+		for _, idx := range ranked {
+			if enteringEndgame || s.inflight[idx] == nil {
+				s.inflight[idx] = make(map[string]bool)
+			}
+			sentForIdx := 0
+			for _, h := range holders[idx] {
+				if !s.inflight[idx][h] {
+					s.inflight[idx][h] = true
+					s.peerLoad[h]++
+					reqs = append(reqs, blockReq{to: h, idx: idx})
+					sentForIdx++
+				}
+			}
+			if sentForIdx == 0 && len(holders[idx]) > 0 {
+				h := holders[idx][0]
+				s.peerLoad[h]++
+				reqs = append(reqs, blockReq{to: h, idx: idx})
+			}
+		}
+	} else {
+		best := ranked[0]
+		for _, idx := range ranked {
+			if len(s.inflight[idx]) == 0 {
+				best = idx
+				break
+			}
+		}
+		target := holders[best][0]
+		if s.inflight[best] == nil {
+			s.inflight[best] = make(map[string]bool)
+		}
+		s.inflight[best][target] = true
+		s.peerLoad[target]++
+		reqs = append(reqs, blockReq{to: target, idx: best})
 	}
 	s.mu.Unlock()
 
-	if best < 0 {
-		return
+	for _, r := range reqs {
+		s.tr.Send(Msg{From: s.selfID, To: r.to, Frame: frameRequest, Payload: encodeBlockIdx(r.idx)})
 	}
-	s.tr.Send(Msg{From: s.selfID, To: target, Frame: frameRequest, Payload: encodeBlockIdx(best)})
 }
 
 // emitMatrix 计算成员矩阵并上抛（源节点视角）。

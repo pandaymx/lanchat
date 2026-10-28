@@ -79,3 +79,24 @@ func TestCreditAcquireNonPositive(t *testing.T) {
 		t.Fatal("非正请求应返回 0")
 	}
 }
+
+func TestRecommendStreamCountAndAdaptiveCreditWindow(t *testing.T) {
+	if n := RecommendStreamCount(500_000, 1<<20); n != 1 {
+		t.Fatalf("small file stream count = %d, want 1", n)
+	}
+	if n := RecommendStreamCount(1_000_000, 64<<20); n != 4 {
+		t.Fatalf("LAN large file stream count = %d, want 4", n)
+	}
+	if n := RecommendStreamCount(12_000_000, 64<<20); n != 6 {
+		t.Fatalf("Tailscale medium-RTT large file stream count = %d, want 6", n)
+	}
+	if n := RecommendStreamCount(45_000_000, 64<<20); n != 8 {
+		t.Fatalf("high-RTT large file stream count = %d, want 8", n)
+	}
+	if win := AdaptiveCreditWindow(0, 0); win != MinCreditBytes {
+		t.Fatalf("AdaptiveCreditWindow(0, 0) = %d, want %d", win, MinCreditBytes)
+	}
+	if win := AdaptiveCreditWindow(20_000_000, 100<<20); win != MaxCreditBytes {
+		t.Fatalf("AdaptiveCreditWindow(20ms, 100MB/s) = %d, want cap %d", win, MaxCreditBytes)
+	}
+}

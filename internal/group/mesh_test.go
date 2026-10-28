@@ -250,3 +250,78 @@ func TestSortedDeterminism(t *testing.T) {
 		t.Fatal("排序失败")
 	}
 }
+
+func TestRarestFirstRankingAndEndgamePreemption(t *testing.T) {
+	const totalBlocks = 5
+	store := newRecvStore(totalBlocks)
+
+	var (
+		mu   sync.Mutex
+		sent []Msg
+	)
+	recTr := TransportFunc(func(m Msg) {
+		mu.Lock()
+		sent = append(sent, m)
+		mu.Unlock()
+	})
+
+	// 构造接收方：包含 3 个同伴节点（p1, p2, p3）
+	s := NewReceiver("g1", "tx-rarest", "self", store, []string{"self", "p1", "p2", "p3"}, nil, recTr, nil)
+
+	// 模拟不同节点的块可用性矩阵：
+	// - 块 0: p1, p2, p3 均持有 (3 holders)
+	// - 块 1: p1, p2 持有 (2 holders)
+	// - 块 2: 仅 p3 持有 (1 holder -> 最稀缺！)
+	// - 块 3: p1, p3 持有 (2 holders)
+	// - 块 4: p2, p3 持有 (2 holders)
+	for _, id := range []string{"p1", "p2", "p3"} {
+		s.HandleMsg(Msg{From: id, To: "self", Frame: frameHave, Payload: encodeBlockIdx(0)})
+	}
+	s.HandleMsg(Msg{From: "p1", To: "self", Frame: frameHave, Payload: encodeBlockIdx(1)})
+	s.HandleMsg(Msg{From: "p2", To: "self", Frame: frameHave, Payload: encodeBlockIdx(1)})
+	s.HandleMsg(Msg{From: "p3", To: "self", Frame: frameHave, Payload: encodeBlockIdx(2)})
+	s.HandleMsg(Msg{From: "p1", To: "self", Frame: frameHave, Payload: encodeBlockIdx(3)})
+	s.HandleMsg(Msg{From: "p3", To: "self", Frame: frameHave, Payload: encodeBlockIdx(3)})
+	s.HandleMsg(Msg{From: "p2", To: "self", Frame: frameHave, Payload: encodeBlockIdx(4)})
+	s.HandleMsg(Msg{From: "p3", To: "self", Frame: frameHave, Payload: encodeBlockIdx(4)})
+
+	ranking := s.RarityRanking()
+	if len(ranking) != 5 || ranking[0] != 2 || ranking[4] != 0 {
+		t.Fatalf("RarityRanking() = %v, want rarest block 2 first and commonest block 0 last", ranking)
+	}
+	if s.IsEndgame() {
+		t.Fatal("should not be in endgame when 5 blocks are missing")
+	}
+
+	// 写入前 3 个块（块 2、块 1、块 3），剩余 2 个缺失块（块 4、块 0）应自动触发 Endgame 并发抢占
+	blkData := bytes.Repeat([]byte{'A'}, 64)
+	s.HandleMsg(Msg{From: "p3", To: "self", Frame: frameBlock, Payload: encodeBlock(2, blkData)})
+	s.HandleMsg(Msg{From: "p1", To: "self", Frame: frameBlock, Payload: encodeBlock(1, blkData)})
+	mu.Lock()
+	sent = nil
+	mu.Unlock()
+	s.HandleMsg(Msg{From: "p1", To: "self", Frame: frameBlock, Payload: encodeBlock(3, blkData)})
+
+	if !s.IsEndgame() {
+		t.Fatal("expected receiver to enter Endgame mode when remaining missing blocks <= 2")
+	}
+	mu.Lock()
+	var endgameReqTargets []string
+	for _, m := range sent {
+		if m.Frame == frameRequest {
+			idx, _ := decodeBlockIdx(m.Payload)
+			if idx == 4 {
+				endgameReqTargets = append(endgameReqTargets, m.To)
+			}
+		}
+	}
+	mu.Unlock()
+	sort.Strings(endgameReqTargets)
+	if len(endgameReqTargets) < 2 || endgameReqTargets[0] != "p2" || endgameReqTargets[1] != "p3" {
+		t.Fatalf("expected Endgame mode to request tail block 4 redundantly from both p2 and p3, got %v", endgameReqTargets)
+	}
+}
+
+type TransportFunc func(Msg)
+
+func (f TransportFunc) Send(m Msg) { f(m) }

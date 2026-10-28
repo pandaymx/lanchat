@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.0.1](https://github.com/pandaymx/lanchat/compare/v7.0.0...v7.0.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **appapi:** allow schemaVersion 1.5 in TestSchemaIsValidV1 ([14de158](https://github.com/pandaymx/lanchat/commit/14de158daa6f4074f4b769679e3c814c4052ff22))
+
 ## [7.0.0](https://github.com/pandaymx/lanchat/compare/v6.3.0...v7.0.0) (2026-10-28)
 
 

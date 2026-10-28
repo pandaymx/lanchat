@@ -1,7 +1,9 @@
 package dev.lanchat.core
 
+import dev.lanchat.model.Formatters
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -83,5 +85,56 @@ class ChannelJsonDecodeTest {
         val channel = state.channels.single()
         assertTrue(channel.private)
         assertEquals("M9", channel.topic)
+    }
+
+    @Test
+    fun decodeState_mapsVoiceCallAndScreenShareAndDualStackBadge() {
+        val payload = """
+            {
+              "conn": "connected",
+              "server": "100.105.48.87:9090",
+              "selfId": "me",
+              "nickname": "本机",
+              "peers": [],
+              "transfers": [],
+              "channels": [],
+              "voiceCall": {
+                "state": "ringing",
+                "peerId": "p1",
+                "groupId": "",
+                "localAddr": "127.0.0.1:50001",
+                "remoteAddr": "100.105.48.87:50002",
+                "framesIn": 12,
+                "framesOut": 8
+              },
+              "screenShare": {
+                "active": true,
+                "peerId": "p1",
+                "groupId": "",
+                "fps": 15,
+                "latestFrame": "data:image/jpeg;base64,AA=="
+              }
+            }
+        """.trimIndent().toByteArray()
+
+        val state = decodeState(payload)
+
+        val vc = state.voiceCall
+        assertNotNull(vc)
+        assertEquals("ringing", vc!!.state)
+        assertEquals("p1", vc.peerId)
+        assertEquals("100.105.48.87:50002", vc.remoteAddr)
+        assertEquals(12L, vc.framesIn)
+
+        val ss = state.screenShare
+        assertNotNull(ss)
+        assertTrue(ss!!.active)
+        assertEquals("p1", ss.peerId)
+        assertEquals(15, ss.fps)
+        assertEquals("data:image/jpeg;base64,AA==", ss.latestFrame)
+
+        assertTrue(Formatters.isTailscaleAddress(state.server))
+        assertEquals("🌐 Tailscale 直连", Formatters.linkBadge(state.server))
+        assertEquals("⚡ 局域网直连", Formatters.linkBadge("192.168.1.10:9090"))
     }
 }

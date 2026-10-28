@@ -17,4 +17,27 @@ object Formatters {
     }
 
     fun speed(bytesPerSecond: Long): String = "${size(bytesPerSecond)}/s"
+
+    fun isTailscaleAddress(raw: String): Boolean {
+        var s = raw.trim()
+        for (prefix in listOf("ws://", "wss://", "http://", "https://")) {
+            if (s.startsWith(prefix, ignoreCase = true)) {
+                s = s.substring(prefix.length)
+                break
+            }
+        }
+        s = s.substringBefore('/').substringBefore(':')
+        val parts = s.split('.')
+        if (parts.size != 4) return false
+        val a = parts[0].toIntOrNull() ?: return false
+        val b = parts[1].toIntOrNull() ?: return false
+        return a == 100 && b in 64..127
+    }
+
+    fun linkBadge(server: String, peerStatus: String = ""): String =
+        if (isTailscaleAddress(server) || isTailscaleAddress(peerStatus)) {
+            "🌐 Tailscale 直连"
+        } else {
+            "⚡ 局域网直连"
+        }
 }

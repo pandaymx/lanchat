@@ -12,6 +12,9 @@ final class AppStore: ObservableObject {
     @Published var messagesByPeer: [String: [ChatMessage]] = [:]
     @Published var matrixSummary: [String: String] = [:]
     @Published var channels: [Channel] = []
+    @Published var voiceCall: VoiceCallState? = nil
+    @Published var screenShare: ScreenShareState? = nil
+    @Published var screenFramesByConversation: [String: String] = [:]
     @Published var updateStatus: String = "内置国内加速节点：ghfast.top · gh-proxy.com · ghproxy.net · mirror.ghproxy.com · ghps.cc"
     @Published var busy = false
     @Published var error: String?
@@ -283,6 +286,57 @@ final class AppStore: ObservableObject {
         }
     }
 
+    // MARK: - 契约 v1.3 实时音视频与屏幕共享（v5.1.0）
+
+    func startVoiceCall(to: String, group: String = "") {
+        run {
+            _ = try await self.engine.startVoiceCall(to: to, group: group)
+            await self.refresh()
+        }
+    }
+
+    func acceptVoiceCall(to: String, group: String = "", remoteUDP: String = "") {
+        run {
+            _ = try await self.engine.acceptVoiceCall(to: to, group: group, remoteUDP: remoteUDP)
+            await self.refresh()
+        }
+    }
+
+    func stopVoiceCall(to: String, group: String = "") {
+        run {
+            try await self.engine.stopVoiceCall(to: to, group: group)
+            self.voiceCall = VoiceCallState(state: "idle")
+            await self.refresh()
+        }
+    }
+
+    func startScreenShare(to: String, group: String = "", fps: Int = 15) {
+        run {
+            _ = try await self.engine.startScreenShare(to: to, group: group, fps: fps)
+            await self.refresh()
+        }
+    }
+
+    func stopScreenShare(to: String, group: String = "") {
+        let key = group.isEmpty ? to : group
+        screenFramesByConversation.removeValue(forKey: key)
+        screenShare = nil
+        run {
+            try await self.engine.stopScreenShare(to: to, group: group)
+            await self.refresh()
+        }
+    }
+
+    func sendScreenAnnotation(to: String, group: String = "", normX: Double, normY: Double, note: String = "") {
+        run {
+            try await self.engine.sendScreenAnnotation(to: to, group: group, normX: normX, normY: normY, note: note)
+        }
+    }
+
+    func clearScreenFrame(for key: String) {
+        screenFramesByConversation.removeValue(forKey: key)
+    }
+
     // MARK: - 事件处理
 
     private func handle(_ event: CoreEvent) {
@@ -309,6 +363,34 @@ final class AppStore: ObservableObject {
                 return
             }
             if type == "CLIP_SYNC" {
+                return
+            }
+            if type == "VOICE_CALL_OFFER" {
+                let remoteUDP = text.components(separatedBy: "]").last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                voiceCall = VoiceCallState(state: "ringing", peerId: from, groupId: group, remoteAddr: remoteUDP)
+                Task { await refresh() }
+                return
+            }
+            if type == "VOICE_CALL" {
+                if text.contains("已结束") {
+                    voiceCall = VoiceCallState(state: "idle")
+                } else {
+                    let remoteUDP = text.components(separatedBy: "]").last?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    voiceCall = VoiceCallState(state: "active", peerId: from, groupId: group, remoteAddr: remoteUDP)
+                }
+                Task { await refresh() }
+                return
+            }
+            if type == "SCREEN_FRAME" {
+                let convKey = group.isEmpty ? from : group
+                screenFramesByConversation[convKey] = text
+                screenShare = ScreenShareState(active: true, peerId: from, groupId: group, fps: 15, latestFrame: text)
+                return
+            }
+            if type == "SCREEN_SHARE" && text.contains("已结束") {
+                let convKey = group.isEmpty ? from : group
+                screenFramesByConversation.removeValue(forKey: convKey)
+                screenShare = nil
                 return
             }
             if type == "MSG_READ" {
@@ -358,6 +440,14 @@ final class AppStore: ObservableObject {
         peers = s.peers
         transfers = s.transfers
         channels = s.channels
+        voiceCall = s.voiceCall
+        screenShare = s.screenShare
+        if let ss = s.screenShare, !ss.latestFrame.isEmpty {
+            let key = ss.groupId.isEmpty ? ss.peerId : ss.groupId
+            if !key.isEmpty {
+                screenFramesByConversation[key] = ss.latestFrame
+            }
+        }
         for m in s.messages {
             appendMessage(m)
         }

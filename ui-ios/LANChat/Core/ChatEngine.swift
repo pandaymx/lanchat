@@ -421,6 +421,46 @@ struct HistoryMessageJSON: Decodable {
     }
 }
 
+struct VoiceCallStateJSON: Decodable {
+    let state: String?
+    let peerId: String?
+    let groupId: String?
+    let localAddr: String?
+    let remoteAddr: String?
+    let framesIn: Int64?
+    let framesOut: Int64?
+
+    func toModel() -> VoiceCallState {
+        VoiceCallState(
+            state: (state?.isEmpty ?? true) ? "idle" : state!,
+            peerId: peerId ?? "",
+            groupId: groupId ?? "",
+            localAddr: localAddr ?? "",
+            remoteAddr: remoteAddr ?? "",
+            framesIn: framesIn ?? 0,
+            framesOut: framesOut ?? 0
+        )
+    }
+}
+
+struct ScreenShareStateJSON: Decodable {
+    let active: Bool?
+    let peerId: String?
+    let groupId: String?
+    let fps: Int?
+    let latestFrame: String?
+
+    func toModel() -> ScreenShareState {
+        ScreenShareState(
+            active: active ?? false,
+            peerId: peerId ?? "",
+            groupId: groupId ?? "",
+            fps: fps ?? 0,
+            latestFrame: latestFrame ?? ""
+        )
+    }
+}
+
 struct StateJSON: Decodable {
     let conn: String
     let server: String?
@@ -430,6 +470,8 @@ struct StateJSON: Decodable {
     let transfers: [TransferJSON]?
     let channels: [ChannelJSON]?
     let messages: [HistoryMessageJSON]?
+    let voiceCall: VoiceCallStateJSON?
+    let screenShare: ScreenShareStateJSON?
 
     func toModel() -> FullState {
         let myId = selfId ?? ""
@@ -441,7 +483,9 @@ struct StateJSON: Decodable {
             peers: peers?.map { $0.toModel() } ?? [],
             transfers: transfers?.map { $0.toModel() } ?? [],
             channels: channels?.map { $0.toModel() } ?? [],
-            messages: messages?.map { $0.toModel(selfId: myId) } ?? []
+            messages: messages?.map { $0.toModel(selfId: myId) } ?? [],
+            voiceCall: voiceCall?.toModel(),
+            screenShare: screenShare?.toModel()
         )
     }
 }

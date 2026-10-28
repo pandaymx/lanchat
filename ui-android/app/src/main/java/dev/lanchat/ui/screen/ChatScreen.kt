@@ -17,6 +17,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -85,6 +86,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -101,7 +103,9 @@ import dev.lanchat.R
 import dev.lanchat.model.Channel
 import dev.lanchat.model.ChatMessage
 import dev.lanchat.model.Conversations
+import dev.lanchat.model.Formatters
 import dev.lanchat.model.Peer
+import dev.lanchat.model.VoiceCallState
 import dev.lanchat.ui.AppUi
 import dev.lanchat.ui.AppViewModel
 import dev.lanchat.ui.theme.QqAvatar
@@ -142,8 +146,9 @@ fun ChatScreen(
     vm: AppViewModel,
     onBack: () -> Unit,
 ) {
+    val linkBadge = Formatters.linkBadge(state.server, peer.status)
     val sub = buildString {
-        append("在线 · P2P 直连")
+        append("在线 · $linkBadge")
         if (peer.os.isNotEmpty()) append(" · ${peer.os}")
     }
     ConversationScaffold(
@@ -156,14 +161,26 @@ fun ChatScreen(
             state.messagesByConversation,
             Conversations.peerKey(peer.id),
         ),
-        screenFrame = state.screenFramesByConversation[Conversations.peerKey(peer.id)],
+        voiceCall = state.voiceCall,
+        screenFrame = state.screenFramesByConversation[Conversations.peerKey(peer.id)]
+            ?: state.screenShare?.latestFrame?.takeIf { it.isNotEmpty() && state.screenShare.peerId == peer.id },
         onClearScreenFrame = { vm.clearScreenFrame(Conversations.peerKey(peer.id)) },
+        onStartVoiceCall = { vm.startVoiceCall(peer.id) },
+        onAcceptVoiceCall = { callerId, remoteUDP ->
+            vm.acceptVoiceCall(callerId.ifEmpty { peer.id }, remoteUDP = remoteUDP)
+        },
+        onStopVoiceCall = { callerId -> vm.stopVoiceCall(callerId.ifEmpty { peer.id }) },
+        onStartScreenShare = { vm.startScreenShare(peer.id, fps = 15L) },
+        onStopScreenShare = { vm.stopScreenShare(peer.id) },
+        onAnnotateScreen = { nx, ny, note ->
+            vm.sendScreenAnnotation(peer.id, normX = nx, normY = ny, note = note)
+        },
         onBack = onBack,
         onSend = { vm.sendText(peer.id, it) },
         onAttach = { path -> vm.offerFile(peer.id, path) },
         onSendSticker = { path -> vm.sendSticker(peer.id, path) },
         showSender = false,
-        peerNameOf = { peer.nickname.ifEmpty { peer.id } },
+        peerNameOf = { id -> peerDisplayName(state, id).ifEmpty { peer.nickname.ifEmpty { peer.id } } },
     )
 }
 
@@ -179,8 +196,9 @@ fun ChannelChatScreen(
     var showInvite by remember { mutableStateOf(false) }
     val isBroadcast = channel.id == "*"
     val isOwner = !isBroadcast && channel.ownerId == state.selfId && state.selfId.isNotEmpty()
+    val linkBadge = Formatters.linkBadge(state.server)
     val sub = buildString {
-        append("${channel.members.size.coerceAtLeast(1)} 人")
+        append("${channel.members.size.coerceAtLeast(1)} 人 · $linkBadge")
         if (channel.topic.isNotEmpty()) append(" · ${channel.topic}")
     }
 
@@ -196,8 +214,20 @@ fun ChannelChatScreen(
             state.messagesByConversation,
             Conversations.groupKey(channel.id),
         ),
-        screenFrame = state.screenFramesByConversation[Conversations.groupKey(channel.id)],
+        voiceCall = state.voiceCall,
+        screenFrame = state.screenFramesByConversation[Conversations.groupKey(channel.id)]
+            ?: state.screenShare?.latestFrame?.takeIf { it.isNotEmpty() && state.screenShare.groupId == channel.id },
         onClearScreenFrame = { vm.clearScreenFrame(Conversations.groupKey(channel.id)) },
+        onStartVoiceCall = { vm.startVoiceCall("", group = channel.id) },
+        onAcceptVoiceCall = { callerId, remoteUDP ->
+            vm.acceptVoiceCall(callerId, group = channel.id, remoteUDP = remoteUDP)
+        },
+        onStopVoiceCall = { callerId -> vm.stopVoiceCall(callerId, group = channel.id) },
+        onStartScreenShare = { vm.startScreenShare("", group = channel.id, fps = 15L) },
+        onStopScreenShare = { vm.stopScreenShare("", group = channel.id) },
+        onAnnotateScreen = { nx, ny, note ->
+            vm.sendScreenAnnotation("", group = channel.id, normX = nx, normY = ny, note = note)
+        },
         onBack = onBack,
         onSend = { vm.sendChannelText(channel.id, it) },
         onAttach = { path -> vm.offerFileToChannel(channel.id, path) },
@@ -255,8 +285,15 @@ private fun ConversationScaffold(
     selfName: String = "我",
     selfSeed: String = "self",
     messages: List<ChatMessage>,
+    voiceCall: VoiceCallState? = null,
     screenFrame: String? = null,
     onClearScreenFrame: () -> Unit = {},
+    onStartVoiceCall: () -> Unit = {},
+    onAcceptVoiceCall: (String, String) -> Unit = { _, _ -> },
+    onStopVoiceCall: (String) -> Unit = {},
+    onStartScreenShare: () -> Unit = {},
+    onStopScreenShare: () -> Unit = {},
+    onAnnotateScreen: (Double, Double, String) -> Unit = { _, _, _ -> },
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onAttach: (String) -> Unit,
@@ -620,23 +657,24 @@ private fun ConversationScaffold(
                         )
                     }
                 }
+                val isCallActive = inVoiceCall || (voiceCall?.state in listOf("calling", "active", "in_call"))
                 TextButton(
                     onClick = {
-                        if (inVoiceCall) {
+                        if (isCallActive || voiceCall?.state == "ringing") {
                             inVoiceCall = false
                             callMuted = false
-                            onSend(if (showSender) "/voiceroom leave" else "/call stop")
+                            onStopVoiceCall(voiceCall?.peerId.orEmpty())
                         } else {
                             inVoiceCall = true
                             callMuted = false
-                            onSend(if (showSender) "/voiceroom join" else "/call start")
+                            onStartVoiceCall()
                         }
                     },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                 ) {
                     Text(
-                        text = if (inVoiceCall) "📵 挂断" else "📞 语音",
-                        color = if (inVoiceCall) Color(0xFFFFD6D6) else Color.White,
+                        text = if (isCallActive) "📵 挂断" else "📞 语音",
+                        color = if (isCallActive) Color(0xFFFFD6D6) else Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -661,7 +699,12 @@ private fun ConversationScaffold(
                 .fillMaxSize()
                 .background(qqChatBackgroundColor()),
         ) {
-            if (inVoiceCall) {
+            val callState = voiceCall?.state.orEmpty()
+            val isRinging = callState == "ringing"
+            val isCallActiveBanner = inVoiceCall || callState in listOf("ringing", "calling", "active", "in_call")
+            if (isCallActiveBanner) {
+                val callerId = voiceCall?.peerId?.takeIf { it.isNotEmpty() } ?: avatarSeed
+                val callerTitle = peerNameOf(callerId).ifEmpty { title }
                 val mm = (callDurationSec / 60).toString().padStart(2, '0')
                 val ss = (callDurationSec % 60).toString().padStart(2, '0')
                 Surface(
@@ -679,15 +722,21 @@ private fun ConversationScaffold(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.weight(1f),
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(9.dp)
-                                    .clip(CircleShape)
-                                    .background(QqOnlineGreen),
+                            QqAvatar(
+                                name = callerTitle,
+                                seed = callerId,
+                                size = 26.dp,
+                                fontSize = 11.sp,
+                                showOnlineDot = true,
+                                online = true,
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = "📞 局域网实时语音中 · $mm:$ss" + if (callMuted) " (已静音)" else "",
+                                text = if (isRinging) {
+                                    "🔔 [来电响铃] $callerTitle 邀请你进行实时低延迟语音通话"
+                                } else {
+                                    "📞 局域网实时语音中 · $callerTitle · $mm:$ss" + if (callMuted) " (已静音)" else ""
+                                },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color(0xFF15803D),
@@ -699,22 +748,45 @@ private fun ConversationScaffold(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            OutlinedButton(
-                                onClick = { callMuted = !callMuted },
-                                shape = RoundedCornerShape(16.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                                modifier = Modifier.height(28.dp),
-                            ) {
-                                Text(
-                                    text = if (callMuted) "🎙️ 开麦" else "🔇 静音",
-                                    fontSize = 11.sp,
-                                )
+                            if (isRinging) {
+                                Button(
+                                    onClick = {
+                                        inVoiceCall = true
+                                        callMuted = false
+                                        onAcceptVoiceCall(callerId, voiceCall?.remoteAddr.orEmpty())
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = QqOnlineGreen,
+                                        contentColor = Color.White,
+                                    ),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp),
+                                ) {
+                                    Text(
+                                        text = "🟢 接听",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = { callMuted = !callMuted },
+                                    shape = RoundedCornerShape(16.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp),
+                                ) {
+                                    Text(
+                                        text = if (callMuted) "🎙️ 开麦" else "🔇 静音",
+                                        fontSize = 11.sp,
+                                    )
+                                }
                             }
                             Button(
                                 onClick = {
                                     inVoiceCall = false
                                     callMuted = false
-                                    onSend(if (showSender) "/voiceroom leave" else "/call stop")
+                                    onStopVoiceCall(callerId)
                                 },
                                 shape = RoundedCornerShape(16.dp),
                                 colors = ButtonDefaults.buttonColors(
@@ -725,7 +797,7 @@ private fun ConversationScaffold(
                                 modifier = Modifier.height(28.dp),
                             ) {
                                 Text(
-                                    text = "📵 挂断",
+                                    text = "🔴 挂断",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                 )
@@ -758,7 +830,7 @@ private fun ConversationScaffold(
                         ) {
                             Text(
                                 text = if (decodedFrameBitmap != null) {
-                                    "🖥️ 正在接收 P2P 实时屏幕共享画布"
+                                    "🖥️ 正在接收 P2P 实时屏幕共享画布 · 点击画面发送激光笔批注"
                                 } else {
                                     "🖥️ 已开启 P2P 屏幕共享（15fps）"
                                 },
@@ -769,7 +841,7 @@ private fun ConversationScaffold(
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 OutlinedButton(
-                                    onClick = { onSend("/annotate 0.50,0.50 激光笔标记重点") },
+                                    onClick = { onAnnotateScreen(0.50, 0.50, "激光笔标记重点") },
                                     shape = RoundedCornerShape(14.dp),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                     modifier = Modifier.height(26.dp),
@@ -788,8 +860,8 @@ private fun ConversationScaffold(
                                     onClick = {
                                         if (isScreenSharing) {
                                             isScreenSharing = false
-                                            onSend("/screenshare stop")
                                         }
+                                        onStopScreenShare()
                                         onClearScreenFrame()
                                     },
                                     shape = RoundedCornerShape(14.dp),
@@ -813,7 +885,14 @@ private fun ConversationScaffold(
                                     .fillMaxWidth()
                                     .heightIn(min = 120.dp, max = 240.dp)
                                     .clip(RoundedCornerShape(12.dp))
-                                    .background(Color.Black),
+                                    .background(Color.Black)
+                                    .pointerInput(Unit) {
+                                        detectTapGestures { offset ->
+                                            val nx = (offset.x / size.width.coerceAtLeast(1)).toDouble().coerceIn(0.0, 1.0)
+                                            val ny = (offset.y / size.height.coerceAtLeast(1)).toDouble().coerceIn(0.0, 1.0)
+                                            onAnnotateScreen(nx, ny, "🔴 激光笔点击批注")
+                                        }
+                                    },
                             )
                         }
                     }
@@ -1057,10 +1136,10 @@ private fun ConversationScaffold(
                             onClick = {
                                 if (isScreenSharing) {
                                     isScreenSharing = false
-                                    onSend("/screenshare stop")
+                                    onStopScreenShare()
                                 } else {
                                     isScreenSharing = true
-                                    onSend("/screenshare start 15")
+                                    onStartScreenShare()
                                 }
                             },
                         )

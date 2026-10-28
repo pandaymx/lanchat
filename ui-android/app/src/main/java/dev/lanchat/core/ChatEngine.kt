@@ -6,8 +6,10 @@ import dev.lanchat.model.Channel
 import dev.lanchat.model.ChatMessage
 import dev.lanchat.model.FullState
 import dev.lanchat.model.Peer
+import dev.lanchat.model.ScreenShareState
 import dev.lanchat.model.ServerInfo
 import dev.lanchat.model.Transfer
+import dev.lanchat.model.VoiceCallState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -205,6 +207,32 @@ internal fun decodeState(payload: ByteArray?): FullState {
         transfers = json.optJSONArray("transfers").toTransferList(),
         channels = json.optJSONArray("channels").toChannelList(),
         messages = json.optJSONArray("messages").toMessageList(selfId),
+        voiceCall = json.optJSONObject("voiceCall").toVoiceCallState(),
+        screenShare = json.optJSONObject("screenShare").toScreenShareState(),
+    )
+}
+
+private fun JSONObject?.toVoiceCallState(): VoiceCallState? {
+    if (this == null) return null
+    return VoiceCallState(
+        state = optString("state", "idle"),
+        peerId = optString("peerId"),
+        groupId = optString("groupId"),
+        localAddr = optString("localAddr"),
+        remoteAddr = optString("remoteAddr"),
+        framesIn = optLong("framesIn", 0L),
+        framesOut = optLong("framesOut", 0L),
+    )
+}
+
+private fun JSONObject?.toScreenShareState(): ScreenShareState? {
+    if (this == null) return null
+    return ScreenShareState(
+        active = optBoolean("active", false),
+        peerId = optString("peerId"),
+        groupId = optString("groupId"),
+        fps = optInt("fps", 0),
+        latestFrame = optString("latestFrame"),
     )
 }
 

@@ -30,9 +30,19 @@ struct ChatView: View {
         }
     }
 
+    private var activeScreenFrame: String? {
+        if let f = store.screenFramesByConversation[peer.id], !f.isEmpty {
+            return f
+        }
+        if let ss = store.screenShare, !ss.latestFrame.isEmpty, (ss.peerId == peer.id || ss.peerId.isEmpty) {
+            return ss.latestFrame
+        }
+        return nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部状态副横幅（OS / 在线状态 / E2EE 指示）
+            // 顶部状态副横幅（OS / 在线状态 / 双栈直连徽章 / E2EE 指示）
             chatStatusSubheader
 
             if let pinned = pinnedMessage {
@@ -48,25 +58,121 @@ struct ChatView: View {
                 .background(Color.orange.opacity(0.12))
             }
 
-            if isScreenSharing {
+            if inVoiceCall || ["ringing", "calling", "active", "in_call"].contains(store.voiceCall?.state ?? "") {
+                let isRinging = store.voiceCall?.state == "ringing"
+                let callerId = (store.voiceCall?.peerId.isEmpty == false) ? store.voiceCall!.peerId : peer.id
+                let callerTitle = store.displayName(callerId)
                 HStack(spacing: 8) {
-                    Text("🖥️ 实时屏幕共享中 · 支持激光笔坐标批注")
+                    Circle()
+                        .fill(QQTheme.avatarColor(for: callerId))
+                        .frame(width: 24, height: 24)
+                        .overlay(
+                            Text(QQTheme.initial(for: callerTitle))
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                        )
+                    Text(isRinging
+                         ? "🔔 [来电响铃] \(callerTitle) 邀请实时语音通话"
+                         : "📞 实时低延迟语音通话中 · \(callerTitle)")
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(QQTheme.onlineGreen)
+                        .lineLimit(1)
                     Spacer()
+                    if isRinging {
+                        Button {
+                            inVoiceCall = true
+                            store.acceptVoiceCall(
+                                to: callerId,
+                                remoteUDP: store.voiceCall?.remoteAddr ?? ""
+                            )
+                        } label: {
+                            Text("🟢 接听")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(QQTheme.onlineGreen, in: Capsule())
+                        }
+                    }
                     Button {
-                        store.sendText(to: peer.id, text: "/annotate 0.5 0.5 重点关注此处")
+                        inVoiceCall = false
+                        store.stopVoiceCall(to: callerId)
                     } label: {
-                        Text("📍 激光批注")
+                        Text("🔴 挂断")
                             .font(.caption2.weight(.bold))
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(QQTheme.qqBlue, in: Capsule())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color.red.opacity(0.88), in: Capsule())
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .padding(.vertical, 7)
+                .background(QQTheme.onlineGreen.opacity(0.12))
+            }
+
+            if isScreenSharing || activeScreenFrame != nil {
+                VStack(spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(activeScreenFrame != nil
+                             ? "🖥️ 实时屏幕共享画布 · 点击画面发送激光笔红点批注"
+                             : "🖥️ 实时屏幕共享中 · 支持激光笔坐标批注")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Spacer()
+                        Button {
+                            store.sendScreenAnnotation(to: peer.id, normX: 0.5, normY: 0.5, note: "重点关注此处")
+                        } label: {
+                            Text("📍 激光批注")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(QQTheme.qqBlue, in: Capsule())
+                        }
+                        Button {
+                            isScreenSharing = false
+                            store.stopScreenShare(to: peer.id)
+                            store.clearScreenFrame(for: peer.id)
+                        } label: {
+                            Text("⏹ 关闭")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.red.opacity(0.85), in: Capsule())
+                        }
+                    }
+                    if let frameStr = activeScreenFrame, let uiImg = decodeScreenUIImage(from: frameStr) {
+                        GeometryReader { geo in
+                            Image(uiImage: uiImg)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .contentShape(Rectangle())
+                                .gesture(
+                                    DragGesture(minimumDistance: 0)
+                                        .onEnded { value in
+                                            let w = max(geo.size.width, 1)
+                                            let h = max(geo.size.height, 1)
+                                            let nx = min(max(Double(value.location.x / w), 0.0), 1.0)
+                                            let ny = min(max(Double(value.location.y / h), 0.0), 1.0)
+                                            store.sendScreenAnnotation(
+                                                to: peer.id,
+                                                normX: nx,
+                                                normY: ny,
+                                                note: "🔴 激光笔点击批注"
+                                            )
+                                        }
+                                )
+                        }
+                        .frame(height: 170)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
                 .background(Color.black.opacity(0.86))
             }
 
@@ -152,40 +258,43 @@ struct ChatView: View {
     // MARK: - 顶部会话状态条
 
     private var chatStatusSubheader: some View {
-        HStack(spacing: 8) {
+        let linkBadge = ServerInfo.linkBadge(server: store.server, status: peer.status)
+        let callActive = inVoiceCall || ["ringing", "calling", "active", "in_call"].contains(store.voiceCall?.state ?? "")
+        return HStack(spacing: 8) {
             Circle()
                 .fill(peer.status == "away" ? QQTheme.awayOrange : QQTheme.onlineGreen)
                 .frame(width: 8, height: 8)
-            Text("\(peer.os.uppercased()) · \(peer.status == "away" ? "离开" : "在线")")
+            Text("\(peer.os.uppercased()) · \(peer.status == "away" ? "离开" : "在线") · \(linkBadge)")
                 .font(.caption2.weight(.medium))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
 
             Spacer()
 
             Button {
-                if inVoiceCall {
+                if callActive {
                     inVoiceCall = false
-                    store.sendText(to: peer.id, text: "/call stop")
+                    store.stopVoiceCall(to: peer.id)
                 } else {
                     inVoiceCall = true
-                    store.sendText(to: peer.id, text: "/call start")
+                    store.startVoiceCall(to: peer.id)
                 }
             } label: {
-                Text(inVoiceCall ? "📵 挂断" : "📞 语音通话")
+                Text(callActive ? "📵 挂断" : "📞 语音通话")
                     .font(.caption2.weight(.semibold))
-                    .foregroundStyle(inVoiceCall ? .red : QQTheme.qqBlue)
+                    .foregroundStyle(callActive ? .red : QQTheme.qqBlue)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
-                    .background((inVoiceCall ? Color.red : QQTheme.qqBlue).opacity(0.12), in: Capsule())
+                    .background((callActive ? Color.red : QQTheme.qqBlue).opacity(0.12), in: Capsule())
             }
 
             Button {
                 if isScreenSharing {
                     isScreenSharing = false
-                    store.sendText(to: peer.id, text: "/screenshare stop")
+                    store.stopScreenShare(to: peer.id)
                 } else {
                     isScreenSharing = true
-                    store.sendText(to: peer.id, text: "/screenshare start 15")
+                    store.startScreenShare(to: peer.id, fps: 15)
                 }
             } label: {
                 Text(isScreenSharing ? "⏹ 停止投屏" : "🖥️ 投屏")
@@ -478,6 +587,18 @@ struct ChatView: View {
             store.sendText(to: peer.id, text: trimmed)
         }
         draft = ""
+    }
+
+    private func decodeScreenUIImage(from raw: String) -> UIImage? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let b64: String
+        if let range = trimmed.range(of: ";base64,") {
+            b64 = String(trimmed[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else {
+            b64 = trimmed
+        }
+        guard let data = Data(base64Encoded: b64) else { return nil }
+        return UIImage(data: data)
     }
 }
 

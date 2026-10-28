@@ -8,8 +8,10 @@ import dev.lanchat.model.Channel
 import dev.lanchat.model.ChatMessage
 import dev.lanchat.model.Conversations
 import dev.lanchat.model.Peer
+import dev.lanchat.model.ScreenShareState
 import dev.lanchat.model.ServerInfo
 import dev.lanchat.model.Transfer
+import dev.lanchat.model.VoiceCallState
 import dev.lanchat.model.formatMatrixSummary
 import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,6 +33,8 @@ data class AppUi(
     val unreadCounts: Map<String, Int> = emptyMap(),
     val matrixSummary: Map<String, String> = emptyMap(),
     val screenFramesByConversation: Map<String, String> = emptyMap(),
+    val voiceCall: VoiceCallState? = null,
+    val screenShare: ScreenShareState? = null,
     val discoveredServers: List<ServerInfo> = emptyList(),
     val pendingInstallApkPath: String? = null,
     val busy: Boolean = false,
@@ -71,6 +75,18 @@ class AppViewModel : ViewModel() {
                 for (m in state.messages) {
                     convs = Conversations.append(convs, m)
                 }
+                var frames = it.screenFramesByConversation
+                val ss = state.screenShare
+                if (ss != null && ss.latestFrame.isNotEmpty()) {
+                    val key = when {
+                        ss.groupId.isNotEmpty() -> Conversations.groupKey(ss.groupId)
+                        ss.peerId.isNotEmpty() -> Conversations.peerKey(ss.peerId)
+                        else -> ""
+                    }
+                    if (key.isNotEmpty()) {
+                        frames = frames + (key to ss.latestFrame)
+                    }
+                }
                 it.copy(
                     conn = state.conn,
                     server = state.server,
@@ -80,6 +96,9 @@ class AppViewModel : ViewModel() {
                     transfers = state.transfers,
                     channels = state.channels,
                     messagesByConversation = convs,
+                    screenFramesByConversation = frames,
+                    voiceCall = state.voiceCall,
+                    screenShare = state.screenShare,
                 )
             }
         }
@@ -401,6 +420,61 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun startVoiceCall(to: String, group: String = "") {
+        launchOp {
+            engine.startVoiceCall(to, group)
+            refresh()
+        }
+    }
+
+    fun acceptVoiceCall(to: String, group: String = "", remoteUDP: String = "") {
+        launchOp {
+            engine.acceptVoiceCall(to, group, remoteUDP)
+            refresh()
+        }
+    }
+
+    fun stopVoiceCall(to: String, group: String = "") {
+        launchOp {
+            engine.stopVoiceCall(to, group)
+            _ui.update { it.copy(voiceCall = VoiceCallState(state = "idle")) }
+            refresh()
+        }
+    }
+
+    fun startScreenShare(to: String, group: String = "", fps: Long = 15L) {
+        launchOp {
+            engine.startScreenShare(to, group, fps)
+            refresh()
+        }
+    }
+
+    fun stopScreenShare(to: String, group: String = "") {
+        launchOp {
+            engine.stopScreenShare(to, group)
+            val convKey = if (group.isNotEmpty()) Conversations.groupKey(group) else Conversations.peerKey(to)
+            _ui.update {
+                it.copy(
+                    screenShare = null,
+                    screenFramesByConversation = it.screenFramesByConversation - convKey,
+                )
+            }
+            refresh()
+        }
+    }
+
+    fun sendScreenAnnotation(
+        to: String,
+        group: String = "",
+        normX: Double,
+        normY: Double,
+        note: String = "",
+    ) {
+        launchOp {
+            engine.sendScreenAnnotation(to, group, normX, normY, note)
+        }
+    }
+
     private fun handleEvent(event: CoreEvent) {
         when (event) {
             is CoreEvent.ConnChanged -> {
@@ -433,6 +507,40 @@ class AppViewModel : ViewModel() {
                 }
                 if (event.type == "CLIP_SYNC") {
                     _ui.update { it.copy(error = event.text) }
+                    return
+                }
+                if (event.type == "VOICE_CALL_OFFER") {
+                    val remoteUDP = event.text.substringAfter("]").trim()
+                    _ui.update {
+                        it.copy(
+                            voiceCall = VoiceCallState(
+                                state = "ringing",
+                                peerId = event.from,
+                                groupId = event.group,
+                                remoteAddr = remoteUDP,
+                            ),
+                        )
+                    }
+                    refresh()
+                    return
+                }
+                if (event.type == "VOICE_CALL") {
+                    if (event.text.contains("已结束")) {
+                        _ui.update { it.copy(voiceCall = VoiceCallState(state = "idle")) }
+                    } else {
+                        val remoteUDP = event.text.substringAfter("]").trim()
+                        _ui.update {
+                            it.copy(
+                                voiceCall = VoiceCallState(
+                                    state = "active",
+                                    peerId = event.from,
+                                    groupId = event.group,
+                                    remoteAddr = remoteUDP,
+                                ),
+                            )
+                        }
+                    }
+                    refresh()
                     return
                 }
                 if (event.type == "SCREEN_FRAME") {

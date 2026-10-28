@@ -45,8 +45,66 @@ struct ChannelChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 频道顶部信息横幅（私有锁 / 主题 / 成员数 / E2EE 状态）
-            ChannelHeader(channel: live, isBroadcast: isBroadcastGroup, e2eeEnabled: e2eeEnabled)
+            // 频道顶部信息横幅（私有锁 / 主题 / 双栈链路标识 / E2EE 状态）
+            ChannelHeader(
+                channel: live,
+                isBroadcast: isBroadcastGroup,
+                e2eeEnabled: e2eeEnabled,
+                linkBadge: ServerInfo.linkBadge(server: store.server)
+            )
+
+            if ["ringing", "calling", "active", "in_call"].contains(store.voiceCall?.state ?? "")
+                && (store.voiceCall?.groupId == live.id || store.voiceCall?.groupId.isEmpty == true) {
+                let isRinging = store.voiceCall?.state == "ringing"
+                let callerId = (store.voiceCall?.peerId.isEmpty == false) ? store.voiceCall!.peerId : live.ownerId
+                let callerTitle = store.displayName(callerId)
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(QQTheme.avatarColor(for: callerId))
+                        .frame(width: 24, height: 24)
+                        .overlay(
+                            Text(QQTheme.initial(for: callerTitle))
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundStyle(.white)
+                        )
+                    Text(isRinging
+                         ? "🔔 [频道语音来电] \(callerTitle) 邀请加入语音"
+                         : "📞 频道实时语音进行中 · \(callerTitle)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(QQTheme.onlineGreen)
+                        .lineLimit(1)
+                    Spacer()
+                    if isRinging {
+                        Button {
+                            store.acceptVoiceCall(
+                                to: callerId,
+                                group: live.id,
+                                remoteUDP: store.voiceCall?.remoteAddr ?? ""
+                            )
+                        } label: {
+                            Text("🟢 接听")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(QQTheme.onlineGreen, in: Capsule())
+                        }
+                    }
+                    Button {
+                        store.stopVoiceCall(to: callerId, group: live.id)
+                    } label: {
+                        Text("🔴 挂断")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(Color.red.opacity(0.88), in: Capsule())
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(QQTheme.onlineGreen.opacity(0.12))
+            }
 
             // 群聊内搜索栏（点击底部「🔍 搜索」展开）
             if showSearchBar {
@@ -388,6 +446,7 @@ private struct ChannelHeader: View {
     let channel: Channel
     let isBroadcast: Bool
     let e2eeEnabled: Bool
+    var linkBadge: String = "⚡ 局域网直连"
 
     var body: some View {
         HStack(spacing: 8) {
@@ -425,6 +484,10 @@ private struct ChannelHeader: View {
             }
 
             Spacer()
+
+            Text(linkBadge)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
 
             if e2eeEnabled {
                 Text("🔐 E2EE")

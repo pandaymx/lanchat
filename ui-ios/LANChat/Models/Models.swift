@@ -18,6 +18,35 @@ struct ServerInfo: Identifiable, Equatable, Hashable {
     var addr: String
     var version: String
     var authMode: String
+
+    static func isTailscaleAddress(_ raw: String) -> Bool {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["ws://", "wss://", "http://", "https://"] {
+            if s.lowercased().hasPrefix(prefix) {
+                s = String(s.dropFirst(prefix.count))
+                break
+            }
+        }
+        if let slashIdx = s.firstIndex(of: "/") {
+            s = String(s[..<slashIdx])
+        }
+        if let colonIdx = s.firstIndex(of: ":") {
+            s = String(s[..<colonIdx])
+        }
+        let parts = s.split(separator: ".")
+        guard parts.count == 4,
+              let a = UInt8(parts[0]),
+              let b = UInt8(parts[1]) else {
+            return false
+        }
+        return a == 100 && (64...127).contains(b)
+    }
+
+    static func linkBadge(server: String, status: String = "") -> String {
+        (isTailscaleAddress(server) || isTailscaleAddress(status))
+            ? "🌐 Tailscale 直连"
+            : "⚡ 局域网直连"
+    }
 }
 
 /// 文件传输快照。

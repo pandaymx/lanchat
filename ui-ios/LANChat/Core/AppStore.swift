@@ -337,6 +337,70 @@ final class AppStore: ObservableObject {
         screenFramesByConversation.removeValue(forKey: key)
     }
 
+    // MARK: - 契约 v1.4 消息富交互与安全控制显式 RPC（v6.0.0）
+
+    func revokeMessage(to: String, group: String = "", msgID: String) {
+        run {
+            try await self.engine.revokeMessage(to: to, group: group, msgID: msgID)
+            self.revokeMessage(id: msgID)
+        }
+    }
+
+    func markMessageRead(to: String, group: String = "", msgID: String) {
+        run {
+            try await self.engine.markMessageRead(to: to, group: group, msgID: msgID)
+            self.markRead(id: msgID, reader: self.selfId)
+        }
+    }
+
+    func reactMessage(to: String, group: String = "", msgID: String, emoji: String = "👍") {
+        run {
+            try await self.engine.reactMessage(to: to, group: group, msgID: msgID, emoji: emoji)
+            await self.refresh()
+        }
+    }
+
+    func editMessage(to: String, group: String = "", msgID: String, newText: String) {
+        run {
+            try await self.engine.editMessage(to: to, group: group, msgID: msgID, newText: newText)
+            await self.refresh()
+        }
+    }
+
+    func pinMessage(to: String, group: String = "", msgID: String) {
+        run {
+            try await self.engine.pinMessage(to: to, group: group, msgID: msgID)
+            await self.refresh()
+        }
+    }
+
+    func setSessionE2EE(_ secret: String) {
+        run {
+            try await self.engine.setSessionE2EE(secret)
+        }
+    }
+
+    func setAutoClipboard(_ enabled: Bool) {
+        Task {
+            await self.engine.setAutoClipboard(enabled)
+        }
+    }
+
+    func setDND(_ enabled: Bool) {
+        Task {
+            await self.engine.setDND(enabled)
+        }
+    }
+
+    func getHistoryPage(convID: String, beforeTS: Int64 = 0, limit: Int = 50) {
+        Task {
+            let page = await self.engine.getHistoryPage(convID: convID, beforeTS: beforeTS, limit: limit, selfId: self.selfId)
+            for m in page {
+                self.appendMessage(m)
+            }
+        }
+    }
+
     // MARK: - 事件处理
 
     private func handle(_ event: CoreEvent) {

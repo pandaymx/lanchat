@@ -136,6 +136,46 @@ func (c *Client) HistoryPageJSON(convID string, beforeTs int64, limit int) []byt
 	return mustJSON(c.core.HistoryPage(convID, beforeTs, limit))
 }
 
+// GetHistoryPageJSON 按会话游标分页拉取历史消息（契约 v1.4 GetHistoryPage 移动绑定）。
+func (c *Client) GetHistoryPageJSON(convID string, beforeTS int64, limit int) []byte {
+	return mustJSON(c.core.GetHistoryPage(convID, beforeTS, limit))
+}
+
+// RevokeMessage 撤回本机在时限内发送的指定消息（契约 v1.4）。
+func (c *Client) RevokeMessage(to string, group string, msgID string) error {
+	return c.core.RevokeMessage(to, group, msgID)
+}
+
+// ReactMessage 为指定消息添加表情回应并同步对端或群组（契约 v1.4）。
+func (c *Client) ReactMessage(to string, group string, msgID string, emoji string) error {
+	return c.core.ReactMessage(to, group, msgID, emoji)
+}
+
+// EditMessage 原地二次编辑本机已发送的消息并同步对端或群组（契约 v1.4）。
+func (c *Client) EditMessage(to string, group string, msgID string, newText string) error {
+	return c.core.EditMessage(to, group, msgID, newText)
+}
+
+// PinMessage 将指定消息标记为会话置顶公告并同步对端或群组（契约 v1.4）。
+func (c *Client) PinMessage(to string, group string, msgID string) error {
+	return c.core.PinMessage(to, group, msgID)
+}
+
+// MarkMessageRead 发送指定消息已读回执并清零对应会话未读计数（契约 v1.4）。
+func (c *Client) MarkMessageRead(to string, group string, msgID string) error {
+	return c.core.MarkMessageRead(to, group, msgID)
+}
+
+// SetSessionE2EE 设置或清除会话端到端对称加密密钥（契约 v1.4）。
+func (c *Client) SetSessionE2EE(secret string) error {
+	return c.core.SetSessionE2EE(secret)
+}
+
+// SetDND 开启或关闭全局免打扰模式（契约 v1.4）。
+func (c *Client) SetDND(enabled bool) {
+	c.core.SetDND(enabled)
+}
+
 // CompactHistory 手动触发本地历史 JSONL 压缩并返回合并后的消息总数。
 func (c *Client) CompactHistory() int {
 	return c.core.CompactHistory()

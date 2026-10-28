@@ -214,6 +214,26 @@ type API interface {
 	VerifyTrustCert(token, rootPub string) (identity string, err error)
 	// RunNetworkDiagnostics 执行局域网/Tailscale 全链路网络诊断雷达（契约 v1.3）。
 	RunNetworkDiagnostics() string
+
+	// RevokeMessage 撤回本机在时限内发送的指定消息（契约 v1.4）。
+	RevokeMessage(to, group, msgID string) error
+	// ReactMessage 为指定消息添加表情回应并同步对端或群组（契约 v1.4）。
+	ReactMessage(to, group, msgID, emoji string) error
+	// EditMessage 原地二次编辑本机已发送的消息并同步对端或群组（契约 v1.4）。
+	EditMessage(to, group, msgID, newText string) error
+	// PinMessage 将指定消息标记为会话置顶公告并同步对端或群组（契约 v1.4）。
+	PinMessage(to, group, msgID string) error
+	// MarkMessageRead 发送指定消息已读回执并清零对应会话未读计数（契约 v1.4）。
+	MarkMessageRead(to, group, msgID string) error
+
+	// SetSessionE2EE 设置或清除会话端到端对称加密密钥（契约 v1.4）。
+	SetSessionE2EE(secret string) error
+	// SetAutoClipboard 开启或关闭跨设备剪贴板自动监听同步模式（契约 v1.4）。
+	SetAutoClipboard(enabled bool)
+	// SetDND 开启或关闭全局免打扰模式（契约 v1.4）。
+	SetDND(enabled bool)
+	// GetHistoryPage 按会话 ID 与游标时间戳分页拉取本地加密历史消息（契约 v1.4）。
+	GetHistoryPage(convID string, beforeTS int64, limit int) []ChatMessage
 }
 
 // Listener 是 core → UI 的事件回调集合（notification）。

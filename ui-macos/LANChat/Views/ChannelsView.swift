@@ -336,16 +336,16 @@ struct BroadcastChatView: View {
                                     replyingTo = target
                                 },
                                 onRevoke: { target in
-                                    Task { await store.sendChannelText(channelID: broadcastKey, text: "/revoke \(target.id)") }
+                                    Task { await store.revokeMessageRpc(group: broadcastKey, msgID: target.id) }
                                 },
                                 onMarkRead: { target in
-                                    Task { await store.sendChannelText(channelID: broadcastKey, text: "/read \(target.id)") }
+                                    Task { await store.markMessageReadRpc(group: broadcastKey, msgID: target.id) }
                                 },
                                 onReact: { target in
-                                    Task { await store.sendChannelText(channelID: broadcastKey, text: "/react \(target.id) 👍") }
+                                    Task { await store.reactMessageRpc(group: broadcastKey, msgID: target.id, emoji: "👍") }
                                 },
                                 onPin: { target in
-                                    Task { await store.sendChannelText(channelID: broadcastKey, text: "/pin \(target.id)") }
+                                    Task { await store.pinMessageRpc(group: broadcastKey, msgID: target.id) }
                                 },
                                 onReEdit: { original in
                                     let clean = Formatters.extractEditableOriginal(original)
@@ -436,8 +436,7 @@ struct BroadcastChatView: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    let cmd = isE2EE ? "/e2ee off" : "/e2ee on"
-                    Task { await store.sendChannelText(channelID: broadcastKey, text: cmd) }
+                    Task { await store.toggleSessionE2EE(threadKey: broadcastKey) }
                 } label: {
                     Text(isE2EE ? "🔐 已加密 (/e2ee)" : "🔐 端到端加密 (/e2ee)")
                         .font(.system(size: 12, weight: .medium))
@@ -904,16 +903,16 @@ struct ChannelChatView: View {
                                     replyingTo = target
                                 },
                                 onRevoke: { target in
-                                    Task { await store.sendChannelText(channelID: channelID, text: "/revoke \(target.id)") }
+                                    Task { await store.revokeMessageRpc(group: channelID, msgID: target.id) }
                                 },
                                 onMarkRead: { target in
-                                    Task { await store.sendChannelText(channelID: channelID, text: "/read \(target.id)") }
+                                    Task { await store.markMessageReadRpc(group: channelID, msgID: target.id) }
                                 },
                                 onReact: { target in
-                                    Task { await store.sendChannelText(channelID: channelID, text: "/react \(target.id) 👍") }
+                                    Task { await store.reactMessageRpc(group: channelID, msgID: target.id, emoji: "👍") }
                                 },
                                 onPin: { target in
-                                    Task { await store.sendChannelText(channelID: channelID, text: "/pin \(target.id)") }
+                                    Task { await store.pinMessageRpc(group: channelID, msgID: target.id) }
                                 },
                                 onReEdit: { original in
                                     let clean = Formatters.extractEditableOriginal(original)
@@ -1046,8 +1045,7 @@ struct ChannelChatView: View {
                 .help("向频道发送文件")
 
                 Button {
-                    let cmd = isE2EE ? "/e2ee off" : "/e2ee on"
-                    Task { await store.sendChannelText(channelID: channel.id, text: cmd) }
+                    Task { await store.toggleSessionE2EE(threadKey: channel.id) }
                 } label: {
                     Text(isE2EE ? "🔐 已加密 (/e2ee)" : "🔐 端到端加密 (/e2ee)")
                         .font(.system(size: 12, weight: .medium))

@@ -192,16 +192,16 @@ struct ChatView: View {
                                 senderAvatarKey: msg.inbound ? peer.id : store.selfId,
                                 onReply: { replyingTo = msg },
                                 onRevoke: {
-                                    store.sendText(to: peer.id, text: "/revoke \(msg.id)")
+                                    store.revokeMessage(to: peer.id, msgID: msg.id)
                                 },
                                 onMarkRead: {
-                                    store.sendText(to: peer.id, text: "/read \(msg.id)")
+                                    store.markMessageRead(to: peer.id, msgID: msg.id)
                                 },
                                 onReact: {
-                                    store.sendText(to: peer.id, text: "/react \(msg.id) 👍")
+                                    store.reactMessage(to: peer.id, msgID: msg.id, emoji: "👍")
                                 },
                                 onPin: {
-                                    store.sendText(to: peer.id, text: "/pin \(msg.id)")
+                                    store.pinMessage(to: peer.id, msgID: msg.id)
                                 },
                                 onReEdit: { original in
                                     let clean = QQTheme.extractEditableOriginal(original)
@@ -498,7 +498,7 @@ struct ChatView: View {
 
                 Button {
                     e2eeEnabled.toggle()
-                    store.sendText(to: peer.id, text: e2eeEnabled ? "/e2ee on" : "/e2ee off")
+                    store.setSessionE2EE(e2eeEnabled ? "on" : "off")
                 } label: {
                     Text("🔐 E2EE 加密")
                         .font(.caption2.weight(.semibold))

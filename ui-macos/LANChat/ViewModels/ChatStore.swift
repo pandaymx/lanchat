@@ -695,6 +695,97 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: - 契约 v1.4 消息富交互与安全控制显式 RPC 方法
+
+    func revokeMessageRpc(to: String = "", group: String = "", msgID: String) async {
+        do {
+            _ = try await ipc.call("RevokeMessage", params: ["to": to, "group": group, "msgID": msgID])
+            revokeMessage(id: msgID)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func reactMessageRpc(to: String = "", group: String = "", msgID: String, emoji: String = "👍") async {
+        do {
+            _ = try await ipc.call("ReactMessage", params: ["to": to, "group": group, "msgID": msgID, "emoji": emoji])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func editMessageRpc(to: String = "", group: String = "", msgID: String, newText: String) async {
+        do {
+            _ = try await ipc.call("EditMessage", params: ["to": to, "group": group, "msgID": msgID, "newText": newText])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func pinMessageRpc(to: String = "", group: String = "", msgID: String) async {
+        do {
+            _ = try await ipc.call("PinMessage", params: ["to": to, "group": group, "msgID": msgID])
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func markMessageReadRpc(to: String = "", group: String = "", msgID: String) async {
+        do {
+            _ = try await ipc.call("MarkMessageRead", params: ["to": to, "group": group, "msgID": msgID])
+            markMessageRead(id: msgID, readerId: selfId)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func toggleSessionE2EE(threadKey: String) async {
+        let enabling = !e2eeEnabledThreads.contains(threadKey)
+        do {
+            _ = try await ipc.call("SetSessionE2EE", params: ["secret": enabling ? "lanchat-qq-key" : ""])
+            if enabling {
+                e2eeEnabledThreads.insert(threadKey)
+            } else {
+                e2eeEnabledThreads.remove(threadKey)
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func setAutoClipboard(_ enabled: Bool) async {
+        do {
+            _ = try await ipc.call("SetAutoClipboard", params: ["enabled": enabled])
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func setDND(_ enabled: Bool) async {
+        do {
+            _ = try await ipc.call("SetDND", params: ["enabled": enabled])
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func getHistoryPage(convID: String, beforeTS: Int64 = 0, limit: Int = 50) async -> [HistoryMessage] {
+        if let list = try? await ipc.call(
+            "GetHistoryPage",
+            params: ["convID": convID, "beforeTS": beforeTS, "limit": limit],
+            as: [HistoryMessage].self
+        ) {
+            for m in list {
+                applyHistoryMessage(m)
+            }
+            return list
+        }
+        return []
+    }
+
     func checkAndSilentUpdate(customProxy: String = "", checkOnly: Bool = false) async {
         let proxyArg = customProxy.trimmingCharacters(in: .whitespacesAndNewlines)
         let cmd: String

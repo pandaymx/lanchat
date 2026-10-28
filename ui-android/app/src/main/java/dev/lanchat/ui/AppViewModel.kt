@@ -475,6 +475,79 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun revokeMessage(to: String, group: String = "", msgID: String) {
+        launchOp {
+            engine.revokeMessage(to, group, msgID)
+            _ui.update {
+                it.copy(messagesByConversation = Conversations.revokeMessage(it.messagesByConversation, msgID))
+            }
+        }
+    }
+
+    fun markMessageRead(to: String, group: String = "", msgID: String) {
+        launchOp {
+            engine.markMessageRead(to, group, msgID)
+            _ui.update {
+                it.copy(messagesByConversation = Conversations.markRead(it.messagesByConversation, msgID, it.selfId))
+            }
+        }
+    }
+
+    fun reactMessage(to: String, group: String = "", msgID: String, emoji: String = "👍") {
+        launchOp {
+            engine.reactMessage(to, group, msgID, emoji)
+            refresh()
+        }
+    }
+
+    fun editMessage(to: String, group: String = "", msgID: String, newText: String) {
+        launchOp {
+            engine.editMessage(to, group, msgID, newText)
+            refresh()
+        }
+    }
+
+    fun pinMessage(to: String, group: String = "", msgID: String) {
+        launchOp {
+            engine.pinMessage(to, group, msgID)
+            refresh()
+        }
+    }
+
+    fun setSessionE2EE(secret: String) {
+        launchOp {
+            engine.setSessionE2EE(secret)
+            val isOff = secret.isEmpty() || secret.equals("off", ignoreCase = true) || secret.equals("false", ignoreCase = true)
+            val notice = if (isOff) "🔐 已关闭端到端加密" else "🔐 已开启端到端加密"
+            _ui.update { it.copy(error = notice) }
+        }
+    }
+
+    fun setAutoClipboard(enabled: Boolean) {
+        launchOp {
+            engine.setAutoClipboard(enabled)
+        }
+    }
+
+    fun setDND(enabled: Boolean) {
+        launchOp {
+            engine.setDND(enabled)
+        }
+    }
+
+    fun getHistoryPage(convID: String, beforeTS: Long = 0L, limit: Long = 50L) {
+        launchOp {
+            val history = engine.getHistoryPage(convID, beforeTS, limit, _ui.value.selfId)
+            _ui.update { state ->
+                var convs = state.messagesByConversation
+                for (m in history) {
+                    convs = Conversations.append(convs, m)
+                }
+                state.copy(messagesByConversation = convs)
+            }
+        }
+    }
+
     private fun handleEvent(event: CoreEvent) {
         when (event) {
             is CoreEvent.ConnChanged -> {

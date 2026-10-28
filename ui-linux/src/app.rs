@@ -1280,7 +1280,7 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // 切换端到端加密（/e2ee）
+    // 切换端到端加密（契约 v1.4 显式 SetSessionE2EE RPC）
     ctx.widgets.e2ee_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -1292,9 +1292,15 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             }
             let enabled = cx.state.borrow().e2ee_enabled;
             if enabled {
-                send_text_to_target(&cx, &target, "/e2ee off");
+                invoke_set_session_e2ee(&cx, "");
+                cx.state.borrow_mut().e2ee_enabled = false;
+                cx.widgets.e2ee_btn.set_label("🔐 加密会话");
+                cx.toast("已关闭端到端加密");
             } else {
-                send_text_to_target(&cx, &target, "/e2ee lanchat-qq-key");
+                invoke_set_session_e2ee(&cx, "lanchat-qq-key");
+                cx.state.borrow_mut().e2ee_enabled = true;
+                cx.widgets.e2ee_btn.set_label("🔐 已加密");
+                cx.toast("已启用端到端加密");
             }
         }
     ));
@@ -1942,6 +1948,126 @@ fn invoke_collab_advanced_rpcs(
             let verify_body = serde_json::json!({ "token": sub_owned, "rootPub": "" });
             let _ = ipc.invoke("VerifyTrustCert", Some(&verify_body)).await;
             let _ = ipc.invoke::<()>("RunNetworkDiagnostics", None).await;
+        });
+    }
+}
+
+fn invoke_revoke_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str) {
+    let (to, group) = resolve_target_to_group(target);
+    let mid = msg_id.to_string();
+    let key = target.key().unwrap_or("").to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "to": to, "group": group, "msgID": mid });
+            let res = ipc
+                .invoke("RevokeMessage", Some(&body))
+                .await
+                .map(|_| mid.clone());
+            let _ = tx.try_send(UiEvent::TextSent(key, group, format!("/revoke {mid}"), res));
+        });
+    }
+}
+
+fn invoke_react_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str, emoji: &str) {
+    let (to, group) = resolve_target_to_group(target);
+    let mid = msg_id.to_string();
+    let em = emoji.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "to": to,
+                "group": group,
+                "msgID": mid,
+                "emoji": em,
+            });
+            let _ = ipc.invoke("ReactMessage", Some(&body)).await;
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_edit_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str, new_text: &str) {
+    let (to, group) = resolve_target_to_group(target);
+    let mid = msg_id.to_string();
+    let txt = new_text.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "to": to,
+                "group": group,
+                "msgID": mid,
+                "newText": txt,
+            });
+            let _ = ipc.invoke("EditMessage", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_pin_message(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str) {
+    let (to, group) = resolve_target_to_group(target);
+    let mid = msg_id.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "to": to, "group": group, "msgID": mid });
+            let _ = ipc.invoke("PinMessage", Some(&body)).await;
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_mark_message_read(ctx: &Rc<AppCtx>, target: &ChatTarget, msg_id: &str) {
+    let (to, group) = resolve_target_to_group(target);
+    let mid = msg_id.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "to": to, "group": group, "msgID": mid });
+            let _ = ipc.invoke("MarkMessageRead", Some(&body)).await;
+        });
+    }
+}
+
+fn invoke_set_session_e2ee(ctx: &Rc<AppCtx>, secret: &str) {
+    let sec = secret.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "secret": sec });
+            let _ = ipc.invoke("SetSessionE2EE", Some(&body)).await;
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_set_auto_clipboard(ctx: &Rc<AppCtx>, enabled: bool) {
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "enabled": enabled });
+            let _ = ipc.invoke("SetAutoClipboard", Some(&body)).await;
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_set_dnd(ctx: &Rc<AppCtx>, enabled: bool) {
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({ "enabled": enabled });
+            let _ = ipc.invoke("SetDND", Some(&body)).await;
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_get_history_page(ctx: &Rc<AppCtx>, conv_id: &str, before_ts: i64, limit: i32) {
+    let cid = conv_id.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "convID": cid,
+                "beforeTS": before_ts,
+                "limit": limit,
+            });
+            let _ = ipc.invoke("GetHistoryPage", Some(&body)).await;
         });
     }
 }
@@ -4027,11 +4153,7 @@ impl AppCtx {
                         #[strong(rename_to = cx)]
                         self,
                         move |_| {
-                            send_text_to_target(
-                                &cx,
-                                &tgt_pill,
-                                &format!("/react {mid_pill} {emoji_pill}"),
-                            );
+                            invoke_react_message(&cx, &tgt_pill, &mid_pill, &emoji_pill);
                         }
                     ));
                 }
@@ -4439,7 +4561,7 @@ fn show_message_context_popover(
             ctx_pop,
             move |_| {
                 ctx_pop.popdown();
-                send_text_to_target(&cx, &tgt_q, &format!("/react {mid_q} {em_q}"));
+                invoke_react_message(&cx, &tgt_q, &mid_q, &em_q);
             }
         ));
         quick_emoji_row.append(&q_btn);
@@ -4458,7 +4580,7 @@ fn show_message_context_popover(
         ctx_pop,
         move |_| {
             ctx_pop.popdown();
-            send_text_to_target(&cx, &tgt_react, &format!("/react {mid_react} 👍"));
+            invoke_react_message(&cx, &tgt_react, &mid_react, "👍");
         }
     ));
     menu_col.append(&btn_react);
@@ -4517,7 +4639,7 @@ fn show_message_context_popover(
         ctx_pop,
         move |_| {
             ctx_pop.popdown();
-            send_text_to_target(&cx, &tgt_pin, &format!("/pin {mid_pin}"));
+            invoke_pin_message(&cx, &tgt_pin, &mid_pin);
         }
     ));
     menu_col.append(&btn_pin);
@@ -4535,7 +4657,7 @@ fn show_message_context_popover(
             ctx_pop,
             move |_| {
                 ctx_pop.popdown();
-                send_text_to_target(&cx, &tgt_rev, &format!("/revoke {mid_rev}"));
+                invoke_revoke_message(&cx, &tgt_rev, &mid_rev);
             }
         ));
         menu_col.append(&btn_revoke);

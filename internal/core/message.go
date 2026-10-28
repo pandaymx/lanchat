@@ -63,9 +63,7 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		return ret, nil
 	}
 	if trimmed == "/e2ee off" || trimmed == "/e2ee clear" {
-		c.mu.Lock()
-		c.e2eeKey = ""
-		c.mu.Unlock()
+		_ = c.SetSessionE2EE("")
 		return "e2ee:off", nil
 	}
 	if strings.HasPrefix(trimmed, "/e2ee ") {
@@ -73,9 +71,9 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		if secret == "" {
 			return "", errEmptyText
 		}
-		c.mu.Lock()
-		c.e2eeKey = secret
-		c.mu.Unlock()
+		if err := c.SetSessionE2EE(secret); err != nil {
+			return "", err
+		}
 		return "e2ee:on", nil
 	}
 	if trimmed == "/bwlimit off" || trimmed == "/bwlimit 0" {
@@ -204,10 +202,9 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	}
 	if strings.HasPrefix(trimmed, "/read ") {
 		targetID := strings.TrimSpace(strings.TrimPrefix(trimmed, "/read "))
-		if err := c.MarkRead(to, group, targetID); err != nil {
+		if err := c.MarkMessageRead(to, group, targetID); err != nil {
 			return "", err
 		}
-		c.ClearUnread(to, group)
 		return targetID, nil
 	}
 	if trimmed == "/react" || strings.HasPrefix(trimmed, "/react ") {
@@ -227,18 +224,9 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		if targetID == "" {
 			targetID = c.history.lastMessageID(to, group)
 		}
-		if targetID == "" {
-			return "", errEmptyText
-		}
-		updated, ok := c.history.reactBy(targetID, c.selfIDValue(), emoji)
-		if !ok {
-			return "", errInvalidState
-		}
-		if err := c.sendControlText(to, group, "sys:react:"+targetID+":"+emoji); err != nil {
+		if err := c.ReactMessage(to, group, targetID, emoji); err != nil {
 			return "", err
 		}
-		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_REACT", updated.Text)
-		c.emitMessageUpdated(updated)
 		return targetID, nil
 	}
 	if strings.HasPrefix(trimmed, "/edit ") {
@@ -249,31 +237,16 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 		}
 		targetID := strings.TrimSpace(parts[0])
 		newBody := strings.TrimSpace(parts[1])
-		updated, ok := c.history.edit(targetID, c.selfIDValue(), newBody)
-		if !ok {
-			return "", errInvalidState
-		}
-		if err := c.sendControlText(to, group, "sys:edit:"+targetID+":"+newBody); err != nil {
+		if err := c.EditMessage(to, group, targetID, newBody); err != nil {
 			return "", err
 		}
-		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_EDIT", updated.Text)
-		c.emitMessageUpdated(updated)
 		return targetID, nil
 	}
 	if strings.HasPrefix(trimmed, "/pin ") {
 		targetID := strings.TrimSpace(strings.TrimPrefix(trimmed, "/pin "))
-		if targetID == "" {
-			return "", errEmptyText
-		}
-		updated, ok := c.history.pin(targetID)
-		if !ok {
-			return "", errInvalidState
-		}
-		if err := c.sendControlText(to, group, "sys:pin:"+targetID); err != nil {
+		if err := c.PinMessage(to, group, targetID); err != nil {
 			return "", err
 		}
-		c.listener().OnMessageReceived(c.selfIDValue(), group, targetID, "MSG_PIN", updated.Text)
-		c.emitMessageUpdated(updated)
 		return targetID, nil
 	}
 	if trimmed == "/voice" || strings.HasPrefix(trimmed, "/voice ") {
@@ -400,6 +373,103 @@ func (c *Client) MarkRead(to, group, msgID string) error {
 		_, err = c.sendTo(conn, protocol.MsgRead, to, payload)
 	}
 	return err
+}
+
+// MarkMessageRead 发送消息已读回执、更新本地历史并清零对应会话未读计数（契约 v1.4）。
+func (c *Client) MarkMessageRead(to, group, msgID string) error {
+	if err := c.MarkRead(to, group, msgID); err != nil {
+		return err
+	}
+	c.ClearUnread(to, group)
+	return nil
+}
+
+// ReactMessage 为指定消息添加表情回应并同步给对端或群组（契约 v1.4）。
+func (c *Client) ReactMessage(to, group, msgID, emoji string) error {
+	msgID = strings.TrimSpace(msgID)
+	emoji = strings.TrimSpace(emoji)
+	if emoji == "" {
+		emoji = "👍"
+	}
+	if msgID == "" {
+		msgID = c.history.lastMessageID(to, group)
+	}
+	if msgID == "" {
+		return errEmptyText
+	}
+	if group == "" && to == "" {
+		return errPeerNotFound
+	}
+	updated, ok := c.history.reactBy(msgID, c.selfIDValue(), emoji)
+	if !ok {
+		return errInvalidState
+	}
+	if err := c.sendControlText(to, group, "sys:react:"+msgID+":"+emoji); err != nil {
+		return err
+	}
+	c.listener().OnMessageReceived(c.selfIDValue(), group, msgID, "MSG_REACT", updated.Text)
+	c.emitMessageUpdated(updated)
+	return nil
+}
+
+// EditMessage 原地二次编辑本机已发送的消息并同步给对端或群组（契约 v1.4）。
+func (c *Client) EditMessage(to, group, msgID, newText string) error {
+	msgID = strings.TrimSpace(msgID)
+	newText = strings.TrimSpace(newText)
+	if msgID == "" || newText == "" {
+		return errEmptyText
+	}
+	if group == "" && to == "" {
+		return errPeerNotFound
+	}
+	updated, ok := c.history.edit(msgID, c.selfIDValue(), newText)
+	if !ok {
+		return errInvalidState
+	}
+	if err := c.sendControlText(to, group, "sys:edit:"+msgID+":"+newText); err != nil {
+		return err
+	}
+	c.listener().OnMessageReceived(c.selfIDValue(), group, msgID, "MSG_EDIT", updated.Text)
+	c.emitMessageUpdated(updated)
+	return nil
+}
+
+// PinMessage 将指定消息标记为会话置顶公告并同步给对端或群组（契约 v1.4）。
+func (c *Client) PinMessage(to, group, msgID string) error {
+	msgID = strings.TrimSpace(msgID)
+	if msgID == "" {
+		return errEmptyText
+	}
+	if group == "" && to == "" {
+		return errPeerNotFound
+	}
+	updated, ok := c.history.pin(msgID)
+	if !ok {
+		return errInvalidState
+	}
+	if err := c.sendControlText(to, group, "sys:pin:"+msgID); err != nil {
+		return err
+	}
+	c.listener().OnMessageReceived(c.selfIDValue(), group, msgID, "MSG_PIN", updated.Text)
+	c.emitMessageUpdated(updated)
+	return nil
+}
+
+// SetSessionE2EE 设置或清除会话端到端对称加密密钥（secret 为空或 "off" 时关闭 E2EE，契约 v1.4）。
+func (c *Client) SetSessionE2EE(secret string) error {
+	s := strings.TrimSpace(secret)
+	if strings.EqualFold(s, "off") || strings.EqualFold(s, "clear") {
+		s = ""
+	}
+	c.mu.Lock()
+	c.e2eeKey = s
+	c.mu.Unlock()
+	return nil
+}
+
+// GetHistoryPage 按会话 ID 与游标时间戳 beforeTS 分页拉取本地加密历史消息（契约 v1.4）。
+func (c *Client) GetHistoryPage(convID string, beforeTS int64, limit int) []appapi.ChatMessage {
+	return c.HistoryPage(convID, beforeTS, limit)
 }
 
 // SearchHistory 在本地历史消息中按关键字（与可选会话 ID）检索未撤回消息。

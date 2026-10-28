@@ -56,6 +56,15 @@ var handlers = map[string]handler{
 			Report string `json:"report"`
 		}{Report: api.RunNetworkDiagnostics()}, nil
 	},
+	"RevokeMessage":    hRevokeMessage,
+	"ReactMessage":     hReactMessage,
+	"EditMessage":      hEditMessage,
+	"PinMessage":       hPinMessage,
+	"MarkMessageRead":  hMarkMessageRead,
+	"SetSessionE2EE":   hSetSessionE2EE,
+	"SetAutoClipboard": hSetAutoClipboard,
+	"SetDND":           hSetDND,
+	"GetHistoryPage":   hGetHistoryPage,
 }
 
 // decodeParams 解码 params 并在失败时返回 invalid params 错误。
@@ -495,4 +504,126 @@ func hVerifyTrustCert(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr
 	return struct {
 		Identity string `json:"identity"`
 	}{Identity: identity}, nil
+}
+
+type msgActionParams struct {
+	To      string `json:"to"`
+	Group   string `json:"group"`
+	MsgID   string `json:"msgID"`
+	Emoji   string `json:"emoji"`
+	NewText string `json:"newText"`
+}
+
+func hRevokeMessage(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[msgActionParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.RevokeMessage(p.To, p.Group, p.MsgID); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+func hReactMessage(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[msgActionParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.ReactMessage(p.To, p.Group, p.MsgID, p.Emoji); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+func hEditMessage(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[msgActionParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.EditMessage(p.To, p.Group, p.MsgID, p.NewText); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+func hPinMessage(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[msgActionParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.PinMessage(p.To, p.Group, p.MsgID); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+func hMarkMessageRead(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[msgActionParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.MarkMessageRead(p.To, p.Group, p.MsgID); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+type setSessionE2EEParams struct {
+	Secret string `json:"secret"`
+}
+
+func hSetSessionE2EE(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p setSessionE2EEParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[setSessionE2EEParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	if err := api.SetSessionE2EE(p.Secret); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+type boolToggleParams struct {
+	Enabled bool `json:"enabled"`
+}
+
+func hSetAutoClipboard(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[boolToggleParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	api.SetAutoClipboard(p.Enabled)
+	return struct{}{}, nil
+}
+
+func hSetDND(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[boolToggleParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	api.SetDND(p.Enabled)
+	return struct{}{}, nil
+}
+
+type getHistoryPageParams struct {
+	ConvID   string `json:"convID"`
+	BeforeTS int64  `json:"beforeTS"`
+	Limit    int    `json:"limit"`
+}
+
+func hGetHistoryPage(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p getHistoryPageParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[getHistoryPageParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	return api.GetHistoryPage(p.ConvID, p.BeforeTS, p.Limit), nil
 }

@@ -175,6 +175,11 @@ fun ChatScreen(
         onAnnotateScreen = { nx, ny, note ->
             vm.sendScreenAnnotation(peer.id, normX = nx, normY = ny, note = note)
         },
+        onRevokeMessage = { msgId -> vm.revokeMessage(peer.id, msgID = msgId) },
+        onMarkMessageRead = { msgId -> vm.markMessageRead(peer.id, msgID = msgId) },
+        onReactMessage = { msgId, emoji -> vm.reactMessage(peer.id, msgID = msgId, emoji = emoji) },
+        onPinMessage = { msgId -> vm.pinMessage(peer.id, msgID = msgId) },
+        onSetSessionE2EE = { secret -> vm.setSessionE2EE(secret) },
         onBack = onBack,
         onSend = { vm.sendText(peer.id, it) },
         onAttach = { path -> vm.offerFile(peer.id, path) },
@@ -228,6 +233,11 @@ fun ChannelChatScreen(
         onAnnotateScreen = { nx, ny, note ->
             vm.sendScreenAnnotation("", group = channel.id, normX = nx, normY = ny, note = note)
         },
+        onRevokeMessage = { msgId -> vm.revokeMessage("", group = channel.id, msgID = msgId) },
+        onMarkMessageRead = { msgId -> vm.markMessageRead("", group = channel.id, msgID = msgId) },
+        onReactMessage = { msgId, emoji -> vm.reactMessage("", group = channel.id, msgID = msgId, emoji = emoji) },
+        onPinMessage = { msgId -> vm.pinMessage("", group = channel.id, msgID = msgId) },
+        onSetSessionE2EE = { secret -> vm.setSessionE2EE(secret) },
         onBack = onBack,
         onSend = { vm.sendChannelText(channel.id, it) },
         onAttach = { path -> vm.offerFileToChannel(channel.id, path) },
@@ -294,6 +304,11 @@ private fun ConversationScaffold(
     onStartScreenShare: () -> Unit = {},
     onStopScreenShare: () -> Unit = {},
     onAnnotateScreen: (Double, Double, String) -> Unit = { _, _, _ -> },
+    onRevokeMessage: (String) -> Unit = {},
+    onMarkMessageRead: (String) -> Unit = {},
+    onReactMessage: (String, String) -> Unit = { _, _ -> },
+    onPinMessage: (String) -> Unit = {},
+    onSetSessionE2EE: (String) -> Unit = {},
     onBack: () -> Unit,
     onSend: (String) -> Unit,
     onAttach: (String) -> Unit,
@@ -919,10 +934,10 @@ private fun ConversationScaffold(
                         isPlayingVoice = playingMsgId == message.msgId,
                         onPlayVoice = { clip -> playVoiceClip(message.msgId, clip) },
                         onReply = { replyTarget = message },
-                        onRevoke = { onSend("/revoke ${message.msgId}") },
-                        onMarkRead = { onSend("/read ${message.msgId}") },
-                        onReact = { onSend("/react ${message.msgId} 👍") },
-                        onPin = { onSend("/pin ${message.msgId}") },
+                        onRevoke = { onRevokeMessage(message.msgId) },
+                        onMarkRead = { onMarkMessageRead(message.msgId) },
+                        onReact = { onReactMessage(message.msgId, "👍") },
+                        onPin = { onPinMessage(message.msgId) },
                         onReEdit = { original ->
                             val clean = Conversations.extractEditableOriginal(original)
                             if (clean.isNotEmpty()) {
@@ -1303,12 +1318,12 @@ private fun ConversationScaffold(
             active = e2eeActive,
             onDismiss = { showE2eeDialog = false },
             onEnable = { secret ->
-                onSend("/e2ee $secret")
+                onSetSessionE2EE(secret)
                 e2eeActive = true
                 showE2eeDialog = false
             },
             onDisable = {
-                onSend("/e2ee off")
+                onSetSessionE2EE("off")
                 e2eeActive = false
                 showE2eeDialog = false
             },

@@ -182,6 +182,43 @@ class ChatEngine {
     suspend fun runNetworkDiagnostics(): String =
         ioOp { requireClient().runNetworkDiagnostics() }
 
+    // ---- 契约 v1.4 消息富交互与安全控制显式 RPC 绑定方法 ----
+
+    suspend fun revokeMessage(to: String, group: String = "", msgID: String): Unit =
+        ioOp { requireClient().revokeMessage(to, group, msgID) }
+
+    suspend fun reactMessage(to: String, group: String = "", msgID: String, emoji: String = "👍"): Unit =
+        ioOp { requireClient().reactMessage(to, group, msgID, emoji) }
+
+    suspend fun editMessage(to: String, group: String = "", msgID: String, newText: String): Unit =
+        ioOp { requireClient().editMessage(to, group, msgID, newText) }
+
+    suspend fun pinMessage(to: String, group: String = "", msgID: String): Unit =
+        ioOp { requireClient().pinMessage(to, group, msgID) }
+
+    suspend fun markMessageRead(to: String, group: String = "", msgID: String): Unit =
+        ioOp { requireClient().markMessageRead(to, group, msgID) }
+
+    suspend fun setSessionE2EE(secret: String): Unit =
+        ioOp { requireClient().setSessionE2EE(secret) }
+
+    suspend fun setAutoClipboard(enabled: Boolean): Unit =
+        ioOp { requireClient().setAutoClipboard(enabled) }
+
+    suspend fun setDND(enabled: Boolean): Unit =
+        ioOp { requireClient().setDND(enabled) }
+
+    suspend fun getHistoryPage(
+        convID: String,
+        beforeTS: Long = 0L,
+        limit: Long = 50L,
+        selfId: String = "",
+    ): List<ChatMessage> =
+        ioOp {
+            val raw = requireClient().historyPageJSON(convID, beforeTS, limit)
+            raw.toJsonArray().toMessageList(selfId)
+        }
+
     private suspend fun <T> ioOp(block: () -> T): T =
         withContext(Dispatchers.IO) {
             try {

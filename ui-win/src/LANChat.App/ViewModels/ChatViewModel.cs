@@ -802,46 +802,125 @@ public sealed partial class ChatViewModel : ViewModelBase
         Draft = message.OriginalText;
     }
 
-    /// <summary>快捷撤回自己发送的消息。</summary>
+    /// <summary>快捷撤回自己发送的消息（契约 v1.4 显式 RevokeMessage RPC）。</summary>
     public async Task RevokeMessageByUiAsync(ChatMessage? message)
     {
         if (message is null || !message.CanRevoke)
         {
             return;
         }
-        var prevDraft = Draft;
-        Draft = $"/revoke {message.MsgId}";
-        await SendAsync();
-        Draft = prevDraft;
+        try
+        {
+            await _services.Ipc.InvokeAsync("RevokeMessage", new
+            {
+                to = CurrentPeer?.Id ?? "",
+                group = CurrentChannel?.Id ?? "",
+                msgID = message.MsgId,
+            });
+            RevokeMessage(message.MsgId);
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"撤回消息失败：{ex.Message}");
+        }
     }
 
-    /// <summary>M20: 快捷对消息添加表情回应 (/react)。</summary>
+    /// <summary>M20 / 契约 v1.4: 快捷对消息添加表情回应（显式 ReactMessage RPC）。</summary>
     public async Task ReactMessageByUiAsync(ChatMessage? message, string emoji = "👍")
     {
         if (message is null || string.IsNullOrEmpty(message.MsgId) || message.Revoked)
         {
             return;
         }
-        var prevDraft = Draft;
-        Draft = $"/react {message.MsgId} {emoji}";
-        await SendAsync();
-        Draft = prevDraft;
+        try
+        {
+            await _services.Ipc.InvokeAsync("ReactMessage", new
+            {
+                to = CurrentPeer?.Id ?? "",
+                group = CurrentChannel?.Id ?? "",
+                msgID = message.MsgId,
+                emoji,
+            });
+            ApplyReaction(message.MsgId, emoji);
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"表情回应失败：{ex.Message}");
+        }
     }
 
-    /// <summary>M20: 快捷置顶消息 (/pin)。</summary>
+    /// <summary>契约 v1.4: 原地二次编辑消息（显式 EditMessage RPC）。</summary>
+    public async Task EditMessageByUiAsync(ChatMessage? message, string newText)
+    {
+        var trimmed = (newText ?? "").Trim();
+        if (message is null || string.IsNullOrEmpty(message.MsgId) || message.Revoked || string.IsNullOrEmpty(trimmed))
+        {
+            return;
+        }
+        try
+        {
+            await _services.Ipc.InvokeAsync("EditMessage", new
+            {
+                to = CurrentPeer?.Id ?? "",
+                group = CurrentChannel?.Id ?? "",
+                msgID = message.MsgId,
+                newText = trimmed,
+            });
+            ApplyEdit(message.MsgId, $"{trimmed} (已编辑)");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"编辑消息失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>M20 / 契约 v1.4: 快捷置顶消息（显式 PinMessage RPC）。</summary>
     public async Task PinMessageByUiAsync(ChatMessage? message)
     {
         if (message is null || string.IsNullOrEmpty(message.MsgId) || message.Revoked)
         {
             return;
         }
-        var prevDraft = Draft;
-        Draft = $"/pin {message.MsgId}";
-        await SendAsync();
-        Draft = prevDraft;
+        try
+        {
+            await _services.Ipc.InvokeAsync("PinMessage", new
+            {
+                to = CurrentPeer?.Id ?? "",
+                group = CurrentChannel?.Id ?? "",
+                msgID = message.MsgId,
+            });
+            ApplyPin(message.MsgId);
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"置顶消息失败：{ex.Message}");
+        }
     }
 
-    /// <summary>快捷切换端到端加密（/e2ee on | off）。</summary>
+    /// <summary>契约 v1.4: 标记消息已读并上报已读回执（显式 MarkMessageRead RPC）。</summary>
+    public async Task MarkMessageReadByUiAsync(ChatMessage? message)
+    {
+        if (message is null || string.IsNullOrEmpty(message.MsgId) || message.Revoked)
+        {
+            return;
+        }
+        try
+        {
+            await _services.Ipc.InvokeAsync("MarkMessageRead", new
+            {
+                to = CurrentPeer?.Id ?? "",
+                group = CurrentChannel?.Id ?? "",
+                msgID = message.MsgId,
+            });
+            MarkMessageRead(message.MsgId);
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"标记已读失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>快捷切换端到端加密（契约 v1.4 显式 SetSessionE2EE RPC）。</summary>
     public async Task ToggleE2eeAsync()
     {
         if (!CanSend)
@@ -849,12 +928,71 @@ public sealed partial class ChatViewModel : ViewModelBase
             return;
         }
         var nextState = !IsE2eeEnabled;
-        var prevDraft = Draft;
-        Draft = nextState ? "/e2ee on" : "/e2ee off";
-        await SendAsync();
-        IsE2eeEnabled = nextState;
-        OnPropertyChanged(nameof(E2eeButtonText));
-        Draft = prevDraft;
+        try
+        {
+            await _services.Ipc.InvokeAsync("SetSessionE2EE", new
+            {
+                secret = nextState ? "lanchat-qq-key" : "",
+            });
+            IsE2eeEnabled = nextState;
+            OnPropertyChanged(nameof(E2eeButtonText));
+            AppendSystemMessage(nextState ? "🔐 已开启会话端到端加密" : "🔓 已关闭会话端到端加密");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"切换端到端加密失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>契约 v1.4: 开启或关闭跨设备剪贴板自动监听同步（显式 SetAutoClipboard RPC）。</summary>
+    public async Task SetAutoClipboardAsync(bool enabled)
+    {
+        try
+        {
+            await _services.Ipc.InvokeAsync("SetAutoClipboard", new { enabled });
+            AppendSystemMessage(enabled ? "📋 已开启跨设备剪贴板自动同步" : "📋 已关闭跨设备剪贴板自动同步");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"设置自动剪贴板失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>契约 v1.4: 开启或关闭全局免打扰模式（显式 SetDND RPC）。</summary>
+    public async Task SetDndAsync(bool enabled)
+    {
+        try
+        {
+            await _services.Ipc.InvokeAsync("SetDND", new { enabled });
+            AppendSystemMessage(enabled ? "🔕 已开启免打扰模式" : "🔔 已关闭免打扰模式");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"设置免打扰失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>契约 v1.4: 按会话与时间戳游标分页拉取历史消息（显式 GetHistoryPage RPC）。</summary>
+    public async Task LoadMoreHistoryPageAsync(long beforeTs = 0, int limit = 50)
+    {
+        var convID = CurrentChannel?.Id ?? CurrentPeer?.Id ?? "";
+        if (string.IsNullOrEmpty(convID))
+        {
+            return;
+        }
+        try
+        {
+            await _services.Ipc.InvokeAsync("GetHistoryPage", new
+            {
+                convID,
+                beforeTS = beforeTs,
+                limit,
+            });
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"拉取历史分页失败：{ex.Message}");
+        }
     }
 
     /// <summary>M15: 核验当前会话 X25519 安全码指纹 (/fingerprint)。</summary>

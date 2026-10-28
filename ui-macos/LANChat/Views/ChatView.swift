@@ -502,16 +502,16 @@ struct ChatView: View {
                                     replyingTo = target
                                 },
                                 onRevoke: { target in
-                                    Task { await store.sendText(to: peer.id, text: "/revoke \(target.id)") }
+                                    Task { await store.revokeMessageRpc(to: peer.id, msgID: target.id) }
                                 },
                                 onMarkRead: { target in
-                                    Task { await store.sendText(to: peer.id, text: "/read \(target.id)") }
+                                    Task { await store.markMessageReadRpc(to: peer.id, msgID: target.id) }
                                 },
                                 onReact: { target in
-                                    Task { await store.sendText(to: peer.id, text: "/react \(target.id) 👍") }
+                                    Task { await store.reactMessageRpc(to: peer.id, msgID: target.id, emoji: "👍") }
                                 },
                                 onPin: { target in
-                                    Task { await store.sendText(to: peer.id, text: "/pin \(target.id)") }
+                                    Task { await store.pinMessageRpc(to: peer.id, msgID: target.id) }
                                 },
                                 onReEdit: { original in
                                     let clean = Formatters.extractEditableOriginal(original)
@@ -648,8 +648,7 @@ struct ChatView: View {
                 .help("发送语音消息 (/voice)")
 
                 Button {
-                    let cmd = isE2EE ? "/e2ee off" : "/e2ee on"
-                    Task { await store.sendText(to: peer.id, text: cmd) }
+                    Task { await store.toggleSessionE2EE(threadKey: peer.id) }
                 } label: {
                     Text(isE2EE ? "🔐 已加密 (/e2ee)" : "🔐 端到端加密 (/e2ee)")
                         .font(.system(size: 12, weight: .medium))

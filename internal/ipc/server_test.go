@@ -159,6 +159,48 @@ func (s *stubAPI) RunNetworkDiagnostics() string {
 	return "netdiag:conn=connected peers=2"
 }
 
+func (s *stubAPI) RevokeMessage(to, group, msgID string) error {
+	s.gotTransferID = msgID
+	return nil
+}
+
+func (s *stubAPI) ReactMessage(to, group, msgID, emoji string) error {
+	s.gotTransferID, s.gotName = msgID, emoji
+	return nil
+}
+
+func (s *stubAPI) EditMessage(to, group, msgID, newText string) error {
+	s.gotTransferID, s.gotName = msgID, newText
+	return nil
+}
+
+func (s *stubAPI) PinMessage(to, group, msgID string) error {
+	s.gotTransferID = msgID
+	return nil
+}
+
+func (s *stubAPI) MarkMessageRead(to, group, msgID string) error {
+	s.gotTransferID = msgID
+	return nil
+}
+
+func (s *stubAPI) SetSessionE2EE(secret string) error {
+	s.gotName = secret
+	return nil
+}
+
+func (s *stubAPI) SetAutoClipboard(enabled bool) {
+	s.gotPrivate = enabled
+}
+
+func (s *stubAPI) SetDND(enabled bool) {
+	s.gotPrivate = enabled
+}
+
+func (s *stubAPI) GetHistoryPage(convID string, beforeTS int64, limit int) []appapi.ChatMessage {
+	return s.state.Messages
+}
+
 // startServer 在临时本地传输（Unix socket / 命名管道）上启动服务端，
 // 返回服务端与客户端连接。
 func startServer(t *testing.T, api appapi.API) (*Server, net.Conn) {
@@ -533,6 +575,33 @@ func TestCollabV13Methods(t *testing.T) {
 	}
 	if resp := call(t, c, "RunNetworkDiagnostics", nil); resp.Error != nil {
 		t.Fatalf("RunNetworkDiagnostics failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "RevokeMessage", map[string]string{"to": "bob", "msgID": "m1"}); resp.Error != nil {
+		t.Fatalf("RevokeMessage failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "ReactMessage", map[string]string{"to": "bob", "msgID": "m1", "emoji": "👍"}); resp.Error != nil {
+		t.Fatalf("ReactMessage failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "EditMessage", map[string]string{"to": "bob", "msgID": "m1", "newText": "edited"}); resp.Error != nil {
+		t.Fatalf("EditMessage failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "PinMessage", map[string]string{"to": "bob", "msgID": "m1"}); resp.Error != nil {
+		t.Fatalf("PinMessage failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "MarkMessageRead", map[string]string{"to": "bob", "msgID": "m1"}); resp.Error != nil {
+		t.Fatalf("MarkMessageRead failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "SetSessionE2EE", map[string]string{"secret": "my-key"}); resp.Error != nil {
+		t.Fatalf("SetSessionE2EE failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "SetAutoClipboard", map[string]bool{"enabled": true}); resp.Error != nil {
+		t.Fatalf("SetAutoClipboard failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "SetDND", map[string]bool{"enabled": true}); resp.Error != nil {
+		t.Fatalf("SetDND failed: %v", resp.Error)
+	}
+	if resp := call(t, c, "GetHistoryPage", map[string]interface{}{"convID": "bob", "beforeTS": 0, "limit": 20}); resp.Error != nil {
+		t.Fatalf("GetHistoryPage failed: %v", resp.Error)
 	}
 }
 

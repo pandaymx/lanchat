@@ -277,6 +277,50 @@ final class ChatEngine {
         await runOnIO { $0.runNetworkDiagnostics() }
     }
 
+    // MARK: - 契约 v1.4 消息富交互与安全控制显式 RPC 绑定方法
+
+    func revokeMessage(to: String, group: String = "", msgID: String) async throws {
+        try await runOnIOThrowing { try $0.revokeMessage(to, group: group, msgID: msgID) }
+    }
+
+    func reactMessage(to: String, group: String = "", msgID: String, emoji: String = "👍") async throws {
+        try await runOnIOThrowing { try $0.reactMessage(to, group: group, msgID: msgID, emoji: emoji) }
+    }
+
+    func editMessage(to: String, group: String = "", msgID: String, newText: String) async throws {
+        try await runOnIOThrowing { try $0.editMessage(to, group: group, msgID: msgID, newText: newText) }
+    }
+
+    func pinMessage(to: String, group: String = "", msgID: String) async throws {
+        try await runOnIOThrowing { try $0.pinMessage(to, group: group, msgID: msgID) }
+    }
+
+    func markMessageRead(to: String, group: String = "", msgID: String) async throws {
+        try await runOnIOThrowing { try $0.markMessageRead(to, group: group, msgID: msgID) }
+    }
+
+    func setSessionE2EE(_ secret: String) async throws {
+        try await runOnIOThrowing { try $0.setSessionE2EE(secret) }
+    }
+
+    func setAutoClipboard(_ enabled: Bool) async {
+        await runOnIO { $0.setAutoClipboard(enabled) }
+    }
+
+    func setDND(_ enabled: Bool) async {
+        await runOnIO { $0.setDND(enabled) }
+    }
+
+    func getHistoryPage(convID: String, beforeTS: Int64 = 0, limit: Int = 50, selfId: String = "") async -> [ChatMessage] {
+        await runOnIO { c in
+            guard let data = c.historyPageJSON(convID, beforeTs: beforeTS, limit: limit),
+                  let dtos = try? JSONDecoder().decode([HistoryMessageJSON].self, from: data) else {
+                return []
+            }
+            return dtos.map { $0.toModel(selfId: selfId) }
+        }
+    }
+
     // MARK: - 线程包装
 
     private func runOnIO<T>(_ block: @escaping @Sendable (LCMobileClient) -> T) async -> T {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.3",
+  "schemaVersion": "1.4",
   "description": "LANChat daemon <-> 五端 UI 契约（JSON-RPC 2.0）。唯一真源为 internal/appapi；禁止任何端使用本文件之外的方法、事件或字段。",
   "transport": {
     "protocol": "jsonrpc-2.0",
@@ -139,6 +139,42 @@
     "RunNetworkDiagnostics": {
       "params": [],
       "result": { "report": "string" }
+    },
+    "RevokeMessage": {
+      "params": { "to": "string?", "group": "string?", "msgID": "string" },
+      "result": {}
+    },
+    "ReactMessage": {
+      "params": { "to": "string?", "group": "string?", "msgID": "string", "emoji": "string" },
+      "result": {}
+    },
+    "EditMessage": {
+      "params": { "to": "string?", "group": "string?", "msgID": "string", "newText": "string" },
+      "result": {}
+    },
+    "PinMessage": {
+      "params": { "to": "string?", "group": "string?", "msgID": "string" },
+      "result": {}
+    },
+    "MarkMessageRead": {
+      "params": { "to": "string?", "group": "string?", "msgID": "string" },
+      "result": {}
+    },
+    "SetSessionE2EE": {
+      "params": { "secret": "string?" },
+      "result": {}
+    },
+    "SetAutoClipboard": {
+      "params": { "enabled": "bool" },
+      "result": {}
+    },
+    "SetDND": {
+      "params": { "enabled": "bool" },
+      "result": {}
+    },
+    "GetHistoryPage": {
+      "params": { "convID": "string?", "beforeTS": "int64?", "limit": "int?" },
+      "result": { "type": "ChatMessage[]" }
     }
   },
   "notifications": {

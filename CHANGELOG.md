@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.0](https://github.com/pandaymx/lanchat/compare/v5.0.0...v5.1.0) (2026-10-28)
+
+
+### Features
+
+* **ui-android:** add mobile collab stage, call banner, and dual-stack badge ([a9457d8](https://github.com/pandaymx/lanchat/commit/a9457d8ef55e2eddf354bf083b3fb8ea046e0501))
+
 ## [5.0.0](https://github.com/pandaymx/lanchat/compare/v4.9.0...v5.0.0) (2026-10-27)
 
 

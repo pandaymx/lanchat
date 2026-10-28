@@ -328,13 +328,8 @@ final class ChatEngine {
     // MARK: - 契约 v1.5 系统与高级消息显式 RPC 绑定方法
 
     @discardableResult
-    func verifyPeerFingerprint(peerID: String) async throws -> String {
-        try await runOnIOThrowing { c in
-            var err: NSError?
-            let fp = c.verifyPeerFingerprint(peerID, error: &err)
-            if let err { throw err }
-            return fp
-        }
+    func verifyPeerFingerprint(peerID: String) async -> String {
+        await runOnIO { $0.verifyPeerFingerprint(peerID) }
     }
 
     @discardableResult
@@ -351,13 +346,13 @@ final class ChatEngine {
     func syncHistoryWithPeer(to: String, group: String = "", sinceTS: Int64 = 0) async throws -> Int {
         try await runOnIOThrowing { c in
             var synced: Int = 0
-            try c.syncHistoryWithPeer(to, group: group, sinceTS: sinceTS, ret0_: &synced)
+            try c.syncHistory(withPeer: to, group: group, sinceTS: sinceTS, ret0_: &synced)
             return synced
         }
     }
 
-    func setBandwidthLimit(_ limitMBps: Double) async throws {
-        try await runOnIOThrowing { try $0.setBandwidthLimit(limitMBps) }
+    func setBandwidthLimit(_ limitMBps: Double) async {
+        await runOnIO { _ = $0.setBandwidthLimit(limitMBps) }
     }
 
     @discardableResult

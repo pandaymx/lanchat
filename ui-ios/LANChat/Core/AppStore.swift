@@ -408,8 +408,8 @@ final class AppStore: ObservableObject {
     }
 
     func verifyPeerFingerprint(peerID: String) {
-        run {
-            let raw = try await self.engine.verifyPeerFingerprint(peerID: peerID)
+        Task {
+            let raw = await self.engine.verifyPeerFingerprint(peerID: peerID)
             let fp = raw.hasPrefix("fp:") ? String(raw.dropFirst(3)) : raw
             self.error = "🛡️ 安全码指纹核验：\(fp)"
         }
@@ -430,8 +430,8 @@ final class AppStore: ObservableObject {
     }
 
     func setBandwidthLimit(_ limitMBps: Double) {
-        run {
-            try await self.engine.setBandwidthLimit(limitMBps)
+        Task {
+            await self.engine.setBandwidthLimit(limitMBps)
         }
     }
 

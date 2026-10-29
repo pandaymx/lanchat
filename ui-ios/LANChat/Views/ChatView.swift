@@ -209,7 +209,7 @@ struct ChatView: View {
                                 let beforeMs = Int64(firstMsg.timestamp.timeIntervalSince1970 * 1000.0)
                                 store.getHistoryPage(convID: peer.id, beforeTS: beforeMs, limit: 50)
                             } label: {
-                                Text("📜 加载更早历史消息")
+                                Text("📜 加载更早历史消息（或上滑触顶自动加载）")
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(QQTheme.qqBlue)
                                     .padding(.horizontal, 12)
@@ -217,6 +217,12 @@ struct ChatView: View {
                                     .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
                             }
                             .buttonStyle(.plain)
+                            .onAppear {
+                                if thread.count >= 20 {
+                                    let beforeMs = Int64(firstMsg.timestamp.timeIntervalSince1970 * 1000.0)
+                                    store.getHistoryPage(convID: peer.id, beforeTS: beforeMs, limit: 50)
+                                }
+                            }
                         }
                         ForEach(thread) { msg in
                             BubbleRow(
@@ -254,7 +260,7 @@ struct ChatView: View {
                     .padding(.vertical, 12)
                 }
                 .background(Color(.systemGroupedBackground))
-                .onChange(of: thread.count) { _ in
+                .onChange(of: thread.last?.id) { _ in
                     if let last = thread.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }
@@ -541,6 +547,22 @@ struct ChatView: View {
                 }
 
                 Button {
+                    if let img = UIPasteboard.general.image, let pngData = img.pngData() {
+                        let b64 = pngData.base64EncodedString()
+                        store.sendText(to: peer.id, text: "/paste data:image/png;base64,\(b64)")
+                    } else if let str = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines), !str.isEmpty {
+                        store.sendText(to: peer.id, text: "/clip \(str)")
+                    }
+                } label: {
+                    Text("📋 粘贴")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Color(.tertiarySystemGroupedBackground), in: Capsule())
+                }
+
+                Button {
                     store.sendText(to: peer.id, text: "/voice 3")
                 } label: {
                     Text("🎤 语音")
@@ -669,6 +691,7 @@ struct BubbleRow: View {
     var onEdit: (() -> Void)? = nil
     var onPin: (() -> Void)? = nil
     var onReEdit: ((String) -> Void)? = nil
+    @State private var showImageLightbox = false
 
     private var parsed: (body: String, reactions: [String]) {
         QQTheme.splitReactions(message.text)
@@ -741,7 +764,25 @@ struct BubbleRow: View {
                                     .scaledToFit()
                                     .frame(maxWidth: 210, maxHeight: 150)
                                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                Text("🖼️ 图片缩略图")
+                                    .onTapGesture {
+                                        showImageLightbox = true
+                                    }
+                                    .sheet(isPresented: $showImageLightbox) {
+                                        VStack(spacing: 12) {
+                                            Text("🖼️ 原图灯箱预览")
+                                                .font(.headline)
+                                            Image(uiImage: img)
+                                                .resizable()
+                                                .scaledToFit()
+                                                .padding()
+                                            Button("关闭") {
+                                                showImageLightbox = false
+                                            }
+                                            .buttonStyle(.borderedProminent)
+                                        }
+                                        .padding()
+                                    }
+                                Text("🖼️ 图片缩略图（点击放大）")
                                     .font(.caption2)
                                     .foregroundStyle(bubbleForeground.opacity(0.85))
                             }
@@ -776,6 +817,16 @@ struct BubbleRow: View {
                                     .font(.system(size: 15))
                                     .foregroundStyle(bubbleForeground)
                                     .textSelection(.enabled)
+
+                                if splitQuoteBody.body.contains("🎤 [语音消息") || splitQuoteBody.body.contains("data:audio/") {
+                                    HStack(spacing: 8) {
+                                        Text("▶️ 语音波形 ▂▄▆█▄▂")
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundStyle(bubbleForeground.opacity(0.9))
+                                        ProgressView(value: 0.65)
+                                            .frame(width: 88)
+                                    }
+                                }
 
                                 if splitQuoteBody.body.contains("```") {
                                     Text(splitQuoteBody.body.replacingOccurrences(of: "```", with: "").trimmingCharacters(in: .whitespacesAndNewlines))

@@ -139,7 +139,7 @@ struct ChannelChatView: View {
                                 let beforeMs = Int64(firstMsg.timestamp.timeIntervalSince1970 * 1000.0)
                                 store.getHistoryPage(convID: live.id, beforeTS: beforeMs, limit: 50)
                             } label: {
-                                Text("📜 加载更早历史消息")
+                                Text("📜 加载更早历史消息（或上滑触顶自动加载）")
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(QQTheme.qqBlue)
                                     .padding(.horizontal, 12)
@@ -147,6 +147,12 @@ struct ChannelChatView: View {
                                     .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
                             }
                             .buttonStyle(.plain)
+                            .onAppear {
+                                if thread.count >= 20 {
+                                    let beforeMs = Int64(firstMsg.timestamp.timeIntervalSince1970 * 1000.0)
+                                    store.getHistoryPage(convID: live.id, beforeTS: beforeMs, limit: 50)
+                                }
+                            }
                         }
                         ForEach(thread) { msg in
                             ChannelBubble(
@@ -182,7 +188,7 @@ struct ChannelChatView: View {
                     .padding(.vertical, 12)
                 }
                 .background(Color(.systemGroupedBackground))
-                .onChange(of: thread.count) { _ in
+                .onChange(of: thread.last?.id) { _ in
                     if let last = thread.last {
                         withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
                     }

@@ -776,7 +776,7 @@ private fun ConversationScaffold(
                                 text = if (isRinging) {
                                     "🔔 [来电响铃] $callerTitle 邀请你进行实时低延迟语音通话"
                                 } else {
-                                    "📞 局域网实时语音中 · $callerTitle · $mm:$ss" + if (callMuted) " (已静音)" else ""
+                                    "📞 局域网实时语音中 (Mesh 混音) · $callerTitle · $mm:$ss" + if (callMuted) " (已静音)" else ""
                                 },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -875,9 +875,9 @@ private fun ConversationScaffold(
                         ) {
                             Text(
                                 text = if (decodedFrameBitmap != null) {
-                                    "🖥️ 正在接收 P2P 实时屏幕共享画布 · 点击画面发送激光笔批注"
+                                    "🖥️ 正在接收 P2P 实时屏幕共享画布 (脏矩形自适应) · 点击发送批注"
                                 } else {
-                                    "🖥️ 已开启 P2P 屏幕共享（15fps）"
+                                    "🖥️ 已开启 P2P 屏幕共享（24fps 脏矩形自适应）"
                                 },
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold,

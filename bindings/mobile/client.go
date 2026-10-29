@@ -281,6 +281,21 @@ func (c *Client) CheckSilentUpdate(proxy string, download bool) (string, error) 
 	return c.core.CheckSilentUpdate(proxy, download)
 }
 
+// ChannelManageMember 执行频道精细化权限治理（promote/demote/mute/unmute/kick/ack_announcement，契约 v1.6）。
+func (c *Client) ChannelManageMember(channelID string, memberID string, action string) error {
+	return c.core.ChannelManageMember(channelID, memberID, action)
+}
+
+// EnqueueOfflineMailbox 向中心节点加密离线投递箱投递经接收方 X25519 公钥密封的离线信封（契约 v1.6）。
+func (c *Client) EnqueueOfflineMailbox(to string, text string, recipientPub string) (string, error) {
+	return c.core.EnqueueOfflineMailbox(to, text, recipientPub)
+}
+
+// DrainOfflineMailbox 从中心节点或本地待收投递箱拉取、解密并销毁离线加密信封（契约 v1.6）。
+func (c *Client) DrainOfflineMailbox(fromPeer string) string {
+	return c.core.DrainOfflineMailbox(fromPeer)
+}
+
 // SyncFolder 扫描本地文件夹并执行 P2P 增量块去重同步（v3.4.0 / 契约 v1.3）。
 func (c *Client) SyncFolder(to string, group string, dirPath string) (int, error) {
 	return c.core.SyncFolder(to, group, dirPath)

@@ -85,6 +85,9 @@ final class ChatStore: ObservableObject {
         case "conn.changed":
             if let p = try? decoder.decode(ConnParams.self, from: params) {
                 conn = p.state
+                if p.state == "connected" {
+                    Task { await refreshState() }
+                }
             }
         case "peer.joined":
             if let p = try? decoder.decode(PeerParams.self, from: params) {
@@ -184,9 +187,16 @@ final class ChatStore: ObservableObject {
         if !incoming.id.isEmpty, let idx = list.firstIndex(where: { $0.id == incoming.id }) {
             let preserved = list[idx].originalText.isEmpty ? incoming.originalText : list[idx].originalText
             list[idx].text = incoming.text
+            list[idx].inbound = incoming.inbound
             list[idx].revoked = incoming.revoked
             list[idx].readBy = incoming.readBy
             list[idx].originalText = preserved
+            list[idx].replyQuote = incoming.replyQuote
+            list[idx].reactions = incoming.reactions
+            list[idx].editedAt = incoming.editedAt
+            list[idx].pinned = incoming.pinned
+            list[idx].mediaMime = incoming.mediaMime
+            list[idx].mediaPath = incoming.mediaPath
             messages[key] = list
             return
         }

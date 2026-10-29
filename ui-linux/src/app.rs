@@ -1711,11 +1711,11 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             let cur = btn.label().map(|s| s.to_string()).unwrap_or_default();
             if cur.contains("已静音") {
                 btn.set_label("🎙️ 静音");
-                send_control_command(&cx, &target, "/call unmute");
+                send_text_to_target(&cx, &target, "/call unmute");
                 cx.toast("🔊 已取消麦克风静音并通知语音频道");
             } else {
                 btn.set_label("🔇 已静音");
-                send_control_command(&cx, &target, "/call mute");
+                send_text_to_target(&cx, &target, "/call mute");
                 cx.toast("🔇 已开启麦克风静音并实时广播");
             }
         }
@@ -1728,11 +1728,11 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
             let cur = btn.label().map(|s| s.to_string()).unwrap_or_default();
             if cur.contains("全屏") {
                 btn.set_label("🗔 窗口/裁剪");
-                send_control_command(&cx, &target, "/screenshare region 0,0,0,0");
+                send_text_to_target(&cx, &target, "/screenshare region 0,0,0,0");
                 cx.toast("🖥️ 已切换为全屏显示器投屏");
             } else {
                 btn.set_label("🖥️ 恢复全屏");
-                send_control_command(&cx, &target, "/screenshare region 0.05,0.05,0.90,0.90");
+                send_text_to_target(&cx, &target, "/screenshare region 0.05,0.05,0.90,0.90");
                 cx.toast("🗔 已启用活动窗口区域裁剪（8×8 脏矩形自适应帧率）");
             }
         }

@@ -176,6 +176,8 @@ jobs:
             dist/LANChat-*-linux-x64.tar.gz
             dist/LANChat-*-linux-amd64.deb
             dist/LANChat-*-linux-x86_64.rpm
+            dist/LANChat-*-aur-PKGBUILD
+            dist/LANChat-*-flatpak-manifest.yml
           if-no-files-found: error
 
   android:
@@ -504,14 +506,31 @@ jobs:
       - name: Bundle daemon and zip
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
+          APPLE_CERTIFICATE_B64: ${{ secrets.APPLE_CERTIFICATE_B64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
         run: |
           APP="ui-macos/build/DerivedData/Build/Products/Release/LANChat.app"
           mkdir -p "$APP/Contents/Resources"
           cp dist/daemon/lanchat-daemon "$APP/Contents/Resources/lanchat-daemon"
           chmod +x "$APP/Contents/Resources/lanchat-daemon"
           mkdir -p dist
+          if [ -n "${APPLE_CERTIFICATE_B64:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "检测到 macOS Developer ID 证书，执行 Hardened Runtime 代码签名..."
+            codesign --force --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$APP/Contents/Resources/lanchat-daemon" || true
+            codesign --force --deep --options runtime --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$APP" || true
+          else
+            echo "::notice::未配置 APPLE_CERTIFICATE_B64，按 unsigned macOS 包发布（AGENTS.md §9）"
+          fi
           ditto -c -k --keepParent "$APP" \
             "dist/LANChat-${TAG#v}-macos-universal-unsigned.zip"
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_SPECIFIC_PASSWORD:-}" ] && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            xcrun notarytool submit "dist/LANChat-${TAG#v}-macos-universal-unsigned.zip" \
+              --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" --wait || true
+          fi
           ls -lh dist
 
       - uses: actions/upload-artifact@v4
@@ -683,13 +702,27 @@ jobs:
 
       - name: Generate and build MSI
         shell: pwsh
+        env:
+          WINDOWS_PFX_B64: ${{ secrets.WINDOWS_PFX_B64 }}
+          WINDOWS_PFX_PASSWORD: ${{ secrets.WINDOWS_PFX_PASSWORD }}
         run: |
           scripts/new-msi.ps1 -SourceDir dist/publish -OutputWxs dist/lanchat.wxs `
             -Version '${{ steps.ver.outputs.msiVersion }}' `
             -UpgradeCode "7B3E9A24-1C5F-4D6B-9E8A-2F0C5D8A3B17"
           $v = '${{ steps.ver.outputs.version }}'
+          $msiPath = "dist/LANChat-$v-windows-${{ matrix.arch }}.msi"
           wix build -arch ${{ matrix.wix_arch }} -nologo `
-            -o "dist/LANChat-$v-windows-${{ matrix.arch }}.msi" dist/lanchat.wxs
+            -o $msiPath dist/lanchat.wxs
+          if ($env:WINDOWS_PFX_B64 -and $env:WINDOWS_PFX_PASSWORD) {
+            $pfxFile = Join-Path $env:RUNNER_TEMP "authenticode.pfx"
+            [IO.File]::WriteAllBytes($pfxFile, [Convert]::FromBase64String($env:WINDOWS_PFX_B64))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Select-Object -Last 1
+            if ($signtool) {
+              & $signtool.FullName sign /f $pfxFile /p $env:WINDOWS_PFX_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $msiPath
+            }
+          } else {
+            Write-Host "::notice::未配置 WINDOWS_PFX_B64，按 unsigned MSI 发布（AGENTS.md §9）"
+          }
 
       - name: Build portable zip
         shell: pwsh

@@ -148,4 +148,55 @@ else
   echo "警告：未检测到 rpmbuild，跳过 .rpm 构建" >&2
 fi
 
-ls -lh "${OUT_DIR_ABS}"/LANChat-"${VERSION}"-linux-*
+# ─── 4. Arch Linux AUR (PKGBUILD) 与 Flatpak 发布清单生成（v8.0.0） ───
+TAR_PATH="${OUT_DIR_ABS}/LANChat-${VERSION}-linux-x64.tar.gz"
+TAR_SHA256="$(sha256sum "$TAR_PATH" | awk '{print $1}')"
+
+cat > "${OUT_DIR_ABS}/LANChat-${VERSION}-aur-PKGBUILD" <<EOF
+# Maintainer: LANChat Contributors <noreply@lanchat.dev>
+pkgname=lanchat-bin
+pkgver=${VERSION//-/_}
+pkgrel=1
+pkgdesc="Zero-configuration LAN P2P instant messaging and file transfer client (GTK4 + libadwaita)"
+arch=('x86_64')
+url="https://github.com/pandaymx/lanchat"
+license=('MIT')
+depends=('gtk4' 'libadwaita' 'ca-certificates')
+provides=('lanchat')
+conflicts=('lanchat')
+source=("LANChat-${VERSION}-linux-x64.tar.gz::https://github.com/pandaymx/lanchat/releases/download/v${VERSION}/LANChat-${VERSION}-linux-x64.tar.gz")
+sha256sums=('${TAR_SHA256}')
+
+package() {
+  install -Dm755 "\${srcdir}/lanchat-ui" "\${pkgdir}/usr/bin/lanchat-ui"
+  install -Dm755 "\${srcdir}/lanchat-daemon" "\${pkgdir}/usr/bin/lanchat-daemon"
+}
+EOF
+
+cat > "${OUT_DIR_ABS}/LANChat-${VERSION}-flatpak-manifest.yml" <<EOF
+app-id: dev.lanchat.LANChat
+runtime: org.gnome.Platform
+runtime-version: '47'
+sdk: org.gnome.Sdk
+command: lanchat-ui
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --Socket=pulseaudio
+  - --filesystem=xdg-download
+modules:
+  - name: lanchat
+    buildsystem: simple
+    build-commands:
+      - install -Dm755 lanchat-ui /app/bin/lanchat-ui
+      - install -Dm755 lanchat-daemon /app/bin/lanchat-daemon
+    sources:
+      - type: archive
+        url: https://github.com/pandaymx/lanchat/releases/download/v${VERSION}/LANChat-${VERSION}-linux-x64.tar.gz
+        sha256: ${TAR_SHA256}
+        strip-components: 0
+EOF
+
+ls -lh "${OUT_DIR_ABS}"/LANChat-"${VERSION}"-*

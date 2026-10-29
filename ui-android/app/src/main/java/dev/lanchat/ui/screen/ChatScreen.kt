@@ -353,6 +353,8 @@ private fun ConversationScaffold(
     var callMuted by remember { mutableStateOf(false) }
     var callDurationSec by remember { mutableIntStateOf(0) }
     var isScreenSharing by remember { mutableStateOf(false) }
+    var lightboxBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var lastAutoPagedTs by remember { mutableLongStateOf(0L) }
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -612,8 +614,19 @@ private fun ConversationScaffold(
 
     val imeVisible = WindowInsets.isImeVisible
 
-    LaunchedEffect(messages.size, imeVisible) {
+    LaunchedEffect(messages.lastOrNull()?.msgId, imeVisible) {
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+    }
+
+    // 向上滑到顶部时自动无缝分页加载更早历史消息并保持滚动锚点（v7.1.0）
+    LaunchedEffect(listState.firstVisibleItemIndex) {
+        if (listState.firstVisibleItemIndex == 0 && messages.size >= 15) {
+            val earliestTs = messages.first().timestamp
+            if (earliestTs > 0L && earliestTs != lastAutoPagedTs) {
+                lastAutoPagedTs = earliestTs
+                onLoadHistoryPage(earliestTs)
+            }
+        }
     }
 
     LaunchedEffect(imeVisible) {
@@ -967,6 +980,7 @@ private fun ConversationScaffold(
                         peerNameOf = peerNameOf,
                         isPlayingVoice = playingMsgId == message.msgId,
                         onPlayVoice = { clip -> playVoiceClip(message.msgId, clip) },
+                        onPreviewImage = { bmp -> lightboxBitmap = bmp },
                         onReply = { replyTarget = message },
                         onRevoke = { onRevokeMessage(message.msgId) },
                         onMarkRead = { onMarkMessageRead(message.msgId) },
@@ -1390,6 +1404,31 @@ private fun ConversationScaffold(
             },
         )
     }
+
+    val previewBmp = lightboxBitmap
+    if (previewBmp != null) {
+        AlertDialog(
+            onDismissRequest = { lightboxBitmap = null },
+            title = { Text("🖼️ 原图灯箱预览") },
+            text = {
+                Image(
+                    bitmap = previewBmp,
+                    contentDescription = "原图灯箱预览",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 180.dp, max = 420.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { lightboxBitmap = null }) {
+                    Text("关闭")
+                }
+            },
+        )
+    }
 }
 
 @Composable
@@ -1462,6 +1501,7 @@ private fun MessageBubbleRow(
     onCopy: (String) -> Unit = {},
     isPlayingVoice: Boolean = false,
     onPlayVoice: (VoiceClip) -> Unit = {},
+    onPreviewImage: (ImageBitmap) -> Unit = {},
 ) {
     val senderDisplay = if (message.inbound) {
         if (showSender && message.senderId.isNotEmpty()) peerNameOf(message.senderId) else targetTitle
@@ -1669,57 +1709,74 @@ private fun MessageBubbleRow(
                             if (inlineBitmap != null) {
                                 Image(
                                     bitmap = inlineBitmap,
-                                    contentDescription = "内联图片缩略图",
+                                    contentDescription = "内联图片缩略图（点击放大预览）",
                                     contentScale = ContentScale.Fit,
                                     modifier = Modifier
                                         .size(width = 180.dp, height = 130.dp)
-                                        .clip(RoundedCornerShape(10.dp)),
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { onPreviewImage(inlineBitmap) },
                                 )
                                 Spacer(Modifier.height(4.dp))
                                 Text(
-                                    text = "🖼️ [图片缩略图]",
+                                    text = "🖼️ [图片 · 点击放大]",
                                     color = bubbleText,
                                     fontSize = 12.sp,
                                 )
                             } else if (voiceClip != null) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    Text(
-                                        text = if (isPlayingVoice) "🔊" else "▶️",
-                                        fontSize = 15.sp,
-                                        color = bubbleText,
-                                    )
-                                    Text(
-                                        text = if (isPlayingVoice) {
-                                            "播放中 ılılılı ${voiceClip.durationSec}\""
-                                        } else {
-                                            "🎤 语音 ılılılı ${voiceClip.durationSec}\""
-                                        },
-                                        color = bubbleText,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        lineHeight = 18.sp,
-                                    )
-                                    if (canAct) {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = if (message.inbound) {
-                                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Text(
+                                            text = if (isPlayingVoice) "🔊" else "▶️",
+                                            fontSize = 15.sp,
+                                            color = bubbleText,
+                                        )
+                                        Text(
+                                            text = if (isPlayingVoice) {
+                                                "播放中 ▂▄▆█▄▂ ${voiceClip.durationSec}\""
                                             } else {
-                                                Color.White.copy(alpha = 0.18f)
+                                                "🎤 语音 ▂▄▆█▄▂ ${voiceClip.durationSec}\""
                                             },
-                                            modifier = Modifier.clickable { showMenu = true },
-                                        ) {
-                                            Text(
-                                                text = "⋯",
-                                                color = bubbleText,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                                            )
+                                            color = bubbleText,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            lineHeight = 18.sp,
+                                        )
+                                        if (canAct) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = if (message.inbound) {
+                                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                                                } else {
+                                                    Color.White.copy(alpha = 0.18f)
+                                                },
+                                                modifier = Modifier.clickable { showMenu = true },
+                                            ) {
+                                                Text(
+                                                    text = "⋯",
+                                                    color = bubbleText,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                                )
+                                            }
                                         }
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .width(126.dp)
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(bubbleText.copy(alpha = 0.25f)),
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(if (isPlayingVoice) 0.72f else 0.18f)
+                                                .height(4.dp)
+                                                .background(bubbleText),
+                                        )
                                     }
                                 }
                             } else if (displayBodyText.contains("```")) {

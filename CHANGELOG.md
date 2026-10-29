@@ -1,5 +1,25 @@
 # Changelog
 
+## [8.0.0](https://github.com/pandaymx/lanchat/compare/v7.3.0...v8.0.0) (2026-10-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **appapi:** upgrade IPC contract schemaVersion to 1.6 with ChannelManageMember, EnqueueOfflineMailbox, and DrainOfflineMailbox RPCs across all six endpoints.
+
+### Features
+
+* **appapi:** upgrade contract schema to v1.6 with governance and mailbox ([e4053dd](https://github.com/pandaymx/lanchat/commit/e4053ddb5b4d5fe5412bcb869ff5c721f81a814c))
+* **bindings:** expose contract v1.6 governance and mailbox methods ([65c2b1b](https://github.com/pandaymx/lanchat/commit/65c2b1b32e704d327d3b79f86f2863a35f3b8d44))
+* **ci:** add conditional code signing and Flatpak/AUR release manifests ([f9c4295](https://github.com/pandaymx/lanchat/commit/f9c42955f3a3a9353f86c384e6390c74e1a9f6f5))
+* **core:** add channel role governance and encrypted offline mailbox ([8fbce64](https://github.com/pandaymx/lanchat/commit/8fbce646e0469a8c5cfd66a417909f5027f9768c))
+* **ipc:** register ChannelManageMember and offline mailbox RPC handlers ([aa5116f](https://github.com/pandaymx/lanchat/commit/aa5116f55cc796aeba43dcf80a190b99cac4f9a8))
+* **ui-android:** bind contract v1.6 channel governance and mailbox RPCs ([719ad05](https://github.com/pandaymx/lanchat/commit/719ad05b25ee08d42391636ae707c112983681f1))
+* **ui-ios:** bind contract v1.6 channel governance and mailbox RPCs ([e48263b](https://github.com/pandaymx/lanchat/commit/e48263bf1cb3cd728d881d6417072773b45a3a1f))
+* **ui-linux:** integrate contract v1.6 RPCs and AppStream metainfo ([321549c](https://github.com/pandaymx/lanchat/commit/321549c8c181679d412302f05349a4fd877bac29))
+* **ui-macos:** integrate contract v1.6 channel governance and mailbox RPCs ([2ed9158](https://github.com/pandaymx/lanchat/commit/2ed9158bb1a2d6b4fe7c2ff58c454fd24ba3da88))
+* **ui-win:** integrate contract v1.6 channel governance and mailbox RPCs ([9769f10](https://github.com/pandaymx/lanchat/commit/9769f105d4ecc39bc8c93facce4f4c8fb496f6f4))
+
 ## [7.3.0](https://github.com/pandaymx/lanchat/compare/v7.2.0...v7.3.0) (2026-10-29)
 
 

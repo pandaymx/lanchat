@@ -1,5 +1,15 @@
 # Changelog
 
+## [7.0.3](https://github.com/pandaymx/lanchat/compare/v7.0.2...v7.0.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* **core:** persist encrypted chat history and device identity by default ([3ca0071](https://github.com/pandaymx/lanchat/commit/3ca00715681e776873aa09e0111c5116a63b37b0))
+* **ui-linux:** pass default download dir to daemon and sync message direction ([04af0e3](https://github.com/pandaymx/lanchat/commit/04af0e3becda43edfa1e827d9b922df47f52fd39))
+* **ui-macos:** refresh state on connect and preserve history metadata ([7a38eec](https://github.com/pandaymx/lanchat/commit/7a38eec706c3d9b38410be67fe599893ce28c4a8))
+* **ui-win:** set default download dir and restore history on connect ([993aa10](https://github.com/pandaymx/lanchat/commit/993aa10f80fa658d32ff3d94fd53afbc568d6298))
+
 ## [7.0.2](https://github.com/pandaymx/lanchat/compare/v7.0.1...v7.0.2) (2026-10-28)
 
 

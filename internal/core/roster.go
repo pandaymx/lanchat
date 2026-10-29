@@ -1,8 +1,6 @@
 package core
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -397,15 +395,8 @@ func (c *Client) autoRoamWithJoinedPeers(joined []appapi.Peer) {
 	c.mu.Unlock()
 
 	for _, peerID := range targets {
-		dmSince := c.history.latestTimestampForConv(peerID)
-		_ = c.sendControlText(peerID, "", "sys:sync:autoreq:"+peerID+":"+strconv.FormatInt(dmSince, 10))
 		bcastSince := c.history.latestTimestampForConv("*")
 		_ = c.sendControlText(peerID, "", "sys:sync:autoreq:*:"+strconv.FormatInt(bcastSince, 10))
-		if dmMsgs := c.history.exportForConvSince(peerID, peerID, selfID, 0); len(dmMsgs) > 0 {
-			if raw, err := json.Marshal(dmMsgs); err == nil {
-				_ = c.sendControlText(peerID, "", "sys:sync:autopush:"+base64.StdEncoding.EncodeToString(raw))
-			}
-		}
 	}
 	for _, sc := range sharedChs {
 		chSince := c.history.latestTimestampForConv(sc.chID)

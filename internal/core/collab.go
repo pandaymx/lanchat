@@ -223,7 +223,6 @@ type voiceSession struct {
 	localAddr        string
 	remoteAddr       *net.UDPAddr
 	meshPeers        map[string]*net.UDPAddr
-	peerJitter       map[string]*voiceJitterBuffer
 	peerMuted        map[string]bool
 	peerSpeaking     map[string]float64
 	peerLastSpeakMs  map[string]int64
@@ -1884,10 +1883,6 @@ func captureOSDesktopBytes() ([]byte, error) {
 		}
 	}
 	return nil, fmt.Errorf("no desktop capture backend available on %s", runtime.GOOS)
-}
-
-func normalizeScreenJPEGBytes(raw []byte) []byte {
-	return cropAndNormalizeScreenJPEGBytes(raw, 0, 0, 0, 0, 55)
 }
 
 func cropAndNormalizeScreenJPEGBytes(raw []byte, cropX, cropY, cropW, cropH float64, quality int) []byte {

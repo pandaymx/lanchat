@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.lanchat.LANChat</id>
+  <name>LANChat</name>
+  <summary>Zero-configuration LAN P2P instant messaging and high-speed file transfer</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="dev.lanchat">
+    <name>LANChat Contributors</name>
+  </developer>
+  <description>
+    <p>
+      LANChat is a cross-platform native LAN instant messaging and P2P file transfer system
+      built with a Go signaling/transfer daemon and a native GTK4 + libadwaita user interface.
+    </p>
+  </description>
+  <launchable type="desktop-id">dev.lanchat.LANChat.desktop</launchable>
+  <url type="homepage">https://github.com/pandaymx/lanchat</url>
+  <content_rating type="oars-1.1" />
+</component>

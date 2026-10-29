@@ -2350,6 +2350,59 @@ fn invoke_check_silent_update(ctx: &Rc<AppCtx>, proxy: &str, download: bool) {
     }
 }
 
+#[allow(dead_code)]
+fn invoke_channel_manage_member(ctx: &Rc<AppCtx>, channel_id: &str, member_id: &str, action: &str) {
+    let cid = channel_id.to_string();
+    let mid = member_id.to_string();
+    let act = action.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "channelID": cid,
+                "memberID": mid,
+                "action": act,
+            });
+            let _ = ipc.invoke("ChannelManageMember", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_enqueue_offline_mailbox(ctx: &Rc<AppCtx>, to: &str, text: &str, recipient_pub: &str) {
+    let to_id = to.to_string();
+    let txt = text.to_string();
+    let pub_key = recipient_pub.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "to": to_id,
+                "text": txt,
+                "recipientPub": pub_key,
+            });
+            let _ = ipc.invoke("EnqueueOfflineMailbox", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_drain_offline_mailbox(ctx: &Rc<AppCtx>, from_peer: &str) {
+    let peer = from_peer.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "fromPeer": peer,
+            });
+            let _ = ipc.invoke("DrainOfflineMailbox", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
+        });
+    }
+}
+
 fn send_sticker_code(ctx: &Rc<AppCtx>, sticker: &str) {
     let target = ctx.state.borrow().current_chat.clone();
     let Some(key) = target.key().map(|s| s.to_string()) else {

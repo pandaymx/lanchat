@@ -332,13 +332,19 @@ struct BroadcastChatView: View {
                                 let beforeTS = Int64(thread.first?.timestamp.timeIntervalSince1970 ?? 0)
                                 Task { _ = await store.getHistoryPage(convID: broadcastKey, beforeTS: beforeTS, limit: 30) }
                             } label: {
-                                Text("📜 加载更早历史消息")
+                                Text("📜 加载更早历史消息（或上滑触顶自动加载）")
                                     .font(.system(size: 11.5))
                                     .foregroundColor(.secondary)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 3)
                             }
                             .buttonStyle(.plain)
+                            .onAppear {
+                                if thread.count >= 20 {
+                                    let beforeTS = Int64(thread.first?.timestamp.timeIntervalSince1970 ?? 0)
+                                    Task { _ = await store.getHistoryPage(convID: broadcastKey, beforeTS: beforeTS, limit: 30) }
+                                }
+                            }
                             Spacer()
                         }
                         ForEach(thread) { msg in
@@ -381,7 +387,7 @@ struct BroadcastChatView: View {
                     .padding(.vertical, 14)
                 }
             }
-            .onChange(of: thread.count) { _ in
+            .onChange(of: thread.last?.id) { _ in
                 if let last = thread.last {
                     proxy.scrollTo(last.id, anchor: .bottom)
                 }
@@ -919,13 +925,19 @@ struct ChannelChatView: View {
                                 let beforeTS = Int64(thread.first?.timestamp.timeIntervalSince1970 ?? 0)
                                 Task { _ = await store.getHistoryPage(convID: channelID, beforeTS: beforeTS, limit: 30) }
                             } label: {
-                                Text("📜 加载更早历史消息")
+                                Text("📜 加载更早历史消息（或上滑触顶自动加载）")
                                     .font(.system(size: 11.5))
                                     .foregroundColor(.secondary)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 3)
                             }
                             .buttonStyle(.plain)
+                            .onAppear {
+                                if thread.count >= 20 {
+                                    let beforeTS = Int64(thread.first?.timestamp.timeIntervalSince1970 ?? 0)
+                                    Task { _ = await store.getHistoryPage(convID: channelID, beforeTS: beforeTS, limit: 30) }
+                                }
+                            }
                             Spacer()
                         }
                         ForEach(thread) { msg in
@@ -968,7 +980,7 @@ struct ChannelChatView: View {
                     .padding(.vertical, 14)
                 }
             }
-            .onChange(of: thread.count) { _ in
+            .onChange(of: thread.last?.id) { _ in
                 if let last = thread.last { proxy.scrollTo(last.id, anchor: .bottom) }
             }
         }

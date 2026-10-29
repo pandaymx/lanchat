@@ -148,10 +148,12 @@ struct Widgets {
     call_bar: gtk::Box,
     call_avatar: adw::Avatar,
     call_label: gtk::Label,
+    call_mute_btn: gtk::Button,
     call_accept_btn: gtk::Button,
     call_reject_btn: gtk::Button,
     screen_bar: gtk::Box,
     screen_pic: gtk::Picture,
+    screen_region_btn: gtk::Button,
     screen_annotate_btn: gtk::Button,
     msg_list: gtk::ListBox,
     msg_scroll: gtk::ScrolledWindow,
@@ -567,10 +569,16 @@ fn build_ui(app: &adw::Application) -> Widgets {
     pinned_bar.append(&pinned_label);
 
     let call_avatar = adw::Avatar::new(26, Some("语音来电"), true);
-    let call_label = gtk::Label::new(Some("📞 实时低延迟 P2P 语音通话中"));
+    let call_label = gtk::Label::new(Some("📞 实时低延迟 P2P 语音通话中 (Mesh 混音 · 音量检测)"));
     call_label.set_xalign(0.0);
     call_label.set_hexpand(true);
     call_label.add_css_class("caption-heading");
+    let call_mute_btn = gtk::Button::with_label("🎙️ 静音");
+    call_mute_btn.add_css_class("flat");
+    call_mute_btn.add_css_class("caption");
+    call_mute_btn.set_tooltip_text(Some(
+        "切换麦克风静音并实时广播至频道成员 (/call toggle-mute)",
+    ));
     let call_accept_btn = gtk::Button::with_label("🟢 接听");
     call_accept_btn.add_css_class("suggested-action");
     call_accept_btn.add_css_class("caption");
@@ -583,18 +591,28 @@ fn build_ui(app: &adw::Application) -> Widgets {
     call_bar.set_visible(false);
     call_bar.append(&call_avatar);
     call_bar.append(&call_label);
+    call_bar.append(&call_mute_btn);
     call_bar.append(&call_accept_btn);
     call_bar.append(&call_reject_btn);
 
-    let screen_title = gtk::Label::new(Some("🖥️ 实时屏幕共享舞台 · 支持激光笔坐标批注"));
+    let screen_title = gtk::Label::new(Some(
+        "🖥️ 实时屏幕共享舞台 · 8×8 脏矩形自适应帧率 + 激光笔批注",
+    ));
     screen_title.set_xalign(0.0);
     screen_title.set_hexpand(true);
     screen_title.add_css_class("caption-heading");
+    let screen_region_btn = gtk::Button::with_label("🗔 窗口/裁剪");
+    screen_region_btn.add_css_class("flat");
+    screen_region_btn.add_css_class("caption");
+    screen_region_btn.set_tooltip_text(Some(
+        "切换全屏显示器 / 活动窗口区域裁剪 (/screenshare region)",
+    ));
     let screen_annotate_btn = gtk::Button::with_label("📍 激光批注");
     screen_annotate_btn.add_css_class("flat");
     screen_annotate_btn.add_css_class("caption");
     let screen_head = gtk::Box::new(Orientation::Horizontal, 8);
     screen_head.append(&screen_title);
+    screen_head.append(&screen_region_btn);
     screen_head.append(&screen_annotate_btn);
 
     let screen_pic = gtk::Picture::new();
@@ -913,10 +931,12 @@ fn build_ui(app: &adw::Application) -> Widgets {
         call_bar,
         call_avatar,
         call_label,
+        call_mute_btn,
         call_accept_btn,
         call_reject_btn,
         screen_bar,
         screen_pic,
+        screen_region_btn,
         screen_annotate_btn,
         msg_list,
         msg_scroll,
@@ -1678,8 +1698,42 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 cx.toast("已停止局域网屏幕投屏");
             } else {
                 btn.set_label("⏹ 停止投屏");
-                invoke_start_screen_share(&cx, &target, 15);
-                cx.toast("🖥️ 已开启 15fps 局域网屏幕投屏");
+                invoke_start_screen_share(&cx, &target, 24);
+                cx.toast("🖥️ 已开启 24fps 脏矩形自适应投屏（静止零带宽）");
+            }
+        }
+    ));
+    ctx.widgets.call_mute_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |btn| {
+            let target = cx.state.borrow().current_chat.clone();
+            let cur = btn.label().map(|s| s.to_string()).unwrap_or_default();
+            if cur.contains("已静音") {
+                btn.set_label("🎙️ 静音");
+                send_control_command(&cx, &target, "/call unmute");
+                cx.toast("🔊 已取消麦克风静音并通知语音频道");
+            } else {
+                btn.set_label("🔇 已静音");
+                send_control_command(&cx, &target, "/call mute");
+                cx.toast("🔇 已开启麦克风静音并实时广播");
+            }
+        }
+    ));
+    ctx.widgets.screen_region_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |btn| {
+            let target = cx.state.borrow().current_chat.clone();
+            let cur = btn.label().map(|s| s.to_string()).unwrap_or_default();
+            if cur.contains("全屏") {
+                btn.set_label("🗔 窗口/裁剪");
+                send_control_command(&cx, &target, "/screenshare region 0,0,0,0");
+                cx.toast("🖥️ 已切换为全屏显示器投屏");
+            } else {
+                btn.set_label("🖥️ 恢复全屏");
+                send_control_command(&cx, &target, "/screenshare region 0.05,0.05,0.90,0.90");
+                cx.toast("🗔 已启用活动窗口区域裁剪（8×8 脏矩形自适应帧率）");
             }
         }
     ));

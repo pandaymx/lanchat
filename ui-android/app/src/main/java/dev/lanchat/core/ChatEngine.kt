@@ -248,6 +248,25 @@ class ChatEngine {
     suspend fun checkSilentUpdate(proxy: String = "", download: Boolean = false): String =
         ioOp { requireClient().checkSilentUpdate(proxy, download) }
 
+    // ---- 契约 v1.6 频道权限治理与加密离线投递箱显式 RPC 绑定方法 ----
+
+    suspend fun channelManageMember(
+        channelID: String,
+        memberID: String = "",
+        action: String,
+    ): Unit =
+        ioOp { requireClient().channelManageMember(channelID, memberID, action) }
+
+    suspend fun enqueueOfflineMailbox(
+        to: String,
+        text: String,
+        recipientPub: String = "",
+    ): String =
+        ioOp { requireClient().enqueueOfflineMailbox(to, text, recipientPub) }
+
+    suspend fun drainOfflineMailbox(fromPeer: String = ""): String =
+        ioOp { requireClient().drainOfflineMailbox(fromPeer) }
+
     private suspend fun <T> ioOp(block: () -> T): T =
         withContext(Dispatchers.IO) {
             try {

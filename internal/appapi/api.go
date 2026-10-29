@@ -84,12 +84,15 @@ type Transfer struct {
 
 // Channel G2 自定义频道。
 type Channel struct {
-	ID      string   `json:"id"`
-	Name    string   `json:"name"`
-	OwnerID string   `json:"ownerId"`
-	Private bool     `json:"private,omitempty"`
-	Topic   string   `json:"topic,omitempty"`
-	Members []string `json:"members"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	OwnerID         string   `json:"ownerId"`
+	Private         bool     `json:"private,omitempty"`
+	Topic           string   `json:"topic,omitempty"`
+	Members         []string `json:"members"`
+	Admins          []string `json:"admins,omitempty"`
+	Muted           []string `json:"muted,omitempty"`
+	AnnouncementAck []string `json:"announcementAck,omitempty"`
 }
 
 // ChatMessage 本地历史消息快照（M10/M11a/v1.1：随 GetState 可选返回，支持重启后恢复会话记录、结构化引用回复、@提及、表情回应表、二次编辑时间戳、置顶标记、媒体附件元信息、撤回与已读回执）。
@@ -249,6 +252,13 @@ type API interface {
 	SetBandwidthLimit(limitMBps float64) string
 	// CheckSilentUpdate 通过国内加速代理链检查或静默下载最新安装包（契约 v1.5）。
 	CheckSilentUpdate(proxy string, download bool) (status string, err error)
+
+	// ChannelManageMember 执行频道精细化权限治理（promote/demote/mute/unmute/kick/ack_announcement，契约 v1.6）。
+	ChannelManageMember(channelID, memberID, action string) error
+	// EnqueueOfflineMailbox 向中心节点加密离线投递箱投递经接收方 X25519 公钥密封的离线信封（契约 v1.6）。
+	EnqueueOfflineMailbox(to, text, recipientPub string) (msgID string, err error)
+	// DrainOfflineMailbox 从中心节点或本地待收投递箱拉取、解密并销毁离线加密信封（契约 v1.6）。
+	DrainOfflineMailbox(fromPeer string) string
 }
 
 // Listener 是 core → UI 的事件回调集合（notification）。

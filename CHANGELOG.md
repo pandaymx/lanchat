@@ -1,5 +1,20 @@
 # Changelog
 
+## [7.3.0](https://github.com/pandaymx/lanchat/compare/v7.2.0...v7.3.0) (2026-10-29)
+
+
+### Features
+
+* **core:** add watch mode folder sync for real-time incremental directory sharing ([3e581d7](https://github.com/pandaymx/lanchat/commit/3e581d756a0481b843a458b7436a2786ae21e9d6))
+* **discover:** add multipath route probing and link tier classification ([010a4ce](https://github.com/pandaymx/lanchat/commit/010a4ced98ef0ac42ad27d0c62326fc1d17eae51))
+* **transfer:** implement multipath chunk scheduling and zero-drop link failover ([afb2767](https://github.com/pandaymx/lanchat/commit/afb27673da7b64b4666f38a5ee225fe52b21e1c8))
+
+
+### Bug Fixes
+
+* **core:** verify tcp reachability of udp-discovered servers in autoStandby mode ([16d968b](https://github.com/pandaymx/lanchat/commit/16d968b002c46e78fd0a00a1a0b7efe9fe6dc0c8))
+* **discover:** remove ineffectual initial assignment in computeRouteWeight ([8fe02fc](https://github.com/pandaymx/lanchat/commit/8fe02fc5f457d4810f6d543d8df54c0ccaf74272))
+
 ## [7.2.0](https://github.com/pandaymx/lanchat/compare/v7.1.0...v7.2.0) (2026-10-29)
 
 

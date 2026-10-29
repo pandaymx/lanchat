@@ -828,3 +828,180 @@ func TestWatchModeFolderSyncAutoIncremental(t *testing.T) {
 		t.Fatal("expected FolderWatch inactive after /folderwatch stop")
 	}
 }
+
+func TestChannelGovernancePromoteMuteKickAndAnnouncementAck(t *testing.T) {
+	addr := startServer(t)
+
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	defer bob.Close()
+	charlie := New(Options{Nickname: "Charlie", DownloadDir: t.TempDir()})
+	defer charlie.Close()
+
+	for _, cli := range []*Client{alice, bob, charlie} {
+		if err := cli.Connect(addr, testPSK); err != nil {
+			t.Fatalf("connect: %v", err)
+		}
+	}
+	bobID := bob.GetState().SelfID
+	charlieID := charlie.GetState().SelfID
+
+	if _, err := alice.ChannelCreate("研发攻坚", "Phase 4 治理测试", false); err != nil {
+		t.Fatalf("ChannelCreate: %v", err)
+	}
+	var chID string
+	waitFor(t, 2*time.Second, func() bool {
+		chs := alice.GetState().Channels
+		if len(chs) > 0 {
+			chID = chs[0].ID
+			return chID != ""
+		}
+		return false
+	})
+
+	if err := bob.ChannelJoin(chID); err != nil {
+		t.Fatalf("bob ChannelJoin: %v", err)
+	}
+	if err := charlie.ChannelJoin(chID); err != nil {
+		t.Fatalf("charlie ChannelJoin: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, ch := range alice.GetState().Channels {
+			if ch.ID == chID && len(ch.Members) == 3 {
+				return true
+			}
+		}
+		return false
+	})
+
+	// 1. 普通成员 Charlie 尝试禁言 Bob 应被拒绝（无管理员权限）
+	if err := charlie.ChannelManageMember(chID, bobID, "mute"); err == nil {
+		t.Fatal("expected non-admin Charlie mute to fail with permission error")
+	}
+
+	// 2. 房主 Alice 提拔 Bob 为频道管理员（promote）
+	if err := alice.ChannelManageMember(chID, bobID, "promote"); err != nil {
+		t.Fatalf("alice promote bob: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, ch := range bob.GetState().Channels {
+			if ch.ID == chID && containsMember(ch.Admins, bobID) {
+				return true
+			}
+		}
+		return false
+	})
+
+	// 3. 管理员 Bob 禁言 Charlie（mute），验证 Charlie 发送普通频道消息被拦截
+	if err := bob.ChannelManageMember(chID, charlieID, "mute"); err != nil {
+		t.Fatalf("admin bob mute charlie: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, ch := range charlie.GetState().Channels {
+			if ch.ID == chID && containsMember(ch.Muted, charlieID) {
+				return true
+			}
+		}
+		return false
+	})
+	if _, err := charlie.SendText("", "unauthorized muted message", chID); err == nil {
+		t.Fatal("expected muted Charlie SendText to fail with errChannelMuted")
+	}
+
+	// 4. 被禁言的成员仍可执行频道公告必读确认（ack_announcement）
+	if err := charlie.ChannelManageMember(chID, "", "ack_announcement"); err != nil {
+		t.Fatalf("charlie ack_announcement: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, ch := range alice.GetState().Channels {
+			if ch.ID == chID && containsMember(ch.AnnouncementAck, charlieID) {
+				return true
+			}
+		}
+		return false
+	})
+
+	// 5. 管理员 Bob 解除 Charlie 禁言（unmute），验证恢复发言
+	if err := bob.ChannelManageMember(chID, charlieID, "unmute"); err != nil {
+		t.Fatalf("admin bob unmute charlie: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, ch := range charlie.GetState().Channels {
+			if ch.ID == chID && !containsMember(ch.Muted, charlieID) {
+				return true
+			}
+		}
+		return false
+	})
+	if _, err := charlie.SendText("", "restored normal message", chID); err != nil {
+		t.Fatalf("charlie SendText after unmute: %v", err)
+	}
+
+	// 6. 房主 Alice 将 Charlie 移出频道（kick）
+	if err := alice.ChannelManageMember(chID, charlieID, "kick"); err != nil {
+		t.Fatalf("alice kick charlie: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		for _, ch := range alice.GetState().Channels {
+			if ch.ID == chID && !containsMember(ch.Members, charlieID) {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestEncryptedOfflineMailboxStoreAndForwardDrain(t *testing.T) {
+	addr := startServer(t)
+
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	defer bob.Close()
+
+	bobID := bob.DeviceID()
+	bobPub := bob.IdentityPublicKey()
+	aliceID := alice.DeviceID()
+
+	// Alice 先连接中心节点，此时 Bob 处于完全离线状态
+	if err := alice.Connect(addr, testPSK); err != nil {
+		t.Fatalf("alice connect: %v", err)
+	}
+
+	secretText := "Store-and-Forward X25519 Encrypted Offline Dispatch"
+	msgID, err := alice.EnqueueOfflineMailbox(bobID, secretText, bobPub)
+	if err != nil || !strings.HasPrefix(msgID, "mbox-") {
+		t.Fatalf("EnqueueOfflineMailbox = (%q, %v), want mbox-*", msgID, err)
+	}
+
+	// Alice 发送完毕立即关机下线
+	alice.Close()
+
+	// 稍后 Bob 上线连接中心节点，拉取、解密并销毁离线加密信封
+	if err := bob.Connect(addr, testPSK); err != nil {
+		t.Fatalf("bob connect: %v", err)
+	}
+	status := bob.DrainOfflineMailbox(aliceID)
+	if status != "mailbox:drained:1" {
+		t.Fatalf("first DrainOfflineMailbox = %q, want mailbox:drained:1", status)
+	}
+
+	// 再次拉取应返回 0（验证投递箱信封已销毁）
+	statusAfter := bob.DrainOfflineMailbox(aliceID)
+	if statusAfter != "mailbox:drained:0" {
+		t.Fatalf("second DrainOfflineMailbox = %q, want mailbox:drained:0", statusAfter)
+	}
+
+	// 验证 Bob 本地历史记录已成功解密并写入明文
+	foundDecrypted := false
+	for _, m := range bob.GetState().Messages {
+		if m.ID == msgID && m.Text == secretText {
+			foundDecrypted = true
+			break
+		}
+	}
+	if !foundDecrypted {
+		t.Fatalf("Bob history did not contain decrypted offline mailbox message %q: %+v", secretText, bob.GetState().Messages)
+	}
+}

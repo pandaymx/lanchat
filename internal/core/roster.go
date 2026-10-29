@@ -73,15 +73,30 @@ func (c *Client) applyUserList(env *protocol.Envelope) {
 // applyChannelList 用服务器下发的全量频道表替换本地缓存并通知 UI；
 // 同时执行 M18 断线/切主频道自愈与 M19 频道群密钥派生及 ECDH 自动分发。
 func (c *Client) applyChannelList(in []protocol.Channel) {
+	c.mu.Lock()
 	next := make(map[string]appapi.Channel, len(in))
 	for _, ch := range in {
+		members := make([]string, 0, len(ch.Members))
+		var admins, muted, acks []string
+		if gov := c.channelGov[ch.ID]; gov != nil {
+			for _, m := range ch.Members {
+				if !gov.kicked[m] {
+					members = append(members, m)
+				}
+			}
+			admins = append([]string(nil), gov.admins...)
+			muted = append([]string(nil), gov.muted...)
+			acks = append([]string(nil), gov.announcementAck...)
+		} else {
+			members = append(members, ch.Members...)
+		}
 		next[ch.ID] = appapi.Channel{
 			ID: ch.ID, Name: ch.Name, OwnerID: ch.OwnerID,
-			Private: ch.Private, Topic: ch.Topic, Members: ch.Members,
+			Private: ch.Private, Topic: ch.Topic, Members: members,
+			Admins: admins, Muted: muted, AnnouncementAck: acks,
 		}
 	}
 
-	c.mu.Lock()
 	selfID := c.selfID
 	c.channels = next
 

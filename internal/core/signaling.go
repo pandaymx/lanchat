@@ -110,6 +110,7 @@ func (c *Client) Connect(addr, psk string) error {
 	c.listener().OnConnChanged(appapi.ConnConnected, "")
 	go c.watch(gen, s, time.Second)
 	_, _ = c.sendTo(s.conn, protocol.ChannelList, "", nil)
+	c.flushOutboundMailbox()
 	_ = hasDesiredChannels
 	return nil
 }

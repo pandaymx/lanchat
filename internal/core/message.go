@@ -283,6 +283,9 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if group != "" && group != protocol.GroupBroadcast && c.isChannelMemberMuted(group, c.selfIDValue()) {
+		return "", errChannelMuted
+	}
 	replyTo, mentions := extractMentionsAndReply(text)
 	if explicitReplyTo != "" {
 		replyTo = explicitReplyTo

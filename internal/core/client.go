@@ -67,6 +67,9 @@ type Client struct {
 	desiredChannels map[string]desiredChannel
 	channelKeys     map[string]string
 	channelKeySent  map[string]map[string]bool
+	channelGov      map[string]*channelGovState
+	outboundMailbox []offlineMailboxItem
+	inboundMailbox  []offlineMailboxItem
 
 	browser *discover.Browser
 
@@ -185,6 +188,7 @@ func New(opts Options) *Client {
 		desiredChannels: map[string]desiredChannel{},
 		channelKeys:     map[string]string{},
 		channelKeySent:  map[string]map[string]bool{},
+		channelGov:      map[string]*channelGovState{},
 		unreadCounts:    map[string]int{},
 		mentionCounts:   map[string]int{},
 		lastAutoRoam:    map[string]int64{},

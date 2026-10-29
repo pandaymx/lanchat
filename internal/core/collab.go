@@ -28,8 +28,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/discover"
+	"github.com/pandaymx/lanchat/internal/protocol"
+	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
 const (
@@ -2745,6 +2749,78 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 			return "", true, err
 		}
 		return fmt.Sprintf("trust:issued:%s pub:%s", tok, pub), true, nil
+
+	case strings.HasPrefix(trimmed, "/chadmin ") || strings.HasPrefix(trimmed, "/chmute ") ||
+		strings.HasPrefix(trimmed, "/chunmute ") || strings.HasPrefix(trimmed, "/chkick ") ||
+		trimmed == "/chack" || strings.HasPrefix(trimmed, "/chack "):
+		fields := strings.Fields(trimmed)
+		cmd := fields[0]
+		chID := group
+		var memberID, action string
+		switch cmd {
+		case "/chadmin":
+			action = "promote"
+			if len(fields) >= 2 {
+				memberID = fields[1]
+			}
+			if len(fields) >= 3 {
+				if fields[2] == "demote" || fields[2] == "promote" {
+					action = fields[2]
+				} else {
+					chID = fields[1]
+					memberID = fields[2]
+					if len(fields) >= 4 {
+						action = fields[3]
+					}
+				}
+			}
+		case "/chmute":
+			action = "mute"
+			if len(fields) == 2 {
+				memberID = fields[1]
+			} else if len(fields) >= 3 {
+				chID = fields[1]
+				memberID = fields[2]
+			}
+		case "/chunmute":
+			action = "unmute"
+			if len(fields) == 2 {
+				memberID = fields[1]
+			} else if len(fields) >= 3 {
+				chID = fields[1]
+				memberID = fields[2]
+			}
+		case "/chkick":
+			action = "kick"
+			if len(fields) == 2 {
+				memberID = fields[1]
+			} else if len(fields) >= 3 {
+				chID = fields[1]
+				memberID = fields[2]
+			}
+		case "/chack":
+			action = "ack_announcement"
+			if len(fields) >= 2 && chID == "" {
+				chID = fields[1]
+			}
+			memberID = c.selfIDValue()
+		}
+		if err := c.ChannelManageMember(chID, memberID, action); err != nil {
+			return "", true, err
+		}
+		return fmt.Sprintf("chgov:%s:%s:%s", chID, memberID, action), true, nil
+
+	case trimmed == "/mailbox" || strings.HasPrefix(trimmed, "/mailbox "):
+		arg := strings.TrimSpace(strings.TrimPrefix(trimmed, "/mailbox"))
+		if strings.HasPrefix(arg, "send ") {
+			body := strings.TrimSpace(strings.TrimPrefix(arg, "send "))
+			id, err := c.EnqueueOfflineMailbox(to, body, "")
+			if err != nil {
+				return "", true, err
+			}
+			return "mailbox:queued:" + id, true, nil
+		}
+		return c.DrainOfflineMailbox(to), true, nil
 	}
 	return "", false, nil
 }
@@ -3005,6 +3081,441 @@ func (c *Client) VerifyTrustCert(token, rootPub string) (string, error) {
 		return "", fmt.Errorf("core: invalid or expired trust certificate")
 	}
 	return sub + "@" + org, nil
+}
+
+// channelGovState 维护 G2 自定义频道的精细化治理状态（管理员、禁言表、踢人记录与公告必读回执，v8.0.0 契约 v1.6）。
+type channelGovState struct {
+	admins          []string
+	muted           []string
+	announcementAck []string
+	kicked          map[string]bool
+}
+
+// offlineMailboxItem 表示中心节点或本地暂存的一条 X25519 公钥密封离线信封（v8.0.0 契约 v1.6）。
+type offlineMailboxItem struct {
+	ID         string `json:"id"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Ciphertext string `json:"ciphertext"`
+	SenderPub  string `json:"senderPub"`
+	TS         int64  `json:"ts"`
+}
+
+func appendUniqueMember(slice []string, id string) []string {
+	if id == "" || containsMember(slice, id) {
+		return slice
+	}
+	return append(slice, id)
+}
+
+func removeMemberFromSlice(slice []string, id string) []string {
+	if len(slice) == 0 || id == "" {
+		return slice
+	}
+	out := make([]string, 0, len(slice))
+	for _, m := range slice {
+		if m != id {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (c *Client) ensureChannelGovLocked(channelID string) *channelGovState {
+	if c.channelGov == nil {
+		c.channelGov = make(map[string]*channelGovState)
+	}
+	gov := c.channelGov[channelID]
+	if gov == nil {
+		gov = &channelGovState{
+			kicked: make(map[string]bool),
+		}
+		c.channelGov[channelID] = gov
+	} else if gov.kicked == nil {
+		gov.kicked = make(map[string]bool)
+	}
+	return gov
+}
+
+func (c *Client) isChannelMemberMuted(channelID, memberID string) bool {
+	if channelID == "" || memberID == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ch, ok := c.channels[channelID]; ok && containsMember(ch.Muted, memberID) {
+		return true
+	}
+	if gov := c.channelGov[channelID]; gov != nil && containsMember(gov.muted, memberID) {
+		return true
+	}
+	return false
+}
+
+func (c *Client) applyChannelGovernanceLocked(channelID, memberID, action string) []appapi.Channel {
+	gov := c.ensureChannelGovLocked(channelID)
+	switch action {
+	case "promote":
+		gov.admins = appendUniqueMember(gov.admins, memberID)
+	case "demote":
+		gov.admins = removeMemberFromSlice(gov.admins, memberID)
+	case "mute":
+		gov.muted = appendUniqueMember(gov.muted, memberID)
+	case "unmute":
+		gov.muted = removeMemberFromSlice(gov.muted, memberID)
+	case "kick":
+		gov.kicked[memberID] = true
+		gov.admins = removeMemberFromSlice(gov.admins, memberID)
+		gov.muted = removeMemberFromSlice(gov.muted, memberID)
+	case "ack_announcement":
+		gov.announcementAck = appendUniqueMember(gov.announcementAck, memberID)
+	}
+
+	if ch, ok := c.channels[channelID]; ok {
+		if action == "kick" {
+			ch.Members = removeMemberFromSlice(ch.Members, memberID)
+		}
+		ch.Admins = append([]string(nil), gov.admins...)
+		ch.Muted = append([]string(nil), gov.muted...)
+		ch.AnnouncementAck = append([]string(nil), gov.announcementAck...)
+		c.channels[channelID] = ch
+	}
+
+	snapshot := make([]appapi.Channel, 0, len(c.channels))
+	for _, ch := range c.channels {
+		snapshot = append(snapshot, ch)
+	}
+	return snapshot
+}
+
+// ChannelManageMember 执行频道精细化权限治理（promote/demote/mute/unmute/kick/ack_announcement，契约 v1.6）。
+func (c *Client) ChannelManageMember(channelID, memberID, action string) error {
+	channelID = strings.TrimSpace(channelID)
+	memberID = strings.TrimSpace(memberID)
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "ack" {
+		action = "ack_announcement"
+	}
+	if channelID == "" || action == "" {
+		return errInvalidState
+	}
+	switch action {
+	case "promote", "demote", "mute", "unmute", "kick", "ack_announcement":
+	default:
+		return errInvalidState
+	}
+
+	selfID := c.selfIDValue()
+	if action == "ack_announcement" && memberID == "" {
+		memberID = selfID
+	}
+	if memberID == "" {
+		return errPeerNotFound
+	}
+
+	c.mu.Lock()
+	if ch, exists := c.channels[channelID]; exists {
+		if action != "ack_announcement" {
+			isOwner := ch.OwnerID != "" && ch.OwnerID == selfID
+			isAdmin := containsMember(ch.Admins, selfID)
+			if gov := c.channelGov[channelID]; gov != nil && containsMember(gov.admins, selfID) {
+				isAdmin = true
+			}
+			if ch.OwnerID != "" && !isOwner && !isAdmin {
+				c.mu.Unlock()
+				return errChannelPermission
+			}
+			if (action == "mute" || action == "kick" || action == "demote") && ch.OwnerID != "" && memberID == ch.OwnerID {
+				c.mu.Unlock()
+				return errChannelPermission
+			}
+		}
+	}
+	snapshot := c.applyChannelGovernanceLocked(channelID, memberID, action)
+	c.mu.Unlock()
+
+	if _, err := c.connectedConn(); err == nil {
+		ctrl := fmt.Sprintf("sys:chgov:%s:%s:%s", channelID, memberID, action)
+		_ = c.sendControlText("", channelID, ctrl)
+	}
+	if len(snapshot) > 0 {
+		c.listener().OnChannelUpdated(snapshot)
+	}
+	c.listener().OnMessageReceived(
+		selfID,
+		channelID,
+		"chgov-"+channelID+"-"+action,
+		"CHANNEL_GOVERNANCE",
+		fmt.Sprintf("🛡️ [频道权限治理] %s → %s", action, memberID),
+	)
+	return nil
+}
+
+func (c *Client) onInboundChannelGovernance(actorID, channelID, memberID, action string) {
+	channelID = strings.TrimSpace(channelID)
+	memberID = strings.TrimSpace(memberID)
+	action = strings.ToLower(strings.TrimSpace(action))
+	if action == "ack" {
+		action = "ack_announcement"
+	}
+	if channelID == "" || memberID == "" || action == "" {
+		return
+	}
+
+	c.mu.Lock()
+	selfID := c.selfID
+	if selfID == "" {
+		selfID = c.deviceID
+	}
+	if ch, exists := c.channels[channelID]; exists && action != "ack_announcement" {
+		isOwner := ch.OwnerID == "" || ch.OwnerID == actorID
+		isAdmin := containsMember(ch.Admins, actorID)
+		if gov := c.channelGov[channelID]; gov != nil && containsMember(gov.admins, actorID) {
+			isAdmin = true
+		}
+		if !isOwner && !isAdmin {
+			c.mu.Unlock()
+			return
+		}
+	}
+	snapshot := c.applyChannelGovernanceLocked(channelID, memberID, action)
+	kickedSelf := action == "kick" && memberID == selfID
+	c.mu.Unlock()
+
+	if len(snapshot) > 0 {
+		c.listener().OnChannelUpdated(snapshot)
+	}
+	c.listener().OnMessageReceived(
+		actorID,
+		channelID,
+		"chgov-"+channelID+"-"+action,
+		"CHANNEL_GOVERNANCE",
+		fmt.Sprintf("🛡️ [频道权限治理] %s → %s", action, memberID),
+	)
+	if kickedSelf {
+		go func(id string) {
+			_ = c.ChannelLeave(id)
+		}(channelID)
+	}
+}
+
+// EnqueueOfflineMailbox 向中心节点加密离线投递箱投递经接收方 X25519 公钥密封的离线信封（契约 v1.6）。
+// 发送方发送完毕即可立即关机下线；中心节点仅暂存不可解密的 X25519 密文信封，接收方上线后自动或主动拉取并销毁。
+func (c *Client) EnqueueOfflineMailbox(to, text, recipientPub string) (string, error) {
+	to = strings.TrimSpace(to)
+	text = strings.TrimSpace(text)
+	recipientPub = strings.TrimSpace(recipientPub)
+	if to == "" {
+		return "", errPeerNotFound
+	}
+	if text == "" {
+		return "", errEmptyText
+	}
+
+	c.mu.Lock()
+	idPriv := c.identityPriv
+	idPub := c.identityPub
+	selfID := c.selfID
+	if selfID == "" {
+		selfID = c.deviceID
+	}
+	if recipientPub == "" {
+		recipientPub = c.peerPubs[to]
+	} else {
+		c.peerPubs[to] = recipientPub
+	}
+	if recipientPub == "" {
+		recipientPub = idPub
+	}
+	c.mu.Unlock()
+
+	if idPriv == nil || recipientPub == "" {
+		return "", errInvalidState
+	}
+	cipherText, err := transfer.SealECDHText(idPriv, recipientPub, text)
+	if err != nil {
+		return "", err
+	}
+
+	msgID := "mbox-" + uuid.NewString()
+	nowTS := time.Now().UnixMilli()
+	item := offlineMailboxItem{
+		ID:         msgID,
+		From:       selfID,
+		To:         to,
+		Ciphertext: cipherText,
+		SenderPub:  idPub,
+		TS:         nowTS,
+	}
+
+	c.history.append(appapi.ChatMessage{
+		ID:   msgID,
+		From: selfID,
+		To:   to,
+		Type: protocol.TextMsg,
+		Text: text,
+		TS:   nowTS,
+	})
+
+	rawItem, err := json.Marshal(item)
+	if err != nil {
+		return "", err
+	}
+	b64 := base64.StdEncoding.EncodeToString(rawItem)
+
+	if conn, err := c.connectedConn(); err == nil {
+		_, sendErr := c.sendTo(conn, protocol.TextMsg, to, protocol.TextPayload{
+			Text:      "sys:mailbox:store:" + b64,
+			SenderPub: idPub,
+		})
+		if sendErr != nil {
+			c.mu.Lock()
+			c.outboundMailbox = append(c.outboundMailbox, item)
+			c.mu.Unlock()
+		}
+		if to == selfID {
+			c.mu.Lock()
+			c.inboundMailbox = append(c.inboundMailbox, item)
+			c.mu.Unlock()
+		}
+	} else {
+		c.mu.Lock()
+		c.outboundMailbox = append(c.outboundMailbox, item)
+		c.inboundMailbox = append(c.inboundMailbox, item)
+		c.mu.Unlock()
+	}
+	return msgID, nil
+}
+
+func (c *Client) flushOutboundMailbox() {
+	conn, err := c.connectedConn()
+	if err != nil {
+		return
+	}
+	c.mu.Lock()
+	if len(c.outboundMailbox) == 0 {
+		c.mu.Unlock()
+		return
+	}
+	pending := c.outboundMailbox
+	c.outboundMailbox = nil
+	idPub := c.identityPub
+	c.mu.Unlock()
+
+	for _, item := range pending {
+		rawItem, mErr := json.Marshal(item)
+		if mErr != nil {
+			continue
+		}
+		b64 := base64.StdEncoding.EncodeToString(rawItem)
+		_, _ = c.sendTo(conn, protocol.TextMsg, item.To, protocol.TextPayload{
+			Text:      "sys:mailbox:store:" + b64,
+			SenderPub: idPub,
+		})
+	}
+}
+
+func (c *Client) onInboundOfflineMailboxStore(fromPeer, b64 string) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	var item offlineMailboxItem
+	if json.Unmarshal(raw, &item) != nil || item.ID == "" || item.Ciphertext == "" {
+		return
+	}
+	if item.From == "" {
+		item.From = fromPeer
+	}
+
+	c.mu.Lock()
+	idPriv := c.identityPriv
+	if item.SenderPub != "" && item.From != "" {
+		c.peerPubs[item.From] = item.SenderPub
+	} else if item.SenderPub == "" && item.From != "" {
+		item.SenderPub = c.peerPubs[item.From]
+	}
+	alreadyQueued := false
+	for _, existing := range c.inboundMailbox {
+		if existing.ID == item.ID {
+			alreadyQueued = true
+			break
+		}
+	}
+	if !alreadyQueued {
+		c.inboundMailbox = append(c.inboundMailbox, item)
+	}
+	c.mu.Unlock()
+
+	if idPriv != nil && item.SenderPub != "" {
+		if plain, decErr := transfer.OpenECDHText(idPriv, item.SenderPub, item.Ciphertext); decErr == nil && plain != "" {
+			if c.history.append(appapi.ChatMessage{
+				ID:   item.ID,
+				From: item.From,
+				To:   item.To,
+				Type: protocol.TextMsg,
+				Text: plain,
+				TS:   item.TS,
+			}) {
+				c.recordInboundUnread(item.From, "", plain, nil)
+				c.listener().OnMessageReceived(item.From, "", item.ID, protocol.TextMsg, plain)
+			}
+		}
+	}
+}
+
+// DrainOfflineMailbox 从中心节点或本地待收投递箱拉取、解密并销毁离线加密信封（契约 v1.6）。
+func (c *Client) DrainOfflineMailbox(fromPeer string) string {
+	fromPeer = strings.TrimSpace(fromPeer)
+
+	if _, err := c.connectedConn(); err == nil {
+		for i := 0; i < 6; i++ {
+			c.mu.Lock()
+			n := len(c.inboundMailbox)
+			c.mu.Unlock()
+			if n > 0 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	c.mu.Lock()
+	idPriv := c.identityPriv
+	var toDrain []offlineMailboxItem
+	var remaining []offlineMailboxItem
+	for _, item := range c.inboundMailbox {
+		if fromPeer == "" || item.From == fromPeer {
+			toDrain = append(toDrain, item)
+		} else {
+			remaining = append(remaining, item)
+		}
+	}
+	c.inboundMailbox = remaining
+	c.mu.Unlock()
+
+	drainedCount := 0
+	for _, item := range toDrain {
+		if idPriv != nil && item.SenderPub != "" {
+			if plain, err := transfer.OpenECDHText(idPriv, item.SenderPub, item.Ciphertext); err == nil && plain != "" {
+				drainedCount++
+				if c.history.append(appapi.ChatMessage{
+					ID:   item.ID,
+					From: item.From,
+					To:   item.To,
+					Type: protocol.TextMsg,
+					Text: plain,
+					TS:   item.TS,
+				}) {
+					c.recordInboundUnread(item.From, "", plain, nil)
+					c.listener().OnMessageReceived(item.From, "", item.ID, protocol.TextMsg, plain)
+				}
+				continue
+			}
+		}
+		drainedCount++
+	}
+	return fmt.Sprintf("mailbox:drained:%d", drainedCount)
 }
 
 // RunNetworkDiagnostics 生成局域网与跨网段（Tailscale/WireGuard）链路质量与节点状态诊断雷达摘要（v4.0.0）。

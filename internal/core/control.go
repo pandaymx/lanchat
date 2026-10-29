@@ -157,6 +157,11 @@ func (c *Client) ChannelInvite(channelID, memberID string) error {
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	if gov := c.channelGov[channelID]; gov != nil && gov.kicked != nil {
+		delete(gov.kicked, memberID)
+	}
+	c.mu.Unlock()
 	_, err = c.sendTo(conn, protocol.ChannelInvite, "", protocol.ChannelInvitePayload{
 		ChannelID: channelID, MemberID: memberID,
 	})

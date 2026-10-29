@@ -89,6 +89,9 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 		if c.handleInboundControlText(env, text) {
 			return
 		}
+		if env.Group != "" && env.Group != protocol.GroupBroadcast && c.isChannelMemberMuted(env.Group, env.From) {
+			return
+		}
 
 		if pendingChannelCipher != "" {
 			c.history.storePendingCipher(env.ID, pendingChannelCipher)
@@ -361,6 +364,22 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		if raw != "" {
 			parts := strings.Split(raw, ",")
 			c.AddGossipEndpoints(parts...)
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:chgov:"):
+		rest := strings.TrimPrefix(text, "sys:chgov:")
+		parts := strings.SplitN(rest, ":", 3)
+		if len(parts) == 3 && parts[0] != "" && parts[1] != "" && parts[2] != "" {
+			c.onInboundChannelGovernance(env.From, parts[0], parts[1], parts[2])
+		}
+		return true
+
+	case strings.HasPrefix(text, "sys:mailbox:"):
+		rest := strings.TrimPrefix(text, "sys:mailbox:")
+		if strings.HasPrefix(rest, "store:") {
+			b64 := strings.TrimSpace(strings.TrimPrefix(rest, "store:"))
+			c.onInboundOfflineMailboxStore(env.From, b64)
 		}
 		return true
 

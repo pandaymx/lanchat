@@ -117,6 +117,14 @@ func (c *Client) DeviceID() string {
 	return id
 }
 
+// IdentityPublicKey 返回本机静态 X25519 公钥（Base64 编码，v8.0.0）。
+func (c *Client) IdentityPublicKey() string {
+	c.mu.Lock()
+	pub := c.identityPub
+	c.mu.Unlock()
+	return pub
+}
+
 // PeerFingerprint 返回指定对端公钥的可读安全码指纹；对端无公钥时返回空串。
 func (c *Client) PeerFingerprint(peerID string) string {
 	c.mu.Lock()

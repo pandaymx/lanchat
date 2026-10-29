@@ -132,11 +132,30 @@ public sealed record ChatMessage
     /// <summary>是否允许引用回复。</summary>
     public bool CanReply => !Revoked && !IsSystem && !string.IsNullOrEmpty(MsgId);
 
-    /// <summary>M17: 是否携带 data:image/...;base64,... 内联缩略图。</summary>
+    /// <summary>M17/v7.1.0: 是否携带 data:image/...;base64,... 内联缩略图或 CAS 本地外置图片。</summary>
     public bool HasInlineImage =>
         !Revoked &&
-        CleanText.TrimStart().StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) &&
-        CleanText.Contains(";base64,", StringComparison.Ordinal);
+        ((CleanText.TrimStart().StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) &&
+          CleanText.Contains(";base64,", StringComparison.Ordinal)) ||
+         (!string.IsNullOrWhiteSpace(MediaPath) &&
+          (MediaMime?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) == true ||
+           MediaPath.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
+           MediaPath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+           MediaPath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+           MediaPath.EndsWith(".webp", StringComparison.OrdinalIgnoreCase))));
+
+    /// <summary>v7.1.0: 内联或 CAS 落盘图片源路径。</summary>
+    public string ImageSourceUri => !string.IsNullOrWhiteSpace(MediaPath) ? MediaPath! : CleanText;
+
+    /// <summary>v7.1.0: 是否为语音消息气泡。</summary>
+    public bool IsVoiceMessage =>
+        !Revoked &&
+        (CleanText.Contains("🎤 [语音消息", StringComparison.Ordinal) ||
+         CleanText.Contains("data:audio/", StringComparison.OrdinalIgnoreCase) ||
+         MediaMime?.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true);
+
+    /// <summary>v7.1.0: 语音气泡内波形进度指示文案。</summary>
+    public string VoiceWaveformText => "▶️ 语音波形  ▂▄▆█▄▂▆█▃▅▂";
 
     /// <summary>剥离尾部点赞/表情回应徽章后的消息正文。</summary>
     public string CleanText => SplitReactions(Text).Body;

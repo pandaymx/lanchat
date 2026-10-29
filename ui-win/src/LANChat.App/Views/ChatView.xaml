@@ -217,12 +217,14 @@
         </StackPanel>
 
         <!-- 中部：NTQQ 聊天气泡流（左收白底卡片 + 36x36 圆形头像；右发 #0099FF 蓝底白字 + 36x36 头像 + 已读/回复/撤回） -->
-        <ListView Grid.Row="2"
+        <ListView x:Name="MessagesListView"
+                  Grid.Row="2"
                   ItemsSource="{Binding Chat.Messages}"
                   SelectionMode="None"
+                  Loaded="MessagesListView_Loaded"
                   Padding="18,12">
             <ListView.Header>
-                <Button Content="📜 加载更早历史消息"
+                <Button Content="📜 加载更早历史消息（或向上滑到顶部自动加载）"
                         FontSize="11.5"
                         Padding="12,3"
                         CornerRadius="12"
@@ -357,12 +359,25 @@
                                         <Border CornerRadius="8"
                                                 MaxWidth="220"
                                                 MaxHeight="160"
+                                                Tag="{Binding}"
+                                                Tapped="InlineImage_Tapped"
+                                                ToolTipService.ToolTip="点击打开原图灯箱预览"
                                                 Visibility="{Binding HasInlineImage, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <Image Source="{Binding CleanText}"
+                                            <Image Source="{Binding ImageSourceUri}"
                                                    Stretch="Uniform"
                                                    MaxWidth="220"
                                                    MaxHeight="160" />
                                         </Border>
+                                        <StackPanel Spacing="4"
+                                                    Visibility="{Binding IsVoiceMessage, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <TextBlock Text="{Binding VoiceWaveformText}"
+                                                       FontSize="11"
+                                                       Foreground="#0088EE" />
+                                            <ProgressBar Value="65"
+                                                         Maximum="100"
+                                                         Width="140"
+                                                         HorizontalAlignment="Left" />
+                                        </StackPanel>
                                         <TextBlock Text="{Binding DisplayText}"
                                                    FontSize="14"
                                                    Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"
@@ -471,12 +486,25 @@
                                         <Border CornerRadius="8"
                                                 MaxWidth="220"
                                                 MaxHeight="160"
+                                                Tag="{Binding}"
+                                                Tapped="InlineImage_Tapped"
+                                                ToolTipService.ToolTip="点击打开原图灯箱预览"
                                                 Visibility="{Binding HasInlineImage, Converter={StaticResource BoolToVisibilityConverter}}">
-                                            <Image Source="{Binding CleanText}"
+                                            <Image Source="{Binding ImageSourceUri}"
                                                    Stretch="Uniform"
                                                    MaxWidth="220"
                                                    MaxHeight="160" />
                                         </Border>
+                                        <StackPanel Spacing="4"
+                                                    Visibility="{Binding IsVoiceMessage, Converter={StaticResource BoolToVisibilityConverter}}">
+                                            <TextBlock Text="{Binding VoiceWaveformText}"
+                                                       FontSize="11"
+                                                       Foreground="#0088EE" />
+                                            <ProgressBar Value="65"
+                                                         Maximum="100"
+                                                         Width="140"
+                                                         HorizontalAlignment="Left" />
+                                        </StackPanel>
                                         <TextBlock Text="{Binding DisplayText}"
                                                    FontSize="14"
                                                    Foreground="{Binding IsSelf, Converter={StaticResource BubbleForegroundConverter}}"

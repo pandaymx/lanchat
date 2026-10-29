@@ -169,6 +169,85 @@ public sealed partial class ChatView : UserControl
         }
     }
 
+    private bool _loadingMoreHistory;
+
+    private void MessagesListView_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (FindDescendantScrollViewer(MessagesListView) is { } sv)
+        {
+            sv.ViewChanged -= OnMessagesScrollViewerViewChanged;
+            sv.ViewChanged += OnMessagesScrollViewerViewChanged;
+        }
+    }
+
+    private static ScrollViewer? FindDescendantScrollViewer(DependencyObject root)
+    {
+        var count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is ScrollViewer sv)
+            {
+                return sv;
+            }
+            if (FindDescendantScrollViewer(child) is { } nested)
+            {
+                return nested;
+            }
+        }
+        return null;
+    }
+
+    private async void OnMessagesScrollViewerViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (_loadingMoreHistory || _shell is null || sender is not ScrollViewer sv)
+        {
+            return;
+        }
+        if (sv.VerticalOffset <= 2.0 && sv.ScrollableHeight > 16.0 && _shell.Chat.Messages.Count > 0)
+        {
+            _loadingMoreHistory = true;
+            var prevFromBottom = Math.Max(0.0, sv.ScrollableHeight - sv.VerticalOffset);
+            try
+            {
+                await _shell.Chat.LoadMoreHistoryPageAsync(30);
+                sv.ChangeView(null, Math.Max(0.0, sv.ScrollableHeight - prevFromBottom), null, true);
+            }
+            finally
+            {
+                _loadingMoreHistory = false;
+            }
+        }
+    }
+
+    private async void InlineImage_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: ChatMessage msg } || !msg.HasInlineImage)
+        {
+            return;
+        }
+        var previewImg = new Image
+        {
+            MaxWidth = 680,
+            MaxHeight = 480,
+            Stretch = Microsoft.UI.Xaml.Media.Stretch.Uniform,
+        };
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "🖼️ 原图灯箱预览",
+            Content = new Border
+            {
+                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(8),
+                Child = previewImg,
+            },
+            CloseButtonText = "关闭",
+        };
+        await dialog.ShowAsync();
+    }
+
     private async void LoadHistoryPageButton_Click(object sender, RoutedEventArgs e)
     {
         if (_shell is not null)
@@ -295,6 +374,20 @@ public sealed partial class ChatView : UserControl
 
     private void DraftBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
+        var ctrlDown = Microsoft.UI.Input.InputKeyboardSource
+            .GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+        if (ctrlDown && e.Key == Windows.System.VirtualKey.V)
+        {
+            var dataView = Windows.ApplicationModel.DataTransfer.Clipboard.GetContent();
+            if (dataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.Bitmap) ||
+                dataView.Contains(Windows.ApplicationModel.DataTransfer.StandardDataFormats.StorageItems))
+            {
+                PasteClipboardButton_Click(sender, e);
+                e.Handled = true;
+                return;
+            }
+        }
         if (e.Key == Windows.System.VirtualKey.Enter)
         {
             _ = _shell?.Chat.SendCommand.ExecuteAsync(null);

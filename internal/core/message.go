@@ -598,7 +598,7 @@ func (c *Client) sealOutboundText(to, group, plain string) (wireText, senderPub 
 	}
 	c.mu.Unlock()
 
-	if e2eeSecret != "" {
+	if e2eeSecret != "" && !strings.HasPrefix(plain, "sys:") {
 		sealed, err := transfer.SealText(e2eeSecret, plain)
 		if err != nil {
 			return "", "", err

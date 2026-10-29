@@ -1,5 +1,12 @@
 # Changelog
 
+## [7.0.4](https://github.com/pandaymx/lanchat/compare/v7.0.3...v7.0.4) (2026-10-29)
+
+
+### Bug Fixes
+
+* **ui-macos:** make ChatMessage.inbound mutable for history sync ([a13da5e](https://github.com/pandaymx/lanchat/commit/a13da5e47db9e40eff09b684210c16b5421a97b8))
+
 ## [7.0.3](https://github.com/pandaymx/lanchat/compare/v7.0.2...v7.0.3) (2026-10-29)
 
 

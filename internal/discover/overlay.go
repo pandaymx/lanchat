@@ -252,3 +252,125 @@ func (b *GossipPeerBook) saveLocked() {
 		_ = os.WriteFile(b.path, raw, 0o600)
 	}
 }
+
+// MultipathRouteMetric 描述单条跨网卡/跨子网候选链路的探测指标与动态调度权重（v7.3.0）。
+type MultipathRouteMetric struct {
+	Endpoint  string        `json:"endpoint"`
+	LinkType  string        `json:"linkType"` // "lan" | "tailscale" | "overlay"
+	RTT       time.Duration `json:"rtt"`
+	Weight    int           `json:"weight"`
+	Reachable bool          `json:"reachable"`
+}
+
+// ClassifyEndpointLinkType 根据候选地址 IP 识别链路类型（lan / tailscale / overlay，v7.3.0）。
+func ClassifyEndpointLinkType(endpoint string) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(endpoint))
+	if err != nil {
+		host = strings.TrimSpace(endpoint)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return "overlay"
+	}
+	v4 := ip.To4()
+	if v4 == nil {
+		return "overlay"
+	}
+	if isCGNAT(v4) {
+		return "tailscale"
+	}
+	if v4.IsLoopback() || v4.IsPrivate() {
+		return "lan"
+	}
+	return "overlay"
+}
+
+// ProbeMultipathRoutes 并发探测有线局域网、Wi-Fi 与 Tailscale 候选地址，按实测 RTT 与链路层级计算聚合调度权重（v7.3.0）。
+func ProbeMultipathRoutes(ctx context.Context, endpoints []string, timeout time.Duration) []MultipathRouteMetric {
+	if len(endpoints) == 0 {
+		return nil
+	}
+	if timeout <= 0 {
+		timeout = 500 * time.Millisecond
+	}
+	seen := make(map[string]bool, len(endpoints))
+	unique := make([]string, 0, len(endpoints))
+	for _, raw := range endpoints {
+		ep := strings.TrimSpace(raw)
+		if ep == "" || seen[ep] {
+			continue
+		}
+		seen[ep] = true
+		unique = append(unique, ep)
+	}
+
+	results := make([]MultipathRouteMetric, len(unique))
+	var wg sync.WaitGroup
+	for i, ep := range unique {
+		wg.Add(1)
+		go func(idx int, target string) {
+			defer wg.Done()
+			linkType := ClassifyEndpointLinkType(target)
+			start := time.Now()
+			d := net.Dialer{Timeout: timeout}
+			conn, err := d.DialContext(ctx, "tcp", target)
+			rtt := time.Since(start)
+			if err != nil {
+				results[idx] = MultipathRouteMetric{
+					Endpoint:  target,
+					LinkType:  linkType,
+					RTT:       timeout,
+					Weight:    0,
+					Reachable: false,
+				}
+				return
+			}
+			_ = conn.Close()
+			weight := computeRouteWeight(linkType, rtt)
+			results[idx] = MultipathRouteMetric{
+				Endpoint:  target,
+				LinkType:  linkType,
+				RTT:       rtt,
+				Weight:    weight,
+				Reachable: true,
+			}
+		}(i, ep)
+	}
+	wg.Wait()
+
+	out := make([]MultipathRouteMetric, 0, len(results))
+	for _, r := range results {
+		if r.Reachable {
+			out = append(out, r)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Weight != out[j].Weight {
+			return out[i].Weight > out[j].Weight
+		}
+		return out[i].RTT < out[j].RTT
+	})
+	return out
+}
+
+func computeRouteWeight(linkType string, rtt time.Duration) int {
+	base := 2
+	switch linkType {
+	case "lan":
+		base = 4
+	case "tailscale":
+		base = 2
+	default:
+		base = 1
+	}
+	switch {
+	case rtt <= 2*time.Millisecond:
+		return base + 4
+	case rtt <= 10*time.Millisecond:
+		return base + 2
+	case rtt <= 40*time.Millisecond:
+		return base + 1
+	default:
+		return base
+	}
+}

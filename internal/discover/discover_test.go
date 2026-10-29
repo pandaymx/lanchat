@@ -286,3 +286,39 @@ func TestTailscalePeerDiscoveryAndDualStackPriority(t *testing.T) {
 		t.Fatalf("expected Tailscale IP 100.105.48.87 first across subnets, got %v", crossNet)
 	}
 }
+
+func TestProbeMultipathRoutesAndLinkClassification(t *testing.T) {
+	if got := ClassifyEndpointLinkType("192.168.1.50:9000"); got != "lan" {
+		t.Fatalf("ClassifyEndpointLinkType(lan) = %q, want lan", got)
+	}
+	if got := ClassifyEndpointLinkType("100.105.48.87:9000"); got != "tailscale" {
+		t.Fatalf("ClassifyEndpointLinkType(tailscale) = %q, want tailscale", got)
+	}
+	if got := ClassifyEndpointLinkType("8.8.8.8:9000"); got != "overlay" {
+		t.Fatalf("ClassifyEndpointLinkType(overlay) = %q, want overlay", got)
+	}
+
+	ln1, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln1.Close()
+	go func() {
+		for {
+			c, err := ln1.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
+	routes := ProbeMultipathRoutes(context.Background(), []string{
+		ln1.Addr().String(),
+		"127.0.0.1:1", // unreachable
+		ln1.Addr().String(),
+	}, 250*time.Millisecond)
+	if len(routes) != 1 || !routes[0].Reachable || routes[0].LinkType != "lan" || routes[0].Weight <= 0 {
+		t.Fatalf("ProbeMultipathRoutes = %+v", routes)
+	}
+}

@@ -5,8 +5,11 @@ namespace LANChat.Services;
 /// <summary>本地配置：昵称、默认下载目录等（JSON 存于 %APPDATA%\LANChat）。</summary>
 public sealed class Settings
 {
+    public static string DefaultDownloadDir =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "LANChat");
+
     public string Nickname { get; set; } = "";
-    public string DownloadDir { get; set; } = "";
+    public string DownloadDir { get; set; } = DefaultDownloadDir;
 
     private static string ConfigDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LANChat");
@@ -19,7 +22,12 @@ public sealed class Settings
         {
             if (File.Exists(ConfigPath))
             {
-                return JsonSerializer.Deserialize<Settings>(File.ReadAllText(ConfigPath)) ?? new Settings();
+                var loaded = JsonSerializer.Deserialize<Settings>(File.ReadAllText(ConfigPath)) ?? new Settings();
+                if (string.IsNullOrWhiteSpace(loaded.DownloadDir))
+                {
+                    loaded.DownloadDir = DefaultDownloadDir;
+                }
+                return loaded;
             }
         }
         catch (JsonException)

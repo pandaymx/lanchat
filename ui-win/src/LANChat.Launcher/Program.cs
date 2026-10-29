@@ -46,10 +46,14 @@ internal static class Program
                 startInfo.ArgumentList.Add("--nickname");
                 startInfo.ArgumentList.Add(config.Nickname);
             }
-            if (!string.IsNullOrWhiteSpace(config.DownloadDir))
+            var downloadDir = string.IsNullOrWhiteSpace(config.DownloadDir)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "LANChat")
+                : config.DownloadDir;
+            if (!string.IsNullOrWhiteSpace(downloadDir))
             {
+                Directory.CreateDirectory(downloadDir);
                 startInfo.ArgumentList.Add("--download-dir");
-                startInfo.ArgumentList.Add(config.DownloadDir);
+                startInfo.ArgumentList.Add(downloadDir);
             }
 
             Process.Start(startInfo);

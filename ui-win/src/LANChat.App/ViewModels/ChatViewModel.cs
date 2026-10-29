@@ -1124,7 +1124,11 @@ public sealed partial class ChatViewModel : ViewModelBase
     {
         var key = !string.IsNullOrEmpty(message.GroupId)
             ? message.GroupId!
-            : (message.IsSelf ? (CurrentPeer?.Id ?? message.FromId) : message.FromId);
+            : (message.IsSelf
+                ? (!string.IsNullOrEmpty(message.FromId) && message.FromId != SelfId
+                    ? message.FromId
+                    : (CurrentPeer?.Id ?? message.FromId))
+                : message.FromId);
 
         if (!_conversations.TryGetValue(key, out var list))
         {

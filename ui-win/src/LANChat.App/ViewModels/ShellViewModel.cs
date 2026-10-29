@@ -145,6 +145,10 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
                     Login.HandleConnChanged(conn, reason);
                     Roster.HandleConnChanged(conn);
                     Channels.HandleConnChanged(conn);
+                    if (conn == ConnState.Connected)
+                    {
+                        _ = InitializeAsync();
+                    }
                 });
                 break;
             case "peer.joined":
@@ -223,6 +227,10 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
             ApplyChannels(state.Channels);
             Chat.ApplyHistory(state.Messages);
             Chat.ApplyCollabState(state.VoiceCall, state.ScreenShare);
+            if (state.Conn == ConnState.Connected && !Chat.HasActiveConversation)
+            {
+                Chat.SelectBroadcastConversation();
+            }
             Login.Initialize(state);
         });
     }

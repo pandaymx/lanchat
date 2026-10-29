@@ -245,7 +245,8 @@ pub fn on_activate(app: &adw::Application) {
     let stop = ctx.stop.clone();
     let ready_tx = ui_tx.clone();
     crate::spawn_rt(async move {
-        ensure_daemon(&socket, None).await;
+        let default_dl = crate::daemon::default_download_dir();
+        ensure_daemon(&socket, Some(&default_dl)).await;
         let client = IpcClient::start(
             socket,
             {

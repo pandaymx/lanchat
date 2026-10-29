@@ -184,6 +184,10 @@ impl AppState {
                     }
                 }
                 existing.text = msg.text;
+                existing.inbound = msg.inbound;
+                if !msg.sender_id.is_empty() {
+                    existing.sender_id = msg.sender_id;
+                }
                 existing.revoked = msg.revoked;
                 existing.read_by = msg.read_by;
                 if !msg.reply_quote.is_empty() {

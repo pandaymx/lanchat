@@ -67,6 +67,23 @@ fn reap_deleted_daemons() -> bool {
     reaped
 }
 
+/// 返回平台默认的下载与本地状态持久化目录（用于保存接收文件、设备身份与加密聊天历史）。
+pub fn default_download_dir() -> PathBuf {
+    if let Some(home) = std::env::var_os("HOME") {
+        let p = PathBuf::from(home);
+        if !p.as_os_str().is_empty() {
+            return p.join("Downloads").join("LANChat");
+        }
+    }
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+        let p = PathBuf::from(data_home);
+        if !p.as_os_str().is_empty() {
+            return p.join("lanchat");
+        }
+    }
+    PathBuf::from("/tmp/lanchat-data")
+}
+
 /// 若 socket 尚不可连或旧版 daemon 已清理，则拉起新版 daemon；返回是否执行了拉起。
 pub async fn ensure_daemon(socket: &Path, download_dir: Option<&Path>) -> bool {
     let reaped = reap_deleted_daemons();
@@ -79,9 +96,10 @@ pub async fn ensure_daemon(socket: &Path, download_dir: Option<&Path>) -> bool {
     let bin = find_daemon();
     let mut cmd = Command::new(&bin);
     cmd.arg("--socket").arg(socket);
-    if let Some(dir) = download_dir {
-        cmd.arg("--download-dir").arg(dir);
-    }
+    let default_dir = default_download_dir();
+    let resolved_dir = download_dir.unwrap_or(&default_dir);
+    let _ = std::fs::create_dir_all(resolved_dir);
+    cmd.arg("--download-dir").arg(resolved_dir);
     match cmd.spawn() {
         Ok(child) => {
             info!("已拉起 daemon (pid {})", child.id().unwrap_or(0));

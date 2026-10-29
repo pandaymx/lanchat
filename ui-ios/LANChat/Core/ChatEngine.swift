@@ -365,6 +365,27 @@ final class ChatEngine {
         }
     }
 
+    // MARK: - 契约 v1.6 频道权限治理与加密离线投递箱显式 RPC 绑定方法
+
+    func channelManageMember(channelID: String, memberID: String = "", action: String) async throws {
+        try await runOnIOThrowing { try $0.channelManageMember(channelID, memberID: memberID, action: action) }
+    }
+
+    @discardableResult
+    func enqueueOfflineMailbox(to: String, text: String, recipientPub: String = "") async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let msgID = c.enqueueOfflineMailbox(to, text: text, recipientPub: recipientPub, error: &err)
+            if let err { throw err }
+            return msgID
+        }
+    }
+
+    @discardableResult
+    func drainOfflineMailbox(fromPeer: String = "") async -> String {
+        await runOnIO { $0.drainOfflineMailbox(fromPeer) }
+    }
+
     // MARK: - 线程包装
 
     private func runOnIO<T>(_ block: @escaping @Sendable (LCMobileClient) -> T) async -> T {

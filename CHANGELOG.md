@@ -1,5 +1,24 @@
 # Changelog
 
+## [7.2.0](https://github.com/pandaymx/lanchat/compare/v7.1.0...v7.2.0) (2026-10-29)
+
+
+### Features
+
+* **core:** add channel mesh voice mixing, speaking indicator, and dirty-tile screen share ([a1034b7](https://github.com/pandaymx/lanchat/commit/a1034b7a4be7cf6fdb744a1c78a477864263e937))
+* **ui-android:** add mesh voice status and adaptive dirty-tile screen share indicator ([82fc271](https://github.com/pandaymx/lanchat/commit/82fc271567ae2d09e2b805f5b6bcbd026d21d3f8))
+* **ui-ios:** add mesh voice status and adaptive dirty-tile screen share indicator ([5b97bf9](https://github.com/pandaymx/lanchat/commit/5b97bf96f882dd85f38b51dca94668b15c105367))
+* **ui-linux:** add voice room mute broadcast and dirty-tile screen region controls ([61f25af](https://github.com/pandaymx/lanchat/commit/61f25afb1889540dc932801f1ebff984f975233e))
+* **ui-macos:** add voice mute toggle and adaptive screen crop controls ([3b35b04](https://github.com/pandaymx/lanchat/commit/3b35b046373342afb5149a066617fff29192fdc6))
+* **ui-win:** add voice mute toggle and adaptive screen crop controls ([2b65ab0](https://github.com/pandaymx/lanchat/commit/2b65ab0bd1d3bb34549adf27f13b9d39a071269a))
+
+
+### Bug Fixes
+
+* **core:** remove unused collab symbols and scope auto-roam to group channels ([4c1886b](https://github.com/pandaymx/lanchat/commit/4c1886b0965cfa98b71ec6f26e9d38abfc0ab54a))
+* **core:** seal internal sys control frames via ECDH instead of manual e2ee ([fb61d48](https://github.com/pandaymx/lanchat/commit/fb61d488e04a34724c3622aeb9cccdeebb8b5f31))
+* **ui-linux:** use send_text_to_target for voice mute and screen region controls ([c7b1963](https://github.com/pandaymx/lanchat/commit/c7b19630e7c05ba16e449a5160b8426475984e87))
+
 ## [7.1.0](https://github.com/pandaymx/lanchat/compare/v7.0.4...v7.1.0) (2026-10-29)
 
 

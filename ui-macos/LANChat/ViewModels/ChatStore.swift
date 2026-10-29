@@ -871,6 +871,45 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: - 契约 v1.6 频道权限治理与加密离线投递箱显式 RPC 方法
+
+    func channelManageMemberRpc(channelID: String, memberID: String = "", action: String) async {
+        do {
+            _ = try await ipc.call(
+                "ChannelManageMember",
+                params: ["channelID": channelID, "memberID": memberID, "action": action]
+            )
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func enqueueOfflineMailboxRpc(to: String, text: String, recipientPub: String = "") async {
+        do {
+            _ = try await ipc.call(
+                "EnqueueOfflineMailbox",
+                params: ["to": to, "text": text, "recipientPub": recipientPub],
+                as: MsgIDResult.self
+            )
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func drainOfflineMailboxRpc(fromPeer: String = "") async {
+        do {
+            _ = try await ipc.call(
+                "DrainOfflineMailbox",
+                params: ["fromPeer": fromPeer]
+            )
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     func shutdown() {
         ipc.stop()
         if settings.stopDaemonOnExit {

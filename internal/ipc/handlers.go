@@ -70,6 +70,9 @@ var handlers = map[string]handler{
 	"SyncHistoryWithPeer":   hSyncHistoryWithPeer,
 	"SetBandwidthLimit":     hSetBandwidthLimit,
 	"CheckSilentUpdate":     hCheckSilentUpdate,
+	"ChannelManageMember":   hChannelManageMember,
+	"EnqueueOfflineMailbox": hEnqueueOfflineMailbox,
+	"DrainOfflineMailbox":   hDrainOfflineMailbox,
 }
 
 // decodeParams 解码 params 并在失败时返回 invalid params 错误。
@@ -731,4 +734,59 @@ func hCheckSilentUpdate(api appapi.API, raw json.RawMessage) (interface{}, *rpcE
 	return struct {
 		Status string `json:"status"`
 	}{Status: status}, nil
+}
+
+type channelManageMemberParams struct {
+	ChannelID string `json:"channelID"`
+	MemberID  string `json:"memberID"`
+	Action    string `json:"action"`
+}
+
+func hChannelManageMember(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[channelManageMemberParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if err := api.ChannelManageMember(p.ChannelID, p.MemberID, p.Action); err != nil {
+		return nil, apiErr(err)
+	}
+	return struct{}{}, nil
+}
+
+type enqueueOfflineMailboxParams struct {
+	To           string `json:"to"`
+	Text         string `json:"text"`
+	RecipientPub string `json:"recipientPub"`
+}
+
+func hEnqueueOfflineMailbox(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[enqueueOfflineMailboxParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	id, err := api.EnqueueOfflineMailbox(p.To, p.Text, p.RecipientPub)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		MsgID string `json:"msgID"`
+	}{MsgID: id}, nil
+}
+
+type drainOfflineMailboxParams struct {
+	FromPeer string `json:"fromPeer"`
+}
+
+func hDrainOfflineMailbox(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p drainOfflineMailboxParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[drainOfflineMailboxParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: api.DrainOfflineMailbox(p.FromPeer)}, nil
 }

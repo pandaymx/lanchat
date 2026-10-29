@@ -228,6 +228,26 @@ func (s *stubAPI) CheckSilentUpdate(proxy string, download bool) (string, error)
 	return "update:当前已是最新版本", nil
 }
 
+func (s *stubAPI) ChannelManageMember(channelID, memberID, action string) error {
+	s.gotTransferID = channelID
+	s.gotMemberID = memberID
+	s.gotName = action
+	return s.channelJErr
+}
+
+func (s *stubAPI) EnqueueOfflineMailbox(to, text, recipientPub string) (string, error) {
+	s.gotName = to + ":" + text
+	if s.sendTextID != "" {
+		return s.sendTextID, s.sendTextErr
+	}
+	return "mbox-test-1", s.sendTextErr
+}
+
+func (s *stubAPI) DrainOfflineMailbox(fromPeer string) string {
+	s.gotName = fromPeer
+	return "mailbox:drained:2"
+}
+
 // startServer 在临时本地传输（Unix socket / 命名管道）上启动服务端，
 // 返回服务端与客户端连接。
 func startServer(t *testing.T, api appapi.API) (*Server, net.Conn) {
@@ -791,6 +811,9 @@ func TestContractV15SystemMethods(t *testing.T) {
 		{"SyncHistoryWithPeer", map[string]interface{}{"to": "peer-99", "group": "", "sinceTS": 0}},
 		{"SetBandwidthLimit", map[string]interface{}{"limitMBps": 25.5}},
 		{"CheckSilentUpdate", map[string]interface{}{"proxy": "https://ghfast.top", "download": false}},
+		{"ChannelManageMember", map[string]interface{}{"channelID": "ch-1", "memberID": "peer-99", "action": "promote"}},
+		{"EnqueueOfflineMailbox", map[string]interface{}{"to": "peer-99", "text": "offline secret", "recipientPub": ""}},
+		{"DrainOfflineMailbox", map[string]interface{}{"fromPeer": "peer-99"}},
 	} {
 		resp := call(t, c, tc.method, tc.params)
 		if resp.Error != nil {

@@ -35,6 +35,8 @@ import (
 const (
 	defaultVoiceJitterWindow    = 40 * time.Millisecond
 	defaultVoiceUDPProbeTimeout = 2 * time.Second
+	maxVoiceMeshPeers           = 8
+	voiceSpeakingRMSThreshold   = 0.015
 )
 
 var (
@@ -214,12 +216,17 @@ func (jb *voiceJitterBuffer) deliverItems(items []voiceJitterFrame, cb func(uint
 	}
 }
 
-// voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道实时语音房间（阶段四 v2.0 / 阶段三 v5.3.0）。
+// voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道多人 Mesh 实时语音房间（阶段四 v2.0 / v5.3.0 / v7.2.0）。
 type voiceSession struct {
 	mu               sync.Mutex
 	conn             net.PacketConn
 	localAddr        string
 	remoteAddr       *net.UDPAddr
+	meshPeers        map[string]*net.UDPAddr
+	peerJitter       map[string]*voiceJitterBuffer
+	peerMuted        map[string]bool
+	peerSpeaking     map[string]float64
+	peerLastSpeakMs  map[string]int64
 	targetPeer       string
 	targetGrp        string
 	state            string // "idle" | "calling" | "active"
@@ -236,6 +243,81 @@ type voiceSession struct {
 	stopAudioCh      chan struct{}
 	capCmd           *exec.Cmd
 	playCmd          *exec.Cmd
+}
+
+// mixPCM16LEFrames 对多路（≤8 路）16-bit 小端有符号单声道 PCM 帧执行软混音与 [-32768, 32767] 饱和防破音裁剪（v7.2.0）。
+func mixPCM16LEFrames(frames [][]byte) []byte {
+	var valid [][]byte
+	maxLen := 0
+	for _, f := range frames {
+		if len(f) == 0 {
+			continue
+		}
+		valid = append(valid, f)
+		if len(f) > maxLen {
+			maxLen = len(f)
+		}
+	}
+	if len(valid) == 0 {
+		return nil
+	}
+	if len(valid) == 1 {
+		return append([]byte(nil), valid[0]...)
+	}
+	if len(valid) > maxVoiceMeshPeers {
+		valid = valid[:maxVoiceMeshPeers]
+	}
+	out := make([]byte, maxLen)
+	samplePairs := maxLen / 2
+	for i := 0; i < samplePairs; i++ {
+		off := i * 2
+		var sum int32
+		for _, f := range valid {
+			if off+1 < len(f) {
+				s := int16(binary.LittleEndian.Uint16(f[off : off+2]))
+				sum += int32(s)
+			}
+		}
+		if sum > 32767 {
+			sum = 32767
+		} else if sum < -32768 {
+			sum = -32768
+		}
+		binary.LittleEndian.PutUint16(out[off:off+2], uint16(int16(sum)))
+	}
+	if maxLen%2 == 1 {
+		lastIdx := maxLen - 1
+		var bSum int
+		for _, f := range valid {
+			if lastIdx < len(f) {
+				bSum += int(f[lastIdx])
+			}
+		}
+		out[lastIdx] = byte(bSum / len(valid))
+	}
+	return out
+}
+
+// computePCMRMSLevel 计算一帧 16-bit 小端有符号 PCM 音频的归一化均方根音量（[0.0, 1.0]，用于发言人音量指示 Speaking Indicator，v7.2.0）。
+func computePCMRMSLevel(pcm []byte) float64 {
+	if len(pcm) == 0 {
+		return 0
+	}
+	samplePairs := len(pcm) / 2
+	if samplePairs == 0 {
+		return float64(pcm[0]) / 255.0
+	}
+	var sumSq float64
+	for i := 0; i < samplePairs; i++ {
+		s := int16(binary.LittleEndian.Uint16(pcm[i*2 : i*2+2]))
+		norm := float64(s) / 32768.0
+		sumSq += norm * norm
+	}
+	rms := math.Sqrt(sumSq / float64(samplePairs))
+	if rms > 1.0 {
+		rms = 1.0
+	}
+	return rms
 }
 
 func (vs *voiceSession) markActiveNow() {
@@ -287,25 +369,271 @@ func (vs *voiceSession) shouldFallbackToRelay(now time.Time) bool {
 	return false
 }
 
-// SetVoiceMuted 设置当前实时语音通话麦克风静音状态（阶段三 v5.3.0）。
+// SetVoiceMuted 设置当前实时语音通话麦克风静音状态并向对端/语音频道实时广播静音标记（v5.3.0 / v7.2.0）。
 func (c *Client) SetVoiceMuted(muted bool) {
 	c.voiceMuted.Store(muted)
+	selfID := c.selfIDValue()
+	var to, group string
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs != nil {
+		vs.mu.Lock()
+		if vs.peerMuted == nil {
+			vs.peerMuted = make(map[string]bool)
+		}
+		if vs.peerSpeaking == nil {
+			vs.peerSpeaking = make(map[string]float64)
+		}
+		if selfID != "" {
+			vs.peerMuted[selfID] = muted
+			if muted {
+				vs.peerSpeaking[selfID] = 0
+			}
+		}
+		to = vs.targetPeer
+		group = vs.targetGrp
+		vs.mu.Unlock()
+	}
+	if to != "" || group != "" {
+		if _, err := c.connectedConn(); err == nil {
+			flag := "0"
+			if muted {
+				flag = "1"
+			}
+			_ = c.sendControlText(to, group, "sys:call:mute:"+flag)
+		}
+	}
+	if vs != nil {
+		c.emitVoiceCallState()
+	}
 }
 
 // ToggleVoiceMuted 切换当前实时语音通话麦克风静音状态并返回切换后的状态。
 func (c *Client) ToggleVoiceMuted() bool {
-	for {
-		cur := c.voiceMuted.Load()
-		next := !cur
-		if c.voiceMuted.CompareAndSwap(cur, next) {
-			return next
-		}
-	}
+	next := !c.voiceMuted.Load()
+	c.SetVoiceMuted(next)
+	return next
 }
 
 // IsVoiceMuted 返回当前实时语音通话是否处于麦克风静音状态。
 func (c *Client) IsVoiceMuted() bool {
 	return c.voiceMuted.Load()
+}
+
+// onInboundVoiceMute 处理对端或频道成员广播的 sys:call:mute:1|0 静音状态变更（v7.2.0）。
+func (c *Client) onInboundVoiceMute(from, group string, muted bool) {
+	if from == "" {
+		return
+	}
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return
+	}
+	vs.mu.Lock()
+	if vs.peerMuted == nil {
+		vs.peerMuted = make(map[string]bool)
+	}
+	if vs.peerSpeaking == nil {
+		vs.peerSpeaking = make(map[string]float64)
+	}
+	vs.peerMuted[from] = muted
+	if muted {
+		vs.peerSpeaking[from] = 0
+	}
+	vs.mu.Unlock()
+	c.emitVoiceCallState()
+}
+
+// AddVoiceMeshPeer 将频道成员加入本地多人语音 Mesh 拓扑（最多支持 8 名成员并发混音，v7.2.0）。
+func (c *Client) AddVoiceMeshPeer(peerID, remoteUDP string) bool {
+	peerID = strings.TrimSpace(peerID)
+	remoteUDP = strings.TrimSpace(remoteUDP)
+	if peerID == "" && remoteUDP == "" {
+		return false
+	}
+	var uaddr *net.UDPAddr
+	if remoteUDP != "" {
+		uaddr, _ = net.ResolveUDPAddr("udp", remoteUDP)
+	}
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return false
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if vs.meshPeers == nil {
+		vs.meshPeers = make(map[string]*net.UDPAddr)
+	}
+	if vs.peerMuted == nil {
+		vs.peerMuted = make(map[string]bool)
+	}
+	if vs.peerSpeaking == nil {
+		vs.peerSpeaking = make(map[string]float64)
+	}
+	if vs.peerLastSpeakMs == nil {
+		vs.peerLastSpeakMs = make(map[string]int64)
+	}
+	if peerID != "" {
+		if _, exists := vs.meshPeers[peerID]; !exists && len(vs.meshPeers) >= maxVoiceMeshPeers {
+			return false
+		}
+		if uaddr != nil {
+			vs.meshPeers[peerID] = uaddr
+		} else if _, exists := vs.meshPeers[peerID]; !exists {
+			vs.meshPeers[peerID] = nil
+		}
+	}
+	if uaddr != nil && vs.remoteAddr == nil {
+		vs.remoteAddr = uaddr
+	}
+	if vs.state != "active" && uaddr != nil {
+		vs.state = "active"
+	}
+	vs.markActiveNow()
+	return true
+}
+
+// VoiceMeshPeers 返回当前语音频道 Mesh 房间内已绑定的全部成员 ID（按字典序排序，≤8 人，v7.2.0）。
+func (c *Client) VoiceMeshPeers() []string {
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return nil
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	out := make([]string, 0, len(vs.meshPeers))
+	for pid := range vs.meshPeers {
+		out = append(out, pid)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// IsPeerVoiceMuted 查询语音频道中指定成员当前是否处于静音状态（v7.2.0）。
+func (c *Client) IsPeerVoiceMuted(peerID string) bool {
+	if peerID == "" || peerID == c.selfIDValue() {
+		return c.IsVoiceMuted()
+	}
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return false
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	return vs.peerMuted[peerID]
+}
+
+// PeerSpeakingLevel 返回指定成员最近的归一化发言音量（[0.0, 1.0]，v7.2.0）。
+func (c *Client) PeerSpeakingLevel(peerID string) float64 {
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return 0
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	if vs.peerMuted[peerID] {
+		return 0
+	}
+	return vs.peerSpeaking[peerID]
+}
+
+// ActiveVoiceSpeakers 返回当前正在发言（RMS 音量超过阈值且未静音）的成员 ID 列表（v7.2.0）。
+func (c *Client) ActiveVoiceSpeakers() []string {
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return nil
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	var speakers []string
+	for pid, lvl := range vs.peerSpeaking {
+		if !vs.peerMuted[pid] && lvl >= voiceSpeakingRMSThreshold {
+			speakers = append(speakers, pid)
+		}
+	}
+	sort.Strings(speakers)
+	return speakers
+}
+
+// MixIncomingVoiceFrames 对频道内多成员并发到达的 PCM 音频帧执行静音过滤、发言音量测算与 16-bit 软混音（v7.2.0）。
+func (c *Client) MixIncomingVoiceFrames(peerFrames map[string][]byte) []byte {
+	if len(peerFrames) == 0 {
+		return nil
+	}
+	_ = c.ensureLocalVoiceUDP("", "")
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return nil
+	}
+	nowMs := time.Now().UnixMilli()
+	var activeFrames [][]byte
+
+	vs.mu.Lock()
+	if vs.peerMuted == nil {
+		vs.peerMuted = make(map[string]bool)
+	}
+	if vs.peerSpeaking == nil {
+		vs.peerSpeaking = make(map[string]float64)
+	}
+	if vs.peerLastSpeakMs == nil {
+		vs.peerLastSpeakMs = make(map[string]int64)
+	}
+	if vs.meshPeers == nil {
+		vs.meshPeers = make(map[string]*net.UDPAddr)
+	}
+	peers := make([]string, 0, len(peerFrames))
+	for pid := range peerFrames {
+		peers = append(peers, pid)
+	}
+	sort.Strings(peers)
+	for _, pid := range peers {
+		pcm := peerFrames[pid]
+		if len(pcm) == 0 {
+			continue
+		}
+		if _, exists := vs.meshPeers[pid]; !exists && len(vs.meshPeers) < maxVoiceMeshPeers {
+			vs.meshPeers[pid] = nil
+		}
+		if vs.peerMuted[pid] {
+			vs.peerSpeaking[pid] = 0
+			continue
+		}
+		rms := computePCMRMSLevel(pcm)
+		vs.peerSpeaking[pid] = rms
+		if rms >= voiceSpeakingRMSThreshold {
+			vs.peerLastSpeakMs[pid] = nowMs
+		}
+		if len(activeFrames) < maxVoiceMeshPeers {
+			activeFrames = append(activeFrames, pcm)
+		}
+	}
+	cb := vs.onFrame
+	vs.mu.Unlock()
+
+	if len(activeFrames) == 0 {
+		return nil
+	}
+	mixed := mixPCM16LEFrames(activeFrames)
+	seq := uint32(vs.framesIn.Add(1))
+	if cb != nil {
+		cb(seq, nowMs, mixed)
+	}
+	return mixed
 }
 
 // StartVoiceCall 发起局域网实时语音呼叫（1:1 或 G2 语音频道），绑定本地 UDP 端口并通过信令下发邀约。
@@ -345,7 +673,7 @@ func (c *Client) AcceptVoiceCall(to, group, remoteUDP string) (string, error) {
 		return "", err
 	}
 	if strings.TrimSpace(remoteUDP) != "" {
-		c.setVoiceRemoteUDP(remoteUDP)
+		c.setVoiceRemoteUDPForPeer(to, remoteUDP)
 	} else {
 		c.mu.Lock()
 		vs := c.voice
@@ -367,8 +695,17 @@ func (c *Client) AcceptVoiceCall(to, group, remoteUDP string) (string, error) {
 	return "call:active:" + localAddr, nil
 }
 
-// onIncomingVoiceCallOffer 处理对端发来的 sys:call:offer:<remoteUDP>，进入响铃待接听状态（"ringing"）并触发系统来电通知（v4.9.0）。
+// onIncomingVoiceCallOffer 处理对端发来的 sys:call:offer:<remoteUDP>，支持 1:1 响铃与 G2 频道多人语音房间自动 Mesh 组网（v4.9.0 / v7.2.0）。
 func (c *Client) onIncomingVoiceCallOffer(from, group, remoteUDP string) {
+	c.mu.Lock()
+	alreadyInSameGroup := false
+	if c.voice != nil && group != "" {
+		c.voice.mu.Lock()
+		alreadyInSameGroup = c.voice.targetGrp == group && (c.voice.state == "calling" || c.voice.state == "active")
+		c.voice.mu.Unlock()
+	}
+	c.mu.Unlock()
+
 	if err := c.ensureLocalVoiceUDP(from, group); err != nil {
 		return
 	}
@@ -378,13 +715,38 @@ func (c *Client) onIncomingVoiceCallOffer(from, group, remoteUDP string) {
 	c.mu.Unlock()
 	if vs != nil {
 		vs.mu.Lock()
-		vs.targetPeer = from
-		vs.targetGrp = group
-		if uaddr != nil {
-			vs.remoteAddr = uaddr
+		if vs.targetPeer == "" || group == "" {
+			vs.targetPeer = from
 		}
-		vs.state = "ringing"
+		if group != "" {
+			vs.targetGrp = group
+		}
+		if uaddr != nil {
+			if vs.meshPeers == nil {
+				vs.meshPeers = make(map[string]*net.UDPAddr)
+			}
+			if _, exists := vs.meshPeers[from]; exists || len(vs.meshPeers) < maxVoiceMeshPeers {
+				vs.meshPeers[from] = uaddr
+			}
+			if vs.remoteAddr == nil || group == "" {
+				vs.remoteAddr = uaddr
+			}
+		}
+		if alreadyInSameGroup {
+			vs.state = "active"
+			vs.markActiveNow()
+		} else {
+			vs.state = "ringing"
+		}
 		vs.mu.Unlock()
+	}
+	if alreadyInSameGroup {
+		localAddr := c.voiceLocalAddr()
+		if _, err := c.connectedConn(); err == nil && localAddr != "" {
+			_ = c.sendControlText(from, group, "sys:call:accept:"+localAddr)
+		}
+		c.emitVoiceCallState()
+		return
 	}
 	c.emitVoiceCallState()
 	c.notifyDesktopEvent(
@@ -419,7 +781,8 @@ func (c *Client) StopVoiceCall(to, group string) error {
 }
 
 // SendVoiceFrame 通过实时语音 UDP 通道发送一帧 PCM/Opus 音频数据；
-// 当本机处于静音（Mute）状态时静默丢弃；当 UDP 连续 2s 不可达或 WriteTo 失败时自动回退控制面加密信令通道（v5.3.0）。
+// 支持 G2 频道多人语音房间（≤8 人）Mesh 多路并发广播；当本机处于静音状态时静默丢弃；
+// 当 UDP 连续 2s 不可达或 WriteTo 失败时自动回退控制面加密信令通道（v5.3.0 / v7.2.0）。
 func (c *Client) SendVoiceFrame(pcm []byte) error {
 	if len(pcm) == 0 {
 		return errEmptyText
@@ -433,34 +796,70 @@ func (c *Client) SendVoiceFrame(pcm []byte) error {
 	if vs == nil {
 		return errInvalidState
 	}
+	selfID := c.selfIDValue()
+	rms := computePCMRMSLevel(pcm)
+	nowMs := time.Now().UnixMilli()
+
 	vs.mu.Lock()
 	conn := vs.conn
 	raddr := vs.remoteAddr
 	targetPeer := vs.targetPeer
 	targetGrp := vs.targetGrp
+	if vs.peerSpeaking == nil {
+		vs.peerSpeaking = make(map[string]float64)
+	}
+	if vs.peerLastSpeakMs == nil {
+		vs.peerLastSpeakMs = make(map[string]int64)
+	}
+	if selfID != "" {
+		vs.peerSpeaking[selfID] = rms
+		if rms >= voiceSpeakingRMSThreshold {
+			vs.peerLastSpeakMs[selfID] = nowMs
+		}
+	}
+	var meshDest []*net.UDPAddr
+	seenAddr := make(map[string]bool)
+	for _, addr := range vs.meshPeers {
+		if addr != nil {
+			key := addr.String()
+			if !seenAddr[key] && len(meshDest) < maxVoiceMeshPeers {
+				seenAddr[key] = true
+				meshDest = append(meshDest, addr)
+			}
+		}
+	}
+	if raddr != nil && !seenAddr[raddr.String()] && len(meshDest) < maxVoiceMeshPeers {
+		meshDest = append(meshDest, raddr)
+	}
 	vs.mu.Unlock()
 
 	vs.markActiveNow()
 	seq := vs.seq.Add(1)
-	tsMs := time.Now().UnixMilli()
+	tsMs := nowMs
 
 	_, wsErr := c.connectedConn()
 	hasSignaling := wsErr == nil && (targetPeer != "" || targetGrp != "")
 
 	var udpWriteErr error
-	if conn != nil && raddr != nil && (!vs.shouldFallbackToRelay(time.Now()) || !hasSignaling) {
+	if conn != nil && len(meshDest) > 0 && (!vs.shouldFallbackToRelay(time.Now()) || !hasSignaling) {
 		pkt := make([]byte, len(voicePacketMagic)+4+8+len(pcm))
 		copy(pkt, voicePacketMagic)
 		binary.BigEndian.PutUint32(pkt[len(voicePacketMagic):], seq)
 		binary.BigEndian.PutUint64(pkt[len(voicePacketMagic)+4:], uint64(tsMs))
 		copy(pkt[len(voicePacketMagic)+12:], pcm)
-		if _, err := conn.WriteTo(pkt, raddr); err == nil {
+		wroteAny := false
+		for _, dest := range meshDest {
+			if _, err := conn.WriteTo(pkt, dest); err == nil {
+				wroteAny = true
+			} else {
+				udpWriteErr = err
+			}
+		}
+		if wroteAny {
 			vs.framesOut.Add(1)
 			return nil
-		} else {
-			udpWriteErr = err
-			vs.udpRelayFallback.Store(true)
 		}
+		vs.udpRelayFallback.Store(true)
 	}
 
 	if hasSignaling {
@@ -517,9 +916,27 @@ func (c *Client) onInboundSignalingVoiceFrame(from, group, raw string) {
 	if ts == 0 {
 		ts = time.Now().UnixMilli()
 	}
+	rms := computePCMRMSLevel(pcm)
 	vs.mu.Lock()
 	if vs.state != "active" {
 		vs.state = "active"
+	}
+	if vs.peerSpeaking == nil {
+		vs.peerSpeaking = make(map[string]float64)
+	}
+	if vs.peerLastSpeakMs == nil {
+		vs.peerLastSpeakMs = make(map[string]int64)
+	}
+	if vs.peerMuted != nil && vs.peerMuted[from] {
+		vs.peerSpeaking[from] = 0
+		vs.mu.Unlock()
+		return
+	}
+	if from != "" {
+		vs.peerSpeaking[from] = rms
+		if rms >= voiceSpeakingRMSThreshold {
+			vs.peerLastSpeakMs[from] = ts
+		}
 	}
 	jb := vs.jitter
 	cb := vs.onFrame
@@ -532,7 +949,7 @@ func (c *Client) onInboundSignalingVoiceFrame(from, group, raw string) {
 	}
 }
 
-// VoiceCallStatus 返回当前实时语音通话状态摘要。
+// VoiceCallStatus 返回当前实时语音通话状态摘要（含 Mesh 成员数与活跃发言人数）。
 func (c *Client) VoiceCallStatus() string {
 	c.mu.Lock()
 	vs := c.voice
@@ -550,8 +967,18 @@ func (c *Client) VoiceCallStatus() string {
 	if vs.udpRelayFallback.Load() {
 		mode = "relay"
 	}
-	return fmt.Sprintf("%s local=%s remote=%s in=%d out=%d mode=%s muted=%t",
-		vs.state, vs.localAddr, remote, vs.framesIn.Load(), vs.framesOut.Load(), mode, c.IsVoiceMuted())
+	meshCount := len(vs.meshPeers)
+	if meshCount == 0 && vs.remoteAddr != nil {
+		meshCount = 1
+	}
+	speakers := 0
+	for pid, lvl := range vs.peerSpeaking {
+		if !vs.peerMuted[pid] && lvl >= voiceSpeakingRMSThreshold {
+			speakers++
+		}
+	}
+	return fmt.Sprintf("%s local=%s remote=%s in=%d out=%d mode=%s muted=%t mesh=%d speakers=%d",
+		vs.state, vs.localAddr, remote, vs.framesIn.Load(), vs.framesOut.Load(), mode, c.IsVoiceMuted(), meshCount, speakers)
 }
 
 func (c *Client) ensureLocalVoiceUDP(to, group string) error {
@@ -814,10 +1241,37 @@ func (c *Client) readVoiceLoop(vs *voiceSession) {
 		vs.framesIn.Add(1)
 
 		vs.mu.Lock()
-		if vs.remoteAddr == nil {
-			if udpAddr, ok := addr.(*net.UDPAddr); ok {
+		var senderID string
+		if udpAddr, ok := addr.(*net.UDPAddr); ok {
+			if vs.remoteAddr == nil {
 				vs.remoteAddr = udpAddr
 				vs.state = "active"
+			}
+			for pid, mAddr := range vs.meshPeers {
+				if mAddr != nil && mAddr.String() == udpAddr.String() {
+					senderID = pid
+					break
+				}
+			}
+		}
+		if senderID != "" && vs.peerMuted != nil && vs.peerMuted[senderID] {
+			if vs.peerSpeaking != nil {
+				vs.peerSpeaking[senderID] = 0
+			}
+			vs.mu.Unlock()
+			continue
+		}
+		if senderID != "" {
+			if vs.peerSpeaking == nil {
+				vs.peerSpeaking = make(map[string]float64)
+			}
+			if vs.peerLastSpeakMs == nil {
+				vs.peerLastSpeakMs = make(map[string]int64)
+			}
+			rms := computePCMRMSLevel(payload)
+			vs.peerSpeaking[senderID] = rms
+			if rms >= voiceSpeakingRMSThreshold {
+				vs.peerLastSpeakMs[senderID] = ts
 			}
 		}
 		jb := vs.jitter
@@ -832,6 +1286,10 @@ func (c *Client) readVoiceLoop(vs *voiceSession) {
 }
 
 func (c *Client) setVoiceRemoteUDP(remoteUDP string) {
+	c.setVoiceRemoteUDPForPeer("", remoteUDP)
+}
+
+func (c *Client) setVoiceRemoteUDPForPeer(peerID, remoteUDP string) {
 	uaddr, err := net.ResolveUDPAddr("udp", strings.TrimSpace(remoteUDP))
 	if err != nil {
 		return
@@ -843,7 +1301,20 @@ func (c *Client) setVoiceRemoteUDP(remoteUDP string) {
 		return
 	}
 	vs.mu.Lock()
-	vs.remoteAddr = uaddr
+	if peerID == "" {
+		peerID = vs.targetPeer
+	}
+	if peerID != "" {
+		if vs.meshPeers == nil {
+			vs.meshPeers = make(map[string]*net.UDPAddr)
+		}
+		if _, exists := vs.meshPeers[peerID]; exists || len(vs.meshPeers) < maxVoiceMeshPeers {
+			vs.meshPeers[peerID] = uaddr
+		}
+	}
+	if vs.remoteAddr == nil || vs.targetGrp == "" {
+		vs.remoteAddr = uaddr
+	}
 	vs.state = "active"
 	vs.mu.Unlock()
 	vs.markActiveNow()
@@ -900,7 +1371,202 @@ func (c *Client) closeVoiceSession() {
 	}
 }
 
-// StartScreenShare 开启局域网低延迟屏幕/窗口共享会话（阶段四 v2.0 / 契约 v1.2 / v4.8.0 真实抓屏推流管线）。
+// SetScreenShareRegion 配置屏幕共享的目标显示器/窗口标识与归一化裁剪区域（0..1，v7.2.0）。
+// target 支持 "display:0"、"display:1"、"window:active" 或自定义区域描述；cropW/cropH <= 0 表示全屏不裁剪。
+func (c *Client) SetScreenShareRegion(target string, cropX, cropY, cropW, cropH float64) {
+	if cropX < 0 {
+		cropX = 0
+	} else if cropX > 0.95 {
+		cropX = 0.95
+	}
+	if cropY < 0 {
+		cropY = 0
+	} else if cropY > 0.95 {
+		cropY = 0.95
+	}
+	if cropW < 0 {
+		cropW = 0
+	}
+	if cropH < 0 {
+		cropH = 0
+	}
+	if cropW > 0 && cropX+cropW > 1.0 {
+		cropW = 1.0 - cropX
+	}
+	if cropH > 0 && cropY+cropH > 1.0 {
+		cropH = 1.0 - cropY
+	}
+	c.mu.Lock()
+	c.screenTarget = strings.TrimSpace(target)
+	c.screenCropX = cropX
+	c.screenCropY = cropY
+	c.screenCropW = cropW
+	c.screenCropH = cropH
+	c.screenHasTileHash = false
+	c.mu.Unlock()
+}
+
+// ScreenShareRegion 返回当前屏幕共享配置的显示器/窗口目标及归一化裁剪区域（v7.2.0）。
+func (c *Client) ScreenShareRegion() (target string, x, y, w, h float64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.screenTarget
+	if t == "" {
+		t = "display:0"
+	}
+	return t, c.screenCropX, c.screenCropY, c.screenCropW, c.screenCropH
+}
+
+// ScreenShareStats 返回最近一帧的脏矩形块数（0..64）、累计静止跳帧数与采集目标（v7.2.0）。
+func (c *Client) ScreenShareStats() (dirtyTiles int, skippedFrames uint64, target string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	t := c.screenTarget
+	if t == "" {
+		t = "display:0"
+	}
+	return c.screenDirtyTiles, c.screenSkipped, t
+}
+
+// computeScreenTileHashes 将图像划分为 8×8 共 64 个网格块，并计算每块的 64-bit FNV-1a 像素特征哈希（v7.2.0 脏矩形检测）。
+func computeScreenTileHashes(img image.Image) [64]uint64 {
+	var hashes [64]uint64
+	if img == nil {
+		return hashes
+	}
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return hashes
+	}
+	for ty := 0; ty < 8; ty++ {
+		y0 := b.Min.Y + ty*h/8
+		y1 := b.Min.Y + (ty+1)*h/8
+		if y1 <= y0 {
+			y1 = y0 + 1
+		}
+		stepY := (y1 - y0) / 4
+		if stepY < 1 {
+			stepY = 1
+		}
+		for tx := 0; tx < 8; tx++ {
+			x0 := b.Min.X + tx*w/8
+			x1 := b.Min.X + (tx+1)*w/8
+			if x1 <= x0 {
+				x1 = x0 + 1
+			}
+			stepX := (x1 - x0) / 4
+			if stepX < 1 {
+				stepX = 1
+			}
+			var fnv uint64 = 14695981039346656037
+			for y := y0; y < y1; y += stepY {
+				for x := x0; x < x1; x += stepX {
+					r, g, bl, _ := img.At(x, y).RGBA()
+					// 量化高 5 位以过滤微小 JPEG 压缩噪点
+					q := uint64(((r >> 11) << 10) | ((g >> 11) << 5) | (bl >> 11))
+					fnv ^= q
+					fnv *= 1099511628211
+				}
+			}
+			hashes[ty*8+tx] = fnv
+		}
+	}
+	return hashes
+}
+
+// diffScreenTileHashes 比较前后两帧的 8×8 块哈希，返回发生变化的脏块数（0..64）及外接包围网格（minTX, minTY, maxTX, maxTY）。
+func diffScreenTileHashes(prev, cur [64]uint64) (dirtyTiles int, minTX, minTY, maxTX, maxTY int) {
+	minTX, minTY = 8, 8
+	maxTX, maxTY = -1, -1
+	for idx := 0; idx < 64; idx++ {
+		if prev[idx] != cur[idx] {
+			dirtyTiles++
+			tx := idx % 8
+			ty := idx / 8
+			if tx < minTX {
+				minTX = tx
+			}
+			if ty < minTY {
+				minTY = ty
+			}
+			if tx > maxTX {
+				maxTX = tx
+			}
+			if ty > maxTY {
+				maxTY = ty
+			}
+		}
+	}
+	if dirtyTiles == 0 {
+		return 0, 0, 0, 0, 0
+	}
+	return dirtyTiles, minTX, minTY, maxTX, maxTY
+}
+
+func decodeDataURIImage(frameDataURI string) (image.Image, bool) {
+	trimmed := strings.TrimSpace(frameDataURI)
+	b64Idx := strings.Index(trimmed, ";base64,")
+	if b64Idx < 0 {
+		return nil, false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(trimmed[b64Idx+len(";base64,"):]))
+	if err != nil || len(raw) < 16 {
+		return nil, false
+	}
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return nil, false
+	}
+	return img, true
+}
+
+// SendScreenFrameIfDirty 对抓屏帧执行 8×8 块哈希脏矩形比对：
+// 若画面完全静止（dirtyTiles == 0）且距上次发送未超过保活周期（1.5s），自动跳过冗余帧传输以将静止带宽降至接近零（v7.2.0）。
+func (c *Client) SendScreenFrameIfDirty(to, group, frameData string) (bool, int, error) {
+	frameData = strings.TrimSpace(frameData)
+	if frameData == "" {
+		return false, 0, errEmptyText
+	}
+	nowMS := time.Now().UnixMilli()
+	dirty := 64
+	if img, ok := decodeDataURIImage(frameData); ok {
+		curHashes := computeScreenTileHashes(img)
+		c.mu.Lock()
+		if c.screenHasTileHash {
+			dirty, _, _, _, _ = diffScreenTileHashes(c.screenTileHashes, curHashes)
+			if dirty == 0 && c.screenLastSentMS > 0 && nowMS-c.screenLastSentMS < 1500 {
+				c.screenDirtyTiles = 0
+				c.screenSkipped++
+				c.mu.Unlock()
+				return false, 0, nil
+			}
+		}
+		c.screenTileHashes = curHashes
+		c.screenHasTileHash = true
+		c.screenDirtyTiles = dirty
+		c.screenLastSentMS = nowMS
+		c.mu.Unlock()
+	} else {
+		c.mu.Lock()
+		if c.screenHasTileHash && c.rawScreenFrame == frameData && c.screenLastSentMS > 0 && nowMS-c.screenLastSentMS < 1500 {
+			c.screenDirtyTiles = 0
+			c.screenSkipped++
+			c.mu.Unlock()
+			return false, 0, nil
+		}
+		c.screenHasTileHash = true
+		c.screenDirtyTiles = dirty
+		c.screenLastSentMS = nowMS
+		c.mu.Unlock()
+	}
+	if err := c.SendScreenFrame(to, group, frameData); err != nil {
+		return false, dirty, err
+	}
+	return true, dirty, nil
+}
+
+// StartScreenShare 开启局域网低延迟屏幕/窗口共享会话（阶段四 v2.0 / 契约 v1.2 / v4.8.0 / v7.2.0 脏矩形与自适应帧率管线）。
 func (c *Client) StartScreenShare(to, group string, fps int) (string, error) {
 	if fps <= 0 || fps > 60 {
 		fps = 15
@@ -912,6 +1578,8 @@ func (c *Client) StartScreenShare(to, group string, fps int) (string, error) {
 	c.screenShareFPS = fps
 	c.screenSharePeer = to
 	c.screenShareGroup = group
+	c.screenHasTileHash = false
+	c.screenLastSentMS = 0
 	c.screenStop = stopCh
 	c.mu.Unlock()
 	if to != "" || group != "" {
@@ -929,8 +1597,8 @@ func (c *Client) StartScreenShare(to, group string, fps int) (string, error) {
 }
 
 // SendScreenFrame 发送一帧屏幕/窗口共享画面（data:image/jpeg;base64,...）；
-// 若已建立实时 UDP 通道、单包 ≤60 KiB 且 UDP 数据面可达，优先走 UDP 数据面直传；
-// 若连续 2s 未收到对端 UDP 入站包或 WriteTo 失败，自动回退加密信令控制帧（v3.1.0 / v5.3.0）。
+// 若已建立实时 UDP 通道、单包 ≤60 KiB 且 UDP 数据面可达，优先走 UDP 数据面直传（支持多人语音频道 Mesh 多路广播）；
+// 若连续 2s 未收到对端 UDP 入站包或 WriteTo 失败，自动回退加密信令控制帧（v3.1.0 / v5.3.0 / v7.2.0）。
 func (c *Client) SendScreenFrame(to, group, frameData string) error {
 	frameData = strings.TrimSpace(frameData)
 	if frameData == "" {
@@ -946,12 +1614,29 @@ func (c *Client) SendScreenFrame(to, group, frameData string) error {
 		vs.mu.Lock()
 		conn := vs.conn
 		raddr := vs.remoteAddr
+		var meshDest []*net.UDPAddr
+		seen := make(map[string]bool)
+		for _, mAddr := range vs.meshPeers {
+			if mAddr != nil && !seen[mAddr.String()] && len(meshDest) < maxVoiceMeshPeers {
+				seen[mAddr.String()] = true
+				meshDest = append(meshDest, mAddr)
+			}
+		}
+		if raddr != nil && !seen[raddr.String()] && len(meshDest) < maxVoiceMeshPeers {
+			meshDest = append(meshDest, raddr)
+		}
 		vs.mu.Unlock()
-		if conn != nil && raddr != nil {
+		if conn != nil && len(meshDest) > 0 {
 			pkt := make([]byte, len(screenPacketMagic)+len(frameData))
 			copy(pkt, screenPacketMagic)
 			copy(pkt[len(screenPacketMagic):], frameData)
-			if _, err := conn.WriteTo(pkt, raddr); err == nil {
+			wroteAny := false
+			for _, dest := range meshDest {
+				if _, err := conn.WriteTo(pkt, dest); err == nil {
+					wroteAny = true
+				}
+			}
+			if wroteAny {
 				return nil
 			}
 			vs.udpRelayFallback.Store(true)
@@ -980,6 +1665,7 @@ func (c *Client) StopScreenShare(to, group string) error {
 	c.screenAnnotY = 0
 	c.screenAnnotNote = ""
 	c.screenAnnotTS = 0
+	c.screenHasTileHash = false
 	c.mu.Unlock()
 	if to != "" || group != "" {
 		if _, err := c.connectedConn(); err == nil {
@@ -1005,8 +1691,8 @@ func (c *Client) runScreenShareCaptureLoop(stopCh <-chan struct{}, to, group str
 		fps = 15
 	}
 	interval := time.Second / time.Duration(fps)
-	if interval < 40*time.Millisecond {
-		interval = 40 * time.Millisecond
+	if interval < 33*time.Millisecond {
+		interval = 33 * time.Millisecond
 	}
 	if interval > 500*time.Millisecond {
 		interval = 500 * time.Millisecond
@@ -1017,7 +1703,10 @@ func (c *Client) runScreenShareCaptureLoop(stopCh <-chan struct{}, to, group str
 	seq := 0
 	pushOne := func() {
 		seq++
-		frameURI, err := captureDesktopJPEGDataURI(seq)
+		c.mu.Lock()
+		cropX, cropY, cropW, cropH := c.screenCropX, c.screenCropY, c.screenCropW, c.screenCropH
+		c.mu.Unlock()
+		frameURI, err := captureDesktopJPEGDataURIWithCrop(seq, cropX, cropY, cropW, cropH)
 		if err != nil || frameURI == "" {
 			return
 		}
@@ -1035,8 +1724,18 @@ func (c *Client) runScreenShareCaptureLoop(stopCh <-chan struct{}, to, group str
 		if !active {
 			return
 		}
-		_ = c.SendScreenFrame(targetPeer, targetGrp, frameURI)
-		c.emitScreenShareFrame(c.selfIDValue(), targetGrp, fps, frameURI)
+		sent, dirty, _ := c.SendScreenFrameIfDirty(targetPeer, targetGrp, frameURI)
+		if !sent {
+			return
+		}
+		effFPS := fps
+		if dirty >= 8 && effFPS < 24 {
+			effFPS = 24
+		}
+		c.mu.Lock()
+		c.screenShareFPS = effFPS
+		c.mu.Unlock()
+		c.emitScreenShareFrame(c.selfIDValue(), targetGrp, effFPS, frameURI)
 	}
 
 	pushOne()
@@ -1052,9 +1751,12 @@ func (c *Client) runScreenShareCaptureLoop(stopCh <-chan struct{}, to, group str
 	}
 }
 
-// captureDesktopJPEGDataURI 执行跨平台真实桌面抓屏（Wayland grim / X11 ffmpeg / xwd / import；macOS screencapture；Windows ffmpeg / GDI），
-// 并自动缩放编码为紧凑 JPEG Data URI（≤ 48 KiB，适合 LCTPSCREEN UDP 数据面直传）。
+// captureDesktopJPEGDataURI 执行跨平台真实桌面抓屏，并自动缩放编码为紧凑 JPEG Data URI（≤ 48 KiB）。
 func captureDesktopJPEGDataURI(seq int) (string, error) {
+	return captureDesktopJPEGDataURIWithCrop(seq, 0, 0, 0, 0)
+}
+
+func captureDesktopJPEGDataURIWithCrop(seq int, cropX, cropY, cropW, cropH float64) (string, error) {
 	collabProviderMu.RLock()
 	hook := screenCaptureProvider
 	collabProviderMu.RUnlock()
@@ -1069,15 +1771,18 @@ func captureDesktopJPEGDataURI(seq int) (string, error) {
 		if strings.HasPrefix(string(raw), "data:image/") {
 			return string(raw), nil
 		}
-		scaled := normalizeScreenJPEGBytes(raw)
+		scaled := cropAndNormalizeScreenJPEGBytes(raw, cropX, cropY, cropW, cropH, 55)
 		return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(scaled), nil
 	}
 
 	raw, err := captureOSDesktopBytes()
 	if err != nil || len(raw) == 0 {
 		raw = renderSyntheticScreenJPEG(seq)
+		if cropW > 0 && cropH > 0 {
+			raw = cropAndNormalizeScreenJPEGBytes(raw, cropX, cropY, cropW, cropH, 55)
+		}
 	} else {
-		raw = normalizeScreenJPEGBytes(raw)
+		raw = cropAndNormalizeScreenJPEGBytes(raw, cropX, cropY, cropW, cropH, 55)
 	}
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(raw), nil
 }
@@ -1182,7 +1887,12 @@ func captureOSDesktopBytes() ([]byte, error) {
 }
 
 func normalizeScreenJPEGBytes(raw []byte) []byte {
-	if len(raw) <= 42*1024 && len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xD8 {
+	return cropAndNormalizeScreenJPEGBytes(raw, 0, 0, 0, 0, 55)
+}
+
+func cropAndNormalizeScreenJPEGBytes(raw []byte, cropX, cropY, cropW, cropH float64, quality int) []byte {
+	hasCrop := cropW > 0 && cropH > 0 && (cropX > 0 || cropY > 0 || cropW < 1.0 || cropH < 1.0)
+	if !hasCrop && len(raw) <= 42*1024 && len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xD8 {
 		return raw
 	}
 	img, _, err := image.Decode(bytes.NewReader(raw))
@@ -1190,9 +1900,32 @@ func normalizeScreenJPEGBytes(raw []byte) []byte {
 		return renderSyntheticScreenJPEG(1)
 	}
 	bounds := img.Bounds()
+	srcMinX, srcMinY := bounds.Min.X, bounds.Min.Y
 	srcW, srcH := bounds.Dx(), bounds.Dy()
 	if srcW <= 0 || srcH <= 0 {
 		return renderSyntheticScreenJPEG(1)
+	}
+	if hasCrop {
+		cx := srcMinX + int(cropX*float64(srcW))
+		cy := srcMinY + int(cropY*float64(srcH))
+		cw := int(cropW * float64(srcW))
+		ch := int(cropH * float64(srcH))
+		if cw < 1 {
+			cw = 1
+		}
+		if ch < 1 {
+			ch = 1
+		}
+		if cx+cw > bounds.Max.X {
+			cw = bounds.Max.X - cx
+		}
+		if cy+ch > bounds.Max.Y {
+			ch = bounds.Max.Y - cy
+		}
+		if cw > 0 && ch > 0 {
+			srcMinX, srcMinY = cx, cy
+			srcW, srcH = cw, ch
+		}
 	}
 	dstW, dstH := srcW, srcH
 	if dstW > 640 {
@@ -1211,14 +1944,17 @@ func normalizeScreenJPEGBytes(raw []byte) []byte {
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
 	for y := 0; y < dstH; y++ {
-		sy := bounds.Min.Y + y*srcH/dstH
+		sy := srcMinY + y*srcH/dstH
 		for x := 0; x < dstW; x++ {
-			sx := bounds.Min.X + x*srcW/dstW
+			sx := srcMinX + x*srcW/dstW
 			dst.Set(x, y, img.At(sx, sy))
 		}
 	}
+	if quality <= 0 || quality > 95 {
+		quality = 55
+	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 55}); err != nil {
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: quality}); err != nil {
 		return renderSyntheticScreenJPEG(1)
 	}
 	return buf.Bytes()
@@ -1791,6 +2527,27 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 		case arg == "stop" || arg == "off":
 			_ = c.StopScreenShare(to, group)
 			return "screenshare:stopped", true, nil
+		case strings.HasPrefix(arg, "region "):
+			raw := strings.TrimSpace(strings.TrimPrefix(arg, "region "))
+			parts := strings.Split(raw, ",")
+			var rx, ry, rw, rh float64
+			if len(parts) == 4 {
+				rx, _ = strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+				ry, _ = strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+				rw, _ = strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+				rh, _ = strconv.ParseFloat(strings.TrimSpace(parts[3]), 64)
+			}
+			c.SetScreenShareRegion("region", rx, ry, rw, rh)
+			t, x, y, w, h := c.ScreenShareRegion()
+			return fmt.Sprintf("screenshare:region:%s:%.2f,%.2f,%.2f,%.2f", t, x, y, w, h), true, nil
+		case strings.HasPrefix(arg, "target "):
+			tgt := strings.TrimSpace(strings.TrimPrefix(arg, "target "))
+			if tgt == "" {
+				tgt = "display:0"
+			}
+			_, x, y, w, h := c.ScreenShareRegion()
+			c.SetScreenShareRegion(tgt, x, y, w, h)
+			return "screenshare:target:" + tgt, true, nil
 		case strings.HasPrefix(arg, "frame "):
 			frame := strings.TrimSpace(strings.TrimPrefix(arg, "frame "))
 			if err := c.SendScreenFrame(to, group, frame); err != nil {

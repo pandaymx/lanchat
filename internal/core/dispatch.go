@@ -294,10 +294,19 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		case strings.HasPrefix(rest, "accept:"):
 			remoteUDP := strings.TrimSpace(strings.TrimPrefix(rest, "accept:"))
 			if remoteUDP != "" {
-				c.setVoiceRemoteUDP(remoteUDP)
+				c.setVoiceRemoteUDPForPeer(env.From, remoteUDP)
 				c.emitVoiceCallState()
 				c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_CALL", "📞 [对方已接听实时语音] "+remoteUDP)
 			}
+		case strings.HasPrefix(rest, "mute:"):
+			flag := strings.TrimSpace(strings.TrimPrefix(rest, "mute:"))
+			muted := flag == "1" || strings.EqualFold(flag, "true")
+			c.onInboundVoiceMute(env.From, env.Group, muted)
+			stateLabel := "🔊 [成员已取消静音]"
+			if muted {
+				stateLabel = "🔇 [成员已开启静音]"
+			}
+			c.listener().OnMessageReceived(env.From, env.Group, env.ID, "VOICE_MUTE", stateLabel)
 		case rest == "hangup":
 			c.closeVoiceSession()
 			c.emitVoiceCallState()

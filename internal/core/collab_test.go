@@ -2,6 +2,8 @@ package core
 
 import (
 	"bytes"
+	"encoding/binary"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -582,5 +584,184 @@ func TestScreenShareLaserDotOverlayAndStateSnapshot(t *testing.T) {
 	bobSS := bob.GetState().ScreenShare
 	if bobSS == nil || bobSS.AnnotX != 0.35 || bobSS.AnnotY != 0.65 || bobSS.LatestFrame == rawFrameURI {
 		t.Fatalf("bob ScreenShare annotation state = %+v", bobSS)
+	}
+}
+
+func TestChannelMeshVoiceMixingSpeakingIndicatorAndMuteBroadcast(t *testing.T) {
+	url := startServer(t)
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	t.Cleanup(alice.Close)
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	t.Cleanup(bob.Close)
+	carol := New(Options{Nickname: "Carol", DownloadDir: t.TempDir()})
+	t.Cleanup(carol.Close)
+
+	if err := alice.Connect(url, testPSK); err != nil {
+		t.Fatalf("alice Connect: %v", err)
+	}
+	if err := bob.Connect(url, testPSK); err != nil {
+		t.Fatalf("bob Connect: %v", err)
+	}
+	if err := carol.Connect(url, testPSK); err != nil {
+		t.Fatalf("carol Connect: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool { return len(alice.GetState().Peers) == 2 })
+	waitFor(t, 2*time.Second, func() bool { return len(bob.GetState().Peers) == 2 })
+	waitFor(t, 2*time.Second, func() bool { return len(carol.GetState().Peers) == 2 })
+
+	if _, err := alice.ChannelCreate("voice-mesh", "Multiplayer Audio", false); err != nil {
+		t.Fatalf("ChannelCreate: %v", err)
+	}
+	var chID string
+	waitFor(t, 2*time.Second, func() bool {
+		bChs := bob.ChannelList()
+		cChs := carol.ChannelList()
+		if len(bChs) == 1 && len(cChs) == 1 {
+			chID = bChs[0].ID
+			return chID != ""
+		}
+		return false
+	})
+	if err := bob.ChannelJoin(chID); err != nil {
+		t.Fatalf("bob ChannelJoin: %v", err)
+	}
+	if err := carol.ChannelJoin(chID); err != nil {
+		t.Fatalf("carol ChannelJoin: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		chs := alice.ChannelList()
+		return len(chs) == 1 && len(chs[0].Members) == 3
+	})
+
+	// 1. Alice、Bob、Carol 在 G2 频道内启动语音房间，自动完成 ≤8 人 Mesh 端点绑定
+	if _, err := alice.StartVoiceCall("", chID); err != nil {
+		t.Fatalf("alice StartVoiceCall: %v", err)
+	}
+	if _, err := bob.StartVoiceCall("", chID); err != nil {
+		t.Fatalf("bob StartVoiceCall: %v", err)
+	}
+	if _, err := carol.StartVoiceCall("", chID); err != nil {
+		t.Fatalf("carol StartVoiceCall: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(alice.VoiceMeshPeers()) >= 2 && len(bob.VoiceMeshPeers()) >= 2
+	})
+
+	// 2. 验证 ≤8 人 Mesh 上限保护
+	for i := 0; i < 12; i++ {
+		alice.AddVoiceMeshPeer(fmt.Sprintf("extra-peer-%d", i), fmt.Sprintf("127.0.0.1:%d", 39000+i))
+	}
+	if got := len(alice.VoiceMeshPeers()); got != maxVoiceMeshPeers {
+		t.Fatalf("expected VoiceMeshPeers capped at %d, got %d", maxVoiceMeshPeers, got)
+	}
+
+	// 3. 验证 16-bit PCM 软混音（含饱和防破音裁剪）与发言人音量指示（Speaking Indicator）
+	makePCM16 := func(samples ...int16) []byte {
+		buf := make([]byte, len(samples)*2)
+		for i, s := range samples {
+			binary.LittleEndian.PutUint16(buf[i*2:i*2+2], uint16(s))
+		}
+		return buf
+	}
+	bobID := bob.selfIDValue()
+	carolID := carol.selfIDValue()
+
+	frameBob := makePCM16(12000, -10000, 25000)
+	frameCarol := makePCM16(8000, -5000, 20000) // 第 3 个采样 25000+20000=45000 -> 裁剪至 32767
+	mixed := alice.MixIncomingVoiceFrames(map[string][]byte{
+		bobID:   frameBob,
+		carolID: frameCarol,
+	})
+	if len(mixed) != 6 {
+		t.Fatalf("mixed PCM len = %d, want 6", len(mixed))
+	}
+	s0 := int16(binary.LittleEndian.Uint16(mixed[0:2]))
+	s1 := int16(binary.LittleEndian.Uint16(mixed[2:4]))
+	s2 := int16(binary.LittleEndian.Uint16(mixed[4:6]))
+	if s0 != 20000 || s1 != -15000 || s2 != 32767 {
+		t.Fatalf("mixed samples = (%d, %d, %d), want (20000, -15000, 32767)", s0, s1, s2)
+	}
+	if alice.PeerSpeakingLevel(bobID) <= 0.1 || alice.PeerSpeakingLevel(carolID) <= 0.1 {
+		t.Fatalf("expected non-zero speaking RMS level for bob(%.3f) and carol(%.3f)",
+			alice.PeerSpeakingLevel(bobID), alice.PeerSpeakingLevel(carolID))
+	}
+	speakers := alice.ActiveVoiceSpeakers()
+	if len(speakers) != 2 {
+		t.Fatalf("ActiveVoiceSpeakers() = %v, want 2 speakers", speakers)
+	}
+
+	// 4. 验证静音状态实时广播（sys:call:mute:1）与混音自动剔除静音成员
+	bob.SetVoiceMuted(true)
+	waitFor(t, 2*time.Second, func() bool {
+		return alice.IsPeerVoiceMuted(bobID)
+	})
+	if alice.PeerSpeakingLevel(bobID) != 0 {
+		t.Fatalf("expected muted peer speaking level = 0, got %.3f", alice.PeerSpeakingLevel(bobID))
+	}
+	mixedAfterMute := alice.MixIncomingVoiceFrames(map[string][]byte{
+		bobID:   frameBob,
+		carolID: frameCarol,
+	})
+	if !bytes.Equal(mixedAfterMute, frameCarol) {
+		t.Fatalf("expected mixed frame with bob muted to equal carol's frame")
+	}
+}
+
+func TestDirtyTileScreenShareSkipStaticAndRegionCrop(t *testing.T) {
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	defer bob.Close()
+
+	resA, err := alice.StartVoiceCall("bob", "")
+	if err != nil {
+		t.Fatalf("StartVoiceCall: %v", err)
+	}
+	aliceUDP := strings.TrimPrefix(resA, "call:calling:")
+	resB, err := bob.AcceptVoiceCall("alice", "", aliceUDP)
+	if err != nil {
+		t.Fatalf("AcceptVoiceCall: %v", err)
+	}
+	bobUDP := strings.TrimPrefix(resB, "call:active:")
+	alice.setVoiceRemoteUDP(bobUDP)
+
+	// 1. 验证多显示器/单窗口选择与归一化裁剪区域配置
+	tRes, err := alice.SendText("", "/screenshare target window:active", "")
+	if err != nil || tRes != "screenshare:target:window:active" {
+		t.Fatalf("/screenshare target = %q, err=%v", tRes, err)
+	}
+	rRes, err := alice.SendText("", "/screenshare region 0.10,0.15,0.50,0.60", "")
+	if err != nil || !strings.HasPrefix(rRes, "screenshare:region:region:0.10,0.15,0.50,0.60") {
+		t.Fatalf("/screenshare region = %q, err=%v", rRes, err)
+	}
+
+	// 2. 验证基于 8×8 块哈希的脏矩形（Dirty Tile）检测与静止画面自动零带宽跳帧
+	frame1, err := captureDesktopJPEGDataURIWithCrop(1, 0.1, 0.15, 0.5, 0.6)
+	if err != nil || frame1 == "" {
+		t.Fatalf("captureDesktopJPEGDataURIWithCrop(1): %v", err)
+	}
+	sent1, dirty1, err := alice.SendScreenFrameIfDirty("bob", "", frame1)
+	if err != nil || !sent1 || dirty1 == 0 {
+		t.Fatalf("first SendScreenFrameIfDirty = (sent=%v, dirty=%d, err=%v), want sent=true", sent1, dirty1, err)
+	}
+
+	// 连续发送相同静止画面：应自动跳过传输并累加 skippedFrames
+	sent2, dirty2, err := alice.SendScreenFrameIfDirty("bob", "", frame1)
+	if err != nil || sent2 || dirty2 != 0 {
+		t.Fatalf("static SendScreenFrameIfDirty = (sent=%v, dirty=%d, err=%v), want sent=false dirty=0", sent2, dirty2, err)
+	}
+	_, skipped, _ := alice.ScreenShareStats()
+	if skipped == 0 {
+		t.Fatal("expected skippedFrames > 0 after static frame")
+	}
+
+	// 发送动态变化的画面（seq=5）：应检测到脏块并立即恢复传输
+	frame2, err := captureDesktopJPEGDataURIWithCrop(5, 0.1, 0.15, 0.5, 0.6)
+	if err != nil || frame2 == "" {
+		t.Fatalf("captureDesktopJPEGDataURIWithCrop(5): %v", err)
+	}
+	sent3, dirty3, err := alice.SendScreenFrameIfDirty("bob", "", frame2)
+	if err != nil || !sent3 || dirty3 == 0 {
+		t.Fatalf("dynamic SendScreenFrameIfDirty = (sent=%v, dirty=%d, err=%v), want sent=true dirty>0", sent3, dirty3, err)
 	}
 }

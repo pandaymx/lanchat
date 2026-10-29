@@ -96,6 +96,16 @@ type Client struct {
 	screenAnnotY      float64
 	screenAnnotNote   string
 	screenAnnotTS     int64
+	screenTarget      string
+	screenCropX       float64
+	screenCropY       float64
+	screenCropW       float64
+	screenCropH       float64
+	screenTileHashes  [64]uint64
+	screenHasTileHash bool
+	screenLastSentMS  int64
+	screenSkipped     uint64
+	screenDirtyTiles  int
 	screenStop        chan struct{}
 	gossipBook        *discover.GossipPeerBook
 

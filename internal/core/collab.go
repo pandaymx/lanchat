@@ -2683,16 +2683,35 @@ func (c *Client) handleCollabCommand(trimmed, to, group string) (string, bool, e
 		}
 		return fmt.Sprintf("annotate:%.2f,%.2f", normX, normY), true, nil
 
-	case strings.HasPrefix(trimmed, "/foldersync "):
-		dirPath := strings.TrimSpace(strings.TrimPrefix(trimmed, "/foldersync "))
-		if dirPath == "" {
-			return "", true, errEmptyPath
+	case trimmed == "/folderwatch" || strings.HasPrefix(trimmed, "/folderwatch ") || strings.HasPrefix(trimmed, "/foldersync "):
+		raw := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "/folderwatch"), "/foldersync"))
+		switch {
+		case raw == "stop" || raw == "off":
+			c.StopFolderWatch()
+			return "folderwatch:off", true, nil
+		case raw == "status":
+			active, dir, _, _, runs, files := c.FolderWatchStats()
+			return fmt.Sprintf("folderwatch:active=%v dir=%s runs=%d files=%d", active, dir, runs, files), true, nil
+		case strings.HasPrefix(raw, "watch ") || strings.HasPrefix(trimmed, "/folderwatch "):
+			dirPath := strings.TrimSpace(strings.TrimPrefix(raw, "watch "))
+			if dirPath == "" {
+				return "", true, errEmptyPath
+			}
+			initial, err := c.StartFolderWatch(to, group, dirPath, 350*time.Millisecond)
+			if err != nil {
+				return "", true, err
+			}
+			return fmt.Sprintf("folderwatch:on:%d", initial), true, nil
+		default:
+			if raw == "" {
+				return "", true, errEmptyPath
+			}
+			synced, err := c.SyncFolderWithPeer(to, group, raw)
+			if err != nil {
+				return "", true, err
+			}
+			return fmt.Sprintf("foldersync:queued:%d", synced), true, nil
 		}
-		synced, err := c.SyncFolderWithPeer(to, group, dirPath)
-		if err != nil {
-			return "", true, err
-		}
-		return fmt.Sprintf("foldersync:queued:%d", synced), true, nil
 
 	case trimmed == "/netdiag" || strings.HasPrefix(trimmed, "/netdiag "):
 		return c.RunNetworkDiagnostics(), true, nil
@@ -2872,6 +2891,93 @@ func (c *Client) SyncFolderWithPeer(to, group, dirPath string) (int, error) {
 // SyncFolder 实现 appapi.API 契约 v1.3 显式增量目录同步接口，委托 SyncFolderWithPeer。
 func (c *Client) SyncFolder(to, group, dirPath string) (int, error) {
 	return c.SyncFolderWithPeer(to, group, dirPath)
+}
+
+// StartFolderWatch 启动本地文件夹双向实时监听同步（Watch Mode Folder Sync，v7.3.0）：
+// 首次立即执行一次 CAS 增量扫描，随后按 interval 轮询监听目录内新增或修改文件并自动触发增量同步。
+func (c *Client) StartFolderWatch(to, group, dirPath string, interval time.Duration) (int, error) {
+	dirPath = strings.TrimSpace(dirPath)
+	if dirPath == "" {
+		return 0, errEmptyPath
+	}
+	info, err := os.Stat(dirPath)
+	if err != nil {
+		return 0, err
+	}
+	if !info.IsDir() {
+		return 0, fmt.Errorf("not a directory: %s", dirPath)
+	}
+	if interval < 40*time.Millisecond {
+		interval = 350 * time.Millisecond
+	}
+
+	c.StopFolderWatch()
+	initialSynced, err := c.SyncFolderWithPeer(to, group, dirPath)
+	if err != nil {
+		return 0, err
+	}
+
+	stopCh := make(chan struct{})
+	c.mu.Lock()
+	c.folderWatchActive = true
+	c.folderWatchDir = dirPath
+	c.folderWatchTo = to
+	c.folderWatchGroup = group
+	c.folderWatchRuns = 1
+	c.folderWatchFiles = initialSynced
+	c.folderWatchStop = stopCh
+	c.mu.Unlock()
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-c.runCtx.Done():
+				return
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				synced, sErr := c.SyncFolderWithPeer(to, group, dirPath)
+				if sErr != nil {
+					continue
+				}
+				c.mu.Lock()
+				c.folderWatchRuns++
+				c.folderWatchFiles += synced
+				c.mu.Unlock()
+				if synced > 0 {
+					c.listener().OnMessageReceived(
+						to,
+						group,
+						"folder-watch",
+						"FOLDER_WATCH_SYNC",
+						fmt.Sprintf("📂 [实时目录监听已自动同步 %d 个变更文件]", synced),
+					)
+				}
+			}
+		}
+	}()
+	return initialSynced, nil
+}
+
+// StopFolderWatch 停止本地文件夹实时监听同步（v7.3.0）。
+func (c *Client) StopFolderWatch() {
+	c.mu.Lock()
+	stopCh := c.folderWatchStop
+	c.folderWatchStop = nil
+	c.folderWatchActive = false
+	c.mu.Unlock()
+	if stopCh != nil {
+		close(stopCh)
+	}
+}
+
+// FolderWatchStats 返回当前本地文件夹实时监听同步的运行状态与累计统计（v7.3.0）。
+func (c *Client) FolderWatchStats() (active bool, dirPath, to, group string, syncRuns, syncedFiles int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.folderWatchActive, c.folderWatchDir, c.folderWatchTo, c.folderWatchGroup, c.folderWatchRuns, c.folderWatchFiles
 }
 
 // IssueTrustCert 实现 appapi.API 契约 v1.3 显式签发组织准入证书接口，返回 "token|rootPubB64"。

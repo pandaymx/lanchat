@@ -765,3 +765,66 @@ func TestDirtyTileScreenShareSkipStaticAndRegionCrop(t *testing.T) {
 		t.Fatalf("dynamic SendScreenFrameIfDirty = (sent=%v, dirty=%d, err=%v), want sent=true dirty>0", sent3, dirty3, err)
 	}
 }
+
+func TestWatchModeFolderSyncAutoIncremental(t *testing.T) {
+	addr := startServer(t)
+
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	defer bob.Close()
+
+	if err := alice.Connect(addr, testPSK); err != nil {
+		t.Fatalf("alice connect: %v", err)
+	}
+	if err := bob.Connect(addr, testPSK); err != nil {
+		t.Fatalf("bob connect: %v", err)
+	}
+	bobID := bob.GetState().SelfID
+	waitFor(t, 2*time.Second, func() bool {
+		return len(alice.GetState().Peers) >= 1 && len(bob.GetState().Peers) >= 1
+	})
+
+	watchDir := filepath.Join(t.TempDir(), "shared-assets")
+	if err := os.MkdirAll(watchDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fileA := filepath.Join(watchDir, "a.txt")
+	if err := os.WriteFile(fileA, []byte("v1-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	initial, err := alice.StartFolderWatch(bobID, "", watchDir, 50*time.Millisecond)
+	if err != nil || initial != 1 {
+		t.Fatalf("StartFolderWatch = (%d, %v), want (1, nil)", initial, err)
+	}
+	active, dir, _, _, _, files := alice.FolderWatchStats()
+	if !active || dir != watchDir || files != 1 {
+		t.Fatalf("unexpected initial FolderWatchStats: active=%v dir=%s files=%d", active, dir, files)
+	}
+
+	// 在监听目录新增文件 b.txt 并修改 a.txt，验证后台轮询自动检测并增量同步 2 个变更文件
+	fileB := filepath.Join(watchDir, "b.txt")
+	if err := os.WriteFile(fileB, []byte("new-asset-b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fileA, []byte("v2-updated-content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		_, _, _, _, runs, totalFiles := alice.FolderWatchStats()
+		return runs >= 2 && totalFiles == 3
+	})
+
+	if res, err := alice.SendText(bobID, "/folderwatch status", ""); err != nil || !strings.Contains(res, "folderwatch:active=true") {
+		t.Fatalf("/folderwatch status = (%q, %v)", res, err)
+	}
+	if res, err := alice.SendText(bobID, "/folderwatch stop", ""); err != nil || res != "folderwatch:off" {
+		t.Fatalf("/folderwatch stop = (%q, %v)", res, err)
+	}
+	activeAfter, _, _, _, _, _ := alice.FolderWatchStats()
+	if activeAfter {
+		t.Fatal("expected FolderWatch inactive after /folderwatch stop")
+	}
+}

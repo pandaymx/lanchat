@@ -107,6 +107,13 @@ type Client struct {
 	screenSkipped     uint64
 	screenDirtyTiles  int
 	screenStop        chan struct{}
+	folderWatchActive bool
+	folderWatchDir    string
+	folderWatchTo     string
+	folderWatchGroup  string
+	folderWatchRuns   int
+	folderWatchFiles  int
+	folderWatchStop   chan struct{}
 	gossipBook        *discover.GossipPeerBook
 
 	cb appapi.Listener
@@ -224,6 +231,7 @@ func (c *Client) Close() {
 		c.closeVoiceSession()
 		c.stopScreenShareLoop()
 		c.stopAutoClipboardLoop()
+		c.StopFolderWatch()
 		if conn != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 		}

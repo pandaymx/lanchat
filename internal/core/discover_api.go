@@ -118,7 +118,14 @@ func (c *Client) BrowseServers() []appapi.Server {
 	gossipEps := c.GossipEndpoints()
 	if autoStandby {
 		for _, s := range discover.ProbeUDP(c.runCtx, 180*time.Millisecond, gossipEps...) {
-			addSrv(toAPIServer(s))
+			srv := toAPIServer(s)
+			if srv.Addr == "" {
+				continue
+			}
+			if conn, err := net.DialTimeout("tcp", srv.Addr, 120*time.Millisecond); err == nil {
+				_ = conn.Close()
+				addSrv(srv)
+			}
 		}
 	}
 

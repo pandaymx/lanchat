@@ -3,6 +3,7 @@ package discover
 import (
 	"context"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -250,7 +251,7 @@ func TestTailscalePeerDiscoveryAndDualStackPriority(t *testing.T) {
 		tailscaleCacheMu.Unlock()
 	}()
 
-	book := NewGossipPeerBook("")
+	book := NewGossipPeerBook(filepath.Join(t.TempDir(), "gossip_peers.json"))
 	if added := book.SeedTailscalePeers(7878); added != 2 {
 		t.Fatalf("SeedTailscalePeers added = %d, want 2", added)
 	}

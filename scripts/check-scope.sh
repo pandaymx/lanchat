@@ -34,7 +34,7 @@ case "$branch" in
     ;;
   *m1*|*server*)
     # A1 后端核心
-    OWNED_PATHS='^internal/(server|core|discover|relay|ipc)/|^cmd/lanchat/'
+    OWNED_PATHS='^internal/(server|core|discover|relay|ipc)/|^cmd/lanchat(-daemon)?/'
     ;;
   *m2*|*m3*|*transfer*)
     # A2 传输引擎

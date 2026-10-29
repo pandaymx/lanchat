@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -29,7 +30,7 @@ func main() {
 
 	socket := flag.String("socket", defaultSocket(), "IPC 监听地址：Unix socket 路径（Linux/macOS）或命名管道名（Windows）")
 	nickname := flag.String("nickname", "", "初始昵称（为空使用默认值）")
-	downloadDir := flag.String("download-dir", "", "默认下载目录")
+	downloadDir := flag.String("download-dir", defaultDownloadDir(), "默认下载目录")
 	showVersion := flag.Bool("version", false, "打印版本信息")
 	flag.Parse()
 
@@ -38,10 +39,15 @@ func main() {
 		return
 	}
 
+	resolvedDir := *downloadDir
+	if resolvedDir == "" {
+		resolvedDir = defaultDownloadDir()
+	}
+
 	client := core.New(core.Options{
 		Nickname:    *nickname,
 		OS:          runtime.GOOS,
-		DownloadDir: *downloadDir,
+		DownloadDir: resolvedDir,
 		AutoStandby: true,
 	})
 	defer client.Close()
@@ -79,4 +85,15 @@ func defaultSocket() string {
 		return dir + "/lanchat.sock"
 	}
 	return "/tmp/lanchat.sock"
+}
+
+// defaultDownloadDir 返回平台默认的下载与本地状态持久化目录（用于保存接收文件、设备身份与加密聊天历史）。
+func defaultDownloadDir() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "Downloads", "LANChat")
+	}
+	if cfg, err := os.UserConfigDir(); err == nil && cfg != "" {
+		return filepath.Join(cfg, "lanchat")
+	}
+	return filepath.Join(os.TempDir(), "lanchat-data")
 }

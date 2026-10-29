@@ -147,6 +147,7 @@ func New(opts Options) *Client {
 	histKey, _ := transfer.DeriveHistoryKey(idPriv)
 	c := &Client{
 		connState:       appapi.ConnDisconnected,
+		selfID:          deviceID,
 		nickname:        nick,
 		os:              opts.OS,
 		downloadDir:     opts.DownloadDir,
@@ -241,10 +242,15 @@ func (c *Client) GetState() appapi.State {
 		channels = append(channels, ch)
 	}
 
+	selfID := c.selfID
+	if selfID == "" {
+		selfID = c.deviceID
+	}
+
 	return appapi.State{
 		Conn:        c.connState,
 		Server:      c.server,
-		SelfID:      c.selfID,
+		SelfID:      selfID,
 		Nickname:    c.nickname,
 		Peers:       peers,
 		Transfers:   transfers,
@@ -269,6 +275,9 @@ func (c *Client) PickDownloadDir(path string) error {
 	if disconnected {
 		id, priv, pub := loadOrCreateIdentity(path)
 		c.mu.Lock()
+		if c.selfID == "" || c.selfID == c.deviceID {
+			c.selfID = id
+		}
 		c.deviceID = id
 		c.identityPriv = priv
 		c.identityPub = pub
@@ -276,6 +285,11 @@ func (c *Client) PickDownloadDir(path string) error {
 		c.mu.Unlock()
 	} else if _, err := os.Stat(filepath.Join(path, identityFileName)); os.IsNotExist(err) {
 		saveIdentity(path, curID, curPriv, curPub)
+	} else {
+		_, priv, _ := loadOrCreateIdentity(path)
+		if priv != nil {
+			curPriv = priv
+		}
 	}
 	histKey, _ := transfer.DeriveHistoryKey(curPriv)
 	c.history.setDir(path, histKey)

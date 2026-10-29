@@ -70,3 +70,37 @@ func TestMediaCASExternalization(t *testing.T) {
 		t.Fatalf("expected CAS file at %s: %v", msg.MediaPath, err)
 	}
 }
+
+func TestHistoryPersistenceAcrossRestartsAndPickDownloadDir(t *testing.T) {
+	dir := t.TempDir()
+
+	// 1. 启动时未传 DownloadDir，先在内存写入消息，再调用 PickDownloadDir 应自动落盘。
+	c1 := New(Options{Nickname: "Alice", OS: "linux"})
+	defer c1.Close()
+	if c1.GetState().SelfID == "" {
+		t.Fatal("expected GetState().SelfID to be non-empty before Connect")
+	}
+	if err := c1.PickDownloadDir(dir); err != nil {
+		t.Fatalf("PickDownloadDir: %v", err)
+	}
+	selfID1 := c1.GetState().SelfID
+	c1.history.append(appapi.ChatMessage{
+		ID:   "persist-1",
+		From: selfID1,
+		To:   "dev-peer",
+		Type: "text",
+		Text: "persisted across sessions",
+		TS:   time.Now().UnixMilli(),
+	})
+
+	// 2. 模拟重启客户端（尚未 Connect 时调用 GetState），应完整恢复 SelfID 与加密历史消息。
+	c2 := New(Options{Nickname: "Alice", OS: "linux", DownloadDir: dir})
+	defer c2.Close()
+	st2 := c2.GetState()
+	if st2.SelfID != selfID1 {
+		t.Fatalf("restarted SelfID = %q, want %q", st2.SelfID, selfID1)
+	}
+	if len(st2.Messages) != 1 || st2.Messages[0].ID != "persist-1" || st2.Messages[0].Text != "persisted across sessions" {
+		t.Fatalf("restarted Messages = %+v, want [persist-1]", st2.Messages)
+	}
+}

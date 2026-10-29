@@ -55,8 +55,12 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 	if dir == "" {
 		return
 	}
+	hadInMemory := len(h.msgs) > 0
 	f, err := os.Open(filepath.Join(dir, historyFileName))
 	if err != nil {
+		if hadInMemory {
+			h.rewriteAllLocked()
+		}
 		return
 	}
 	defer func() { _ = f.Close() }()
@@ -107,8 +111,8 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 	}
 	h.msgs = combined
 	h.diskLines = rawLines
-	// 启动时若历史文件超过 Compaction 阈值或存在大量冗余变更行，自动重写合并。
-	if rawLines >= historyCompactThreshold || (rawLines > len(h.msgs)+32 && len(h.msgs) > 0) {
+	// 启动时若历史文件超过 Compaction 阈值、存在大量冗余变更行，或切换目录前已有内存消息待落盘，自动重写合并。
+	if rawLines >= historyCompactThreshold || (rawLines > len(h.msgs)+32 && len(h.msgs) > 0) || (hadInMemory && len(h.msgs) > len(loaded)) {
 		h.rewriteAllLocked()
 	}
 }

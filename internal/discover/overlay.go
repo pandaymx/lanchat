@@ -354,7 +354,7 @@ func ProbeMultipathRoutes(ctx context.Context, endpoints []string, timeout time.
 }
 
 func computeRouteWeight(linkType string, rtt time.Duration) int {
-	base := 2
+	var base int
 	switch linkType {
 	case "lan":
 		base = 4

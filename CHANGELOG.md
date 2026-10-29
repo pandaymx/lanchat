@@ -1,5 +1,17 @@
 # Changelog
 
+## [7.1.0](https://github.com/pandaymx/lanchat/compare/v7.0.4...v7.1.0) (2026-10-29)
+
+
+### Features
+
+* **core:** add auto incremental history roaming and inverted full-text index ([97857c4](https://github.com/pandaymx/lanchat/commit/97857c45be80bf11f9d2a07ed362d5a5f0ffcb2a))
+* **ui-android:** add top-reached infinite scroll, image lightbox, and voice waveform ([4051ff3](https://github.com/pandaymx/lanchat/commit/4051ff393386345f72917aa1c6b59da8f5febb99))
+* **ui-ios:** add top-reached infinite scroll, clipboard paste, and image lightbox ([c0117a7](https://github.com/pandaymx/lanchat/commit/c0117a779890f7594950cbd31268d7804b26ddc0))
+* **ui-linux:** add top-reached infinite scroll, screenshot paste, and image lightbox ([9b1899e](https://github.com/pandaymx/lanchat/commit/9b1899e7ef3954dc6339d23d29dfb9e9140af097))
+* **ui-macos:** add top-reached infinite scroll, image lightbox, and voice waveform ([43dbab8](https://github.com/pandaymx/lanchat/commit/43dbab8e16746bceb9df063d32c48ec53f596a36))
+* **ui-win:** add top-reached infinite scroll, screenshot paste, and media preview ([2ea219d](https://github.com/pandaymx/lanchat/commit/2ea219de2ae9b40c8a7509f3fc023b730dd20d61))
+
 ## [7.0.4](https://github.com/pandaymx/lanchat/compare/v7.0.3...v7.0.4) (2026-10-29)
 
 

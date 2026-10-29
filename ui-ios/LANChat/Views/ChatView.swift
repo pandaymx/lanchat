@@ -76,7 +76,7 @@ struct ChatView: View {
                         )
                     Text(isRinging
                          ? "🔔 [来电响铃] \(callerTitle) 邀请实时语音通话"
-                         : "📞 实时低延迟语音通话中 · \(callerTitle)")
+                         : "📞 实时语音通话中 (Mesh 混音 · 发言音量检测) · \(callerTitle)")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(QQTheme.onlineGreen)
                         .lineLimit(1)
@@ -134,8 +134,8 @@ struct ChatView: View {
                 VStack(spacing: 6) {
                     HStack(spacing: 8) {
                         Text(activeScreenFrame != nil
-                             ? "🖥️ 实时屏幕共享画布 · 点击画面发送激光笔红点批注"
-                             : "🖥️ 实时屏幕共享中 · 支持激光笔坐标批注")
+                             ? "🖥️ 实时屏幕共享画布 (8×8 脏矩形自适应帧率) · 点击发送批注"
+                             : "🖥️ 实时屏幕共享中 (24fps 自适应) · 支持激光笔坐标批注")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.white)
                             .lineLimit(1)

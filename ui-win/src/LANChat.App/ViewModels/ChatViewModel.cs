@@ -1538,13 +1538,71 @@ public sealed partial class ChatViewModel : ViewModelBase
                 {
                     to,
                     group = grp,
-                    fps = 15,
+                    fps = 24,
                 });
             }
         }
         catch (Exception ex)
         {
             AppendSystemMessage($"屏幕共享操作失败：{ex.Message}");
+        }
+    }
+
+    public bool IsVoiceMuted { get; private set; }
+    public string VoiceMuteButtonText => IsVoiceMuted ? "🔇 已静音" : "🎙️ 静音";
+
+    [RelayCommand]
+    public async Task ToggleVoiceMuteAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        IsVoiceMuted = !IsVoiceMuted;
+        OnPropertyChanged(nameof(IsVoiceMuted));
+        OnPropertyChanged(nameof(VoiceMuteButtonText));
+        var (to, grp) = ResolveCollabTarget();
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("SendText", new
+            {
+                to,
+                text = IsVoiceMuted ? "/call mute" : "/call unmute",
+                group = grp,
+            });
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    public bool IsScreenCropped { get; private set; }
+    public string ScreenCropButtonText => IsScreenCropped ? "🖥️ 恢复全屏" : "🗔 窗口裁剪";
+
+    [RelayCommand]
+    public async Task ToggleScreenCropAsync()
+    {
+        if (!CanSend)
+        {
+            return;
+        }
+        IsScreenCropped = !IsScreenCropped;
+        OnPropertyChanged(nameof(IsScreenCropped));
+        OnPropertyChanged(nameof(ScreenCropButtonText));
+        var (to, grp) = ResolveCollabTarget();
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("SendText", new
+            {
+                to,
+                text = IsScreenCropped ? "/screenshare region 0.05,0.05,0.90,0.90" : "/screenshare region 0,0,0,0",
+                group = grp,
+            });
+        }
+        catch
+        {
+            // ignore
         }
     }
 

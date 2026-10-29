@@ -148,14 +148,21 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
                     <TextBlock Grid.Column="0"
-                               Text="{Binding Chat.VoiceCallStatusText, FallbackValue=📞 实时 P2P 语音通话进行中}"
+                               Text="{Binding Chat.VoiceCallStatusText, FallbackValue=📞 实时 P2P 语音通话进行中 (Mesh 混音 · 发言音量检测)}"
                                FontSize="12"
                                FontWeight="SemiBold"
                                Foreground="#047857"
                                VerticalAlignment="Center" />
                     <Button Grid.Column="1"
+                            Content="{Binding Chat.VoiceMuteButtonText, FallbackValue=🎙️ 静音}"
+                            FontSize="11"
+                            Padding="10,2"
+                            CornerRadius="6"
+                            Command="{Binding Chat.ToggleVoiceMuteCommand}" />
+                    <Button Grid.Column="2"
                             Content="🟢 接听"
                             FontSize="11"
                             Padding="10,2"
@@ -164,7 +171,7 @@
                             Foreground="White"
                             Visibility="{Binding Chat.IsIncomingCallRinging, Converter={StaticResource BoolToVisibilityConverter}}"
                             Command="{Binding Chat.AcceptIncomingCallCommand}" />
-                    <Button Grid.Column="2"
+                    <Button Grid.Column="3"
                             Content="🔴 挂断"
                             FontSize="11"
                             Padding="10,2"
@@ -183,12 +190,17 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0"
-                                   Text="🖥️ 实时屏幕共享画布 · 支持激光笔坐标批注"
+                                   Text="🖥️ 实时屏幕共享画布 · 8×8 脏矩形自适应帧率 + 激光笔批注"
                                    FontSize="12"
                                    FontWeight="SemiBold"
                                    Foreground="White"
                                    VerticalAlignment="Center" />
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                            <Button Content="{Binding Chat.ScreenCropButtonText, FallbackValue=🗔 窗口裁剪}"
+                                    FontSize="11"
+                                    Padding="8,3"
+                                    CornerRadius="6"
+                                    Command="{Binding Chat.ToggleScreenCropCommand}" />
                             <Button Content="📍 激光批注"
                                     FontSize="11"
                                     Padding="8,3"

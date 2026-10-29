@@ -140,6 +140,14 @@ func serveSendConnFile(ctx context.Context, cfg SendConfig, conn net.Conn, file 
 		_ = writePeerError(fr, "invalid resume offset")
 		return fmt.Errorf("%w: resumeOffset %d", errBadPayload, resume)
 	}
+	endOffset := cfg.Size
+	if hello.EndOffset > 0 {
+		if hello.EndOffset <= resume || hello.EndOffset > cfg.Size {
+			_ = writePeerError(fr, "invalid end offset")
+			return fmt.Errorf("%w: endOffset %d", errBadPayload, hello.EndOffset)
+		}
+		endOffset = hello.EndOffset
+	}
 
 	// 2. 回 ACCEPT，初始窗口 1 MiB。
 	if err := writeAccept(fr, cfg.Size, ChunkSize); err != nil {
@@ -180,15 +188,19 @@ func serveSendConnFile(ctx context.Context, cfg SendConfig, conn net.Conn, file 
 		lastReportBytes = bytesSent
 	}
 
-	// 3. 信用窗口循环发送（从 resume 起读）。
-	for bytesSent < cfg.Size {
+	// 3. 信用窗口循环发送（从 resume 起读至 endOffset）。
+	for bytesSent < endOffset {
 		// ctx 取消优先。
 		if err := ctx.Err(); err != nil {
 			_ = writeCancel(fr)
 			return ErrCanceled
 		}
 
-		n, err := file.ReadAt(buf, bytesSent)
+		readLen := len(buf)
+		if rem := endOffset - bytesSent; int64(readLen) > rem {
+			readLen = int(rem)
+		}
+		n, err := file.ReadAt(buf[:readLen], bytesSent)
 		if err != nil && n == 0 {
 			if errors.Is(err, io.EOF) {
 				break

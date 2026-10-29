@@ -25,10 +25,12 @@ var (
 	errBadPayload   = errors.New("transfer: malformed payload")
 )
 
-// helloBody 是 HELLO 帧的 JSON 负载。ResumeOffset 在 M2 恒为 0，M3 续传启用。
+// helloBody 是 HELLO 帧的 JSON 负载。ResumeOffset 在 M2 恒为 0，M3 续传启用；
+// EndOffset 在 v7.3.0 多路径并发分片拉取时指定分片结束偏移（0 表示读取至文件末尾）。
 type helloBody struct {
 	Token        string `json:"token"`
 	ResumeOffset int64  `json:"resumeOffset"`
+	EndOffset    int64  `json:"endOffset,omitempty"`
 }
 
 // acceptBody 是 ACCEPT 帧的 JSON 负载。
@@ -83,6 +85,15 @@ func readJSON(fr *protocol.Framer, frameType byte, v any) error {
 // writeHello 发送 HELLO 帧。
 func writeHello(fr *protocol.Framer, token string, resumeOffset int64) error {
 	return writeJSON(fr, protocol.FrameHello, helloBody{Token: token, ResumeOffset: resumeOffset})
+}
+
+// writeHelloRange 发送携带 [resumeOffset, endOffset) 分片区间的 HELLO 帧（v7.3.0 多路径并发）。
+func writeHelloRange(fr *protocol.Framer, token string, resumeOffset, endOffset int64) error {
+	return writeJSON(fr, protocol.FrameHello, helloBody{
+		Token:        token,
+		ResumeOffset: resumeOffset,
+		EndOffset:    endOffset,
+	})
 }
 
 // readHello 读取 HELLO 帧。

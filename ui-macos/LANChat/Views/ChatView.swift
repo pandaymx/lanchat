@@ -97,7 +97,9 @@ struct ChatView: View {
     @State private var showSearchBar = false
     @State private var searchQuery = ""
     @State private var inVoiceCall = false
+    @State private var isVoiceMuted = false
     @State private var isScreenSharing = false
+    @State private var isScreenCropped = false
     @State private var replyingTo: ChatMessage? = nil
 
     private var thread: [ChatMessage] {
@@ -149,10 +151,23 @@ struct ChatView: View {
                     QQAvatar(key: callerId, title: callerTitle, size: 26, status: "online")
                     Text(isRinging
                          ? "🔔 [来电响铃] \(callerTitle) 邀请你进行实时低延迟语音通话"
-                         : "📞 实时低延迟 P2P 语音通话进行中 · \(callerTitle)")
+                         : "📞 实时低延迟 P2P 语音通话中 (Mesh 混音 · 发言音量检测) · \(callerTitle)")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(QQPalette.onlineGreen)
                     Spacer()
+                    Button {
+                        isVoiceMuted.toggle()
+                        let cmd = isVoiceMuted ? "/call mute" : "/call unmute"
+                        Task { await store.sendText(to: callerId, text: cmd) }
+                    } label: {
+                        Text(isVoiceMuted ? "🔇 已静音" : "🎙️ 静音")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 3)
+                            .background(Capsule().fill(Color.secondary.opacity(0.16)))
+                    }
+                    .buttonStyle(.plain)
                     if isRinging {
                         Button {
                             inVoiceCall = true
@@ -189,10 +204,23 @@ struct ChatView: View {
             if let frameStr = store.latestScreenFrame, !frameStr.isEmpty {
                 VStack(spacing: 8) {
                     HStack {
-                        Text("🖥️ 实时屏幕共享舞台 · 点击画面发送激光笔红点批注")
+                        Text("🖥️ 实时屏幕共享舞台 · 8×8 脏矩形自适应帧率 + 激光笔批注")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundColor(.white)
                         Spacer()
+                        Button {
+                            isScreenCropped.toggle()
+                            let cmd = isScreenCropped ? "/screenshare region 0.05,0.05,0.90,0.90" : "/screenshare region 0,0,0,0"
+                            Task { await store.sendText(to: peer.id, text: cmd) }
+                        } label: {
+                            Text(isScreenCropped ? "🖥️ 恢复全屏" : "🗔 窗口裁剪")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color.white.opacity(0.18)))
+                        }
+                        .buttonStyle(.plain)
                         Button {
                             Task { await store.sendScreenAnnotation(to: peer.id, normX: 0.5, normY: 0.5, note: "重点关注此处") }
                         } label: {

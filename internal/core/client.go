@@ -83,6 +83,7 @@ type Client struct {
 	dnd               bool
 	unreadCounts      map[string]int
 	mentionCounts     map[string]int
+	lastAutoRoam      map[string]int64
 	voice             *voiceSession
 	voiceMuted        atomic.Bool
 	screenSharing     bool
@@ -169,6 +170,7 @@ func New(opts Options) *Client {
 		channelKeySent:  map[string]map[string]bool{},
 		unreadCounts:    map[string]int{},
 		mentionCounts:   map[string]int{},
+		lastAutoRoam:    map[string]int64{},
 		cb:              opts.Listener,
 		runCtx:          runCtx,
 		stopRun:         cancel,

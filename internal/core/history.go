@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,18 +27,20 @@ const (
 
 // historyStore 维护内存环形缓冲与可选的本地 JSONL 聊天历史文件（零 CGO，M23 支持 AES-GCM 静态加密落盘，v1.19 支持自动 Compaction、游标分页与媒体 CAS 落盘）。
 type historyStore struct {
-	mu        sync.Mutex
-	dir       string
-	atRestKey string
-	msgs      []appapi.ChatMessage
-	rawCipher map[string]string
-	diskLines int
+	mu         sync.Mutex
+	dir        string
+	atRestKey  string
+	msgs       []appapi.ChatMessage
+	rawCipher  map[string]string
+	tokenIndex map[string]map[string]struct{}
+	diskLines  int
 }
 
 func newHistoryStore(dir, atRestKey string) *historyStore {
 	h := &historyStore{
-		atRestKey: atRestKey,
-		rawCipher: make(map[string]string),
+		atRestKey:  atRestKey,
+		rawCipher:  make(map[string]string),
+		tokenIndex: make(map[string]map[string]struct{}),
 	}
 	if dir != "" {
 		h.setDir(dir, atRestKey)
@@ -111,6 +114,7 @@ func (h *historyStore) setDir(dir, atRestKey string) {
 	}
 	h.msgs = combined
 	h.diskLines = rawLines
+	h.rebuildIndexLocked()
 	// 启动时若历史文件超过 Compaction 阈值、存在大量冗余变更行，或切换目录前已有内存消息待落盘，自动重写合并。
 	if rawLines >= historyCompactThreshold || (rawLines > len(h.msgs)+32 && len(h.msgs) > 0) || (hadInMemory && len(h.msgs) > len(loaded)) {
 		h.rewriteAllLocked()
@@ -137,8 +141,13 @@ func (h *historyStore) append(m appapi.ChatMessage) bool {
 	h.externalizeMediaCASLocked(&m)
 	h.msgs = append(h.msgs, m)
 	if len(h.msgs) > maxHistoryMessages {
+		evicted := h.msgs[:len(h.msgs)-maxHistoryMessages]
+		for _, ev := range evicted {
+			h.unindexMessageLocked(ev.ID)
+		}
 		h.msgs = append([]appapi.ChatMessage(nil), h.msgs[len(h.msgs)-maxHistoryMessages:]...)
 	}
+	h.indexMessageLocked(m)
 	h.persistLocked(m)
 	return true
 }
@@ -191,6 +200,7 @@ func (h *historyStore) revoke(msgID, actorID string, maxAge time.Duration) (appa
 		}
 		h.msgs[i].Revoked = true
 		h.msgs[i].Text = "[消息已撤回]"
+		h.unindexMessageLocked(msgID)
 		updated := h.msgs[i]
 		h.persistLocked(updated)
 		return updated, true
@@ -218,6 +228,7 @@ func (h *historyStore) purgeByID(msgID string) bool {
 		return false
 	}
 	h.msgs = append([]appapi.ChatMessage(nil), filtered...)
+	h.unindexMessageLocked(msgID)
 	delete(h.rawCipher, msgID)
 	h.rewriteAllLocked()
 	return true
@@ -571,6 +582,8 @@ func (h *historyStore) edit(msgID, actorID, newText string) (appapi.ChatMessage,
 		h.msgs[i].Text = prefix + newText + " (已编辑)" + reactSuffix
 		h.msgs[i].EditedAt = time.Now().UnixMilli()
 		populateStructuredFields(&h.msgs[i])
+		h.unindexMessageLocked(msgID)
+		h.indexMessageLocked(h.msgs[i])
 		updated := h.msgs[i]
 		h.persistLocked(updated)
 		return updated, true
@@ -593,6 +606,7 @@ func (h *historyStore) pin(msgID string) (appapi.ChatMessage, bool) {
 			h.msgs[i].Text = "📌 [置顶] " + h.msgs[i].Text
 		}
 		h.msgs[i].Pinned = true
+		h.indexMessageLocked(h.msgs[i])
 		updated := h.msgs[i]
 		h.persistLocked(updated)
 		return updated, true
@@ -650,7 +664,106 @@ func populateStructuredFields(m *appapi.ChatMessage) {
 	}
 }
 
-// search 在本地历史中按多维过滤条件（from:<peer>、type:image|voice|code|pin、since:<ts>）及关键字（大小写不敏感）与可选会话 ID 检索未撤回消息（v3.4.0）。
+// stripInlineBase64ForIndex 剔除消息中可能存在的内联 Base64 图像/音频载荷，避免噪音进入全文倒排索引（v7.1.0）。
+func stripInlineBase64ForIndex(raw string) string {
+	lower := strings.ToLower(raw)
+	if idx := strings.Index(lower, "data:image/"); idx >= 0 {
+		return raw[:idx]
+	}
+	if idx := strings.Index(lower, "data:audio/"); idx >= 0 {
+		return raw[:idx]
+	}
+	return raw
+}
+
+// tokenizeForIndex 提取英文单词、数字及中文字符/二元词组（Unigram + Bigram），构建轻量内存倒排索引（v7.1.0）。
+func tokenizeForIndex(raw string) []string {
+	clean := strings.ToLower(stripInlineBase64ForIndex(raw))
+	if clean == "" {
+		return nil
+	}
+	seen := make(map[string]struct{}, 16)
+	addToken := func(tk string) {
+		if tk != "" {
+			seen[tk] = struct{}{}
+		}
+	}
+	var wordBuf strings.Builder
+	var prevHan rune
+	for _, r := range clean {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			wordBuf.WriteRune(r)
+			prevHan = 0
+			continue
+		}
+		if wordBuf.Len() > 0 {
+			addToken(wordBuf.String())
+			wordBuf.Reset()
+		}
+		if unicode.Is(unicode.Han, r) {
+			addToken(string(r))
+			if prevHan != 0 {
+				addToken(string([]rune{prevHan, r}))
+			}
+			prevHan = r
+		} else {
+			prevHan = 0
+		}
+	}
+	if wordBuf.Len() > 0 {
+		addToken(wordBuf.String())
+	}
+	out := make([]string, 0, len(seen))
+	for tk := range seen {
+		out = append(out, tk)
+	}
+	return out
+}
+
+func (h *historyStore) indexMessageLocked(m appapi.ChatMessage) {
+	if m.ID == "" || m.Revoked {
+		return
+	}
+	if h.tokenIndex == nil {
+		h.tokenIndex = make(map[string]map[string]struct{})
+	}
+	tokens := tokenizeForIndex(m.Text + " " + m.ReplyQuote)
+	for _, tk := range tokens {
+		posting := h.tokenIndex[tk]
+		if posting == nil {
+			posting = make(map[string]struct{})
+			h.tokenIndex[tk] = posting
+		}
+		posting[m.ID] = struct{}{}
+	}
+}
+
+func (h *historyStore) unindexMessageLocked(msgID string) {
+	if msgID == "" || len(h.tokenIndex) == 0 {
+		return
+	}
+	for tk, posting := range h.tokenIndex {
+		delete(posting, msgID)
+		if len(posting) == 0 {
+			delete(h.tokenIndex, tk)
+		}
+	}
+}
+
+func (h *historyStore) rebuildIndexLocked() {
+	h.tokenIndex = make(map[string]map[string]struct{}, len(h.msgs)*2)
+	for _, m := range h.msgs {
+		h.indexMessageLocked(m)
+	}
+}
+
+func (h *historyStore) invertedIndexSize() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.tokenIndex)
+}
+
+// search 在本地历史中按多维过滤条件（from:<peer>、type:image|voice|code|pin、since:<ts>）及关键字（大小写不敏感，优先利用倒排索引加速筛选）与可选会话 ID 检索未撤回消息（v3.4.0 / v7.1.0）。
 func (h *historyStore) search(query, convID string) []appapi.ChatMessage {
 	rawTokens := strings.Fields(strings.TrimSpace(query))
 	if len(rawTokens) == 0 {
@@ -680,10 +793,53 @@ func (h *historyStore) search(query, convID string) []appapi.ChatMessage {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
+	// 若查询关键词存在对应的倒排索引词项（如完整单词或中文字符/二元词），先计算候选消息 ID 交集加速扫描。
+	var candidateIDs map[string]struct{}
+	if len(keywords) > 0 && len(h.tokenIndex) > 0 {
+		for _, kw := range keywords {
+			kwTokens := tokenizeForIndex(kw)
+			for _, ktk := range kwTokens {
+				posting, ok := h.tokenIndex[ktk]
+				if !ok {
+					continue
+				}
+				if candidateIDs == nil {
+					candidateIDs = make(map[string]struct{}, len(posting))
+					for id := range posting {
+						candidateIDs[id] = struct{}{}
+					}
+				} else {
+					for id := range candidateIDs {
+						if _, keep := posting[id]; !keep {
+							delete(candidateIDs, id)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	var out []appapi.ChatMessage
 	for _, m := range h.msgs {
 		if m.Revoked {
 			continue
+		}
+		if candidateIDs != nil {
+			if _, ok := candidateIDs[m.ID]; !ok {
+				// 兜底：若关键词为英文子串（如 "mai" 匹配 "main"），不因精确词项未命中而漏检
+				lowerAll := strings.ToLower(m.Text + " " + m.ReplyQuote)
+				subHit := true
+				for _, kw := range keywords {
+					if !strings.Contains(lowerAll, kw) {
+						subHit = false
+						break
+					}
+				}
+				if !subHit {
+					continue
+				}
+			}
 		}
 		if convID != "" && m.Group != convID && m.From != convID && m.To != convID {
 			continue
@@ -755,6 +911,61 @@ func (h *historyStore) snapshot() []appapi.ChatMessage {
 	return out
 }
 
+// latestTimestampForConv 返回指定会话（convID 为空表示全部会话，"*" 表示广播群，其他值表示频道 ID 或单聊对端 ID）本地最新一条消息的时间戳游标（v7.1.0）。
+func (h *historyStore) latestTimestampForConv(convID string) int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var maxTS int64
+	for _, m := range h.msgs {
+		if convID != "" {
+			if convID == "*" {
+				if m.Group != "*" {
+					continue
+				}
+			} else if m.Group != convID && (m.Group != "" || (m.From != convID && m.To != convID)) {
+				continue
+			}
+		}
+		if m.TS > maxTS {
+			maxTS = m.TS
+		}
+	}
+	return maxTS
+}
+
+// exportForConvSince 导出指定会话（广播群 "*"、自定义频道或 1:1 单聊）中 TS > sinceTs 的历史消息切片（v7.1.0 自动增量漫游）。
+func (h *historyStore) exportForConvSince(convID, peerID, selfID string, sinceTs int64) []appapi.ChatMessage {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []appapi.ChatMessage
+	for _, m := range h.msgs {
+		if m.TS <= sinceTs {
+			continue
+		}
+		if convID == "*" {
+			if m.Group != "*" {
+				continue
+			}
+		} else if convID != "" && convID != peerID && convID != selfID {
+			if m.Group != convID {
+				continue
+			}
+		} else {
+			if m.Group != "" {
+				continue
+			}
+			isPair := (m.From == selfID && m.To == peerID) ||
+				(m.From == peerID && m.To == selfID) ||
+				(selfID == "" && (m.From == peerID || m.To == peerID))
+			if !isPair {
+				continue
+			}
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
 // exportSince 导出 TS >= sinceTs 的本地历史消息切片（用于 v3.0.0 多端漫游增量同步）。
 func (h *historyStore) exportSince(sinceTs int64) []appapi.ChatMessage {
 	h.mu.Lock()
@@ -770,8 +981,13 @@ func (h *historyStore) exportSince(sinceTs int64) []appapi.ChatMessage {
 
 // mergeRemoteMessages 幂等合并来自个人其他设备的历史漫游消息（按 MsgID 去重或更新状态，返回新增/更新条数，v3.0.0）。
 func (h *historyStore) mergeRemoteMessages(incoming []appapi.ChatMessage) int {
+	return len(h.mergeRemoteMessagesWithDiff(incoming))
+}
+
+// mergeRemoteMessagesWithDiff 幂等合并远端历史漫游消息，支持乱序按 TS 升序重排、CAS 媒体外置与倒排索引同步，返回实际新增或更新的消息列表（v7.1.0）。
+func (h *historyStore) mergeRemoteMessagesWithDiff(incoming []appapi.ChatMessage) []appapi.ChatMessage {
 	if len(incoming) == 0 {
-		return 0
+		return nil
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -781,35 +997,49 @@ func (h *historyStore) mergeRemoteMessages(incoming []appapi.ChatMessage) int {
 			idxByID[m.ID] = i
 		}
 	}
-	changed := 0
+	var changedMsgs []appapi.ChatMessage
+	appendedNew := false
 	for _, rm := range incoming {
-		if rm.ID == "" {
+		if rm.ID == "" || isSystemDiagnosticMessage(rm) {
 			continue
 		}
+		rm.Text = sanitizeQuoteAndReactions(rm.Text)
 		populateStructuredFields(&rm)
+		h.externalizeMediaCASLocked(&rm)
 		if idx, exists := idxByID[rm.ID]; exists {
 			cur := h.msgs[idx]
 			if rm.Revoked && !cur.Revoked {
 				h.msgs[idx].Revoked = true
 				h.msgs[idx].Text = "[消息已撤回]"
+				h.unindexMessageLocked(rm.ID)
 				h.persistLocked(h.msgs[idx])
-				changed++
-			} else if rm.EditedAt > cur.EditedAt || (rm.Pinned && !cur.Pinned) {
+				changedMsgs = append(changedMsgs, h.msgs[idx])
+			} else if rm.EditedAt > cur.EditedAt || (rm.Pinned && !cur.Pinned) || len(rm.ReadBy) > len(cur.ReadBy) || len(rm.Reactions) > len(cur.Reactions) {
 				h.msgs[idx] = rm
+				h.unindexMessageLocked(rm.ID)
+				h.indexMessageLocked(rm)
 				h.persistLocked(h.msgs[idx])
-				changed++
+				changedMsgs = append(changedMsgs, h.msgs[idx])
 			}
 			continue
 		}
 		h.msgs = append(h.msgs, rm)
 		idxByID[rm.ID] = len(h.msgs) - 1
+		h.indexMessageLocked(rm)
 		h.persistLocked(rm)
-		changed++
+		changedMsgs = append(changedMsgs, rm)
+		appendedNew = true
+	}
+	if appendedNew && len(h.msgs) > 1 {
+		sort.SliceStable(h.msgs, func(i, j int) bool {
+			return h.msgs[i].TS < h.msgs[j].TS
+		})
 	}
 	if len(h.msgs) > maxHistoryMessages {
 		h.msgs = append([]appapi.ChatMessage(nil), h.msgs[len(h.msgs)-maxHistoryMessages:]...)
+		h.rebuildIndexLocked()
 	}
-	return changed
+	return changedMsgs
 }
 
 // extractMentionsAndReply 从消息文本中解析可选的 `[reply:<msgID>]` 前缀与 `@mention` 标记。

@@ -358,6 +358,38 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 	case strings.HasPrefix(text, "sys:sync:"):
 		rest := strings.TrimPrefix(text, "sys:sync:")
 		switch {
+		case strings.HasPrefix(rest, "autoreq:"):
+			body := strings.TrimSpace(strings.TrimPrefix(rest, "autoreq:"))
+			parts := strings.SplitN(body, ":", 2)
+			convID := ""
+			var sinceTs int64
+			if len(parts) == 2 {
+				convID = strings.TrimSpace(parts[0])
+				sinceTs, _ = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+			} else if len(parts) == 1 {
+				sinceTs, _ = strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
+			}
+			if c.canPeerAccessConv(env.From, convID) {
+				msgs := c.history.exportForConvSince(convID, env.From, c.currentSelfID(), sinceTs)
+				if len(msgs) > 0 {
+					if raw, err := json.Marshal(msgs); err == nil {
+						b64 := base64.StdEncoding.EncodeToString(raw)
+						_ = c.sendControlText(env.From, "", "sys:sync:autopush:"+b64)
+					}
+				}
+			}
+		case strings.HasPrefix(rest, "autopush:"):
+			b64 := strings.TrimSpace(strings.TrimPrefix(rest, "autopush:"))
+			if raw, err := base64.StdEncoding.DecodeString(b64); err == nil {
+				var incoming []appapi.ChatMessage
+				if json.Unmarshal(raw, &incoming) == nil && len(incoming) > 0 {
+					incoming = c.prepareRoamedMessages(incoming)
+					mergedMsgs := c.history.mergeRemoteMessagesWithDiff(incoming)
+					for _, m := range mergedMsgs {
+						c.emitMessageUpdated(m)
+					}
+				}
+			}
 		case strings.HasPrefix(rest, "req:"):
 			sinceStr := strings.TrimSpace(strings.TrimPrefix(rest, "req:"))
 			sinceTs, _ := strconv.ParseInt(sinceStr, 10, 64)
@@ -373,9 +405,13 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 			if raw, err := base64.StdEncoding.DecodeString(b64); err == nil {
 				var incoming []appapi.ChatMessage
 				if json.Unmarshal(raw, &incoming) == nil && len(incoming) > 0 {
-					merged := c.history.mergeRemoteMessages(incoming)
-					if merged > 0 {
-						c.listener().OnMessageReceived(env.From, env.Group, env.ID, "HISTORY_SYNC", fmt.Sprintf("🔄 [多端漫游已同步 %d 条历史消息]", merged))
+					incoming = c.prepareRoamedMessages(incoming)
+					mergedMsgs := c.history.mergeRemoteMessagesWithDiff(incoming)
+					if len(mergedMsgs) > 0 {
+						for _, m := range mergedMsgs {
+							c.emitMessageUpdated(m)
+						}
+						c.listener().OnMessageReceived(env.From, env.Group, env.ID, "HISTORY_SYNC", fmt.Sprintf("🔄 [多端漫游已同步 %d 条历史消息]", len(mergedMsgs)))
 					}
 				}
 			}
@@ -383,6 +419,24 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		return true
 	}
 	return false
+}
+
+// prepareRoamedMessages 对漫游入站的历史消息尝试解密频道密文或暂存待解密密文（v7.1.0）。
+func (c *Client) prepareRoamedMessages(incoming []appapi.ChatMessage) []appapi.ChatMessage {
+	out := make([]appapi.ChatMessage, 0, len(incoming))
+	for _, rm := range incoming {
+		if rm.Group != "" && strings.HasPrefix(rm.Text, transfer.TextChannelPrefix) {
+			chKey := c.ensureChannelKey(rm.Group)
+			if plain, err := transfer.OpenChannelText(chKey, rm.Text); err == nil {
+				rm.Text = plain
+			} else {
+				c.history.storePendingCipher(rm.ID, rm.Text)
+				rm.Text = "[频道加密消息] 正在同步频道密钥..."
+			}
+		}
+		out = append(out, rm)
+	}
+	return out
 }
 
 // isTransferSignal 判定是否为应路由到任务的文件 / 中继信令。

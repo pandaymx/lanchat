@@ -104,3 +104,106 @@ func TestHistoryPersistenceAcrossRestartsAndPickDownloadDir(t *testing.T) {
 		t.Fatalf("restarted Messages = %+v, want [persist-1]", st2.Messages)
 	}
 }
+
+func TestHistoryInvertedIndexAndChronologicalMerge(t *testing.T) {
+	dir := t.TempDir()
+	h := newHistoryStore(dir, "")
+
+	h.append(appapi.ChatMessage{
+		ID:   "idx-2",
+		From: "alice",
+		To:   "bob",
+		Type: "text",
+		Text: "研发协同架构评审通过",
+		TS:   2000,
+	})
+	if h.invertedIndexSize() == 0 {
+		t.Fatal("expected inverted token index to be populated after append")
+	}
+
+	// 中文二元词组与英文子串检索
+	hits := h.search("协同 评审", "bob")
+	if len(hits) != 1 || hits[0].ID != "idx-2" {
+		t.Fatalf("expected CJK bigram search hit idx-2, got %+v", hits)
+	}
+
+	// 乱序漫游合并（TS=1000 晚于 TS=2000 到达）应按 TS 升序排列并落盘 CAS 媒体
+	diff := h.mergeRemoteMessagesWithDiff([]appapi.ChatMessage{
+		{
+			ID:   "idx-1",
+			From: "bob",
+			To:   "alice",
+			Type: "text",
+			Text: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+			TS:   1000,
+		},
+	})
+	if len(diff) != 1 || diff[0].MediaMime != "image/png" || diff[0].MediaPath == "" {
+		t.Fatalf("expected roamed image message to externalize CAS media, got %+v", diff)
+	}
+	snap := h.snapshot()
+	if len(snap) != 2 || snap[0].ID != "idx-1" || snap[1].ID != "idx-2" {
+		t.Fatalf("expected chronological sort [idx-1, idx-2], got %+v", snap)
+	}
+
+	// 撤回与物理销毁应同步清理倒排索引
+	h.revoke("idx-2", "alice", 0)
+	if hitsAfterRevoke := h.search("协同", "bob"); len(hitsAfterRevoke) != 0 {
+		t.Fatalf("expected 0 hits after revoke, got %+v", hitsAfterRevoke)
+	}
+	h.purgeByID("idx-1")
+	if len(h.snapshot()) != 1 {
+		t.Fatalf("expected 1 message left after purgeByID, got %d", len(h.snapshot()))
+	}
+}
+
+func TestAutoHistoryRoamingOnPeerJoinAndChannelSync(t *testing.T) {
+	url := startServer(t)
+	la := &recordingListener{}
+	alice := New(Options{Nickname: "alice", OS: "linux", DownloadDir: t.TempDir(), Listener: la})
+	t.Cleanup(alice.Close)
+	if err := alice.Connect(url, testPSK); err != nil {
+		t.Fatal(err)
+	}
+
+	// Alice 在 Bob 离线期间发送一条广播群消息，并创建公开频道发送一条频道消息
+	if _, err := alice.SendText("", "offline broadcast notice", "*"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := alice.ChannelCreate("roam-dev", "auto roam test", false); err != nil {
+		t.Fatal(err)
+	}
+	var chID string
+	waitFor(t, time.Second, func() bool {
+		chs := la.channelSnapshot()
+		if len(chs) == 1 {
+			chID = chs[0].ID
+		}
+		return chID != ""
+	})
+	if _, err := alice.SendText("", "offline channel message", chID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Bob 上线连接：无需手动点击 /sync，应自动增量漫游拉取离线期间的广播群消息
+	lb := &recordingListener{}
+	bob := New(Options{Nickname: "bob", OS: "linux", DownloadDir: t.TempDir(), Listener: lb})
+	t.Cleanup(bob.Close)
+	if err := bob.Connect(url, testPSK); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		page := bob.GetHistoryPage("*", 0, 20)
+		return len(page) == 1 && page[0].Text == "offline broadcast notice"
+	})
+
+	// Bob 加入频道前不应收到该频道历史；加入后自动漫游补齐离线期间的频道消息
+	if err := bob.ChannelJoin(chID); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		page := bob.GetHistoryPage(chID, 0, 20)
+		return len(page) == 1 && page[0].Text == "offline channel message"
+	})
+}

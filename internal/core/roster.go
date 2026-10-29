@@ -1,7 +1,11 @@
 package core
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/protocol"
@@ -65,6 +69,7 @@ func (c *Client) applyUserList(env *protocol.Envelope) {
 		l.OnPeerLeft(id)
 	}
 	c.distributePendingChannelKeys()
+	c.scheduleAutoRoamPeers(joined)
 }
 
 // applyChannelList 用服务器下发的全量频道表替换本地缓存并通知 UI；
@@ -165,6 +170,7 @@ func (c *Client) applyChannelList(in []protocol.Channel) {
 		}
 	}
 	c.distributePendingChannelKeys()
+	c.autoRoamChannels(snapshot)
 }
 
 type pendingKeyGrant struct {
@@ -260,6 +266,7 @@ func (c *Client) applyJoin(env *protocol.Envelope) {
 	c.mu.Unlock()
 	c.listener().OnPeerJoined(peer)
 	c.distributePendingChannelKeys()
+	c.scheduleAutoRoamPeers([]appapi.Peer{peer})
 }
 
 // applyLeave 增量下线。
@@ -274,6 +281,12 @@ func (c *Client) applyLeave(env *protocol.Envelope) {
 		return
 	}
 	delete(c.peers, p.User.ID)
+	delete(c.lastAutoRoam, "peer:"+p.User.ID)
+	for k := range c.lastAutoRoam {
+		if strings.HasSuffix(k, ":"+p.User.ID) {
+			delete(c.lastAutoRoam, k)
+		}
+	}
 	for _, sentMap := range c.channelKeySent {
 		delete(sentMap, p.User.ID)
 	}
@@ -300,4 +313,145 @@ func (c *Client) applyPresence(env *protocol.Envelope) {
 	c.mu.Unlock()
 	c.listener().OnPeerJoined(peer)
 	c.distributePendingChannelKeys()
+}
+
+// currentSelfID 返回当前会话在信令服务器上的节点 ID（未连接时回退为 deviceID）。
+func (c *Client) currentSelfID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.selfID != "" {
+		return c.selfID
+	}
+	return c.deviceID
+}
+
+// scheduleAutoRoamPeers 异步延迟触发上线增量漫游，避开对端或本端握手期帧竞争（v7.1.0）。
+func (c *Client) scheduleAutoRoamPeers(joined []appapi.Peer) {
+	if len(joined) == 0 {
+		return
+	}
+	peersCopy := append([]appapi.Peer(nil), joined...)
+	go func() {
+		select {
+		case <-c.runCtx.Done():
+			return
+		case <-time.After(45 * time.Millisecond):
+		}
+		c.autoRoamWithJoinedPeers(peersCopy)
+	}()
+}
+
+// canPeerAccessConv 校验指定对端是否有权漫游拉取目标会话的历史记录（保障 G2 频道成员边界安全，v7.1.0）。
+func (c *Client) canPeerAccessConv(peerID, convID string) bool {
+	if peerID == "" {
+		return false
+	}
+	if convID == "" || convID == "*" || convID == peerID {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if convID == c.selfID {
+		return true
+	}
+	ch, ok := c.channels[convID]
+	if !ok {
+		return false
+	}
+	return containsMember(ch.Members, c.selfID) && containsMember(ch.Members, peerID)
+}
+
+// autoRoamWithJoinedPeers 在节点上线或重连后，携带本地最新 TS 游标向对端静默发起增量历史补齐（v7.1.0）。
+func (c *Client) autoRoamWithJoinedPeers(joined []appapi.Peer) {
+	if len(joined) == 0 {
+		return
+	}
+	if _, err := c.connectedConn(); err != nil {
+		return
+	}
+	now := time.Now().UnixMilli()
+	type chSyncTarget struct {
+		peerID string
+		chID   string
+	}
+	c.mu.Lock()
+	selfID := c.selfID
+	var targets []string
+	var sharedChs []chSyncTarget
+	for _, p := range joined {
+		if p.ID == "" || p.ID == selfID {
+			continue
+		}
+		key := "peer:" + p.ID
+		if now-c.lastAutoRoam[key] < 1500 {
+			continue
+		}
+		c.lastAutoRoam[key] = now
+		targets = append(targets, p.ID)
+		for _, ch := range c.channels {
+			if containsMember(ch.Members, selfID) && containsMember(ch.Members, p.ID) {
+				sharedChs = append(sharedChs, chSyncTarget{peerID: p.ID, chID: ch.ID})
+			}
+		}
+	}
+	c.mu.Unlock()
+
+	for _, peerID := range targets {
+		dmSince := c.history.latestTimestampForConv(peerID)
+		_ = c.sendControlText(peerID, "", "sys:sync:autoreq:"+peerID+":"+strconv.FormatInt(dmSince, 10))
+		bcastSince := c.history.latestTimestampForConv("*")
+		_ = c.sendControlText(peerID, "", "sys:sync:autoreq:*:"+strconv.FormatInt(bcastSince, 10))
+		if dmMsgs := c.history.exportForConvSince(peerID, peerID, selfID, 0); len(dmMsgs) > 0 {
+			if raw, err := json.Marshal(dmMsgs); err == nil {
+				_ = c.sendControlText(peerID, "", "sys:sync:autopush:"+base64.StdEncoding.EncodeToString(raw))
+			}
+		}
+	}
+	for _, sc := range sharedChs {
+		chSince := c.history.latestTimestampForConv(sc.chID)
+		_ = c.sendControlText(sc.peerID, "", "sys:sync:autoreq:"+sc.chID+":"+strconv.FormatInt(chSince, 10))
+	}
+}
+
+// autoRoamChannels 在频道成员变更或频道列表同步后，对本端已加入的频道向在线成员静默请求增量历史补齐（v7.1.0）。
+func (c *Client) autoRoamChannels(channels []appapi.Channel) {
+	if len(channels) == 0 {
+		return
+	}
+	if _, err := c.connectedConn(); err != nil {
+		return
+	}
+	now := time.Now().UnixMilli()
+	type chSyncTarget struct {
+		peerID string
+		chID   string
+	}
+	c.mu.Lock()
+	selfID := c.selfID
+	var syncList []chSyncTarget
+	for _, ch := range channels {
+		if ch.ID == "" || !containsMember(ch.Members, selfID) {
+			continue
+		}
+		for _, memberID := range ch.Members {
+			if memberID == "" || memberID == selfID {
+				continue
+			}
+			if _, online := c.peers[memberID]; !online {
+				continue
+			}
+			key := "ch:" + ch.ID + ":" + memberID
+			if now-c.lastAutoRoam[key] < 1500 {
+				continue
+			}
+			c.lastAutoRoam[key] = now
+			syncList = append(syncList, chSyncTarget{peerID: memberID, chID: ch.ID})
+		}
+	}
+	c.mu.Unlock()
+
+	for _, item := range syncList {
+		sinceTS := c.history.latestTimestampForConv(item.chID)
+		_ = c.sendControlText(item.peerID, "", "sys:sync:autoreq:"+item.chID+":"+strconv.FormatInt(sinceTS, 10))
+	}
 }

@@ -1641,6 +1641,70 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
     }
 
+    /// <summary>执行频道精细化权限治理（契约 v1.6 ChannelManageMember RPC）。</summary>
+    public async Task ChannelManageMemberAsync(string channelId, string memberId, string action)
+    {
+        if (string.IsNullOrWhiteSpace(channelId) || string.IsNullOrWhiteSpace(action))
+        {
+            return;
+        }
+        try
+        {
+            await _services.Ipc.InvokeAsync<object>("ChannelManageMember", new
+            {
+                channelID = channelId,
+                memberID = memberId ?? string.Empty,
+                action,
+            });
+            AppendSystemMessage($"🛡️ 频道治理已执行：{action} ({memberId})");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"频道治理失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>向中心节点加密离线投递箱投递 X25519 密文信封（契约 v1.6 EnqueueOfflineMailbox RPC）。</summary>
+    public async Task EnqueueOfflineMailboxAsync(string to, string text, string recipientPub = "")
+    {
+        if (string.IsNullOrWhiteSpace(to) || string.IsNullOrWhiteSpace(text))
+        {
+            return;
+        }
+        try
+        {
+            await _services.Ipc.InvokeAsync<System.Text.Json.JsonElement>("EnqueueOfflineMailbox", new
+            {
+                to,
+                text,
+                recipientPub,
+            });
+            AppendSystemMessage("📬 已投递至中心节点加密离线信箱");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"离线信箱投递失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>拉取、解密并销毁中心节点暂存的离线加密信封（契约 v1.6 DrainOfflineMailbox RPC）。</summary>
+    public async Task DrainOfflineMailboxAsync(string fromPeer = "")
+    {
+        try
+        {
+            var res = await _services.Ipc.InvokeAsync<System.Text.Json.JsonElement>("DrainOfflineMailbox", new
+            {
+                fromPeer,
+            });
+            var status = res.TryGetProperty("status", out var prop) ? prop.GetString() : res.ToString();
+            AppendSystemMessage($"📬 离线信箱已收取：{status}");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"离线信箱拉取失败：{ex.Message}");
+        }
+    }
+
     private void NotifyConversationHeaderChanged()
     {
         OnPropertyChanged(nameof(ConversationTitle));

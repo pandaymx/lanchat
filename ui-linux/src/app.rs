@@ -197,6 +197,8 @@ pub struct AppCtx {
     sync_in_flight: Cell<bool>,
     sync_pending: Cell<bool>,
     last_transfer_render_ms: Cell<u128>,
+    render_limit: Cell<usize>,
+    preserve_scroll_from_bottom: Cell<Option<f64>>,
 }
 
 /// 应用启动入口（Application::activate）。
@@ -225,6 +227,8 @@ pub fn on_activate(app: &adw::Application) {
         sync_in_flight: Cell::new(false),
         sync_pending: Cell::new(false),
         last_transfer_render_ms: Cell::new(0),
+        render_limit: Cell::new(60),
+        preserve_scroll_from_bottom: Cell::new(None),
     });
 
     wire_actions(&ctx);
@@ -1107,12 +1111,38 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
 
-    // Enter 键发送消息（Shift+Enter 换行）
+    // Enter 键发送消息（Shift+Enter 换行）+ Ctrl+V 直接粘贴系统剪贴板截图发送（v7.1.0）
     let key_ctrl = gtk::EventControllerKey::new();
     key_ctrl.connect_key_pressed(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |_, key, _, state| {
+            let is_ctrl_v = state.contains(gdk::ModifierType::CONTROL_MASK)
+                && (key == gdk::Key::v || key == gdk::Key::V);
+            if is_ctrl_v {
+                let target = cx.state.borrow().current_chat.clone();
+                if target.key().is_some() {
+                    let clipboard = cx.widgets.window.clipboard();
+                    glib::spawn_future_local(clone!(
+                        #[strong]
+                        cx,
+                        #[strong]
+                        target,
+                        async move {
+                            if let Ok(Some(texture)) = clipboard.read_texture_future().await {
+                                let png_bytes = texture.save_to_png_bytes();
+                                let b64 = glib::base64_encode(&png_bytes);
+                                send_text_to_target(
+                                    &cx,
+                                    &target,
+                                    &format!("/paste data:image/png;base64,{b64}"),
+                                );
+                                cx.toast("🖼️ 已从剪贴板粘贴截图并发送");
+                            }
+                        }
+                    ));
+                }
+            }
             let is_enter = key == gdk::Key::Return || key == gdk::Key::KP_Enter;
             if is_enter && !state.contains(gdk::ModifierType::SHIFT_MASK) {
                 cx.widgets.send_btn.emit_clicked();
@@ -1122,6 +1152,44 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
         }
     ));
     ctx.widgets.input.add_controller(key_ctrl);
+
+    // 向上滚动触顶无缝分页加载更早历史消息并保持滚动锚点（v7.1.0）
+    ctx.widgets.msg_scroll.connect_edge_reached(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |scroll, pos| {
+            if pos != gtk::PositionType::Top {
+                return;
+            }
+            let (conv_opt, before_ts, total_len) = {
+                let st = cx.state.borrow();
+                let Some(k) = st.current_chat.key().map(|s| s.to_string()) else {
+                    return;
+                };
+                let msgs = st.messages.get(&k);
+                let total = msgs.map(|v| v.len()).unwrap_or(0);
+                let cur_limit = cx.render_limit.get().max(60);
+                let start_idx = total.saturating_sub(cur_limit);
+                let earliest_ts = msgs
+                    .and_then(|v| v.get(start_idx).or_else(|| v.first()))
+                    .map(|m| m.ts)
+                    .unwrap_or(0);
+                (Some(k), earliest_ts, total)
+            };
+            let Some(conv_key) = conv_opt else {
+                return;
+            };
+            if total_len == 0 {
+                return;
+            }
+            let adj = scroll.vadjustment();
+            let dist_from_bottom = (adj.upper() - adj.value()).max(0.0);
+            cx.preserve_scroll_from_bottom.set(Some(dist_from_bottom));
+            cx.render_limit
+                .set(cx.render_limit.get().max(60).saturating_add(30));
+            invoke_get_history_page(&cx, &conv_key, before_ts, 30);
+        }
+    ));
 
     // 取消引用回复预览条
     ctx.widgets.reply_cancel_btn.connect_clicked(clone!(
@@ -1346,6 +1414,17 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
                 #[strong]
                 target,
                 async move {
+                    if let Ok(Some(texture)) = clipboard.read_texture_future().await {
+                        let png_bytes = texture.save_to_png_bytes();
+                        let b64 = glib::base64_encode(&png_bytes);
+                        send_text_to_target(
+                            &cx,
+                            &target,
+                            &format!("/paste data:image/png;base64,{b64}"),
+                        );
+                        cx.toast("🖼️ 已从剪贴板粘贴截图并发送");
+                        return;
+                    }
                     if let Ok(Some(text)) = clipboard.read_text_future().await {
                         let trimmed = text.trim();
                         if !trimmed.is_empty() {
@@ -3468,6 +3547,8 @@ impl AppCtx {
             st.current_chat = target.clone();
             st.reply_target = None;
         }
+        self.render_limit.set(60);
+        self.preserve_scroll_from_bottom.set(None);
         self.widgets.reply_bar.set_visible(false);
         self.refresh_chat_header();
         if had_unseen {
@@ -3926,15 +4007,16 @@ impl AppCtx {
             return;
         };
 
-        // 仅渲染最近 60 条消息，避免历史消息过多时一次性构建数千个 GTK Widget 导致切换会话卡顿
-        const MAX_RENDERED_MSGS: usize = 60;
-        let start_idx = msgs.len().saturating_sub(MAX_RENDERED_MSGS);
+        // 动态按需分页渲染消息（默认 60 条，向上滚动触顶或点击加载更多时按页扩展并保持滚动锚点，v7.1.0）
+        let max_rendered = self.render_limit.get().max(60);
+        let start_idx = msgs.len().saturating_sub(max_rendered);
         let slice: Vec<ChatMessage> = msgs[start_idx..].to_vec();
         let before_ts = slice.first().map(|m| m.ts).unwrap_or(0);
         let conv_key_for_page = conv_key.clone();
         drop(st);
 
-        let load_more_btn = gtk::Button::with_label("📜 加载更早历史消息");
+        let load_more_btn =
+            gtk::Button::with_label("📜 加载更早历史消息（或向上滑到顶部自动加载）");
         load_more_btn.add_css_class("flat");
         load_more_btn.add_css_class("caption");
         load_more_btn.set_halign(Align::Center);
@@ -3944,6 +4026,11 @@ impl AppCtx {
             #[strong(rename_to = cx)]
             self,
             move |_| {
+                let adj = cx.widgets.msg_scroll.vadjustment();
+                cx.preserve_scroll_from_bottom
+                    .set(Some((adj.upper() - adj.value()).max(0.0)));
+                cx.render_limit
+                    .set(cx.render_limit.get().max(60).saturating_add(30));
                 invoke_get_history_page(&cx, &conv_key_for_page, before_ts, 30);
                 cx.toast("📜 已请求加载更早历史消息");
             }
@@ -3955,7 +4042,12 @@ impl AppCtx {
             self.widgets.msg_list.append(&row_widget);
         }
         let adj = self.widgets.msg_scroll.vadjustment();
-        adj.set_value(adj.upper());
+        if let Some(dist_from_bottom) = self.preserve_scroll_from_bottom.take() {
+            let target_val = (adj.upper() - dist_from_bottom).clamp(adj.lower(), adj.upper());
+            adj.set_value(target_val);
+        } else {
+            adj.set_value(adj.upper());
+        }
     }
 
     fn append_single_message(self: &Rc<Self>, m: &ChatMessage) {
@@ -4131,17 +4223,27 @@ impl AppCtx {
             bubble_card.append(&quote_box);
         }
 
-        let has_inline_img = extract_inline_image_b64(&clean_body).is_some();
-        if let Some(b64) = extract_inline_image_b64(&clean_body) {
+        let is_cas_img = !m.media_path.is_empty()
+            && (m.media_mime.starts_with("image/")
+                || m.media_path.ends_with(".png")
+                || m.media_path.ends_with(".jpg")
+                || m.media_path.ends_with(".jpeg")
+                || m.media_path.ends_with(".gif")
+                || m.media_path.ends_with(".webp"));
+        let has_inline_img = extract_inline_image_b64(&clean_body).is_some() || is_cas_img;
+        if has_inline_img {
             let cache_key = if !m.msg_id.is_empty() {
                 m.msg_id.clone()
+            } else if !m.media_path.is_empty() {
+                format!("cas:{}", m.media_path)
             } else {
+                let b64 = extract_inline_image_b64(&clean_body).unwrap_or_default();
                 format!("img:{}:{}", b64.len(), &b64[..b64.len().min(32)])
             };
             let tex_opt = {
                 if let Some(cached) = self.texture_cache.borrow().get(&cache_key) {
                     Some(cached.clone())
-                } else {
+                } else if let Some(b64) = extract_inline_image_b64(&clean_body) {
                     let bytes = glib::base64_decode(b64);
                     if !bytes.is_empty() {
                         let gbytes = glib::Bytes::from_owned(bytes);
@@ -4156,6 +4258,18 @@ impl AppCtx {
                     } else {
                         None
                     }
+                } else if is_cas_img {
+                    let gfile = gio::File::for_path(&m.media_path);
+                    if let Ok(texture) = gdk::Texture::from_file(&gfile) {
+                        self.texture_cache
+                            .borrow_mut()
+                            .insert(cache_key, texture.clone());
+                        Some(texture)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
                 }
             };
             if let Some(texture) = tex_opt {
@@ -4163,14 +4277,27 @@ impl AppCtx {
                 pic.set_can_shrink(true);
                 pic.set_content_fit(gtk::ContentFit::Contain);
                 pic.set_size_request(180, 130);
+                pic.set_tooltip_text(Some("点击打开原图灯箱预览"));
+                let img_click = gtk::GestureClick::new();
+                let tex_for_zoom = texture.clone();
+                img_click.connect_released(clone!(
+                    #[strong(rename_to = cx)]
+                    self,
+                    move |_, _, _, _| {
+                        open_image_lightbox(&cx, &tex_for_zoom);
+                    }
+                ));
+                pic.add_controller(img_click);
                 bubble_card.append(&pic);
             }
         }
 
         let inline_audio_b64 = extract_inline_audio_b64(&body_only).map(|s| s.to_string());
-        let is_voice_msg = body_only.contains("🎤 [语音消息") || inline_audio_b64.is_some();
+        let is_voice_msg = body_only.contains("🎤 [语音消息")
+            || inline_audio_b64.is_some()
+            || m.media_mime.starts_with("audio/");
         let display_body = if has_inline_img {
-            "🖼️ [图片]".to_string()
+            "🖼️ [图片 · 点击放大预览]".to_string()
         } else if let Some(idx) = body_only.find(" data:audio/") {
             body_only[..idx].to_string()
         } else {
@@ -4186,31 +4313,53 @@ impl AppCtx {
         bubble.set_xalign(0.0);
         bubble_card.append(&bubble);
 
-        // QQ 语音气泡播放按钮：调用本机 PipeWire / PulseAudio / ALSA 播放语音
+        // QQ 语音气泡播放按钮 + 波形播放进度条（v7.1.0）：调用本机 PipeWire / PulseAudio / ALSA 播放语音
         if is_voice_msg {
-            let play_btn = gtk::Button::with_label("▶️ 点击播放语音");
+            let voice_row = gtk::Box::new(Orientation::Horizontal, 8);
+            let play_btn = gtk::Button::with_label("▶️ 播放语音");
             play_btn.add_css_class("flat");
             play_btn.add_css_class("qq-ctx-btn");
+            let wave_bar = gtk::ProgressBar::new();
+            wave_bar.set_fraction(0.0);
+            wave_bar.set_text(Some("▂▄▆█▄▂▆█▃▅▂"));
+            wave_bar.set_show_text(true);
+            wave_bar.set_valign(Align::Center);
+            wave_bar.set_size_request(128, -1);
             let audio_b64 = inline_audio_b64.clone();
             let msg_id_for_play = m.msg_id.clone();
+            let wave_weak = wave_bar.downgrade();
             play_btn.connect_clicked(clone!(
                 #[strong(rename_to = cx)]
                 self,
                 move |btn| {
-                    btn.set_label("🔊 正在播放…");
+                    btn.set_label("🔊 播放中…");
                     play_voice_message(&cx, &msg_id_for_play, audio_b64.as_deref());
                     let btn_weak = btn.downgrade();
-                    glib::timeout_add_local_once(
-                        std::time::Duration::from_millis(1600),
-                        move || {
-                            if let Some(b) = btn_weak.upgrade() {
-                                b.set_label("▶️ 点击播放语音");
+                    let w_weak = wave_weak.clone();
+                    let step = Rc::new(Cell::new(0u32));
+                    glib::timeout_add_local(std::time::Duration::from_millis(160), move || {
+                        let cur = step.get() + 1;
+                        step.set(cur);
+                        if let Some(wb) = w_weak.upgrade() {
+                            wb.set_fraction((cur as f64 / 10.0).clamp(0.0, 1.0));
+                        }
+                        if cur >= 10 {
+                            if let Some(wb) = w_weak.upgrade() {
+                                wb.set_fraction(0.0);
                             }
-                        },
-                    );
+                            if let Some(b) = btn_weak.upgrade() {
+                                b.set_label("▶️ 播放语音");
+                            }
+                            glib::ControlFlow::Break
+                        } else {
+                            glib::ControlFlow::Continue
+                        }
+                    });
                 }
             ));
-            bubble_card.append(&play_btn);
+            voice_row.append(&play_btn);
+            voice_row.append(&wave_bar);
+            bubble_card.append(&voice_row);
         }
 
         // NTQQ 暗色等宽代码块卡片（支持 ```lang ... ```）
@@ -4951,6 +5100,25 @@ fn play_voice_message(ctx: &Rc<AppCtx>, msg_id: &str, audio_b64: Option<&str>) {
     }
     ctx.toast("🔊 正在播放语音消息…");
     play_wav_file_async(wav_path);
+}
+
+/// 打开 CAS 富媒体原图灯箱预览窗口（v7.1.0）。
+fn open_image_lightbox(ctx: &Rc<AppCtx>, texture: &gdk::Texture) {
+    let pic = gtk::Picture::for_paintable(texture);
+    pic.set_can_shrink(true);
+    pic.set_content_fit(gtk::ContentFit::Contain);
+    pic.set_hexpand(true);
+    pic.set_vexpand(true);
+
+    let win = gtk::Window::builder()
+        .title("🖼️ 原图灯箱预览")
+        .transient_for(&ctx.widgets.window)
+        .modal(true)
+        .default_width(760)
+        .default_height(540)
+        .child(&pic)
+        .build();
+    win.present();
 }
 
 fn server_addr_with_path(srv: &ServerInfo) -> String {

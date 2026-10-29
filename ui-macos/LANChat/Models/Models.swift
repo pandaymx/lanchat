@@ -148,7 +148,7 @@ struct ChatMessage: Identifiable, Hashable {
     let id: String
     let peerId: String
     var text: String
-    let inbound: Bool
+    var inbound: Bool
     let timestamp: Date
     var revoked: Bool = false
     var readBy: [String] = []

@@ -1,5 +1,25 @@
 # Changelog
 
+## [8.3.0](https://github.com/pandaymx/lanchat/compare/v8.2.0...v8.3.0) (2026-10-30)
+
+
+### Features
+
+* **core:** add adaptive voice jitter buffer and packet loss concealment ([ca265d3](https://github.com/pandaymx/lanchat/commit/ca265d3ca040176791049b71be2f040fefeb83bd))
+* **ui-android:** add notification quick actions for reply call and file accept ([435506f](https://github.com/pandaymx/lanchat/commit/435506f19720c32d87b9c86c5ee84b30ee6f6c64))
+* **ui-ios:** add notification quick actions for reply call and file accept ([b87ec7c](https://github.com/pandaymx/lanchat/commit/b87ec7cdbf134135debe5add584a988cbf969ff4))
+* **ui-linux:** add notification quick actions and status notifier residency ([f24519f](https://github.com/pandaymx/lanchat/commit/f24519fb218d969ac9f4358d60865bc0da9cdad5))
+* **ui-macos:** add notification quick actions and menu bar unread badge ([29169b2](https://github.com/pandaymx/lanchat/commit/29169b2670723e1c7a687ade0cbf3f6c3bcd58ac))
+* **ui-win:** add notification quick actions and tray unread residency ([163e05f](https://github.com/pandaymx/lanchat/commit/163e05fc4726e89cbd76a739e690a6a0ba322caa))
+
+
+### Bug Fixes
+
+* **ui-android:** use sendText group parameter for notification quick reply ([fa6850f](https://github.com/pandaymx/lanchat/commit/fa6850f0517e55a693a0a72f0ee8d949ff604c89))
+* **ui-macos:** align quick action helper calls in ChatStore ([17a3797](https://github.com/pandaymx/lanchat/commit/17a379786f253b14144d97ac07d9f6f075e975c7))
+* **ui-macos:** remove duplicate totalUnreadCount property in ChatStore ([cbecca0](https://github.com/pandaymx/lanchat/commit/cbecca05c8b9f8f7afefd854fbb5e9b9e6de3e42))
+* **ui-win:** use TransferDirection and TransferState enums in ShellViewModel ([f5536f1](https://github.com/pandaymx/lanchat/commit/f5536f17f534d2263b6b900886d6788dbe436c55))
+
 ## [8.2.0](https://github.com/pandaymx/lanchat/compare/v8.1.0...v8.2.0) (2026-10-30)
 
 

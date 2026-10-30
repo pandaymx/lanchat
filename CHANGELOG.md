@@ -1,5 +1,18 @@
 # Changelog
 
+## [8.2.0](https://github.com/pandaymx/lanchat/compare/v8.1.0...v8.2.0) (2026-10-30)
+
+
+### Features
+
+* **core:** add auto multipath unicast upgrade and swarm relay fallback ([43151fb](https://github.com/pandaymx/lanchat/commit/43151fbde6d5884fa9bce7e2b13de22ad7d6b10b))
+* **transfer:** add tiered chunk buffer pool and multipath bitmap resume ([929b0e9](https://github.com/pandaymx/lanchat/commit/929b0e97ef9e6c4e3933660aae7d7009488c9baf))
+
+
+### Bug Fixes
+
+* **transfer:** remove unused writeHelloRange helper ([930a7d0](https://github.com/pandaymx/lanchat/commit/930a7d000b77c8e3316db7214170f9736569e827))
+
 ## [8.1.0](https://github.com/pandaymx/lanchat/compare/v8.0.0...v8.1.0) (2026-10-30)
 
 

@@ -60,22 +60,31 @@ type voiceJitterFrame struct {
 	pcm []byte
 }
 
-// voiceJitterBuffer 实现 40ms 自适应滑动窗口抖动缓冲（阶段三 v5.3.0）：
-// 基于 seq（uint32）与 ts（int64）对跨网段 / Tailscale 隧道微抖动引起的乱序包进行重排、去重与平滑出队。
+// voiceJitterBuffer 实现 20ms–160ms 自适应环形抖动缓冲与丢包隐藏（PLC）（v5.3.0 / v8.3.0）：
+// 基于 seq（uint32）与 ts（int64）对跨网段 / Wi-Fi 漫游 / Tailscale 隧道引起的乱序包进行重排、去重，
+// 按 RFC 3550 到达间隔抖动动态伸缩缓冲窗口与队列深度，并在检测到序号断档时自动合成平滑衰减 + 尾交叉淡入淡出 PLC 帧，
+// 消除无线漫游切换时的爆音与卡顿。
 type voiceJitterBuffer struct {
-	mu         sync.Mutex
-	windowDur  time.Duration
-	maxDepth   int
-	queue      []voiceJitterFrame
-	seenSeq    map[uint32]struct{}
-	lastOutSeq uint32
-	lastArrMs  int64
-	lastPktTS  int64
-	jitterMs   float64
-	timer      *time.Timer
-	closed     bool
-	onDeliver  func(seq uint32, ts int64, pcm []byte)
+	mu           sync.Mutex
+	windowDur    time.Duration
+	maxDepth     int
+	queue        []voiceJitterFrame
+	seenSeq      map[uint32]struct{}
+	lastOutSeq   uint32
+	lastOutTS    int64
+	lastGoodPCM  []byte
+	lastArrMs    int64
+	lastPktTS    int64
+	jitterMs     float64
+	peakJitterMs float64
+	plcCount     uint64
+	enablePLC    bool
+	timer        *time.Timer
+	closed       bool
+	onDeliver    func(seq uint32, ts int64, pcm []byte)
 }
+
+const maxPLCStretchFrames = 3
 
 func newVoiceJitterBuffer(windowDur time.Duration, maxDepth int, onDeliver func(uint32, int64, []byte)) *voiceJitterBuffer {
 	if windowDur <= 0 {
@@ -90,6 +99,24 @@ func newVoiceJitterBuffer(windowDur time.Duration, maxDepth int, onDeliver func(
 		seenSeq:   make(map[uint32]struct{}, 64),
 		onDeliver: onDeliver,
 	}
+}
+
+func (jb *voiceJitterBuffer) SetPLCEnabled(enabled bool) {
+	if jb == nil {
+		return
+	}
+	jb.mu.Lock()
+	jb.enablePLC = enabled
+	jb.mu.Unlock()
+}
+
+func (jb *voiceJitterBuffer) Stats() (jitterMs float64, windowDur time.Duration, plcCount uint64) {
+	if jb == nil {
+		return 0, 0, 0
+	}
+	jb.mu.Lock()
+	defer jb.mu.Unlock()
+	return jb.jitterMs, jb.adaptiveWindowLocked(), jb.plcCount
 }
 
 func (jb *voiceJitterBuffer) Push(seq uint32, ts int64, pcm []byte) {
@@ -128,6 +155,11 @@ func (jb *voiceJitterBuffer) Push(seq uint32, ts int64, pcm []byte) {
 	if jb.lastArrMs > 0 && ts > 0 && jb.lastPktTS > 0 {
 		transitDiff := math.Abs(float64((nowMs - jb.lastArrMs) - (ts - jb.lastPktTS)))
 		jb.jitterMs += (transitDiff - jb.jitterMs) / 16.0
+		if jb.jitterMs > jb.peakJitterMs {
+			jb.peakJitterMs = jb.jitterMs
+		} else {
+			jb.peakJitterMs = jb.peakJitterMs*0.92 + jb.jitterMs*0.08
+		}
 	}
 	jb.lastArrMs = nowMs
 	jb.lastPktTS = ts
@@ -141,7 +173,7 @@ func (jb *voiceJitterBuffer) Push(seq uint32, ts int64, pcm []byte) {
 		return jb.queue[i].ts < jb.queue[j].ts
 	})
 
-	if len(jb.queue) >= jb.maxDepth {
+	if len(jb.queue) >= jb.adaptiveMaxDepthLocked() {
 		items := jb.takeLocked()
 		cb := jb.onDeliver
 		jb.mu.Unlock()
@@ -161,13 +193,32 @@ func (jb *voiceJitterBuffer) adaptiveWindowLocked() time.Duration {
 	if base <= 0 {
 		base = defaultVoiceJitterWindow
 	}
-	if jb.jitterMs > 5 {
-		adapted := time.Duration(jb.jitterMs*1.5) * time.Millisecond
-		if adapted > base && adapted <= 80*time.Millisecond {
+	effJitter := math.Max(jb.jitterMs, jb.peakJitterMs*0.85)
+	if effJitter > 3 {
+		adapted := time.Duration(effJitter*1.8+20) * time.Millisecond
+		if adapted > 160*time.Millisecond {
+			adapted = 160 * time.Millisecond
+		}
+		if adapted > base {
 			return adapted
 		}
 	}
 	return base
+}
+
+func (jb *voiceJitterBuffer) adaptiveMaxDepthLocked() int {
+	depth := jb.maxDepth
+	if depth <= 0 {
+		depth = 8
+	}
+	if jb.jitterMs > 25 && depth < 16 {
+		extra := int(jb.jitterMs / 15)
+		if depth+extra > 16 {
+			return 16
+		}
+		return depth + extra
+	}
+	return depth
 }
 
 func (jb *voiceJitterBuffer) takeLocked() []voiceJitterFrame {
@@ -178,14 +229,79 @@ func (jb *voiceJitterBuffer) takeLocked() []voiceJitterFrame {
 	if len(jb.queue) == 0 {
 		return nil
 	}
-	items := jb.queue
+	rawItems := jb.queue
 	jb.queue = nil
-	for _, it := range items {
+	out := make([]voiceJitterFrame, 0, len(rawItems)+2)
+	for _, it := range rawItems {
+		if jb.enablePLC && jb.lastOutSeq > 0 && it.seq > jb.lastOutSeq+1 && len(jb.lastGoodPCM) >= 2 {
+			gap := int(it.seq - jb.lastOutSeq - 1)
+			if gap > maxPLCStretchFrames {
+				gap = maxPLCStretchFrames
+			}
+			for m := 1; m <= gap; m++ {
+				plcSeq := jb.lastOutSeq + uint32(m)
+				plcTS := jb.lastOutTS + int64(m)*20
+				if it.ts > jb.lastOutTS && jb.lastOutTS > 0 {
+					plcTS = jb.lastOutTS + (it.ts-jb.lastOutTS)*int64(m)/int64(gap+1)
+				}
+				plcPCM := synthesizePLCFrame(jb.lastGoodPCM, it.pcm, m, gap)
+				jb.plcCount++
+				out = append(out, voiceJitterFrame{
+					seq: plcSeq,
+					ts:  plcTS,
+					pcm: plcPCM,
+				})
+			}
+		}
+		out = append(out, it)
 		if it.seq > jb.lastOutSeq {
 			jb.lastOutSeq = it.seq
 		}
+		if it.ts > 0 {
+			jb.lastOutTS = it.ts
+		}
+		jb.lastGoodPCM = append(jb.lastGoodPCM[:0], it.pcm...)
 	}
-	return items
+	return out
+}
+
+// synthesizePLCFrame 基于上一帧有效 16-bit LE PCM 与后续到达帧执行指数衰减波形延拓 + 尾部交叉淡化（PLC，v8.3.0），
+// 消除 Wi-Fi 漫游丢包恢复瞬间的阶跃爆音。
+func synthesizePLCFrame(prevPCM, nextPCM []byte, step, totalMissing int) []byte {
+	n := len(prevPCM) &^ 1
+	if n < 2 {
+		return append([]byte(nil), prevPCM...)
+	}
+	out := make([]byte, len(prevPCM))
+	atten := math.Pow(0.72, float64(step))
+	samples := n / 2
+	crossfadeSamples := 16
+	if samples/4 < crossfadeSamples {
+		crossfadeSamples = samples / 4
+	}
+	nextSamples := (len(nextPCM) &^ 1) / 2
+	for i := 0; i < samples; i++ {
+		off := i * 2
+		sPrev := float64(int16(binary.LittleEndian.Uint16(prevPCM[off:off+2]))) * atten
+		val := sPrev
+		if step == totalMissing && crossfadeSamples > 0 && i >= samples-crossfadeSamples && nextSamples > 0 {
+			nextIdx := i - (samples - crossfadeSamples)
+			if nextIdx >= nextSamples {
+				nextIdx = nextSamples - 1
+			}
+			nOff := nextIdx * 2
+			sNext := float64(int16(binary.LittleEndian.Uint16(nextPCM[nOff : nOff+2])))
+			alpha := float64(i-(samples-crossfadeSamples)+1) / float64(crossfadeSamples+1)
+			val = sPrev*(1.0-alpha) + sNext*alpha
+		}
+		if val > 32767 {
+			val = 32767
+		} else if val < -32768 {
+			val = -32768
+		}
+		binary.LittleEndian.PutUint16(out[off:off+2], uint16(int16(val)))
+	}
+	return out
 }
 
 func (jb *voiceJitterBuffer) Flush() {
@@ -980,8 +1096,15 @@ func (c *Client) VoiceCallStatus() string {
 			speakers++
 		}
 	}
-	return fmt.Sprintf("%s local=%s remote=%s in=%d out=%d mode=%s muted=%t mesh=%d speakers=%d",
-		vs.state, vs.localAddr, remote, vs.framesIn.Load(), vs.framesOut.Load(), mode, c.IsVoiceMuted(), meshCount, speakers)
+	var jitterMs int64
+	var plcFrames uint64
+	if vs.jitter != nil {
+		_, win, plc := vs.jitter.Stats()
+		jitterMs = win.Milliseconds()
+		plcFrames = plc
+	}
+	return fmt.Sprintf("%s local=%s remote=%s in=%d out=%d mode=%s muted=%t mesh=%d speakers=%d jitter=%dms plc=%d",
+		vs.state, vs.localAddr, remote, vs.framesIn.Load(), vs.framesOut.Load(), mode, c.IsVoiceMuted(), meshCount, speakers, jitterMs, plcFrames)
 }
 
 func (c *Client) ensureLocalVoiceUDP(to, group string) error {
@@ -1042,6 +1165,7 @@ func (c *Client) ensureLocalVoiceUDP(to, group string) error {
 			cb(seq, ts, pcm)
 		}
 	})
+	vs.jitter.SetPLCEnabled(true)
 
 	c.mu.Lock()
 	if c.voice != nil && c.voice.conn != nil {

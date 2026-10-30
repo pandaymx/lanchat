@@ -357,8 +357,11 @@ func (g *groupTask) handleDown(ev groupEvent) {
 }
 
 func (g *groupTask) isViaRelay() bool {
-	if !g.source && g.peerName != "" && g.tr != nil {
-		if relayed, ok := g.relay[g.peerName]; ok && !relayed && g.tr.isPeerConnected(g.peerName) {
+	if !g.source && g.peerName != "" {
+		if g.relay[g.peerName] {
+			return true
+		}
+		if g.tr != nil && !g.tr.isDirectBlocked(g.peerName) {
 			return false
 		}
 	}

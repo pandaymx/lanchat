@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1063,4 +1064,59 @@ func TestAutoKeyDirectoryAndZeroTouchOfflineMailbox(t *testing.T) {
 		}
 		return has1 && has2
 	})
+}
+
+func TestAdaptiveVoiceJitterBufferAndPLC(t *testing.T) {
+	var delivered []voiceJitterFrame
+	var mu sync.Mutex
+	jb := newVoiceJitterBuffer(20*time.Millisecond, 6, func(seq uint32, ts int64, pcm []byte) {
+		mu.Lock()
+		delivered = append(delivered, voiceJitterFrame{
+			seq: seq,
+			ts:  ts,
+			pcm: append([]byte(nil), pcm...),
+		})
+		mu.Unlock()
+	})
+	jb.SetPLCEnabled(true)
+
+	makeToneFrame := func(sample int16) []byte {
+		buf := make([]byte, 64)
+		for i := 0; i < len(buf); i += 2 {
+			binary.LittleEndian.PutUint16(buf[i:i+2], uint16(sample))
+		}
+		return buf
+	}
+
+	// 1. 推入 seq=1 并 Flush
+	jb.Push(1, 1000, makeToneFrame(10000))
+	jb.Flush()
+
+	// 2. 模拟 Wi-Fi 漫游丢包（丢失 seq=2, 3）并乱序到达 seq=5, 4
+	jb.Push(5, 1080, makeToneFrame(4000))
+	jb.Push(4, 1060, makeToneFrame(6000))
+	jb.Flush()
+
+	mu.Lock()
+	got := append([]voiceJitterFrame(nil), delivered...)
+	mu.Unlock()
+
+	// 期望交付序列：1, 2(PLC), 3(PLC), 4, 5 共 5 帧
+	if len(got) != 5 {
+		t.Fatalf("expected 5 delivered frames (including 2 PLC frames), got %d", len(got))
+	}
+	for i, wantSeq := range []uint32{1, 2, 3, 4, 5} {
+		if got[i].seq != wantSeq {
+			t.Fatalf("frame[%d].seq = %d, want %d", i, got[i].seq, wantSeq)
+		}
+	}
+	_, _, plcCount := jb.Stats()
+	if plcCount != 2 {
+		t.Fatalf("expected plcCount = 2, got %d", plcCount)
+	}
+	// 校验 PLC 帧采样幅度经过指数平滑衰减（介于 [4000, 10000) 之间，无突变静音归零）
+	s2 := int16(binary.LittleEndian.Uint16(got[1].pcm[:2]))
+	if s2 <= 4000 || s2 >= 10000 {
+		t.Fatalf("unexpected PLC frame sample amplitude: %d", s2)
+	}
 }

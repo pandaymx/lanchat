@@ -73,6 +73,11 @@ var handlers = map[string]handler{
 	"ChannelManageMember":   hChannelManageMember,
 	"EnqueueOfflineMailbox": hEnqueueOfflineMailbox,
 	"DrainOfflineMailbox":   hDrainOfflineMailbox,
+	"PairDevice":            hPairDevice,
+	"ListPairedDevices":     hListPairedDevices,
+	"ManageChannelWebhook":  hManageChannelWebhook,
+	"ExportHistoryArchive":  hExportHistoryArchive,
+	"ImportHistoryArchive":  hImportHistoryArchive,
 }
 
 // decodeParams 解码 params 并在失败时返回 invalid params 错误。
@@ -789,4 +794,105 @@ func hDrainOfflineMailbox(api appapi.API, raw json.RawMessage) (interface{}, *rp
 	return struct {
 		Status string `json:"status"`
 	}{Status: api.DrainOfflineMailbox(p.FromPeer)}, nil
+}
+
+type pairDeviceParams struct {
+	Action string `json:"action"`
+	Code   string `json:"code"`
+	PeerID string `json:"peerID"`
+}
+
+func hPairDevice(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p pairDeviceParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[pairDeviceParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	status, err := api.PairDevice(p.Action, p.Code, p.PeerID)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: status}, nil
+}
+
+type listPairedDevicesParams struct {
+	Filter string `json:"filter"`
+}
+
+func hListPairedDevices(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	var p listPairedDevicesParams
+	if len(raw) > 0 && string(raw) != "null" {
+		var rerr *rpcErr
+		p, rerr = decodeParams[listPairedDevicesParams](raw)
+		if rerr != nil {
+			return nil, rerr
+		}
+	}
+	return struct {
+		Devices string `json:"devices"`
+	}{Devices: api.ListPairedDevices(p.Filter)}, nil
+}
+
+type manageChannelWebhookParams struct {
+	ChannelID  string `json:"channelID"`
+	Action     string `json:"action"`
+	Name       string `json:"name"`
+	ListenAddr string `json:"listenAddr"`
+}
+
+func hManageChannelWebhook(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[manageChannelWebhookParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	status, err := api.ManageChannelWebhook(p.ChannelID, p.Action, p.Name, p.ListenAddr)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: status}, nil
+}
+
+type exportHistoryArchiveParams struct {
+	DestPath   string `json:"destPath"`
+	Passphrase string `json:"passphrase"`
+}
+
+func hExportHistoryArchive(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[exportHistoryArchiveParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	status, err := api.ExportHistoryArchive(p.DestPath, p.Passphrase)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: status}, nil
+}
+
+type importHistoryArchiveParams struct {
+	SrcPath    string `json:"srcPath"`
+	Passphrase string `json:"passphrase"`
+}
+
+func hImportHistoryArchive(api appapi.API, raw json.RawMessage) (interface{}, *rpcErr) {
+	p, rerr := decodeParams[importHistoryArchiveParams](raw)
+	if rerr != nil {
+		return nil, rerr
+	}
+	status, err := api.ImportHistoryArchive(p.SrcPath, p.Passphrase)
+	if err != nil {
+		return nil, apiErr(err)
+	}
+	return struct {
+		Status string `json:"status"`
+	}{Status: status}, nil
 }

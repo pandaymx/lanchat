@@ -248,6 +248,31 @@ func (s *stubAPI) DrainOfflineMailbox(fromPeer string) string {
 	return "mailbox:drained:2"
 }
 
+func (s *stubAPI) PairDevice(action, code, peerID string) (string, error) {
+	s.gotName = action + ":" + code + ":" + peerID
+	return "pair:bound:" + peerID, nil
+}
+
+func (s *stubAPI) ListPairedDevices(filter string) string {
+	s.gotName = filter
+	return "[]"
+}
+
+func (s *stubAPI) ManageChannelWebhook(channelID, action, name, listenAddr string) (string, error) {
+	s.gotName = channelID + ":" + action + ":" + name
+	return "webhook:ok", nil
+}
+
+func (s *stubAPI) ExportHistoryArchive(destPath, passphrase string) (string, error) {
+	s.gotPath = destPath
+	return "archive:exported:3:" + destPath, nil
+}
+
+func (s *stubAPI) ImportHistoryArchive(srcPath, passphrase string) (string, error) {
+	s.gotPath = srcPath
+	return "archive:imported:3", nil
+}
+
 // startServer 在临时本地传输（Unix socket / 命名管道）上启动服务端，
 // 返回服务端与客户端连接。
 func startServer(t *testing.T, api appapi.API) (*Server, net.Conn) {
@@ -814,6 +839,11 @@ func TestContractV15SystemMethods(t *testing.T) {
 		{"ChannelManageMember", map[string]interface{}{"channelID": "ch-1", "memberID": "peer-99", "action": "promote"}},
 		{"EnqueueOfflineMailbox", map[string]interface{}{"to": "peer-99", "text": "offline secret", "recipientPub": ""}},
 		{"DrainOfflineMailbox", map[string]interface{}{"fromPeer": "peer-99"}},
+		{"PairDevice", map[string]interface{}{"action": "bind", "code": "123456", "peerID": "peer-99"}},
+		{"ListPairedDevices", map[string]interface{}{"filter": "peer"}},
+		{"ManageChannelWebhook", map[string]interface{}{"channelID": "ch-1", "action": "create", "name": "CI", "listenAddr": "127.0.0.1:0"}},
+		{"ExportHistoryArchive", map[string]interface{}{"destPath": "/tmp/a.lcha", "passphrase": "secret"}},
+		{"ImportHistoryArchive", map[string]interface{}{"srcPath": "/tmp/a.lcha", "passphrase": "secret"}},
 	} {
 		resp := call(t, c, tc.method, tc.params)
 		if resp.Error != nil {

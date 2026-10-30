@@ -25,9 +25,40 @@ public sealed partial class MainWindow : Window
             if (_shell is { IsConnected: true })
             {
                 args.Cancel = true;
+                _shell.SetTrayResidency(true);
                 AppWindow.Hide();
             }
         };
+    }
+
+    /// <summary>从系统托盘恢复主窗口并清除后台未读角标（v8.3.0）。</summary>
+    public void RestoreFromTray()
+    {
+        AppWindow.Show();
+        Activate();
+        _shell?.SetTrayResidency(false);
+    }
+
+    /// <summary>分发系统原生通知栏快捷操作（快捷回复 / 接听来电 / 接收文件，v8.3.0）。</summary>
+    public async Task HandleNotificationQuickActionAsync(string action, string payload = "")
+    {
+        if (_shell is null)
+        {
+            return;
+        }
+        switch (action)
+        {
+            case "quick_reply":
+                await _shell.QuickReplyLastNotificationAsync(payload);
+                break;
+            case "accept_call":
+                RestoreFromTray();
+                await _shell.QuickAcceptIncomingCallAsync();
+                break;
+            case "accept_file":
+                await _shell.QuickAcceptPendingFileAsync(payload);
+                break;
+        }
     }
 
     /// <summary>绑定 Shell 并导航到登录页。</summary>
@@ -64,7 +95,19 @@ public sealed partial class MainWindow : Window
 
     private void OnShellPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (_shell is null || e.PropertyName is not (nameof(ShellViewModel.IsConnected) or nameof(ShellViewModel.ShowLogin)))
+        if (_shell is null)
+        {
+            return;
+        }
+
+        if (e.PropertyName is nameof(ShellViewModel.TrayWindowTitle)
+            or nameof(ShellViewModel.UnreadCount)
+            or nameof(ShellViewModel.IsTrayResident))
+        {
+            Title = _shell.TrayWindowTitle;
+        }
+
+        if (e.PropertyName is not (nameof(ShellViewModel.IsConnected) or nameof(ShellViewModel.ShowLogin)))
         {
             return;
         }

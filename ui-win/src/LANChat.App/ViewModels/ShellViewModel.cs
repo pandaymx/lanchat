@@ -36,6 +36,30 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _showTransfersDrawer = true;
 
+    /// <summary>当前未读消息总数（用于系统托盘驻留角标与标题提示，v8.3.0）。</summary>
+    [ObservableProperty]
+    private int _unreadCount;
+
+    /// <summary>窗口是否处于最小化托盘后台常驻模式（v8.3.0）。</summary>
+    [ObservableProperty]
+    private bool _isTrayResident;
+
+    /// <summary>最近一条入站通知对应的发送方 ID 或频道 ID（供系统通知栏快捷回复，v8.3.0）。</summary>
+    public string? LastNotifiedPeerId { get; private set; }
+    public string? LastNotifiedChannelId { get; private set; }
+    public string? PendingInboundTransferId { get; private set; }
+
+    /// <summary>托盘与窗口动态标题（含未读角标与后台保活状态，v8.3.0）。</summary>
+    public string TrayWindowTitle
+    {
+        get
+        {
+            var prefix = UnreadCount > 0 ? $"[{UnreadCount} 条未读] " : "";
+            var suffix = IsTrayResident ? " — 托盘常驻中" : "";
+            return $"{prefix}LANChat 局域网即时通信{suffix}";
+        }
+    }
+
     /// <summary>已连接到中心节点。</summary>
     public bool IsConnected => Conn == ConnState.Connected;
 
@@ -160,7 +184,11 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
                 _ui.Post(() => Roster.RemovePeer(peerId));
                 break;
             case "msg.received":
-                _ui.Post(() => Chat.HandleMessageReceived(parameters));
+                _ui.Post(() =>
+                {
+                    Chat.HandleMessageReceived(parameters);
+                    TrackInboundNotification(parameters);
+                });
                 break;
             case "msg.updated":
                 _ui.Post(() => Chat.HandleMessageUpdated(parameters));
@@ -177,6 +205,10 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
                 {
                     Transfers.Upsert(transfer);
                     Chat.HandleTransferProgress(transfer);
+                    if (transfer.Direction == "inbound" && transfer.State == "pending")
+                    {
+                        PendingInboundTransferId = transfer.Id;
+                    }
                 });
                 break;
             case "transfer.done":
@@ -253,6 +285,116 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
         "auth_failed" => ConnState.AuthFailed,
         _ => ConnState.Disconnected,
     };
+
+    public void SetTrayResidency(bool hiddenToTray)
+    {
+        IsTrayResident = hiddenToTray;
+        if (!hiddenToTray)
+        {
+            UnreadCount = 0;
+        }
+        OnPropertyChanged(nameof(TrayWindowTitle));
+    }
+
+    private void TrackInboundNotification(JsonElement parameters)
+    {
+        var from = parameters.TryGetProperty("from", out var f) ? f.GetString() ?? "" : "";
+        if (!string.IsNullOrEmpty(from) && from == SelfId)
+        {
+            return;
+        }
+        var channelId = parameters.TryGetProperty("channelId", out var ch) ? ch.GetString() ?? "" : "";
+        if (!string.IsNullOrEmpty(channelId))
+        {
+            LastNotifiedChannelId = channelId;
+            LastNotifiedPeerId = null;
+        }
+        else if (!string.IsNullOrEmpty(from))
+        {
+            LastNotifiedPeerId = from;
+            LastNotifiedChannelId = null;
+        }
+        if (IsTrayResident)
+        {
+            UnreadCount++;
+            OnPropertyChanged(nameof(TrayWindowTitle));
+        }
+    }
+
+    /// <summary>系统原生通知栏快捷操作：直接回复最近一条通知消息（v8.3.0）。</summary>
+    public async Task QuickReplyLastNotificationAsync(string replyText)
+    {
+        var text = replyText.Trim();
+        if (string.IsNullOrEmpty(text))
+        {
+            return;
+        }
+        try
+        {
+            if (!string.IsNullOrEmpty(LastNotifiedChannelId))
+            {
+                await _services.Ipc.InvokeAsync<object?>("SendChannelText", new
+                {
+                    channelId = LastNotifiedChannelId,
+                    text,
+                });
+            }
+            else if (!string.IsNullOrEmpty(LastNotifiedPeerId))
+            {
+                await _services.Ipc.InvokeAsync<object?>("SendText", new
+                {
+                    to = LastNotifiedPeerId,
+                    text,
+                });
+            }
+        }
+        catch
+        {
+            // 快捷回复失败时忽略
+        }
+    }
+
+    /// <summary>系统原生通知栏快捷操作：一键接听来电（v8.3.0）。</summary>
+    public async Task QuickAcceptIncomingCallAsync()
+    {
+        try
+        {
+            var peerId = LastNotifiedPeerId ?? Chat.CurrentPeer?.Id ?? "";
+            await _services.Ipc.InvokeAsync<object?>("AnswerVoiceCall", new
+            {
+                peerId,
+                accept = true,
+            });
+        }
+        catch
+        {
+            // 忽略接听失败
+        }
+    }
+
+    /// <summary>系统原生通知栏快捷操作：一键接收待确认文件（v8.3.0）。</summary>
+    public async Task QuickAcceptPendingFileAsync(string destDir = "")
+    {
+        var tid = PendingInboundTransferId;
+        if (string.IsNullOrEmpty(tid))
+        {
+            return;
+        }
+        try
+        {
+            await _services.Ipc.InvokeAsync<object?>("RespondFile", new
+            {
+                transferId = tid,
+                accept = true,
+                destDir,
+            });
+            PendingInboundTransferId = null;
+        }
+        catch
+        {
+            // 忽略接收失败
+        }
+    }
 
     public void Dispose()
     {

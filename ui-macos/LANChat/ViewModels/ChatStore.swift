@@ -912,10 +912,6 @@ final class ChatStore: ObservableObject {
 
     // MARK: - 阶段七 v8.3.0：MenuBarExtra 未读角标常驻与系统通知快捷操作
 
-    var totalUnreadCount: Int {
-        unreadCounts.values.reduce(0, +)
-    }
-
     var hasIncomingCall: Bool {
         voiceCall?.state == "ringing"
     }

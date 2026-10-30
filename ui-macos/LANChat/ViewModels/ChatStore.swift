@@ -931,7 +931,11 @@ final class ChatStore: ObservableObject {
 
     func quickReplyLatestUnread(text: String = "👍 收到，稍后处理") async {
         let targetKey = unreadCounts.first(where: { $0.value > 0 })?.key ?? activeThreadKey ?? "*"
-        await sendText(key: targetKey, text: text)
+        if targetKey == "*" || channels.contains(where: { $0.id == targetKey }) {
+            await sendChannelText(channelID: targetKey, text: text)
+        } else {
+            await sendText(to: targetKey, text: text)
+        }
         unreadCounts[targetKey] = 0
         syncDockUnreadBadge()
     }
@@ -939,13 +943,12 @@ final class ChatStore: ObservableObject {
     func quickAcceptIncomingCall() async {
         let to = voiceCall?.peerId ?? ""
         let group = voiceCall?.groupId ?? ""
-        await acceptVoiceCallRpc(to: to, group: group)
+        await acceptVoiceCall(to: to, group: group)
     }
 
     func quickAcceptPendingFile() async {
         guard let pending = pendingInboundTransfer else { return }
-        let savePath = (settings.downloadDir as NSString).appendingPathComponent(pending.name)
-        await respondFile(id: pending.id, accept: true, savePath: savePath)
+        await respondFile(transferId: pending.id, accept: true)
     }
 
     func shutdown() {

@@ -267,6 +267,32 @@ class ChatEngine {
     suspend fun drainOfflineMailbox(fromPeer: String = ""): String =
         ioOp { requireClient().drainOfflineMailbox(fromPeer) }
 
+    // ---- 契约 v1.7 多设备配对、频道 Webhook 机器人与加密归档显式 RPC 绑定方法 ----
+
+    suspend fun pairDevice(
+        action: String = "generate",
+        code: String = "",
+        peerID: String = "",
+    ): String =
+        ioOp { requireClient().pairDevice(action, code, peerID) }
+
+    suspend fun listPairedDevices(filter: String = ""): String =
+        ioOp { requireClient().listPairedDevices(filter) }
+
+    suspend fun manageChannelWebhook(
+        channelID: String,
+        action: String = "create",
+        name: String = "CI-Bot",
+        listenAddr: String = "127.0.0.1:0",
+    ): String =
+        ioOp { requireClient().manageChannelWebhook(channelID, action, name, listenAddr) }
+
+    suspend fun exportHistoryArchive(destPath: String, passphrase: String): String =
+        ioOp { requireClient().exportHistoryArchive(destPath, passphrase) }
+
+    suspend fun importHistoryArchive(srcPath: String, passphrase: String): String =
+        ioOp { requireClient().importHistoryArchive(srcPath, passphrase) }
+
     private suspend fun <T> ioOp(block: () -> T): T =
         withContext(Dispatchers.IO) {
             try {

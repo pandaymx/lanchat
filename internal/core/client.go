@@ -146,6 +146,11 @@ type Client struct {
 	updateBaseURL    string
 	updateProxies    []string
 	updateHTTPClient *http.Client
+
+	// 契约 v1.7（v9.0.0）：同账号多设备配对镜像与本地频道 Webhook 机器人网关状态。
+	pendingPairCode string
+	pairedDevices   map[string]*pairedDeviceEntry
+	webhooks        map[string]*channelWebhookEndpoint
 }
 
 // defaultMultipathMinBytes 是单播自动升级 Multipath 多路径并发拉取的默认文件大小阈值（32 MiB，v8.2.0）。
@@ -225,6 +230,8 @@ func New(opts Options) *Client {
 		unreadCounts:    map[string]int{},
 		mentionCounts:   map[string]int{},
 		lastAutoRoam:    map[string]int64{},
+		pairedDevices:   map[string]*pairedDeviceEntry{},
+		webhooks:        map[string]*channelWebhookEndpoint{},
 		cb:              opts.Listener,
 		runCtx:          runCtx,
 		stopRun:         cancel,
@@ -269,6 +276,7 @@ func (c *Client) Close() {
 		c.stopScreenShareLoop()
 		c.stopAutoClipboardLoop()
 		c.StopFolderWatch()
+		c.closeAllWebhooks()
 		if conn != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 		}

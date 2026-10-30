@@ -3,6 +3,10 @@ package core
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
@@ -16,6 +20,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -3818,4 +3823,546 @@ func sendOSDesktopNotification(title, body string, urgent bool) {
 			_ = exec.CommandContext(ctx, p, "-NoProfile", "-NonInteractive", "-Command", psScript).Run()
 		}
 	}
+}
+
+// ============================================================================
+// 阶段八 v9.0.0（契约 v1.7）：同账号多设备联邦同步、内网 Webhook 机器人网关与全量加密归档迁移
+// ============================================================================
+
+type pairedDeviceEntry struct {
+	PeerID     string `json:"peerId"`
+	Nickname   string `json:"nickname"`
+	OS         string `json:"os"`
+	PairedAt   int64  `json:"pairedAt"`
+	PairCode   string `json:"pairCode"`
+	MirrorKey  string `json:"mirrorKey"`
+	SyncedMsgs int    `json:"syncedMsgs"`
+}
+
+// PairDevice 执行同账号多设备配对码生成、绑定、解绑与实时加密镜像同步（generate/bind/unbind/sync，契约 v1.7）。
+func (c *Client) PairDevice(action, code, peerID string) (string, error) {
+	act := strings.ToLower(strings.TrimSpace(action))
+	code = strings.TrimSpace(code)
+	peerID = strings.TrimSpace(peerID)
+
+	switch act {
+	case "", "generate":
+		var rnd [3]byte
+		_, _ = rand.Read(rnd[:])
+		num := (int(rnd[0])<<16 | int(rnd[1])<<8 | int(rnd[2])) % 900000
+		pairCode := fmt.Sprintf("%06d", 100000+num)
+		c.mu.Lock()
+		c.pendingPairCode = pairCode
+		selfID := c.selfID
+		if selfID == "" {
+			selfID = c.deviceID
+		}
+		c.mu.Unlock()
+		return fmt.Sprintf("pair:code:%s:%s", pairCode, selfID), nil
+
+	case "bind":
+		if peerID == "" {
+			return "", fmt.Errorf("pair device: peerID is required for bind")
+		}
+		c.mu.Lock()
+		if code == "" {
+			code = c.pendingPairCode
+		}
+		if code == "" {
+			code = "000000"
+		}
+		if c.pairedDevices == nil {
+			c.pairedDevices = make(map[string]*pairedDeviceEntry)
+		}
+		nick := peerID
+		osName := "unknown"
+		if p, ok := c.peers[peerID]; ok {
+			if p.Nickname != "" {
+				nick = p.Nickname
+			}
+			if p.OS != "" {
+				osName = p.OS
+			}
+		}
+		sum := sha256.Sum256([]byte("lanchat-mirror-v1:" + code))
+		entry := &pairedDeviceEntry{
+			PeerID:    peerID,
+			Nickname:  nick,
+			OS:        osName,
+			PairedAt:  time.Now().Unix(),
+			PairCode:  code,
+			MirrorKey: hex.EncodeToString(sum[:16]),
+		}
+		c.pairedDevices[peerID] = entry
+		c.mu.Unlock()
+
+		synced, _ := c.SyncHistoryWithPeer(peerID, "", 0)
+		c.mu.Lock()
+		if d, ok := c.pairedDevices[peerID]; ok {
+			d.SyncedMsgs += synced
+		}
+		c.mu.Unlock()
+		return fmt.Sprintf("pair:bound:%s", peerID), nil
+
+	case "unbind":
+		if peerID == "" {
+			return "", fmt.Errorf("pair device: peerID is required for unbind")
+		}
+		c.mu.Lock()
+		delete(c.pairedDevices, peerID)
+		c.mu.Unlock()
+		return fmt.Sprintf("pair:unbound:%s", peerID), nil
+
+	case "sync":
+		c.mu.Lock()
+		targets := make([]string, 0, len(c.pairedDevices))
+		if peerID != "" {
+			targets = append(targets, peerID)
+		} else {
+			for id := range c.pairedDevices {
+				targets = append(targets, id)
+			}
+		}
+		clip := c.sharedClip
+		c.mu.Unlock()
+
+		totalSynced := 0
+		for _, tid := range targets {
+			n, _ := c.SyncHistoryWithPeer(tid, "", 0)
+			totalSynced += n
+			if clip != "" {
+				_, _ = c.SendText(tid, "/clip "+clip, "")
+			}
+			c.mu.Lock()
+			if d, ok := c.pairedDevices[tid]; ok {
+				d.SyncedMsgs += n
+			}
+			c.mu.Unlock()
+		}
+		return fmt.Sprintf("pair:synced:%d", totalSynced), nil
+
+	default:
+		return "", fmt.Errorf("unsupported pair action: %s", action)
+	}
+}
+
+// ListPairedDevices 返回当前已绑定同账号配对设备的 JSON 列表摘要（契约 v1.7）。
+func (c *Client) ListPairedDevices(filter string) string {
+	q := strings.ToLower(strings.TrimSpace(filter))
+	c.mu.Lock()
+	list := make([]pairedDeviceEntry, 0, len(c.pairedDevices))
+	for _, d := range c.pairedDevices {
+		if d == nil {
+			continue
+		}
+		if q != "" &&
+			!strings.Contains(strings.ToLower(d.PeerID), q) &&
+			!strings.Contains(strings.ToLower(d.Nickname), q) &&
+			!strings.Contains(strings.ToLower(d.OS), q) {
+			continue
+		}
+		list = append(list, *d)
+	}
+	c.mu.Unlock()
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].PeerID < list[j].PeerID
+	})
+	raw, err := json.Marshal(list)
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
+type channelWebhookEndpoint struct {
+	ID         string       `json:"id"`
+	ChannelID  string       `json:"channelId"`
+	Name       string       `json:"name"`
+	ListenAddr string       `json:"listenAddr"`
+	Secret     string       `json:"secret"`
+	URL        string       `json:"url"`
+	CreatedAt  int64        `json:"createdAt"`
+	Deliveries int64        `json:"deliveries"`
+	ln         net.Listener `json:"-"`
+	srv        *http.Server `json:"-"`
+}
+
+func (c *Client) closeAllWebhooks() {
+	c.mu.Lock()
+	eps := make([]*channelWebhookEndpoint, 0, len(c.webhooks))
+	for _, ep := range c.webhooks {
+		eps = append(eps, ep)
+	}
+	c.webhooks = map[string]*channelWebhookEndpoint{}
+	c.mu.Unlock()
+	for _, ep := range eps {
+		if ep != nil && ep.ln != nil {
+			_ = ep.ln.Close()
+		}
+	}
+}
+
+// ManageChannelWebhook 管理 G2 频道本地 HMAC-SHA256 签名 HTTP Webhook 机器人网关（create/delete/list/trigger，契约 v1.7）。
+func (c *Client) ManageChannelWebhook(channelID, action, name, listenAddr string) (string, error) {
+	chID := strings.TrimSpace(channelID)
+	if chID == "" {
+		chID = "*"
+	}
+	act := strings.ToLower(strings.TrimSpace(action))
+	botName := strings.TrimSpace(name)
+	if botName == "" {
+		botName = "CI-Bot"
+	}
+	addr := strings.TrimSpace(listenAddr)
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
+
+	switch act {
+	case "", "create":
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			return "", fmt.Errorf("webhook listen failed: %w", err)
+		}
+		var secBytes [16]byte
+		_, _ = rand.Read(secBytes[:])
+		secret := "whsec_" + hex.EncodeToString(secBytes[:])
+		whID := "wh-" + uuid.NewString()[:8]
+		boundAddr := ln.Addr().String()
+		whURL := fmt.Sprintf("http://%s/webhook/%s", boundAddr, whID)
+
+		ep := &channelWebhookEndpoint{
+			ID:         whID,
+			ChannelID:  chID,
+			Name:       botName,
+			ListenAddr: boundAddr,
+			Secret:     secret,
+			URL:        whURL,
+			CreatedAt:  time.Now().Unix(),
+			ln:         ln,
+		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/webhook/"+whID, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			body, rErr := io.ReadAll(io.LimitReader(r.Body, 256*1024))
+			if rErr != nil {
+				http.Error(w, "bad body", http.StatusBadRequest)
+				return
+			}
+			if sigHdr := strings.TrimSpace(r.Header.Get("X-LANChat-Signature")); sigHdr != "" {
+				mac := hmac.New(sha256.New, []byte(secret))
+				_, _ = mac.Write(body)
+				expected := hex.EncodeToString(mac.Sum(nil))
+				gotSig := strings.TrimPrefix(sigHdr, "sha256=")
+				if !hmac.Equal([]byte(strings.ToLower(gotSig)), []byte(strings.ToLower(expected))) {
+					http.Error(w, "invalid hmac signature", http.StatusUnauthorized)
+					return
+				}
+			}
+			card := formatWebhookBotCard(botName, body)
+			c.deliverWebhookCardToChannel(chID, botName, card)
+			atomic.AddInt64(&ep.Deliveries, 1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		})
+		ep.srv = &http.Server{
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		c.mu.Lock()
+		if c.webhooks == nil {
+			c.webhooks = make(map[string]*channelWebhookEndpoint)
+		}
+		c.webhooks[whID] = ep
+		c.mu.Unlock()
+
+		go func() {
+			_ = ep.srv.Serve(ln)
+		}()
+		return fmt.Sprintf("webhook:created:%s secret=%s", whURL, secret), nil
+
+	case "list":
+		c.mu.Lock()
+		out := make([]channelWebhookEndpoint, 0, len(c.webhooks))
+		for _, ep := range c.webhooks {
+			if ep == nil {
+				continue
+			}
+			if chID != "*" && ep.ChannelID != chID {
+				continue
+			}
+			cp := *ep
+			cp.Deliveries = atomic.LoadInt64(&ep.Deliveries)
+			out = append(out, cp)
+		}
+		c.mu.Unlock()
+		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+		raw, _ := json.Marshal(out)
+		return string(raw), nil
+
+	case "trigger":
+		card := fmt.Sprintf("🤖 [Webhook · %s] %s", botName, listenAddr)
+		if strings.TrimSpace(listenAddr) == "" {
+			card = fmt.Sprintf("🤖 [Webhook · %s] 告警/构建流水线触发通知", botName)
+		}
+		c.deliverWebhookCardToChannel(chID, botName, card)
+		return fmt.Sprintf("webhook:triggered:%s", chID), nil
+
+	case "delete":
+		c.mu.Lock()
+		var removed int
+		for id, ep := range c.webhooks {
+			if ep == nil {
+				continue
+			}
+			if ep.ChannelID == chID || id == name || ep.Name == name {
+				if ep.ln != nil {
+					_ = ep.ln.Close()
+				}
+				delete(c.webhooks, id)
+				removed++
+			}
+		}
+		c.mu.Unlock()
+		return fmt.Sprintf("webhook:deleted:%d", removed), nil
+
+	default:
+		return "", fmt.Errorf("unsupported webhook action: %s", action)
+	}
+}
+
+func formatWebhookBotCard(botName string, rawBody []byte) string {
+	var payload struct {
+		Title  string `json:"title"`
+		Status string `json:"status"`
+		Body   string `json:"body"`
+		Text   string `json:"text"`
+	}
+	if err := json.Unmarshal(rawBody, &payload); err == nil && (payload.Title != "" || payload.Body != "" || payload.Text != "") {
+		title := strings.TrimSpace(payload.Title)
+		if title == "" {
+			title = "自动化事件通知"
+		}
+		status := strings.TrimSpace(payload.Status)
+		body := strings.TrimSpace(payload.Body)
+		if body == "" {
+			body = strings.TrimSpace(payload.Text)
+		}
+		if status != "" {
+			return fmt.Sprintf("🤖 [Webhook · %s] %s [%s]\n%s", botName, title, status, body)
+		}
+		return fmt.Sprintf("🤖 [Webhook · %s] %s\n%s", botName, title, body)
+	}
+	trimmed := strings.TrimSpace(string(rawBody))
+	if trimmed == "" {
+		trimmed = "收到本地 Webhook 推送"
+	}
+	return fmt.Sprintf("🤖 [Webhook · %s] %s", botName, trimmed)
+}
+
+func (c *Client) deliverWebhookCardToChannel(channelID, botName, cardText string) {
+	if _, err := c.SendText("", cardText, channelID); err == nil {
+		return
+	}
+	msgID := uuid.NewString()
+	msg := appapi.ChatMessage{
+		ID:    msgID,
+		From:  "webhook:" + botName,
+		Group: channelID,
+		Type:  "text",
+		Text:  cardText,
+		TS:    time.Now().Unix(),
+	}
+	c.history.append(msg)
+	c.listener().OnMessageReceived(msg.From, channelID, msgID, "text", cardText)
+}
+
+const historyArchiveMagic = "LCHA1:"
+
+type historyArchiveBundle struct {
+	Version  int                  `json:"version"`
+	SelfID   string               `json:"selfId"`
+	ExportTS int64                `json:"exportTs"`
+	Messages []appapi.ChatMessage `json:"messages"`
+	CASBlobs map[string][]byte    `json:"casBlobs,omitempty"`
+}
+
+func deriveArchiveKeyPBKDF2(passphrase string, salt []byte, iterations int) []byte {
+	if iterations <= 0 {
+		iterations = 10000
+	}
+	prf := hmac.New(sha256.New, []byte(passphrase))
+	_, _ = prf.Write(salt)
+	_, _ = prf.Write([]byte{0, 0, 0, 1})
+	u := prf.Sum(nil)
+	out := make([]byte, len(u))
+	copy(out, u)
+	for i := 2; i <= iterations; i++ {
+		prf.Reset()
+		_, _ = prf.Write(u)
+		u = prf.Sum(u[:0])
+		for j := range out {
+			out[j] ^= u[j]
+		}
+	}
+	return out
+}
+
+// ExportHistoryArchive 使用 PBKDF2-SHA256 + AES-256-GCM 口令将全量历史消息与 CAS 富媒体打包导出为加密归档文件（契约 v1.7）。
+func (c *Client) ExportHistoryArchive(destPath, passphrase string) (string, error) {
+	destPath = strings.TrimSpace(destPath)
+	if destPath == "" {
+		return "", errEmptyPath
+	}
+	if strings.TrimSpace(passphrase) == "" {
+		return "", fmt.Errorf("archive passphrase must not be empty")
+	}
+
+	msgs := c.history.snapshot()
+	casBlobs := make(map[string][]byte)
+	for _, m := range msgs {
+		if m.MediaPath != "" {
+			if data, err := os.ReadFile(m.MediaPath); err == nil && len(data) <= 8*1024*1024 {
+				casBlobs[filepath.Base(m.MediaPath)] = data
+			}
+		}
+	}
+	c.mu.Lock()
+	selfID := c.selfID
+	if selfID == "" {
+		selfID = c.deviceID
+	}
+	c.mu.Unlock()
+
+	bundle := historyArchiveBundle{
+		Version:  1,
+		SelfID:   selfID,
+		ExportTS: time.Now().Unix(),
+		Messages: msgs,
+		CASBlobs: casBlobs,
+	}
+	plain, err := json.Marshal(bundle)
+	if err != nil {
+		return "", err
+	}
+
+	var salt [16]byte
+	if _, err := rand.Read(salt[:]); err != nil {
+		return "", err
+	}
+	key := deriveArchiveKeyPBKDF2(passphrase, salt[:], 10000)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	sealed := gcm.Seal(nil, nonce, plain, salt[:])
+	payload := make([]byte, 0, len(salt)+len(nonce)+len(sealed))
+	payload = append(payload, salt[:]...)
+	payload = append(payload, nonce...)
+	payload = append(payload, sealed...)
+
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
+		return "", err
+	}
+	encoded := historyArchiveMagic + base64.StdEncoding.EncodeToString(payload)
+	if err := os.WriteFile(destPath, []byte(encoded), 0o600); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("archive:exported:%d:%s", len(msgs), destPath), nil
+}
+
+// ImportHistoryArchive 解密并恢复加密历史归档文件中的消息与 CAS 富媒体（契约 v1.7）。
+func (c *Client) ImportHistoryArchive(srcPath, passphrase string) (string, error) {
+	srcPath = strings.TrimSpace(srcPath)
+	if srcPath == "" {
+		return "", errEmptyPath
+	}
+	if strings.TrimSpace(passphrase) == "" {
+		return "", fmt.Errorf("archive passphrase must not be empty")
+	}
+	rawFile, err := os.ReadFile(srcPath)
+	if err != nil {
+		return "", err
+	}
+	content := strings.TrimSpace(string(rawFile))
+	if !strings.HasPrefix(content, historyArchiveMagic) {
+		return "", fmt.Errorf("invalid archive magic header")
+	}
+	payload, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(content, historyArchiveMagic))
+	if err != nil {
+		return "", err
+	}
+	if len(payload) < 16+12+16 {
+		return "", fmt.Errorf("archive payload too short")
+	}
+	salt := payload[:16]
+	key := deriveArchiveKeyPBKDF2(passphrase, salt, 10000)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	ns := gcm.NonceSize()
+	nonce := payload[16 : 16+ns]
+	ciphertext := payload[16+ns:]
+	plain, err := gcm.Open(nil, nonce, ciphertext, salt)
+	if err != nil {
+		return "", fmt.Errorf("archive decryption failed (wrong passphrase or corrupted file): %w", err)
+	}
+
+	var bundle historyArchiveBundle
+	if err := json.Unmarshal(plain, &bundle); err != nil {
+		return "", err
+	}
+
+	c.mu.Lock()
+	dlDir := c.downloadDir
+	c.mu.Unlock()
+	casDir := ""
+	if dlDir != "" && len(bundle.CASBlobs) > 0 {
+		casDir = filepath.Join(dlDir, "cas")
+		_ = os.MkdirAll(casDir, 0o700)
+		for name, blob := range bundle.CASBlobs {
+			safeBase := filepath.Base(name)
+			if safeBase != "" && safeBase != "." && safeBase != ".." {
+				_ = os.WriteFile(filepath.Join(casDir, safeBase), blob, 0o600)
+			}
+		}
+	}
+
+	existing := make(map[string]bool)
+	for _, m := range c.history.snapshot() {
+		if m.ID != "" {
+			existing[m.ID] = true
+		}
+	}
+	restored := 0
+	for _, m := range bundle.Messages {
+		if m.ID != "" && existing[m.ID] {
+			continue
+		}
+		if casDir != "" && m.MediaPath != "" {
+			cand := filepath.Join(casDir, filepath.Base(m.MediaPath))
+			if _, stErr := os.Stat(cand); stErr == nil {
+				m.MediaPath = cand
+			}
+		}
+		c.history.append(m)
+		restored++
+	}
+	return fmt.Sprintf("archive:imported:%d", restored), nil
 }

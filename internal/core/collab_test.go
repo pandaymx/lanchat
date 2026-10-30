@@ -2,9 +2,13 @@ package core
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1118,5 +1122,143 @@ func TestAdaptiveVoiceJitterBufferAndPLC(t *testing.T) {
 	s2 := int16(binary.LittleEndian.Uint16(got[1].pcm[:2]))
 	if s2 <= 4000 || s2 >= 10000 {
 		t.Fatalf("unexpected PLC frame sample amplitude: %d", s2)
+	}
+}
+
+func TestContractV17PairingWebhookAndArchive(t *testing.T) {
+	dirA := t.TempDir()
+	alice := New(Options{Nickname: "Alice-Desktop", OS: "linux", DownloadDir: dirA})
+	defer alice.Close()
+
+	// 1. 多设备配对码生成、绑定、过滤查询与同步
+	genRes, err := alice.PairDevice("generate", "", "")
+	if err != nil || !strings.HasPrefix(genRes, "pair:code:") {
+		t.Fatalf("PairDevice generate failed: %v, res=%s", err, genRes)
+	}
+	parts := strings.Split(genRes, ":")
+	code := parts[2]
+
+	bindRes, err := alice.PairDevice("bind", code, "peer-mobile-01")
+	if err != nil || bindRes != "pair:bound:peer-mobile-01" {
+		t.Fatalf("PairDevice bind failed: %v, res=%s", err, bindRes)
+	}
+	listJSON := alice.ListPairedDevices("mobile")
+	if !strings.Contains(listJSON, "peer-mobile-01") {
+		t.Fatalf("ListPairedDevices missing peer-mobile-01: %s", listJSON)
+	}
+	syncRes, err := alice.PairDevice("sync", "", "peer-mobile-01")
+	if err != nil || !strings.HasPrefix(syncRes, "pair:synced:") {
+		t.Fatalf("PairDevice sync failed: %v, res=%s", err, syncRes)
+	}
+	unbindRes, err := alice.PairDevice("unbind", "", "peer-mobile-01")
+	if err != nil || unbindRes != "pair:unbound:peer-mobile-01" {
+		t.Fatalf("PairDevice unbind failed: %v, res=%s", err, unbindRes)
+	}
+
+	// 2. 本地频道 Webhook 机器人网关（HMAC-SHA256 验签与结构化消息卡片推送）
+	whRes, err := alice.ManageChannelWebhook("ch-devops", "create", "GitHub-CI", "127.0.0.1:0")
+	if err != nil || !strings.HasPrefix(whRes, "webhook:created:") {
+		t.Fatalf("ManageChannelWebhook create failed: %v, res=%s", err, whRes)
+	}
+	var whURL, secret string
+	for _, tok := range strings.Fields(strings.TrimPrefix(whRes, "webhook:created:")) {
+		if strings.HasPrefix(tok, "http://") {
+			whURL = tok
+		} else if strings.HasPrefix(tok, "secret=") {
+			secret = strings.TrimPrefix(tok, "secret=")
+		}
+	}
+	if whURL == "" || secret == "" {
+		t.Fatalf("failed to parse webhook URL or secret from %q", whRes)
+	}
+
+	body := []byte(`{"title":"Nightly Build #42","status":"SUCCESS","body":"All 9 CI checks green"}`)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	sig := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+
+	req, err := http.NewRequest(http.MethodPost, whURL, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-LANChat-Signature", sig)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST webhook failed: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from signed webhook, got %d", resp.StatusCode)
+	}
+
+	// 错误签名必须返回 401
+	badReq, _ := http.NewRequest(http.MethodPost, whURL, bytes.NewReader(body))
+	badReq.Header.Set("X-LANChat-Signature", "sha256=deadbeef")
+	badResp, err := http.DefaultClient.Do(badReq)
+	if err != nil {
+		t.Fatalf("POST bad webhook failed: %v", err)
+	}
+	_ = badResp.Body.Close()
+	if badResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized on bad HMAC, got %d", badResp.StatusCode)
+	}
+
+	whList, err := alice.ManageChannelWebhook("ch-devops", "list", "", "")
+	if err != nil || !strings.Contains(whList, "GitHub-CI") {
+		t.Fatalf("ManageChannelWebhook list failed: %v, list=%s", err, whList)
+	}
+	if _, err := alice.ManageChannelWebhook("ch-devops", "delete", "GitHub-CI", ""); err != nil {
+		t.Fatalf("ManageChannelWebhook delete failed: %v", err)
+	}
+
+	// 3. 全量历史消息 + CAS 富媒体 PBKDF2-AES-256-GCM 加密归档导出与跨机恢复
+	casFile := filepath.Join(dirA, "sample-media.png")
+	if err := os.WriteFile(casFile, []byte("PNG-CAS-BINARY-DATA"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alice.history.append(appapi.ChatMessage{
+		ID:        "arch-msg-1",
+		From:      alice.GetState().SelfID,
+		Group:     "ch-devops",
+		Type:      "image",
+		Text:      "[图片]",
+		MediaPath: casFile,
+		TS:        time.Now().Unix(),
+	})
+
+	archivePath := filepath.Join(t.TempDir(), "lanchat-backup.lcha")
+	expRes, err := alice.ExportHistoryArchive(archivePath, "correct-horse-battery-staple")
+	if err != nil || !strings.HasPrefix(expRes, "archive:exported:") {
+		t.Fatalf("ExportHistoryArchive failed: %v, res=%s", err, expRes)
+	}
+
+	dirB := t.TempDir()
+	bob := New(Options{Nickname: "Alice-NewPC", OS: "windows", DownloadDir: dirB})
+	defer bob.Close()
+
+	// 错误口令必须拒绝解密
+	if _, err := bob.ImportHistoryArchive(archivePath, "wrong-passphrase"); err == nil {
+		t.Fatal("expected ImportHistoryArchive with wrong passphrase to fail")
+	}
+
+	impRes, err := bob.ImportHistoryArchive(archivePath, "correct-horse-battery-staple")
+	if err != nil || !strings.HasPrefix(impRes, "archive:imported:") {
+		t.Fatalf("ImportHistoryArchive failed: %v, res=%s", err, impRes)
+	}
+
+	var foundWebhook, foundCAS bool
+	for _, m := range bob.GetState().Messages {
+		if strings.Contains(m.Text, "Nightly Build #42") {
+			foundWebhook = true
+		}
+		if m.ID == "arch-msg-1" && m.MediaPath != "" {
+			if raw, rErr := os.ReadFile(m.MediaPath); rErr == nil && string(raw) == "PNG-CAS-BINARY-DATA" {
+				foundCAS = true
+			}
+		}
+	}
+	if !foundWebhook || !foundCAS {
+		t.Fatalf("expected restored webhook card (%v) and CAS media (%v) in imported history", foundWebhook, foundCAS)
 	}
 }

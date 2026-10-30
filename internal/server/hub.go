@@ -74,7 +74,7 @@ func newHub(opts Options, logf func(string, ...any)) *hub {
 	if stateFile == "" {
 		stateFile = strings.TrimSpace(os.Getenv("LANCHAT_SERVER_STATE_FILE"))
 	}
-	spool, restoredChannels := newMessageSpool(stateFile, func() []group.ChannelInfo {
+	spool, restoredChannels := newMessageSpool(stateFile, opts.PSKHash, func() []group.ChannelInfo {
 		return h.channels.List()
 	})
 	h.spool = spool
@@ -89,23 +89,24 @@ type queryResult struct {
 	revision uint64
 	users    []protocol.User
 	offline  []*protocol.Envelope
+	keyDir   map[string]string
 }
 
-// registerSnapshot 同步完成注册并返回注册后的 revision、全量在线表与待补发的离线暂存消息，
+// registerSnapshot 同步完成注册并返回注册后的 revision、全量在线表、待补发的离线暂存消息与全网 X25519 公钥目录，
 // 供握手阶段在发 USER_LIST 前调用，保证首个客户端的在线表也含自己。
-func (h *hub) registerSnapshot(ctx context.Context, c *Client) (uint64, []protocol.User, []*protocol.Envelope) {
+func (h *hub) registerSnapshot(ctx context.Context, c *Client) (uint64, []protocol.User, []*protocol.Envelope, map[string]string) {
 	ch := make(chan queryResult, 1)
 	ev := hubEvent{kind: evRegisterSnapshot, client: c, reply: ch}
 	select {
 	case h.events <- ev:
 	case <-ctx.Done():
-		return 0, nil, nil
+		return 0, nil, nil, nil
 	}
 	select {
 	case r := <-ch:
-		return r.revision, r.users, r.offline
+		return r.revision, r.users, r.offline, r.keyDir
 	case <-ctx.Done():
-		return 0, nil, nil
+		return 0, nil, nil, nil
 	}
 }
 
@@ -145,10 +146,15 @@ func (h *hub) handle(ev hubEvent) {
 		rev := h.onRegister(ev.client)
 		_, users := h.reg.snapshot()
 		var offline []*protocol.Envelope
+		var keyDir map[string]string
 		if h.spool != nil {
+			if ev.client.pubKey != "" {
+				h.spool.recordPubKey(ev.client.id, ev.client.pubKey, h.now())
+			}
 			offline = h.spool.drainUser(ev.client.id, h.now())
+			keyDir = h.spool.keyDirectory()
 		}
-		ev.reply <- queryResult{revision: rev, users: users, offline: offline}
+		ev.reply <- queryResult{revision: rev, users: users, offline: offline, keyDir: keyDir}
 	case evUnregister:
 		h.onUnregister(ev.client)
 	case evListReq:

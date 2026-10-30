@@ -3,8 +3,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -437,5 +439,85 @@ func TestSpoolOfflineStoreAndChannelHistory(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "lanchat_active_channels 1") {
 		t.Fatalf("unexpected /metrics output:\n%s", string(body))
+	}
+}
+
+func TestEncryptedSpoolQuotaTTLAndKeyDirectory(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "encrypted-spool.state")
+	h := newHub(Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          "none",
+		PSKHash:           "custom-spool-secret",
+		HeartbeatInterval: time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownGrace:     time.Second,
+		StateFile:         stateFile,
+	}, nil)
+
+	// 1. 验证 X25519 公钥目录持久化与特征编码。
+	now := time.Now()
+	h.spool.recordPubKey("peer-alice", "alice-pub-hex", now)
+	h.spool.recordPubKey("peer-bob", "bob-pub-hex", now)
+	kd := h.spool.keyDirectory()
+	if kd["peer-alice"] != "alice-pub-hex" || kd["peer-bob"] != "bob-pub-hex" {
+		t.Fatalf("unexpected key directory: %+v", kd)
+	}
+	feat := encodeKeyDirectoryFeature(kd)
+	if !strings.HasPrefix(feat, "keydir:") {
+		t.Fatalf("expected keydir: feature prefix, got %q", feat)
+	}
+
+	// 2. 验证磁盘状态文件已使用 AES-256-GCM (LCSP1:) 加密落盘，而非明文 JSON。
+	rawDisk, err := os.ReadFile(stateFile)
+	if err != nil {
+		t.Fatalf("read stateFile: %v", err)
+	}
+	if !strings.HasPrefix(string(rawDisk), spoolCipherPrefix) {
+		t.Fatalf("expected encrypted snapshot prefix %q, got %q", spoolCipherPrefix, string(rawDisk))
+	}
+	if strings.Contains(string(rawDisk), "alice-pub-hex") {
+		t.Fatal("state file should not contain plaintext pubkey")
+	}
+
+	// 3. 验证单用户信封条数/字节数配额淘汰与过期 TTL 自动清理。
+	h.spool.setQuotaAndTTL(2, 4096, 10*time.Second)
+	t0 := time.Now()
+	for i := 1; i <= 3; i++ {
+		env, err := protocol.NewEnvelope(fmt.Sprintf("m-%d", i), protocol.TextMsg, protocol.TextPayload{Text: fmt.Sprintf("msg-%d", i)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.From = "peer-alice"
+		env.To = "peer-bob"
+		h.spool.enqueueUser("peer-bob", env, t0.Add(time.Duration(i)*time.Second))
+	}
+
+	// 重启恢复：应恢复最新的 2 条离线消息与完整公钥目录。
+	h2 := newHub(Options{
+		Listen:            "127.0.0.1:0",
+		Path:              "/lanchat",
+		AuthMode:          "none",
+		PSKHash:           "custom-spool-secret",
+		HeartbeatInterval: time.Second,
+		IdleTimeout:       time.Minute,
+		ShutdownGrace:     time.Second,
+		StateFile:         stateFile,
+	}, nil)
+	h2.spool.setQuotaAndTTL(2, 4096, 10*time.Second)
+	if h2.spool.keyDirectory()["peer-alice"] != "alice-pub-hex" {
+		t.Fatalf("expected restored key directory, got %+v", h2.spool.keyDirectory())
+	}
+	drained := h2.spool.drainUser("peer-bob", t0.Add(4*time.Second))
+	if len(drained) != 2 || drained[0].ID != "m-2" || drained[1].ID != "m-3" {
+		t.Fatalf("expected quota-evicted messages [m-2, m-3], got %+v", drained)
+	}
+
+	// 验证 TTL 过期清理。
+	envTTL, _ := protocol.NewEnvelope("m-ttl", protocol.TextMsg, protocol.TextPayload{Text: "expire-me"})
+	h2.spool.enqueueUser("peer-bob", envTTL, t0)
+	expiredDrain := h2.spool.drainUser("peer-bob", t0.Add(20*time.Second))
+	if len(expiredDrain) != 0 {
+		t.Fatalf("expected expired message to be pruned, got %+v", expiredDrain)
 	}
 }

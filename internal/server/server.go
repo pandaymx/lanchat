@@ -224,13 +224,19 @@ func (s *Server) handshake(parent context.Context, c *Client) error {
 	c.pubKey = strings.TrimSpace(hello.PubKey)
 
 	// 先同步完成注册，拿到含自己的全量在线表，再下发 WELCOME/USER_LIST。
-	rev, users, offline := s.hub.registerSnapshot(parent, c)
+	rev, users, offline, keyDir := s.hub.registerSnapshot(parent, c)
+	features := negotiateFeatures(hello.Caps, s.opts.RelayListen != "")
+	if c.pubKey != "" && len(keyDir) > 0 {
+		if kdFeat := encodeKeyDirectoryFeature(keyDir); kdFeat != "" {
+			features = append(features, kdFeat)
+		}
+	}
 	s.mustEnqueue(c, protocol.Welcome, protocol.WelcomePayload{
 		SelfID:            c.id,
 		ProtocolVersion:   protocol.ProtocolVersion,
 		HeartbeatInterval: int(s.opts.HeartbeatInterval / time.Second),
 		AuthMode:          s.opts.AuthMode,
-		Features:          negotiateFeatures(hello.Caps, s.opts.RelayListen != ""),
+		Features:          features,
 	})
 	s.mustEnqueue(c, protocol.UserList, protocol.UserListPayload{
 		Revision: rev, Users: users,

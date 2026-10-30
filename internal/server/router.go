@@ -197,6 +197,9 @@ func (h *hub) onPresenceUpdate(c *Client, env *protocol.Envelope) {
 	c.nickname = nick
 	if strings.TrimSpace(p.User.PubKey) != "" {
 		c.pubKey = strings.TrimSpace(p.User.PubKey)
+		if h.spool != nil {
+			h.spool.recordPubKey(c.id, c.pubKey, h.now())
+		}
 	}
 	rev := h.reg.bumpRevision()
 	h.fanoutExcept(c, protocol.PresenceUpdate, protocol.UserUpdatePayload{

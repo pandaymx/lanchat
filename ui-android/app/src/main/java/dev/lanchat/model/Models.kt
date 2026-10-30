@@ -64,6 +64,9 @@ data class Channel(
     val private: Boolean = false,
     val topic: String = "",
     val members: List<String> = emptyList(),
+    val admins: List<String> = emptyList(),
+    val muted: List<String> = emptyList(),
+    val announcementAck: List<String> = emptyList(),
 )
 
 data class VoiceCallState(

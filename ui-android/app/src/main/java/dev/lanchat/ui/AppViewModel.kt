@@ -300,6 +300,20 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun channelManageMember(channelId: String, memberId: String = "", action: String) {
+        launchOp {
+            engine.channelManageMember(channelId, memberId, action)
+            val channels = engine.channelList()
+            _ui.update {
+                it.copy(
+                    channels = channels,
+                    error = if (action == "ack_announcement") "✅ 已确认阅读频道必读公告" else "✅ 频道成员权限治理已执行：$action",
+                )
+            }
+            refresh()
+        }
+    }
+
     fun leaveChannel(channelId: String) {
         launchOp {
             engine.channelLeave(channelId)

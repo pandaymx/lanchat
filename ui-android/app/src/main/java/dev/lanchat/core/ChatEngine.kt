@@ -355,6 +355,9 @@ private fun JSONArray?.toChannelList(): List<Channel> {
                     private = item.optBoolean("private", false),
                     topic = item.optString("topic"),
                     members = item.optJSONArray("members").toStringList(),
+                    admins = item.optJSONArray("admins").toStringList(),
+                    muted = item.optJSONArray("muted").toStringList(),
+                    announcementAck = item.optJSONArray("announcementAck").toStringList(),
                 ),
             )
         }

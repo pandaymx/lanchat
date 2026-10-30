@@ -204,10 +204,23 @@ fun ChannelChatScreen(
 ) {
     var showInvite by remember { mutableStateOf(false) }
     val isBroadcast = channel.id == "*"
-    val isOwner = !isBroadcast && channel.ownerId == state.selfId && state.selfId.isNotEmpty()
+    val selfId = state.selfId
+    val isOwner = !isBroadcast && channel.ownerId == selfId && selfId.isNotEmpty()
+    val isAdmin = !isBroadcast && selfId.isNotEmpty() && selfId in channel.admins
+    val isMuted = !isBroadcast && selfId.isNotEmpty() && selfId in channel.muted
+    val roleBadges = buildList {
+        if (isOwner) add("👑 群主") else if (isAdmin) add("🛡️ 管理员")
+        if (isMuted) add("🔇 禁言中")
+    }.joinToString(" · ")
+    val unackedTopic = if (!isBroadcast && channel.topic.isNotBlank() && selfId.isNotEmpty() && selfId !in channel.announcementAck) {
+        channel.topic
+    } else {
+        ""
+    }
     val linkBadge = Formatters.linkBadge(state.server)
     val sub = buildString {
         append("${channel.members.size.coerceAtLeast(1)} 人 · $linkBadge")
+        if (roleBadges.isNotEmpty()) append(" · $roleBadges")
         if (channel.topic.isNotEmpty()) append(" · ${channel.topic}")
     }
 
@@ -219,6 +232,10 @@ fun ChannelChatScreen(
         selfSeed = state.selfId.ifEmpty { "self" },
         subtitle = sub,
         private = channel.private,
+        unackedAnnouncement = unackedTopic,
+        onAckAnnouncement = {
+            vm.channelManageMember(channel.id, selfId, "ack_announcement")
+        },
         messages = Conversations.messagesOf(
             state.messagesByConversation,
             Conversations.groupKey(channel.id),
@@ -330,6 +347,8 @@ private fun ConversationScaffold(
     largeFileHint: Boolean = false,
     subtitle: String = "",
     private: Boolean = false,
+    unackedAnnouncement: String = "",
+    onAckAnnouncement: () -> Unit = {},
     actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -740,6 +759,46 @@ private fun ConversationScaffold(
                 .fillMaxSize()
                 .background(qqChatBackgroundColor()),
         ) {
+            if (unackedAnnouncement.isNotEmpty()) {
+                Surface(
+                    color = Color(0xFFFEF3C7),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = "📢 [必读频道公告] $unackedAnnouncement",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF92400E),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = onAckAnnouncement,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFD97706),
+                                contentColor = Color.White,
+                            ),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = "✅ 确认必读公告",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
+                    }
+                }
+            }
             val callState = voiceCall?.state.orEmpty()
             val isRinging = callState == "ringing"
             val isCallActiveBanner = inVoiceCall || callState in listOf("ringing", "calling", "active", "in_call")

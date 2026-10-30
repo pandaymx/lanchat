@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 
 /// 中央状态：@MainActor 聚合 core 事件，向 UI 暴露全部异步操作。
 @MainActor
@@ -37,10 +38,64 @@ final class AppStore: ObservableObject {
 
     /// 应用启动：创建核心并拉取快照。
     func bootstrap() async {
+        registerNotificationQuickActions()
         engine.start(nickname: settings.nickname)
         try? await engine.pickDownloadDir(settings.downloadDir)
         await applyState(await engine.getState())
         await browseServers()
+    }
+
+    /// 注册 iOS 系统通知栏快捷操作（快捷回复 / 接听来电 / 接收文件，v8.3.0）。
+    func registerNotificationQuickActions() {
+        let replyAction = UNTextInputNotificationAction(
+            identifier: "QUICK_REPLY",
+            title: "快捷回复",
+            options: [],
+            textInputButtonTitle: "发送",
+            textInputPlaceholder: "输入回复内容…"
+        )
+        let callAction = UNNotificationAction(
+            identifier: "ACCEPT_CALL",
+            title: "接听来电",
+            options: [.foreground]
+        )
+        let fileAction = UNNotificationAction(
+            identifier: "ACCEPT_FILE",
+            title: "接收文件",
+            options: []
+        )
+        let category = UNNotificationCategory(
+            identifier: "LANCHAT_EVENT",
+            actions: [replyAction, callAction, fileAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([category])
+    }
+
+    /// 处理系统通知栏触发的快捷操作（v8.3.0）。
+    func handleNotificationQuickAction(actionIdentifier: String, userText: String = "", targetKey: String = "") {
+        let resolvedKey = targetKey.isEmpty ? "*" : targetKey
+        switch actionIdentifier {
+        case "QUICK_REPLY":
+            let reply = userText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !reply.isEmpty else { return }
+            if resolvedKey == "*" || channels.contains(where: { $0.id == resolvedKey }) {
+                sendChannelText(channelID: resolvedKey, text: reply)
+            } else {
+                sendText(to: resolvedKey, text: reply)
+            }
+        case "ACCEPT_CALL":
+            let to = voiceCall?.peerId ?? ""
+            let group = voiceCall?.groupId ?? ""
+            acceptVoiceCall(to: to, group: group)
+        case "ACCEPT_FILE":
+            if let pending = transfers.first(where: { $0.direction == "inbound" && $0.state == "pending" }) {
+                respondFile(transferID: pending.id, accept: true)
+            }
+        default:
+            break
+        }
     }
 
     func consumeError() { error = nil }

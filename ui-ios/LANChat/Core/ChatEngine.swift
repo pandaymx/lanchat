@@ -386,6 +386,58 @@ final class ChatEngine {
         await runOnIO { $0.drainOfflineMailbox(fromPeer) }
     }
 
+    // MARK: - 契约 v1.7 多设备配对、频道 Webhook 机器人与加密归档显式 RPC 绑定方法
+
+    @discardableResult
+    func pairDevice(action: String = "generate", code: String = "", peerID: String = "") async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let res = c.pairDevice(action, code: code, peerID: peerID, error: &err)
+            if let err { throw err }
+            return res
+        }
+    }
+
+    @discardableResult
+    func listPairedDevices(filter: String = "") async -> String {
+        await runOnIO { $0.listPairedDevices(filter) }
+    }
+
+    @discardableResult
+    func manageChannelWebhook(
+        channelID: String,
+        action: String = "create",
+        name: String = "CI-Bot",
+        listenAddr: String = "127.0.0.1:0"
+    ) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let res = c.manageChannelWebhook(channelID, action: action, name: name, listenAddr: listenAddr, error: &err)
+            if let err { throw err }
+            return res
+        }
+    }
+
+    @discardableResult
+    func exportHistoryArchive(destPath: String, passphrase: String) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let res = c.exportHistoryArchive(destPath, passphrase: passphrase, error: &err)
+            if let err { throw err }
+            return res
+        }
+    }
+
+    @discardableResult
+    func importHistoryArchive(srcPath: String, passphrase: String) async throws -> String {
+        try await runOnIOThrowing { c in
+            var err: NSError?
+            let res = c.importHistoryArchive(srcPath, passphrase: passphrase, error: &err)
+            if let err { throw err }
+            return res
+        }
+    }
+
     // MARK: - 线程包装
 
     private func runOnIO<T>(_ block: @escaping @Sendable (LCMobileClient) -> T) async -> T {

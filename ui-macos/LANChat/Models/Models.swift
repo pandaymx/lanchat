@@ -78,9 +78,12 @@ struct Channel: Codable, Identifiable, Hashable {
     var isPrivate: Bool?
     var topic: String?
     var members: [String]
+    var admins: [String]?
+    var muted: [String]?
+    var announcementAck: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, ownerId, members, topic
+        case id, name, ownerId, members, topic, admins, muted, announcementAck
         case isPrivate = "private"
     }
 

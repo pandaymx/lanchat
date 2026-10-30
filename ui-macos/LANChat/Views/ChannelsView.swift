@@ -677,6 +677,14 @@ struct ChannelChatView: View {
             if let channel {
                 header(channel)
                 Divider()
+                if joined,
+                   let topic = channel.topic?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !topic.isEmpty,
+                   !store.selfId.isEmpty,
+                   !(channel.announcementAck ?? []).contains(store.selfId) {
+                    announcementAckBanner(channel, topic: topic)
+                    Divider()
+                }
                 if showSearchBar && joined {
                     searchHeaderBar(channel)
                     Divider()
@@ -745,6 +753,35 @@ struct ChannelChatView: View {
                             .padding(.vertical, 1.5)
                             .background(QQPalette.onlineGreen.opacity(0.14))
                             .clipShape(Capsule())
+                    }
+
+                    if !store.selfId.isEmpty {
+                        if channel.ownerId == store.selfId {
+                            Text("👑 群主")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundColor(QQPalette.qqBlue)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1.5)
+                                .background(QQPalette.qqBlue.opacity(0.14))
+                                .clipShape(Capsule())
+                        } else if (channel.admins ?? []).contains(store.selfId) {
+                            Text("🛡️ 管理员")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundColor(.teal)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1.5)
+                                .background(Color.teal.opacity(0.14))
+                                .clipShape(Capsule())
+                        }
+                        if (channel.muted ?? []).contains(store.selfId) {
+                            Text("🔇 禁言中")
+                                .font(.system(size: 10.5, weight: .semibold))
+                                .foregroundColor(.red)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1.5)
+                                .background(Color.red.opacity(0.14))
+                                .clipShape(Capsule())
+                        }
                     }
                 }
 
@@ -860,6 +897,38 @@ struct ChannelChatView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+    }
+
+    private func announcementAckBanner(_ channel: Channel, topic: String) -> some View {
+        let ackCount = (channel.announcementAck ?? []).count
+        let totalCount = max(1, channel.members.count)
+        return HStack(spacing: 10) {
+            Text("📢 [必读频道公告] \(topic)（已确认 \(ackCount)/\(totalCount)）")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(QQPalette.qqBlue)
+                .lineLimit(1)
+            Spacer()
+            Button {
+                Task {
+                    await store.channelManageMemberRpc(
+                        channelID: channel.id,
+                        memberID: store.selfId,
+                        action: "ack_announcement"
+                    )
+                }
+            } label: {
+                Text("✅ 确认必读公告")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(Capsule().fill(QQPalette.qqBlue))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+        .background(QQPalette.qqBlue.opacity(0.10))
     }
 
     private func searchHeaderBar(_ channel: Channel) -> some View {

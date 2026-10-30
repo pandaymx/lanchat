@@ -38,12 +38,14 @@ func (c *Client) applyUserList(env *protocol.Envelope) {
 	next := make(map[string]appapi.Peer, len(p.Users))
 	var joined []appapi.Peer
 	var left []string
+	pubChanged := false
 	for _, u := range p.Users {
 		if u.ID == selfID {
 			continue
 		}
-		if u.PubKey != "" {
+		if u.PubKey != "" && c.peerPubs[u.ID] != u.PubKey {
 			c.peerPubs[u.ID] = u.PubKey
+			pubChanged = true
 		}
 		peer := toPeer(u)
 		next[u.ID] = peer
@@ -58,6 +60,9 @@ func (c *Client) applyUserList(env *protocol.Envelope) {
 	}
 	c.peers = next
 	c.mu.Unlock()
+	if pubChanged {
+		c.persistKeyDirectory()
+	}
 
 	l := c.listener()
 	for _, peer := range joined {
@@ -271,12 +276,17 @@ func (c *Client) applyJoin(env *protocol.Envelope) {
 		c.mu.Unlock()
 		return
 	}
-	if p.User.PubKey != "" {
+	pubChanged := false
+	if p.User.PubKey != "" && c.peerPubs[p.User.ID] != p.User.PubKey {
 		c.peerPubs[p.User.ID] = p.User.PubKey
+		pubChanged = true
 	}
 	c.peers[p.User.ID] = toPeer(p.User)
 	peer := c.peers[p.User.ID]
 	c.mu.Unlock()
+	if pubChanged {
+		c.persistKeyDirectory()
+	}
 	c.listener().OnPeerJoined(peer)
 	c.distributePendingChannelKeys()
 	c.scheduleAutoRoamPeers([]appapi.Peer{peer})
@@ -318,12 +328,17 @@ func (c *Client) applyPresence(env *protocol.Envelope) {
 		c.mu.Unlock()
 		return
 	}
-	if p.User.PubKey != "" {
+	pubChanged := false
+	if p.User.PubKey != "" && c.peerPubs[p.User.ID] != p.User.PubKey {
 		c.peerPubs[p.User.ID] = p.User.PubKey
+		pubChanged = true
 	}
 	c.peers[p.User.ID] = toPeer(p.User)
 	peer := c.peers[p.User.ID]
 	c.mu.Unlock()
+	if pubChanged {
+		c.persistKeyDirectory()
+	}
 	c.listener().OnPeerJoined(peer)
 	c.distributePendingChannelKeys()
 }
@@ -409,6 +424,7 @@ func (c *Client) autoRoamWithJoinedPeers(joined []appapi.Peer) {
 	}
 	c.mu.Unlock()
 
+	c.broadcastKeyDirectoryToPeers(targets)
 	for _, peerID := range targets {
 		bcastSince := c.history.latestTimestampForConv("*")
 		_ = c.sendControlText(peerID, "", "sys:sync:autoreq:*:"+strconv.FormatInt(bcastSince, 10))

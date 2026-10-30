@@ -179,7 +179,7 @@ func New(opts Options) *Client {
 		deviceID:        deviceID,
 		identityPriv:    idPriv,
 		identityPub:     idPub,
-		peerPubs:        map[string]string{},
+		peerPubs:        loadKeyDirectory(opts.DownloadDir),
 		heartbeat:       protocol.HeartbeatIntervalSec,
 		peers:           map[string]appapi.Peer{},
 		transfers:       map[string]*transferTask{},
@@ -317,6 +317,11 @@ func (c *Client) PickDownloadDir(path string) error {
 	}
 	histKey, _ := transfer.DeriveHistoryKey(curPriv)
 	c.history.setDir(path, histKey)
+	loadedKD := loadKeyDirectory(path)
+	c.mu.Lock()
+	_ = c.mergePeerPubsLocked(loadedKD)
+	c.mu.Unlock()
+	c.persistKeyDirectory()
 	return nil
 }
 

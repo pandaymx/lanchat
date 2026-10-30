@@ -111,6 +111,7 @@ func (c *Client) Connect(addr, psk string) error {
 	go c.watch(gen, s, time.Second)
 	_, _ = c.sendTo(s.conn, protocol.ChannelList, "", nil)
 	c.flushOutboundMailbox()
+	c.autoDrainOfflineMailboxOnConnect()
 	_ = hasDesiredChannels
 	return nil
 }
@@ -240,6 +241,7 @@ func (c *Client) establishAddr(ctx context.Context, targetAddr string) (*session
 		c.server = wp.AuthMode
 	}
 	c.mu.Unlock()
+	c.handleWelcomeKeyDirectory(wp.Features)
 
 	// USER_LIST 是握手后首帧，同步消化，避免 connected 事件早于在线表。
 	listCtx, lCancel := context.WithTimeout(ctx, handshakeTimeout)
@@ -361,6 +363,8 @@ func (c *Client) watch(gen uint64, s *session, backoff time.Duration) {
 	if hasDesiredChannels {
 		_, _ = c.sendTo(ns.conn, protocol.ChannelList, "", nil)
 	}
+	c.flushOutboundMailbox()
+	c.autoDrainOfflineMailboxOnConnect()
 
 	next := backoff * 2
 	if next > maxBackoff {

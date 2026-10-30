@@ -1005,3 +1005,62 @@ func TestEncryptedOfflineMailboxStoreAndForwardDrain(t *testing.T) {
 		t.Fatalf("Bob history did not contain decrypted offline mailbox message %q: %+v", secretText, bob.GetState().Messages)
 	}
 }
+
+func TestAutoKeyDirectoryAndZeroTouchOfflineMailbox(t *testing.T) {
+	addr := startServer(t)
+
+	dirAlice := t.TempDir()
+	dirBob := t.TempDir()
+
+	// 1. Bob 先上线注册身份公钥后立即下线（与 Alice 从未同时在线）。
+	bob1 := New(Options{Nickname: "Bob", DownloadDir: dirBob})
+	bobID := bob1.DeviceID()
+	bobPub := bob1.IdentityPublicKey()
+	if err := bob1.Connect(addr, testPSK); err != nil {
+		t.Fatalf("bob1 connect: %v", err)
+	}
+	bob1.Close()
+
+	// 2. Alice 上线连接中心节点，握手期自动从 WELCOME.Features (keydir:) 同步全网 X25519 公钥目录并落盘。
+	alice := New(Options{Nickname: "Alice", DownloadDir: dirAlice})
+	defer alice.Close()
+	if err := alice.Connect(addr, testPSK); err != nil {
+		t.Fatalf("alice connect: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		return len(alice.GetState().Peers) == 0
+	})
+	if got := alice.KeyDirectory()[bobID]; got != bobPub {
+		t.Fatalf("expected Alice KeyDirectory[%s] = %q, got %q", bobID, bobPub, got)
+	}
+
+	// 3. Alice 在单聊中直接调用普通 SendText 及无显式 recipientPub 的 EnqueueOfflineMailbox 发送给离线的 Bob。
+	msgID1, err := alice.SendText(bobID, "Zero-Touch Offline SendText via KeyDir", "")
+	if err != nil || !strings.HasPrefix(msgID1, "mbox-") {
+		t.Fatalf("SendText to offline peer = (%q, %v), want mbox-*", msgID1, err)
+	}
+	msgID2, err := alice.EnqueueOfflineMailbox(bobID, "Zero-PubKey EnqueueOfflineMailbox", "")
+	if err != nil || !strings.HasPrefix(msgID2, "mbox-") {
+		t.Fatalf("EnqueueOfflineMailbox without recipientPub = (%q, %v), want mbox-*", msgID2, err)
+	}
+	alice.Close()
+
+	// 4. Bob 重新上线，无需手工调用 DrainOfflineMailbox 即可自动解密入库。
+	bob2 := New(Options{Nickname: "Bob", DownloadDir: dirBob})
+	defer bob2.Close()
+	if err := bob2.Connect(addr, testPSK); err != nil {
+		t.Fatalf("bob2 connect: %v", err)
+	}
+	waitFor(t, 2*time.Second, func() bool {
+		var has1, has2 bool
+		for _, m := range bob2.GetState().Messages {
+			if m.ID == msgID1 && m.Text == "Zero-Touch Offline SendText via KeyDir" {
+				has1 = true
+			}
+			if m.ID == msgID2 && m.Text == "Zero-PubKey EnqueueOfflineMailbox" {
+				has2 = true
+			}
+		}
+		return has1 && has2
+	})
+}

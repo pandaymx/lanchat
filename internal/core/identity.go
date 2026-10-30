@@ -16,7 +16,10 @@ import (
 	"github.com/pandaymx/lanchat/internal/transfer"
 )
 
-const identityFileName = ".lanchat-identity.json"
+const (
+	identityFileName = ".lanchat-identity.json"
+	keyDirFileName   = ".lanchat-keydir.json"
+)
 
 type persistedIdentity struct {
 	DeviceID   string `json:"deviceId"`
@@ -82,6 +85,164 @@ func saveIdentity(dir, deviceID string, priv *ecdh.PrivateKey, pubB64 string) {
 		return
 	}
 	_ = os.WriteFile(filepath.Join(dir, identityFileName), raw, 0o600)
+}
+
+func loadKeyDirectory(dir string) map[string]string {
+	out := make(map[string]string)
+	if strings.TrimSpace(dir) == "" {
+		return out
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, keyDirFileName))
+	if err != nil || len(raw) == 0 {
+		return out
+	}
+	var m map[string]string
+	if json.Unmarshal(raw, &m) == nil {
+		for k, v := range m {
+			k = strings.TrimSpace(k)
+			v = strings.TrimSpace(v)
+			if k != "" && v != "" {
+				out[k] = v
+			}
+		}
+	}
+	return out
+}
+
+func saveKeyDirectory(dir string, keyDir map[string]string) {
+	if strings.TrimSpace(dir) == "" || len(keyDir) == 0 {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	raw, err := json.MarshalIndent(keyDir, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := filepath.Join(dir, keyDirFileName+".tmp")
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, filepath.Join(dir, keyDirFileName))
+}
+
+func (c *Client) mergePeerPubsLocked(entries map[string]string) bool {
+	if c.peerPubs == nil {
+		c.peerPubs = make(map[string]string)
+	}
+	changed := false
+	for id, pub := range entries {
+		id = strings.TrimSpace(id)
+		pub = strings.TrimSpace(pub)
+		if id == "" || pub == "" || id == c.selfID || id == c.deviceID {
+			continue
+		}
+		if c.peerPubs[id] != pub {
+			c.peerPubs[id] = pub
+			changed = true
+		}
+	}
+	return changed
+}
+
+func (c *Client) persistKeyDirectory() {
+	c.mu.Lock()
+	dir := c.downloadDir
+	if strings.TrimSpace(dir) == "" || len(c.peerPubs) == 0 {
+		c.mu.Unlock()
+		return
+	}
+	snap := make(map[string]string, len(c.peerPubs))
+	for k, v := range c.peerPubs {
+		if k != "" && v != "" {
+			snap[k] = v
+		}
+	}
+	c.mu.Unlock()
+	saveKeyDirectory(dir, snap)
+}
+
+// KeyDirectory 返回当前客户端缓存的全网节点 X25519 公钥目录快照（含本机公钥，v8.1.0）。
+func (c *Client) KeyDirectory() map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make(map[string]string, len(c.peerPubs)+1)
+	for k, v := range c.peerPubs {
+		if k != "" && v != "" {
+			out[k] = v
+		}
+	}
+	selfID := c.selfID
+	if selfID == "" {
+		selfID = c.deviceID
+	}
+	if selfID != "" && c.identityPub != "" {
+		out[selfID] = c.identityPub
+	}
+	return out
+}
+
+func (c *Client) handleWelcomeKeyDirectory(features []string) {
+	for _, f := range features {
+		if !strings.HasPrefix(f, "keydir:") {
+			continue
+		}
+		b64 := strings.TrimSpace(strings.TrimPrefix(f, "keydir:"))
+		raw, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		var kd map[string]string
+		if json.Unmarshal(raw, &kd) != nil || len(kd) == 0 {
+			continue
+		}
+		c.mu.Lock()
+		changed := c.mergePeerPubsLocked(kd)
+		c.mu.Unlock()
+		if changed {
+			c.persistKeyDirectory()
+		}
+	}
+}
+
+func (c *Client) onInboundKeyDirectory(b64 string) {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if err != nil || len(raw) == 0 {
+		return
+	}
+	var kd map[string]string
+	if json.Unmarshal(raw, &kd) != nil || len(kd) == 0 {
+		return
+	}
+	c.mu.Lock()
+	changed := c.mergePeerPubsLocked(kd)
+	c.mu.Unlock()
+	if changed {
+		c.persistKeyDirectory()
+	}
+}
+
+func (c *Client) broadcastKeyDirectoryToPeers(peerIDs []string) {
+	if len(peerIDs) == 0 {
+		return
+	}
+	kd := c.KeyDirectory()
+	if len(kd) == 0 {
+		return
+	}
+	raw, err := json.Marshal(kd)
+	if err != nil {
+		return
+	}
+	b64 := base64.StdEncoding.EncodeToString(raw)
+	for _, pid := range peerIDs {
+		pid = strings.TrimSpace(pid)
+		if pid == "" {
+			continue
+		}
+		_ = c.sendControlText(pid, "", "sys:keydir:"+b64)
+	}
 }
 
 // deriveDeviceIDFromPub 由公钥 SHA-256 前 16 个十六进制字符派生固定 DeviceID。

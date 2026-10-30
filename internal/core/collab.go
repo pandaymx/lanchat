@@ -3093,12 +3093,14 @@ type channelGovState struct {
 
 // offlineMailboxItem 表示中心节点或本地暂存的一条 X25519 公钥密封离线信封（v8.0.0 契约 v1.6）。
 type offlineMailboxItem struct {
-	ID         string `json:"id"`
-	From       string `json:"from"`
-	To         string `json:"to"`
-	Ciphertext string `json:"ciphertext"`
-	SenderPub  string `json:"senderPub"`
-	TS         int64  `json:"ts"`
+	ID         string   `json:"id"`
+	From       string   `json:"from"`
+	To         string   `json:"to"`
+	Ciphertext string   `json:"ciphertext"`
+	SenderPub  string   `json:"senderPub"`
+	ReplyTo    string   `json:"replyTo,omitempty"`
+	Mentions   []string `json:"mentions,omitempty"`
+	TS         int64    `json:"ts"`
 }
 
 func appendUniqueMember(slice []string, id string) []string {
@@ -3302,6 +3304,10 @@ func (c *Client) onInboundChannelGovernance(actorID, channelID, memberID, action
 // EnqueueOfflineMailbox 向中心节点加密离线投递箱投递经接收方 X25519 公钥密封的离线信封（契约 v1.6）。
 // 发送方发送完毕即可立即关机下线；中心节点仅暂存不可解密的 X25519 密文信封，接收方上线后自动或主动拉取并销毁。
 func (c *Client) EnqueueOfflineMailbox(to, text, recipientPub string) (string, error) {
+	return c.enqueueOfflineTextWithMeta(to, text, recipientPub, "", nil)
+}
+
+func (c *Client) enqueueOfflineTextWithMeta(to, text, recipientPub, replyTo string, mentions []string) (string, error) {
 	to = strings.TrimSpace(to)
 	text = strings.TrimSpace(text)
 	recipientPub = strings.TrimSpace(recipientPub)
@@ -3319,15 +3325,20 @@ func (c *Client) EnqueueOfflineMailbox(to, text, recipientPub string) (string, e
 	if selfID == "" {
 		selfID = c.deviceID
 	}
+	pubUpdated := false
 	if recipientPub == "" {
 		recipientPub = c.peerPubs[to]
-	} else {
+	} else if c.peerPubs[to] != recipientPub {
 		c.peerPubs[to] = recipientPub
+		pubUpdated = true
 	}
 	if recipientPub == "" {
 		recipientPub = idPub
 	}
 	c.mu.Unlock()
+	if pubUpdated {
+		c.persistKeyDirectory()
+	}
 
 	if idPriv == nil || recipientPub == "" {
 		return "", errInvalidState
@@ -3345,16 +3356,20 @@ func (c *Client) EnqueueOfflineMailbox(to, text, recipientPub string) (string, e
 		To:         to,
 		Ciphertext: cipherText,
 		SenderPub:  idPub,
+		ReplyTo:    replyTo,
+		Mentions:   append([]string(nil), mentions...),
 		TS:         nowTS,
 	}
 
 	c.history.append(appapi.ChatMessage{
-		ID:   msgID,
-		From: selfID,
-		To:   to,
-		Type: protocol.TextMsg,
-		Text: text,
-		TS:   nowTS,
+		ID:       msgID,
+		From:     selfID,
+		To:       to,
+		Type:     protocol.TextMsg,
+		Text:     text,
+		ReplyTo:  replyTo,
+		Mentions: append([]string(nil), mentions...),
+		TS:       nowTS,
 	})
 
 	rawItem, err := json.Marshal(item)
@@ -3430,8 +3445,12 @@ func (c *Client) onInboundOfflineMailboxStore(fromPeer, b64 string) {
 
 	c.mu.Lock()
 	idPriv := c.identityPriv
+	pubLearned := false
 	if item.SenderPub != "" && item.From != "" {
-		c.peerPubs[item.From] = item.SenderPub
+		if c.peerPubs[item.From] != item.SenderPub {
+			c.peerPubs[item.From] = item.SenderPub
+			pubLearned = true
+		}
 	} else if item.SenderPub == "" && item.From != "" {
 		item.SenderPub = c.peerPubs[item.From]
 	}
@@ -3446,22 +3465,70 @@ func (c *Client) onInboundOfflineMailboxStore(fromPeer, b64 string) {
 		c.inboundMailbox = append(c.inboundMailbox, item)
 	}
 	c.mu.Unlock()
+	if pubLearned {
+		c.persistKeyDirectory()
+	}
 
 	if idPriv != nil && item.SenderPub != "" {
 		if plain, decErr := transfer.OpenECDHText(idPriv, item.SenderPub, item.Ciphertext); decErr == nil && plain != "" {
 			if c.history.append(appapi.ChatMessage{
-				ID:   item.ID,
-				From: item.From,
-				To:   item.To,
-				Type: protocol.TextMsg,
-				Text: plain,
-				TS:   item.TS,
+				ID:       item.ID,
+				From:     item.From,
+				To:       item.To,
+				Type:     protocol.TextMsg,
+				Text:     plain,
+				ReplyTo:  item.ReplyTo,
+				Mentions: item.Mentions,
+				TS:       item.TS,
 			}) {
-				c.recordInboundUnread(item.From, "", plain, nil)
+				c.recordInboundUnread(item.From, "", plain, item.Mentions)
 				c.listener().OnMessageReceived(item.From, "", item.ID, protocol.TextMsg, plain)
 			}
 		}
 	}
+}
+
+func (c *Client) autoDrainOfflineMailboxOnConnect() {
+	go func() {
+		select {
+		case <-c.runCtx.Done():
+			return
+		case <-time.After(35 * time.Millisecond):
+		}
+		c.mu.Lock()
+		idPriv := c.identityPriv
+		items := make([]offlineMailboxItem, len(c.inboundMailbox))
+		copy(items, c.inboundMailbox)
+		for i := range items {
+			if items[i].SenderPub == "" && items[i].From != "" {
+				items[i].SenderPub = c.peerPubs[items[i].From]
+			}
+		}
+		c.mu.Unlock()
+		if idPriv == nil || len(items) == 0 {
+			return
+		}
+		for _, item := range items {
+			if item.SenderPub == "" {
+				continue
+			}
+			if plain, err := transfer.OpenECDHText(idPriv, item.SenderPub, item.Ciphertext); err == nil && plain != "" {
+				if c.history.append(appapi.ChatMessage{
+					ID:       item.ID,
+					From:     item.From,
+					To:       item.To,
+					Type:     protocol.TextMsg,
+					Text:     plain,
+					ReplyTo:  item.ReplyTo,
+					Mentions: item.Mentions,
+					TS:       item.TS,
+				}) {
+					c.recordInboundUnread(item.From, "", plain, item.Mentions)
+					c.listener().OnMessageReceived(item.From, "", item.ID, protocol.TextMsg, plain)
+				}
+			}
+		}
+	}()
 }
 
 // DrainOfflineMailbox 从中心节点或本地待收投递箱拉取、解密并销毁离线加密信封（契约 v1.6）。

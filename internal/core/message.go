@@ -290,6 +290,16 @@ func (c *Client) SendText(to, text, group string) (string, error) {
 	if explicitReplyTo != "" {
 		replyTo = explicitReplyTo
 	}
+	if group == "" && burnDur == 0 && !strings.HasPrefix(text, "sys:") {
+		c.mu.Lock()
+		_, peerOnline := c.peers[to]
+		peerPub := c.peerPubs[to]
+		e2eeSecret := c.e2eeKey
+		c.mu.Unlock()
+		if !peerOnline && peerPub != "" && e2eeSecret == "" {
+			return c.enqueueOfflineTextWithMeta(to, text, peerPub, replyTo, mentions)
+		}
+	}
 	wireText, senderPub, err := c.sealOutboundText(to, group, text)
 	if err != nil {
 		return "", err

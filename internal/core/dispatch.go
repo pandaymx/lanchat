@@ -65,11 +65,16 @@ func (c *Client) dispatch(gen uint64, env *protocol.Envelope) {
 			c.mu.Lock()
 			idPriv := c.identityPriv
 			senderPub := c.peerPubs[env.From]
+			pubLearned := false
 			if senderPub == "" && p.SenderPub != "" {
 				senderPub = p.SenderPub
 				c.peerPubs[env.From] = senderPub
+				pubLearned = true
 			}
 			c.mu.Unlock()
+			if pubLearned {
+				c.persistKeyDirectory()
+			}
 			if plain, err := transfer.OpenECDHText(idPriv, senderPub, text); err == nil {
 				text = plain
 			} else {
@@ -373,6 +378,11 @@ func (c *Client) handleInboundControlText(env *protocol.Envelope, text string) b
 		if len(parts) == 3 && parts[0] != "" && parts[1] != "" && parts[2] != "" {
 			c.onInboundChannelGovernance(env.From, parts[0], parts[1], parts[2])
 		}
+		return true
+
+	case strings.HasPrefix(text, "sys:keydir:"):
+		b64 := strings.TrimSpace(strings.TrimPrefix(text, "sys:keydir:"))
+		c.onInboundKeyDirectory(b64)
 		return true
 
 	case strings.HasPrefix(text, "sys:mailbox:"):

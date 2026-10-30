@@ -296,6 +296,31 @@ func (c *Client) DrainOfflineMailbox(fromPeer string) string {
 	return c.core.DrainOfflineMailbox(fromPeer)
 }
 
+// PairDevice 执行同账号多设备配对码生成、绑定、解绑与实时加密镜像同步（契约 v1.7）。
+func (c *Client) PairDevice(action string, code string, peerID string) (string, error) {
+	return c.core.PairDevice(action, code, peerID)
+}
+
+// ListPairedDevices 返回当前已绑定同账号配对设备的 JSON 列表摘要（契约 v1.7）。
+func (c *Client) ListPairedDevices(filter string) string {
+	return c.core.ListPairedDevices(filter)
+}
+
+// ManageChannelWebhook 管理 G2 频道本地 HMAC-SHA256 签名 HTTP Webhook 机器人网关（契约 v1.7）。
+func (c *Client) ManageChannelWebhook(channelID string, action string, name string, listenAddr string) (string, error) {
+	return c.core.ManageChannelWebhook(channelID, action, name, listenAddr)
+}
+
+// ExportHistoryArchive 使用 PBKDF2-SHA256 + AES-256-GCM 口令将全量历史消息与 CAS 富媒体打包导出为加密归档文件（契约 v1.7）。
+func (c *Client) ExportHistoryArchive(destPath string, passphrase string) (string, error) {
+	return c.core.ExportHistoryArchive(destPath, passphrase)
+}
+
+// ImportHistoryArchive 解密并恢复加密历史归档文件中的消息与 CAS 富媒体（契约 v1.7）。
+func (c *Client) ImportHistoryArchive(srcPath string, passphrase string) (string, error) {
+	return c.core.ImportHistoryArchive(srcPath, passphrase)
+}
+
 // SyncFolder 扫描本地文件夹并执行 P2P 增量块去重同步（v3.4.0 / 契约 v1.3）。
 func (c *Client) SyncFolder(to string, group string, dirPath string) (int, error) {
 	return c.core.SyncFolder(to, group, dirPath)

@@ -60,6 +60,51 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
     }
 
+    /// <summary>当前用户在 G2 频道中的角色与禁言徽章（群主 / 管理员 / 禁言中，v8.1.0）。</summary>
+    public string ChannelRoleBadgeText
+    {
+        get
+        {
+            if (CurrentChannel is null || CurrentChannel.Id == "*" || string.IsNullOrEmpty(SelfId))
+            {
+                return "";
+            }
+            var badges = new List<string>();
+            if (CurrentChannel.OwnerId == SelfId)
+            {
+                badges.Add("👑 群主");
+            }
+            else if (CurrentChannel.Admins.Contains(SelfId))
+            {
+                badges.Add("🛡️ 管理员");
+            }
+            else if (IsMember(CurrentChannel))
+            {
+                badges.Add("👤 成员");
+            }
+            if (CurrentChannel.Muted.Contains(SelfId))
+            {
+                badges.Add("🔇 禁言中");
+            }
+            return string.Join(" · ", badges);
+        }
+    }
+
+    /// <summary>当前 G2 频道是否存在尚未被本机确认的必读公告（v8.1.0）。</summary>
+    public bool HasUnackedAnnouncement =>
+        CurrentChannel is not null &&
+        CurrentChannel.Id != "*" &&
+        !string.IsNullOrWhiteSpace(CurrentChannel.Topic) &&
+        !string.IsNullOrEmpty(SelfId) &&
+        IsMember(CurrentChannel) &&
+        !CurrentChannel.AnnouncementAck.Contains(SelfId);
+
+    /// <summary>必读频道公告横幅文案（v8.1.0）。</summary>
+    public string AnnouncementBannerText =>
+        CurrentChannel is null || string.IsNullOrWhiteSpace(CurrentChannel.Topic)
+            ? ""
+            : $"📢 [必读频道公告] {CurrentChannel.Topic}（已确认 {CurrentChannel.AnnouncementAck.Count}/{Math.Max(1, CurrentChannel.Members.Count)}）";
+
     /// <summary>是否展示 NTQQ 顶部实时语音通话状态栏。</summary>
     public bool HasVoiceCallBanner => IsInVoiceCall || IsIncomingCallRinging || !string.IsNullOrWhiteSpace(VoiceCallStatusText);
 
@@ -107,7 +152,9 @@ public sealed partial class ChatViewModel : ViewModelBase
                 var topicPart = string.IsNullOrWhiteSpace(CurrentChannel.Topic)
                     ? "G2 自定义频道"
                     : CurrentChannel.Topic;
-                return $"👥 {CurrentChannel.Members.Count} 名成员 · {linkBadge} · {topicPart}";
+                var roleBadge = ChannelRoleBadgeText;
+                var rolePrefix = string.IsNullOrWhiteSpace(roleBadge) ? "" : $"{roleBadge} · ";
+                return $"{rolePrefix}👥 {CurrentChannel.Members.Count} 名成员 · {linkBadge} · {topicPart}";
             }
 
             if (CurrentPeer is not null)
@@ -1705,11 +1752,32 @@ public sealed partial class ChatViewModel : ViewModelBase
         }
     }
 
+    /// <summary>确认当前 G2 频道的必读公告回执（v8.1.0）。</summary>
+    [RelayCommand]
+    public async Task AckChannelAnnouncementAsync()
+    {
+        if (CurrentChannel is null || CurrentChannel.Id == "*" || string.IsNullOrEmpty(SelfId))
+        {
+            return;
+        }
+        var ch = CurrentChannel;
+        if (!ch.AnnouncementAck.Contains(SelfId))
+        {
+            var nextAck = ch.AnnouncementAck.Concat([SelfId]).Distinct().ToList();
+            CurrentChannel = ch with { AnnouncementAck = nextAck };
+            NotifyConversationHeaderChanged();
+        }
+        await ChannelManageMemberAsync(ch.Id, SelfId, "ack_announcement");
+    }
+
     private void NotifyConversationHeaderChanged()
     {
         OnPropertyChanged(nameof(ConversationTitle));
         OnPropertyChanged(nameof(ConversationSubtitle));
         OnPropertyChanged(nameof(ConversationAvatarText));
+        OnPropertyChanged(nameof(ChannelRoleBadgeText));
+        OnPropertyChanged(nameof(HasUnackedAnnouncement));
+        OnPropertyChanged(nameof(AnnouncementBannerText));
         OnPropertyChanged(nameof(HasActiveConversation));
         OnPropertyChanged(nameof(IsChannelConversation));
         OnPropertyChanged(nameof(IsBroadcastConversation));

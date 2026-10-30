@@ -123,8 +123,37 @@
             </Grid>
         </Border>
 
-        <!-- 次顶栏：NTQQ 置顶消息横幅 + 实时语音通话栏 + 实时屏幕共享舞台（v1.2 协同套件） -->
+        <!-- 次顶栏：NTQQ 必读频道公告横幅 + 置顶消息横幅 + 实时语音通话栏 + 实时屏幕共享舞台（v1.2 协同套件） -->
         <StackPanel Grid.Row="1">
+            <Border Background="#EFF6FF"
+                    BorderBrush="#BFDBFE"
+                    BorderThickness="0,0,0,1"
+                    Padding="16,6"
+                    Visibility="{Binding Chat.HasUnackedAnnouncement, Converter={StaticResource BoolToVisibilityConverter}}">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="{Binding Chat.AnnouncementBannerText}"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="#1D4ED8"
+                               VerticalAlignment="Center"
+                               MaxLines="1"
+                               TextTrimming="CharacterEllipsis" />
+                    <Button Grid.Column="1"
+                            Content="✅ 确认必读公告"
+                            FontSize="11"
+                            Padding="10,2"
+                            CornerRadius="6"
+                            Background="#2563EB"
+                            Foreground="White"
+                            Command="{Binding Chat.AckChannelAnnouncementCommand}" />
+                </Grid>
+            </Border>
+
             <Border Background="#FFFBEB"
                     BorderBrush="#FDE68A"
                     BorderThickness="0,0,0,1"

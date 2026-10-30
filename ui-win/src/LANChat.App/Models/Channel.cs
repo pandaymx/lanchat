@@ -9,4 +9,7 @@ public sealed record Channel
     public bool Private { get; init; }
     public string Topic { get; init; } = "";
     public IReadOnlyList<string> Members { get; init; } = [];
+    public IReadOnlyList<string> Admins { get; init; } = [];
+    public IReadOnlyList<string> Muted { get; init; } = [];
+    public IReadOnlyList<string> AnnouncementAck { get; init; } = [];
 }

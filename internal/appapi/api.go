@@ -259,6 +259,17 @@ type API interface {
 	EnqueueOfflineMailbox(to, text, recipientPub string) (msgID string, err error)
 	// DrainOfflineMailbox 从中心节点或本地待收投递箱拉取、解密并销毁离线加密信封（契约 v1.6）。
 	DrainOfflineMailbox(fromPeer string) string
+
+	// PairDevice 执行同账号多设备配对码生成、绑定、解绑与实时加密镜像同步（generate/bind/unbind/sync，契约 v1.7）。
+	PairDevice(action, code, peerID string) (status string, err error)
+	// ListPairedDevices 返回当前已绑定同账号配对设备的 JSON 列表摘要（契约 v1.7）。
+	ListPairedDevices(filter string) string
+	// ManageChannelWebhook 管理 G2 频道本地 HMAC-SHA256 签名 HTTP Webhook 机器人网关（create/delete/list/trigger，契约 v1.7）。
+	ManageChannelWebhook(channelID, action, name, listenAddr string) (status string, err error)
+	// ExportHistoryArchive 使用 PBKDF2-SHA256 + AES-256-GCM 口令将全量历史消息与 CAS 富媒体打包导出为加密归档文件（契约 v1.7）。
+	ExportHistoryArchive(destPath, passphrase string) (status string, err error)
+	// ImportHistoryArchive 解密并恢复加密历史归档文件中的消息与 CAS 富媒体（契约 v1.7）。
+	ImportHistoryArchive(srcPath, passphrase string) (status string, err error)
 }
 
 // Listener 是 core → UI 的事件回调集合（notification）。

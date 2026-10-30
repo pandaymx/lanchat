@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.6",
+  "schemaVersion": "1.7",
   "description": "LANChat daemon <-> 五端 UI 契约（JSON-RPC 2.0）。唯一真源为 internal/appapi；禁止任何端使用本文件之外的方法、事件或字段。",
   "transport": {
     "protocol": "jsonrpc-2.0",
@@ -206,6 +206,26 @@
     },
     "DrainOfflineMailbox": {
       "params": { "fromPeer": "string?" },
+      "result": { "status": "string" }
+    },
+    "PairDevice": {
+      "params": { "action": "string", "code": "string?", "peerID": "string?" },
+      "result": { "status": "string" }
+    },
+    "ListPairedDevices": {
+      "params": { "filter": "string?" },
+      "result": { "devices": "string" }
+    },
+    "ManageChannelWebhook": {
+      "params": { "channelID": "string", "action": "string", "name": "string?", "listenAddr": "string?" },
+      "result": { "status": "string" }
+    },
+    "ExportHistoryArchive": {
+      "params": { "destPath": "string", "passphrase": "string" },
+      "result": { "status": "string" }
+    },
+    "ImportHistoryArchive": {
+      "params": { "srcPath": "string", "passphrase": "string" },
       "result": { "status": "string" }
     }
   },

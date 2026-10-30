@@ -2452,6 +2452,97 @@ fn invoke_drain_offline_mailbox(ctx: &Rc<AppCtx>, from_peer: &str) {
     }
 }
 
+#[allow(dead_code)]
+fn invoke_pair_device(ctx: &Rc<AppCtx>, action: &str, code: &str, peer_id: &str) {
+    let act = action.to_string();
+    let cd = code.to_string();
+    let pid = peer_id.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "action": act,
+                "code": cd,
+                "peerID": pid,
+            });
+            let _ = ipc.invoke("PairDevice", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_list_paired_devices(ctx: &Rc<AppCtx>, filter: &str) {
+    let flt = filter.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "filter": flt,
+            });
+            let _ = ipc.invoke("ListPairedDevices", Some(&body)).await;
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_manage_channel_webhook(
+    ctx: &Rc<AppCtx>,
+    channel_id: &str,
+    action: &str,
+    name: &str,
+    listen_addr: &str,
+) {
+    let cid = channel_id.to_string();
+    let act = action.to_string();
+    let nm = name.to_string();
+    let addr = listen_addr.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "channelID": cid,
+                "action": act,
+                "name": nm,
+                "listenAddr": addr,
+            });
+            let _ = ipc.invoke("ManageChannelWebhook", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_export_history_archive(ctx: &Rc<AppCtx>, dest_path: &str, passphrase: &str) {
+    let dest = dest_path.to_string();
+    let pass = passphrase.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "destPath": dest,
+                "passphrase": pass,
+            });
+            let _ = ipc.invoke("ExportHistoryArchive", Some(&body)).await;
+        });
+    }
+}
+
+#[allow(dead_code)]
+fn invoke_import_history_archive(ctx: &Rc<AppCtx>, src_path: &str, passphrase: &str) {
+    let src = src_path.to_string();
+    let pass = passphrase.to_string();
+    if let Some(ipc) = ctx.ipc.borrow().clone() {
+        let tx = ctx.ui_tx.clone();
+        crate::spawn_rt(async move {
+            let body = serde_json::json!({
+                "srcPath": src,
+                "passphrase": pass,
+            });
+            let _ = ipc.invoke("ImportHistoryArchive", Some(&body)).await;
+            let _ = tx.try_send(UiEvent::Reconnected);
+        });
+    }
+}
+
 fn send_sticker_code(ctx: &Rc<AppCtx>, sticker: &str) {
     let target = ctx.state.borrow().current_chat.clone();
     let Some(key) = target.key().map(|s| s.to_string()) else {

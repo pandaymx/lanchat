@@ -435,6 +435,13 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func channelManageMember(channelID: String, memberID: String = "", action: String) {
+        run {
+            try await self.engine.channelManageMember(channelID: channelID, memberID: memberID, action: action)
+            await self.refresh()
+        }
+    }
+
     // MARK: - 事件处理
 
     private func handle(_ event: CoreEvent) {

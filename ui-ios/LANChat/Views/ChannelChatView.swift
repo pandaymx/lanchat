@@ -48,13 +48,45 @@ struct ChannelChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 频道顶部信息横幅（私有锁 / 主题 / 双栈链路标识 / E2EE 状态）
+            // 频道顶部信息横幅（私有锁 / 主题 / 角色徽章 / 双栈链路标识 / E2EE 状态）
             ChannelHeader(
                 channel: live,
                 isBroadcast: isBroadcastGroup,
                 e2eeEnabled: e2eeEnabled,
+                selfId: store.selfId,
                 linkBadge: ServerInfo.linkBadge(server: store.server)
             )
+
+            if !isBroadcastGroup
+                && !live.topic.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !store.selfId.isEmpty
+                && live.members.contains(store.selfId)
+                && !live.announcementAck.contains(store.selfId) {
+                HStack(spacing: 8) {
+                    Text("📢 [必读频道公告] \(live.topic)（已确认 \(live.announcementAck.count)/\(max(1, live.members.count))）")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(QQTheme.qqBlue)
+                        .lineLimit(1)
+                    Spacer()
+                    Button {
+                        store.channelManageMember(
+                            channelID: live.id,
+                            memberID: store.selfId,
+                            action: "ack_announcement"
+                        )
+                    } label: {
+                        Text("✅ 确认必读公告")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(QQTheme.qqBlue, in: Capsule())
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(QQTheme.qqBlue.opacity(0.12))
+            }
 
             if ["ringing", "calling", "active", "in_call"].contains(store.voiceCall?.state ?? "")
                 && (store.voiceCall?.groupId == live.id || store.voiceCall?.groupId.isEmpty == true) {
@@ -507,6 +539,7 @@ private struct ChannelHeader: View {
     let channel: Channel
     let isBroadcast: Bool
     let e2eeEnabled: Bool
+    var selfId: String = ""
     var linkBadge: String = "⚡ 局域网直连"
 
     var body: some View {
@@ -535,6 +568,32 @@ private struct ChannelHeader: View {
                     .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
+            }
+
+            if !isBroadcast && !selfId.isEmpty {
+                if channel.ownerId == selfId {
+                    Text("👑 群主")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(QQTheme.qqBlue)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
+                } else if channel.admins.contains(selfId) {
+                    Text("🛡️ 管理员")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.teal)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.teal.opacity(0.12), in: Capsule())
+                }
+                if channel.muted.contains(selfId) {
+                    Text("🔇 禁言中")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.red)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.red.opacity(0.12), in: Capsule())
+                }
             }
 
             if !channel.topic.isEmpty {

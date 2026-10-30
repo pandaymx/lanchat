@@ -480,16 +480,22 @@ struct ChannelJSON: Decodable {
     let topic: String?
     let isPrivate: Bool?
     let members: [String]?
+    let admins: [String]?
+    let muted: [String]?
+    let announcementAck: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case id, name, ownerId, topic, members
+        case id, name, ownerId, topic, members, admins, muted, announcementAck
         case isPrivate = "private"
     }
 
     func toModel() -> Channel {
         Channel(id: id, name: name, ownerId: ownerId,
                 topic: topic ?? "", isPrivate: isPrivate ?? false,
-                members: members ?? [])
+                members: members ?? [],
+                admins: admins ?? [],
+                muted: muted ?? [],
+                announcementAck: announcementAck ?? [])
     }
 }
 

@@ -83,6 +83,9 @@ struct Channel: Identifiable, Equatable, Hashable {
     /// 是否为私有频道；私有频道仅可经 owner 邀请加入。
     var isPrivate: Bool
     var members: [String]
+    var admins: [String] = []
+    var muted: [String] = []
+    var announcementAck: [String] = []
 }
 
 /// 契约 v1.2 实时语音通话状态快照。

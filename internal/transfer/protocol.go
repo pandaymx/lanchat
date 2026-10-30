@@ -89,11 +89,6 @@ func writeHello(fr *protocol.Framer, token string, resumeOffset int64) error {
 	return writeJSON(fr, protocol.FrameHello, helloBody{Token: token, ResumeOffset: resumeOffset})
 }
 
-// writeHelloRange 发送携带 [resumeOffset, endOffset) 分片区间的 HELLO 帧（v7.3.0 多路径并发）。
-func writeHelloRange(fr *protocol.Framer, token string, resumeOffset, endOffset int64) error {
-	return writeHelloRangeBitmap(fr, token, resumeOffset, endOffset, nil)
-}
-
 // writeHelloRangeBitmap 发送携带 [resumeOffset, endOffset) 分片区间及已完成块位图的 HELLO 帧（v8.2.0）。
 func writeHelloRangeBitmap(fr *protocol.Framer, token string, resumeOffset, endOffset int64, chunkBitmap []byte) error {
 	return writeJSON(fr, protocol.FrameHello, helloBody{

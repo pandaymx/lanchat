@@ -1,5 +1,18 @@
 # Changelog
 
+## [8.1.0](https://github.com/pandaymx/lanchat/compare/v8.0.0...v8.1.0) (2026-10-30)
+
+
+### Features
+
+* **core:** add X25519 key directory broadcast and auto offline mailbox ([9103b64](https://github.com/pandaymx/lanchat/commit/9103b6476d9145e86fc943b1f94016ad716da234))
+* **server:** add encrypted spool persistence and key directory governance ([7c656ec](https://github.com/pandaymx/lanchat/commit/7c656ec8b071aa0dc99e90c881bcfcb0bbb9229c))
+* **ui-android:** add channel role badges and announcement ack banner ([b186736](https://github.com/pandaymx/lanchat/commit/b186736e305814a3f5251db505b05d4da995a6c5))
+* **ui-ios:** add channel role badges and announcement ack banner ([6de3498](https://github.com/pandaymx/lanchat/commit/6de349897fade86134c78f7294e189f078eb40a6))
+* **ui-linux:** add channel role badges and announcement ack banner ([c2e2e35](https://github.com/pandaymx/lanchat/commit/c2e2e352e01679f0f7f3f6006078f8c214832ad4))
+* **ui-macos:** add channel role badges and announcement ack banner ([53328a4](https://github.com/pandaymx/lanchat/commit/53328a46ab10f0665fca082054a4508f2996492c))
+* **ui-win:** add channel role badges and announcement ack banner ([7674f27](https://github.com/pandaymx/lanchat/commit/7674f27a9c84b3020df51e612f380028df40d58a))
+
 ## [8.0.0](https://github.com/pandaymx/lanchat/compare/v7.3.0...v8.0.0) (2026-10-29)
 
 

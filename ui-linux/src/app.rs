@@ -143,6 +143,9 @@ struct Widgets {
     header_invite_btn: gtk::Button,
     header_leave_btn: gtk::Button,
     header_drawer_btn: gtk::Button,
+    announcement_bar: gtk::Box,
+    announcement_label: gtk::Label,
+    announcement_ack_btn: gtk::Button,
     pinned_bar: gtk::Box,
     pinned_label: gtk::Label,
     call_bar: gtk::Box,
@@ -557,7 +560,21 @@ fn build_ui(app: &adw::Application) -> Widgets {
     header_bar.append(&header_leave_btn);
     header_bar.append(&header_drawer_btn);
 
-    // NTQQ 次顶栏：置顶消息横幅 + 实时语音通话栏 + 实时屏幕共享画布舞台
+    // NTQQ 次顶栏：必读频道公告横幅 + 置顶消息横幅 + 实时语音通话栏 + 实时屏幕共享画布舞台
+    let announcement_label = gtk::Label::new(None);
+    announcement_label.set_xalign(0.0);
+    announcement_label.set_hexpand(true);
+    announcement_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    announcement_label.add_css_class("caption-heading");
+    let announcement_ack_btn = gtk::Button::with_label("✅ 确认必读公告");
+    announcement_ack_btn.add_css_class("suggested-action");
+    announcement_ack_btn.add_css_class("caption");
+    let announcement_bar = gtk::Box::new(Orientation::Horizontal, 8);
+    announcement_bar.add_css_class("qq-pinned-banner");
+    announcement_bar.set_visible(false);
+    announcement_bar.append(&announcement_label);
+    announcement_bar.append(&announcement_ack_btn);
+
     let pinned_label = gtk::Label::new(None);
     pinned_label.set_xalign(0.0);
     pinned_label.set_hexpand(true);
@@ -768,6 +785,7 @@ fn build_ui(app: &adw::Application) -> Widgets {
     chat_col.add_css_class("qq-chat-col");
     chat_col.append(&header_bar);
     chat_col.append(&gtk::Separator::new(Orientation::Horizontal));
+    chat_col.append(&announcement_bar);
     chat_col.append(&pinned_bar);
     chat_col.append(&call_bar);
     chat_col.append(&screen_bar);
@@ -926,6 +944,9 @@ fn build_ui(app: &adw::Application) -> Widgets {
         header_invite_btn,
         header_leave_btn,
         header_drawer_btn,
+        announcement_bar,
+        announcement_label,
+        announcement_ack_btn,
         pinned_bar,
         pinned_label,
         call_bar,
@@ -1783,7 +1804,35 @@ fn wire_actions(ctx: &Rc<AppCtx>) {
     ));
     ctx.widgets.screen_pic.add_controller(screen_click);
 
-    // 顶部频道邀请 & 退出快捷按钮
+    // 顶部频道邀请 & 退出快捷按钮 + 必读频道公告确认按钮（v8.1.0）
+    ctx.widgets.announcement_ack_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            let (cid_opt, self_id) = {
+                let st = cx.state.borrow();
+                let cid = match &st.current_chat {
+                    ChatTarget::Channel(c) if c != "*" => Some(c.clone()),
+                    _ => None,
+                };
+                (cid, st.self_id.clone())
+            };
+            if let Some(cid) = cid_opt {
+                {
+                    let mut st = cx.state.borrow_mut();
+                    if let Some(ch) = st.channels.iter_mut().find(|c| c.id == cid) {
+                        if !self_id.is_empty() && !ch.announcement_ack.iter().any(|x| x == &self_id)
+                        {
+                            ch.announcement_ack.push(self_id.clone());
+                        }
+                    }
+                }
+                cx.widgets.announcement_bar.set_visible(false);
+                invoke_channel_manage_member(&cx, &cid, &self_id, "ack_announcement");
+                cx.toast("✅ 已确认必读频道公告");
+            }
+        }
+    ));
     ctx.widgets.header_invite_btn.connect_clicked(clone!(
         #[strong(rename_to = cx)]
         ctx,
@@ -3695,6 +3744,7 @@ impl AppCtx {
                 ));
                 self.widgets.header_invite_btn.set_visible(false);
                 self.widgets.header_leave_btn.set_visible(false);
+                self.widgets.announcement_bar.set_visible(false);
             }
             ChatTarget::Channel(cid) if cid == "*" => {
                 self.widgets.chat_avatar.set_text(Some("全员群"));
@@ -3708,25 +3758,53 @@ impl AppCtx {
                 ));
                 self.widgets.header_invite_btn.set_visible(false);
                 self.widgets.header_leave_btn.set_visible(false);
+                self.widgets.announcement_bar.set_visible(false);
             }
             ChatTarget::Channel(cid) => {
                 if let Some(ch) = st.channel(cid) {
                     self.widgets.chat_avatar.set_text(Some(&ch.name));
                     self.widgets.chat_header.set_text(&channel_header_text(ch));
-                    let role = if st.is_channel_owner(cid) {
-                        "我是群主"
+                    let self_id = st.self_id.as_str();
+                    let is_admin =
+                        !self_id.is_empty() && ch.admins.iter().any(|a| a.as_str() == self_id);
+                    let is_muted =
+                        !self_id.is_empty() && ch.muted.iter().any(|m| m.as_str() == self_id);
+                    let mut role = if st.is_channel_owner(cid) {
+                        "👑 群主".to_string()
+                    } else if is_admin {
+                        "🛡️ 管理员".to_string()
                     } else {
-                        "频道成员"
+                        "👤 频道成员".to_string()
                     };
+                    if is_muted {
+                        role.push_str(" · 🔇 禁言中");
+                    }
                     self.widgets.chat_subtitle.set_text(&format!(
                         "● {role} · {server_badge} · 支持群内聊天与 Swarm 文件分发"
                     ));
                     self.widgets
                         .header_invite_btn
-                        .set_visible(st.is_channel_owner(cid));
+                        .set_visible(st.is_channel_owner(cid) || is_admin);
                     self.widgets
                         .header_leave_btn
                         .set_visible(st.is_channel_member(cid));
+                    let unacked = !ch.topic.trim().is_empty()
+                        && !self_id.is_empty()
+                        && st.is_channel_member(cid)
+                        && !ch.announcement_ack.iter().any(|a| a.as_str() == self_id);
+                    if unacked {
+                        self.widgets.announcement_label.set_text(&format!(
+                            "📢 [必读频道公告] {}（已确认 {}/{}）",
+                            ch.topic.trim(),
+                            ch.announcement_ack.len(),
+                            ch.members.len().max(1)
+                        ));
+                        self.widgets.announcement_bar.set_visible(true);
+                    } else {
+                        self.widgets.announcement_bar.set_visible(false);
+                    }
+                } else {
+                    self.widgets.announcement_bar.set_visible(false);
                 }
             }
             ChatTarget::Peer(pid) => {
@@ -3758,6 +3836,7 @@ impl AppCtx {
                 }
                 self.widgets.header_invite_btn.set_visible(false);
                 self.widgets.header_leave_btn.set_visible(false);
+                self.widgets.announcement_bar.set_visible(false);
             }
         }
     }
@@ -5530,6 +5609,7 @@ mod tests {
             private: true,
             topic: "值班".into(),
             members: vec!["p1".into()],
+            ..Default::default()
         };
         assert_eq!(channel_header_text(&ch), "🔒 # 运维（1 名成员） · 值班");
     }

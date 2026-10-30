@@ -162,6 +162,12 @@ pub struct Channel {
     pub topic: String,
     #[serde(default)]
     pub members: Vec<String>,
+    #[serde(default)]
+    pub admins: Vec<String>,
+    #[serde(default)]
+    pub muted: Vec<String>,
+    #[serde(default, rename = "announcementAck")]
+    pub announcement_ack: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

@@ -1770,6 +1770,103 @@ public sealed partial class ChatViewModel : ViewModelBase
         await ChannelManageMemberAsync(ch.Id, SelfId, "ack_announcement");
     }
 
+    /// <summary>执行同账号多设备配对与实时镜像（契约 v1.7 PairDevice RPC）。</summary>
+    public async Task PairDeviceAsync(string action = "generate", string code = "", string peerId = "")
+    {
+        try
+        {
+            var res = await _services.Ipc.InvokeAsync<System.Text.Json.JsonElement>("PairDevice", new
+            {
+                action,
+                code,
+                peerID = peerId,
+            });
+            var status = res.TryGetProperty("status", out var prop) ? prop.GetString() : res.ToString();
+            AppendSystemMessage($"🔗 多设备协同：{status}");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"多设备配对失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>查询已绑定的同账号多设备列表（契约 v1.7 ListPairedDevices RPC）。</summary>
+    public async Task ListPairedDevicesAsync(string filter = "")
+    {
+        try
+        {
+            var res = await _services.Ipc.InvokeAsync<System.Text.Json.JsonElement>("ListPairedDevices", new
+            {
+                filter,
+            });
+            var devices = res.TryGetProperty("devices", out var prop) ? prop.GetString() : res.ToString();
+            AppendSystemMessage($"📱 已配对设备列表：{devices}");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"查询配对设备失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>管理 G2 频道本地 HMAC-SHA256 Webhook 机器人网关（契约 v1.7 ManageChannelWebhook RPC）。</summary>
+    public async Task ManageChannelWebhookAsync(string channelId, string action = "create", string name = "CI-Bot", string listenAddr = "127.0.0.1:0")
+    {
+        try
+        {
+            var res = await _services.Ipc.InvokeAsync<System.Text.Json.JsonElement>("ManageChannelWebhook", new
+            {
+                channelID = channelId,
+                action,
+                name,
+                listenAddr,
+            });
+            var status = res.TryGetProperty("status", out var prop) ? prop.GetString() : res.ToString();
+            AppendSystemMessage($"🤖 频道 Webhook 机器人：{status}");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"管理频道 Webhook 失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>导出 PBKDF2-AES-256-GCM 全量加密历史归档（契约 v1.7 ExportHistoryArchive RPC）。</summary>
+    public async Task ExportHistoryArchiveAsync(string destPath, string passphrase)
+    {
+        try
+        {
+            var res = await _services.Ipc.InvokeAsync<System.Text.Json.JsonElement>("ExportHistoryArchive", new
+            {
+                destPath,
+                passphrase,
+            });
+            var status = res.TryGetProperty("status", out var prop) ? prop.GetString() : res.ToString();
+            AppendSystemMessage($"📦 历史加密归档已导出：{status}");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"导出加密归档失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>从 PBKDF2-AES-256-GCM 加密历史归档导入恢复（契约 v1.7 ImportHistoryArchive RPC）。</summary>
+    public async Task ImportHistoryArchiveAsync(string srcPath, string passphrase)
+    {
+        try
+        {
+            var res = await _services.Ipc.InvokeAsync<System.Text.Json.JsonElement>("ImportHistoryArchive", new
+            {
+                srcPath,
+                passphrase,
+            });
+            var status = res.TryGetProperty("status", out var prop) ? prop.GetString() : res.ToString();
+            AppendSystemMessage($"📥 历史加密归档已恢复：{status}");
+        }
+        catch (Exception ex)
+        {
+            AppendSystemMessage($"导入加密归档失败：{ex.Message}");
+        }
+    }
+
     private void NotifyConversationHeaderChanged()
     {
         OnPropertyChanged(nameof(ConversationTitle));

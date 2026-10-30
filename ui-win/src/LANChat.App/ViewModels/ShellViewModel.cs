@@ -205,7 +205,7 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
                 {
                     Transfers.Upsert(transfer);
                     Chat.HandleTransferProgress(transfer);
-                    if (transfer.Direction == "inbound" && transfer.State == "pending")
+                    if (transfer.Direction == TransferDirection.Inbound && transfer.State == TransferState.Pending)
                     {
                         PendingInboundTransferId = transfer.Id;
                     }
@@ -333,9 +333,10 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
         {
             if (!string.IsNullOrEmpty(LastNotifiedChannelId))
             {
-                await _services.Ipc.InvokeAsync<object?>("SendChannelText", new
+                await _services.Ipc.InvokeAsync<object?>("SendText", new
                 {
-                    channelId = LastNotifiedChannelId,
+                    to = "",
+                    group = LastNotifiedChannelId,
                     text,
                 });
             }
@@ -360,10 +361,11 @@ public sealed partial class ShellViewModel : ViewModelBase, IDisposable
         try
         {
             var peerId = LastNotifiedPeerId ?? Chat.CurrentPeer?.Id ?? "";
-            await _services.Ipc.InvokeAsync<object?>("AnswerVoiceCall", new
+            await _services.Ipc.InvokeAsync<object?>("AcceptVoiceCall", new
             {
-                peerId,
-                accept = true,
+                to = peerId,
+                group = LastNotifiedChannelId ?? "",
+                remoteUDP = "",
             });
         }
         catch

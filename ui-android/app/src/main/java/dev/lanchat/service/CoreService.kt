@@ -62,11 +62,11 @@ class CoreService : Service() {
                             .orEmpty()
                             .ifEmpty { "👍 收到，稍后处理" }
                         if (targetGroup.isNotEmpty()) {
-                            ServiceLocator.engine.sendChannelText(targetGroup, reply)
+                            ServiceLocator.engine.sendText("", reply, targetGroup)
                         } else if (targetPeer.isNotEmpty()) {
                             ServiceLocator.engine.sendText(targetPeer, reply)
                         } else {
-                            ServiceLocator.engine.sendChannelText("*", reply)
+                            ServiceLocator.engine.sendText("", reply, "*")
                         }
                     }
                     ACTION_ACCEPT_CALL -> {

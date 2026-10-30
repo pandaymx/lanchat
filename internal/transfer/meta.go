@@ -7,14 +7,89 @@ import (
 )
 
 // metaState 是 DestPath.meta 的内容，记录断点续传所需最小状态。
+// v8.2.0 新增 ChunkBitmap 支持多路径乱序 Chunk 写入的位图级精准断点续传。
 type metaState struct {
-	TransferID string `json:"transferID"`
-	Name       string `json:"name"`
-	Size       int64  `json:"size"`
-	SHA256     string `json:"sha256"`
-	ChunkSize  int    `json:"chunkSize"`
-	BytesDone  int64  `json:"bytesDone"`
-	UpdatedAt  string `json:"updatedAt"`
+	TransferID  string `json:"transferID"`
+	Name        string `json:"name"`
+	Size        int64  `json:"size"`
+	SHA256      string `json:"sha256"`
+	ChunkSize   int    `json:"chunkSize"`
+	BytesDone   int64  `json:"bytesDone"`
+	ChunkBitmap []byte `json:"chunkBitmap,omitempty"`
+	UpdatedAt   string `json:"updatedAt"`
+}
+
+func (m *metaState) ensureBitmap(totalChunks int) {
+	if totalChunks <= 0 {
+		return
+	}
+	needBytes := (totalChunks + 7) / 8
+	if len(m.ChunkBitmap) < needBytes {
+		nb := make([]byte, needBytes)
+		copy(nb, m.ChunkBitmap)
+		m.ChunkBitmap = nb
+	}
+	if m.ChunkSize <= 0 {
+		m.ChunkSize = ChunkSize
+	}
+	// 将连续前缀 BytesDone 已覆盖的完整 Chunk 同步置位。
+	contiguousChunks := int(m.BytesDone / int64(m.ChunkSize))
+	if m.Size > 0 && m.BytesDone >= m.Size {
+		contiguousChunks = totalChunks
+	}
+	for i := 0; i < contiguousChunks && i < totalChunks; i++ {
+		m.ChunkBitmap[i/8] |= 1 << uint(i%8)
+	}
+}
+
+func (m *metaState) isChunkDone(idx int) bool {
+	if idx < 0 || idx/8 >= len(m.ChunkBitmap) {
+		return false
+	}
+	return (m.ChunkBitmap[idx/8] & (1 << uint(idx%8))) != 0
+}
+
+func (m *metaState) markChunkDone(idx, totalChunks int, totalSize int64) {
+	m.ensureBitmap(totalChunks)
+	if idx >= 0 && idx < totalChunks {
+		m.ChunkBitmap[idx/8] |= 1 << uint(idx%8)
+	}
+	// 更新连续前缀 BytesDone（兼容单流回退续传），全部置位时设为 totalSize。
+	contiguous := 0
+	for contiguous < totalChunks && m.isChunkDone(contiguous) {
+		contiguous++
+	}
+	if contiguous >= totalChunks {
+		m.BytesDone = totalSize
+		return
+	}
+	off := int64(contiguous) * int64(ChunkSize)
+	if off > totalSize {
+		off = totalSize
+	}
+	if off > m.BytesDone {
+		m.BytesDone = off
+	}
+}
+
+func (m *metaState) completedChunksAndBytes(totalChunks int, totalSize int64) (int, int64) {
+	m.ensureBitmap(totalChunks)
+	var cnt int
+	var bytes int64
+	for i := 0; i < totalChunks; i++ {
+		if m.isChunkDone(i) {
+			cnt++
+			cStart := int64(i) * int64(ChunkSize)
+			cEnd := cStart + int64(ChunkSize)
+			if cEnd > totalSize {
+				cEnd = totalSize
+			}
+			if cEnd > cStart {
+				bytes += cEnd - cStart
+			}
+		}
+	}
+	return cnt, bytes
 }
 
 // loadMeta 读取 meta 文件；不存在时返回 (nil, nil)。

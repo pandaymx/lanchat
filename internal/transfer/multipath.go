@@ -173,9 +173,23 @@ func ServeMultipathListeners(ctx context.Context, cfg SendConfig, listeners []ne
 		lastBytes   int64
 	)
 
-	markRangeCompleted := func(startOff, endOff int64) {
+	markRangeCompleted := func(startOff, endOff int64, peerBitmap []byte) {
 		mu.Lock()
 		defer mu.Unlock()
+		if len(peerBitmap) > 0 {
+			for idx := 0; idx < totalChunks; idx++ {
+				if idx/8 < len(peerBitmap) && (peerBitmap[idx/8]&(1<<uint(idx%8))) != 0 && !doneChunks[idx] {
+					doneChunks[idx] = true
+					doneCount++
+					cStart := int64(idx) * int64(ChunkSize)
+					cEnd := cStart + int64(ChunkSize)
+					if cEnd > cfg.Size {
+						cEnd = cfg.Size
+					}
+					bytesDone += cEnd - cStart
+				}
+			}
+		}
 		if startOff == 0 && endOff >= cfg.Size {
 			bytesDone = cfg.Size
 			doneCount = totalChunks
@@ -225,7 +239,7 @@ func ServeMultipathListeners(ctx context.Context, cfg SendConfig, listeners []ne
 			go func(conn net.Conn) {
 				defer connWG.Done()
 				defer conn.Close()
-				sStart, sEnd, err := serveMultipathConn(ctx, cfg, conn)
+				sStart, sEnd, peerBitmap, err := serveMultipathConn(ctx, cfg, conn)
 				if err != nil {
 					if errors.Is(err, ErrCanceled) || errors.Is(err, ErrBadToken) {
 						mu.Lock()
@@ -237,7 +251,7 @@ func ServeMultipathListeners(ctx context.Context, cfg SendConfig, listeners []ne
 					}
 					return
 				}
-				markRangeCompleted(sStart, sEnd)
+				markRangeCompleted(sStart, sEnd, peerBitmap)
 			}(c)
 		}
 	}
@@ -267,37 +281,38 @@ func ServeMultipathListeners(ctx context.Context, cfg SendConfig, listeners []ne
 	return err
 }
 
-func serveMultipathConn(ctx context.Context, cfg SendConfig, conn net.Conn) (int64, int64, error) {
+func serveMultipathConn(ctx context.Context, cfg SendConfig, conn net.Conn) (int64, int64, []byte, error) {
 	fr := protocol.NewFramer(conn)
 	hello, err := readHello(fr)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	if hello.Token != cfg.Token {
 		_ = writePeerError(fr, "bad token")
-		return 0, 0, ErrBadToken
+		return 0, 0, nil, ErrBadToken
 	}
 	resume := hello.ResumeOffset
 	if resume < 0 || resume > cfg.Size {
 		_ = writePeerError(fr, "invalid resume offset")
-		return 0, 0, fmt.Errorf("%w: resumeOffset %d", errBadPayload, resume)
+		return 0, 0, nil, fmt.Errorf("%w: resumeOffset %d", errBadPayload, resume)
 	}
 	endOffset := cfg.Size
 	if hello.EndOffset > 0 {
 		if hello.EndOffset <= resume || hello.EndOffset > cfg.Size {
 			_ = writePeerError(fr, "invalid end offset")
-			return 0, 0, fmt.Errorf("%w: endOffset %d", errBadPayload, hello.EndOffset)
+			return 0, 0, nil, fmt.Errorf("%w: endOffset %d", errBadPayload, hello.EndOffset)
 		}
 		endOffset = hello.EndOffset
 	}
 	if err := writeAccept(fr, cfg.Size, ChunkSize); err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 
 	cw := newCreditWindow(MaxCreditBytes)
 	cw.sent = resume
 	cw.acked = resume
-	buf := make([]byte, ChunkSize)
+	buf := AcquireChunkBuffer(ChunkSize)
+	defer ReleaseChunkBuffer(buf)
 
 	ackCh := make(chan ackResult, 8)
 	ackCtx, stopAck := context.WithCancel(ctx)
@@ -308,7 +323,7 @@ func serveMultipathConn(ctx context.Context, cfg SendConfig, conn net.Conn) (int
 	for bytesSent < endOffset {
 		if err := ctx.Err(); err != nil {
 			_ = writeCancel(fr)
-			return 0, 0, ErrCanceled
+			return 0, 0, nil, ErrCanceled
 		}
 		readLen := len(buf)
 		if rem := endOffset - bytesSent; int64(readLen) > rem {
@@ -319,7 +334,7 @@ func serveMultipathConn(ctx context.Context, cfg SendConfig, conn net.Conn) (int
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return 0, 0, err
+			return 0, 0, nil, err
 		}
 		for sent := 0; sent < n; {
 			take := cw.acquire(n - sent)
@@ -328,23 +343,23 @@ func serveMultipathConn(ctx context.Context, cfg SendConfig, conn net.Conn) (int
 				case r := <-ackCh:
 					if r.err != nil {
 						if errors.Is(r.err, ErrCanceled) {
-							return 0, 0, ErrCanceled
+							return 0, 0, nil, ErrCanceled
 						}
-						return 0, 0, r.err
+						return 0, 0, nil, r.err
 					}
 					cw.grant(r.cumOffset, int64(r.credit))
 				case <-ctx.Done():
 					_ = writeCancel(fr)
-					return 0, 0, ErrCanceled
+					return 0, 0, nil, ErrCanceled
 				}
 				continue
 			}
 			if err := throttleBytes(ctx, take); err != nil {
 				_ = writeCancel(fr)
-				return 0, 0, ErrCanceled
+				return 0, 0, nil, ErrCanceled
 			}
 			if err := writeData(fr, bytesSent+int64(sent), buf[sent:sent+take]); err != nil {
-				return 0, 0, err
+				return 0, 0, nil, err
 			}
 			sent += take
 			bytesSent += int64(take)
@@ -352,7 +367,7 @@ func serveMultipathConn(ctx context.Context, cfg SendConfig, conn net.Conn) (int
 	}
 
 	if err := writeFin(fr, cfg.SHA256, bytesSent); err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	if cwConn, ok := conn.(interface{ CloseWrite() error }); ok {
 		_ = cwConn.CloseWrite()
@@ -363,13 +378,13 @@ func serveMultipathConn(ctx context.Context, cfg SendConfig, conn net.Conn) (int
 		select {
 		case r := <-ackCh:
 			if r.err != nil {
-				return resume, endOffset, nil
+				return resume, endOffset, hello.ChunkBitmap, nil
 			}
 			cw.grant(r.cumOffset, int64(r.credit))
 		case <-grace.C:
-			return resume, endOffset, nil
+			return resume, endOffset, hello.ChunkBitmap, nil
 		case <-ctx.Done():
-			return resume, endOffset, nil
+			return resume, endOffset, hello.ChunkBitmap, nil
 		}
 	}
 }
@@ -394,35 +409,30 @@ func ReceiveMultipath(ctx context.Context, cfg ReceiveConfig, progress func(byte
 	partPath := cfg.DestPath + ".part"
 	metaPath := cfg.DestPath + ".meta"
 
-	resume, err := recoverOffset(metaPath, partPath, &cfg)
+	totalChunks := int((cfg.Size + int64(ChunkSize) - 1) / int64(ChunkSize))
+	if totalChunks <= 0 && cfg.Size > 0 {
+		totalChunks = 1
+	}
+
+	meta, initialDoneCnt, initialBytesDone, err := recoverMultipathMeta(metaPath, partPath, &cfg, totalChunks)
 	if err != nil {
 		return nil, err
 	}
-	// 对按块并发乱序写入的续传，向下对齐到 ChunkSize 边界。
-	resume = (resume / int64(ChunkSize)) * int64(ChunkSize)
 
 	part, err := os.OpenFile(partPath, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
 	userCanceled := false
-	dataStarted := false
+	dataStarted := initialDoneCnt > 0
 	defer func() {
 		_ = part.Close()
-		if userCanceled || (!dataStarted && resume == 0) {
+		if userCanceled || (!dataStarted && initialDoneCnt == 0) {
 			_ = os.Remove(partPath)
 			_ = os.Remove(metaPath)
 		}
 	}()
 
-	meta := &metaState{
-		TransferID: cfg.TransferID,
-		Name:       filepath.Base(cfg.DestPath),
-		Size:       cfg.Size,
-		SHA256:     cfg.SHA256,
-		ChunkSize:  ChunkSize,
-		BytesDone:  resume,
-	}
 	mw := newMetaWriter(metaPath, meta, MinCreditBytes, metaFlushInterval)
 	if err := mw.flush(); err != nil {
 		return nil, err
@@ -447,32 +457,43 @@ func ReceiveMultipath(ctx context.Context, cfg ReceiveConfig, progress func(byte
 		return nil, ErrDialFailed
 	}
 
-	// 将 [resume, cfg.Size) 切分为 1 MiB Chunk 队列。
-	var chunks []multipathChunk
-	for off := resume; off < cfg.Size; off += int64(ChunkSize) {
+	// 将 [0, cfg.Size) 切分为 1 MiB Chunk 队列，并按 .meta ChunkBitmap 跳过已完成块（v8.2.0 乱序位图续传）。
+	var pending []multipathChunk
+	for idx := 0; idx < totalChunks; idx++ {
+		if meta.isChunkDone(idx) {
+			continue
+		}
+		off := int64(idx) * int64(ChunkSize)
 		end := off + int64(ChunkSize)
 		if end > cfg.Size {
 			end = cfg.Size
 		}
-		chunks = append(chunks, multipathChunk{
-			index: len(chunks),
+		pending = append(pending, multipathChunk{
+			index: idx,
 			start: off,
 			end:   end,
 		})
 	}
-	totalChunks := len(chunks)
 
 	var (
 		qMu           sync.Mutex
-		pending       = append([]multipathChunk(nil), chunks...)
-		completedCnt  int
-		bytesDone     = resume
+		completedCnt  = initialDoneCnt
+		bytesDone     = initialBytesDone
 		failoverCount atomic.Int32
 		anyDialOK     atomic.Bool
 		fatalErr      error
 		lastReport    = time.Now()
-		lastBytes     = resume
+		lastBytes     = initialBytesDone
 	)
+	if initialDoneCnt >= totalChunks && totalChunks > 0 {
+		anyDialOK.Store(true)
+	}
+
+	snapshotBitmap := func() []byte {
+		qMu.Lock()
+		defer qMu.Unlock()
+		return append([]byte(nil), meta.ChunkBitmap...)
+	}
 
 	popChunk := func() (multipathChunk, bool) {
 		qMu.Lock()
@@ -497,8 +518,11 @@ func ReceiveMultipath(ctx context.Context, cfg ReceiveConfig, progress func(byte
 		defer qMu.Unlock()
 		dataStarted = true
 		chunkBytes := ch.end - ch.start
-		completedCnt++
-		bytesDone += chunkBytes
+		if !meta.isChunkDone(ch.index) {
+			meta.markChunkDone(ch.index, totalChunks, cfg.Size)
+			completedCnt++
+			bytesDone += chunkBytes
+		}
 		routes[routeIdx].ChunksDone++
 		routes[routeIdx].BytesDone += chunkBytes
 		if elapsed > 0 {
@@ -510,10 +534,8 @@ func ReceiveMultipath(ctx context.Context, cfg ReceiveConfig, progress func(byte
 			}
 			routes[routeIdx].RTT = elapsed
 		}
-		// 仅当全部块完成时将 meta.BytesDone 推到 cfg.Size，部分完成时保持保守偏移。
-		if completedCnt == totalChunks {
-			_ = mw.update(cfg.Size, true)
-		}
+		// 实时将 ChunkBitmap 与连续前缀偏移持久化到 .meta（v8.2.0）。
+		_ = mw.update(meta.BytesDone, true)
 		if progress != nil {
 			now := time.Now()
 			if now.Sub(lastReport) >= progressInterval || bytesDone == cfg.Size {
@@ -565,7 +587,7 @@ func ReceiveMultipath(ctx context.Context, cfg ReceiveConfig, progress func(byte
 				}
 
 				start := time.Now()
-				err := pullChunkOnPath(ctx, cfg, addr, part, ch)
+				err := pullChunkOnPath(ctx, cfg, addr, part, ch, snapshotBitmap())
 				if err != nil {
 					if errors.Is(err, ErrCanceled) || errors.Is(err, ErrBadToken) {
 						qMu.Lock()
@@ -649,7 +671,60 @@ func ReceiveMultipath(ctx context.Context, cfg ReceiveConfig, progress func(byte
 	}, nil
 }
 
-func pullChunkOnPath(ctx context.Context, cfg ReceiveConfig, addr string, part *os.File, ch multipathChunk) error {
+func recoverMultipathMeta(metaPath, partPath string, cfg *ReceiveConfig, totalChunks int) (*metaState, int, int64, error) {
+	partSize, err := fileSize(partPath)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	m, err := loadMeta(metaPath)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	fresh := func() (*metaState, int, int64, error) {
+		if partSize > 0 {
+			_ = os.Remove(partPath)
+		}
+		_ = os.Remove(metaPath)
+		st := &metaState{
+			TransferID: cfg.TransferID,
+			Name:       filepath.Base(cfg.DestPath),
+			Size:       cfg.Size,
+			SHA256:     cfg.SHA256,
+			ChunkSize:  ChunkSize,
+		}
+		st.ensureBitmap(totalChunks)
+		return st, 0, 0, nil
+	}
+	if m == nil {
+		return fresh()
+	}
+	if m.TransferID != cfg.TransferID || m.Size != cfg.Size || m.SHA256 != cfg.SHA256 {
+		return fresh()
+	}
+	m.Name = filepath.Base(cfg.DestPath)
+	m.ChunkSize = ChunkSize
+	if m.BytesDone > partSize {
+		m.BytesDone = partSize
+	}
+	m.ensureBitmap(totalChunks)
+	// 若 .part 实际大小不足以覆盖某置位块，则清除超出 partSize 的块置位。
+	for idx := 0; idx < totalChunks; idx++ {
+		if !m.isChunkDone(idx) {
+			continue
+		}
+		cEnd := int64(idx+1) * int64(ChunkSize)
+		if cEnd > cfg.Size {
+			cEnd = cfg.Size
+		}
+		if partSize < cEnd {
+			m.ChunkBitmap[idx/8] &^= 1 << uint(idx%8)
+		}
+	}
+	doneCnt, doneBytes := m.completedChunksAndBytes(totalChunks, cfg.Size)
+	return m, doneCnt, doneBytes, nil
+}
+
+func pullChunkOnPath(ctx context.Context, cfg ReceiveConfig, addr string, part *os.File, ch multipathChunk, chunkBitmap []byte) error {
 	dialCtx, cancel := context.WithTimeout(ctx, cfg.DialTimeout)
 	defer cancel()
 	d := net.Dialer{}
@@ -660,7 +735,7 @@ func pullChunkOnPath(ctx context.Context, cfg ReceiveConfig, addr string, part *
 	defer conn.Close()
 
 	fr := protocol.NewFramer(conn)
-	if err := writeHelloRange(fr, cfg.Token, ch.start, ch.end); err != nil {
+	if err := writeHelloRangeBitmap(fr, cfg.Token, ch.start, ch.end, chunkBitmap); err != nil {
 		return err
 	}
 	accept, err := readAccept(fr)

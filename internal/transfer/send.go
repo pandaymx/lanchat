@@ -158,7 +158,8 @@ func serveSendConnFile(ctx context.Context, cfg SendConfig, conn net.Conn, file 
 	cw := newCreditWindow(MinCreditBytes)
 	cw.sent = resume
 	cw.acked = resume
-	buf := make([]byte, ChunkSize)
+	buf := AcquireChunkBuffer(ChunkSize)
+	defer ReleaseChunkBuffer(buf)
 
 	// ackErr 承载 ACK 读取 goroutine 的结果。
 	ackCh := make(chan ackResult, 8)

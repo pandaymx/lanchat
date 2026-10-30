@@ -26,11 +26,13 @@ var (
 )
 
 // helloBody 是 HELLO 帧的 JSON 负载。ResumeOffset 在 M2 恒为 0，M3 续传启用；
-// EndOffset 在 v7.3.0 多路径并发分片拉取时指定分片结束偏移（0 表示读取至文件末尾）。
+// EndOffset 在 v7.3.0 多路径并发分片拉取时指定分片结束偏移（0 表示读取至文件末尾）；
+// ChunkBitmap 在 v8.2.0 多路径续传时携带接收方已落盘的 Chunk 位图，供发送方准确统计全文件完成度。
 type helloBody struct {
 	Token        string `json:"token"`
 	ResumeOffset int64  `json:"resumeOffset"`
 	EndOffset    int64  `json:"endOffset,omitempty"`
+	ChunkBitmap  []byte `json:"chunkBitmap,omitempty"`
 }
 
 // acceptBody 是 ACCEPT 帧的 JSON 负载。
@@ -89,10 +91,16 @@ func writeHello(fr *protocol.Framer, token string, resumeOffset int64) error {
 
 // writeHelloRange 发送携带 [resumeOffset, endOffset) 分片区间的 HELLO 帧（v7.3.0 多路径并发）。
 func writeHelloRange(fr *protocol.Framer, token string, resumeOffset, endOffset int64) error {
+	return writeHelloRangeBitmap(fr, token, resumeOffset, endOffset, nil)
+}
+
+// writeHelloRangeBitmap 发送携带 [resumeOffset, endOffset) 分片区间及已完成块位图的 HELLO 帧（v8.2.0）。
+func writeHelloRangeBitmap(fr *protocol.Framer, token string, resumeOffset, endOffset int64, chunkBitmap []byte) error {
 	return writeJSON(fr, protocol.FrameHello, helloBody{
 		Token:        token,
 		ResumeOffset: resumeOffset,
 		EndOffset:    endOffset,
+		ChunkBitmap:  chunkBitmap,
 	})
 }
 
@@ -140,15 +148,16 @@ func writeCancel(fr *protocol.Framer) error {
 // dataHeaderSize DATA 帧内 offset 头部长度。
 const dataHeaderSize = 8
 
-// writeData 发送 DATA 帧：offset（8B 大端）+ data。
+// writeData 发送 DATA 帧：offset（8B 大端）+ data（v8.2.0 复用分级 sync.Pool 缓冲池避免高频分配）。
 func writeData(fr *protocol.Framer, offset int64, data []byte) error {
-	payload := make([]byte, dataHeaderSize+len(data))
+	payload := AcquireChunkBuffer(dataHeaderSize + len(data))
+	defer ReleaseChunkBuffer(payload)
 	binary.BigEndian.PutUint64(payload[:dataHeaderSize], uint64(offset))
 	copy(payload[dataHeaderSize:], data)
 	return fr.WriteFrame(&protocol.Frame{Type: protocol.FrameData, Payload: payload})
 }
 
-// readData 读取 DATA 帧，返回 offset 与数据副本。
+// readData 读取 DATA 帧，返回 offset 与零拷贝负载切片视图（v8.2.0）。
 func readData(fr *protocol.Framer) (offset int64, data []byte, err error) {
 	f, err := fr.ReadFrame()
 	if err != nil {
@@ -169,9 +178,7 @@ func readData(fr *protocol.Framer) (offset int64, data []byte, err error) {
 		return 0, nil, errShortPayload
 	}
 	off := int64(binary.BigEndian.Uint64(f.Payload[:dataHeaderSize]))
-	body := make([]byte, len(f.Payload)-dataHeaderSize)
-	copy(body, f.Payload[dataHeaderSize:])
-	return off, body, nil
+	return off, f.Payload[dataHeaderSize:], nil
 }
 
 // ackHeaderSize ACK 帧头部长度：cumOffset 8B + credit 4B。

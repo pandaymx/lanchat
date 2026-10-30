@@ -1,5 +1,24 @@
 # Changelog
 
+## [9.0.0](https://github.com/pandaymx/lanchat/compare/v8.3.0...v9.0.0) (2026-10-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **appapi:** upgrade IPC contract schemaVersion to 1.7 with PairDevice, ListPairedDevices, ManageChannelWebhook, ExportHistoryArchive, and ImportHistoryArchive RPCs across all six endpoints.
+
+### Features
+
+* **appapi:** upgrade contract schema to v1.7 with multi-device webhook and archive ([3a64629](https://github.com/pandaymx/lanchat/commit/3a6462969f072f936045c955427d3a6081fbca18))
+* **bindings:** expose contract v1.7 pairing webhook and archive methods ([dfc9094](https://github.com/pandaymx/lanchat/commit/dfc9094eff4307033318fce71704f6e95e0803a4))
+* **core:** add multi-device pairing, channel webhook gateway, and encrypted archive ([e27add6](https://github.com/pandaymx/lanchat/commit/e27add6a859bd035fa51e015ac0805cce0c6c1e2))
+* **ipc:** register contract v1.7 pairing webhook and archive RPC handlers ([dd23485](https://github.com/pandaymx/lanchat/commit/dd23485973144455d4d564cae0b8da1010350e20))
+* **ui-android:** bind contract v1.7 pairing webhook and archive RPCs ([e92e5f0](https://github.com/pandaymx/lanchat/commit/e92e5f0828fd79f4bfb4062cbcfa67378d7a4c8c))
+* **ui-ios:** bind contract v1.7 pairing webhook and archive RPCs ([651265a](https://github.com/pandaymx/lanchat/commit/651265ab6f2144583362eb3a7cacddbb499ed84f))
+* **ui-linux:** integrate contract v1.7 pairing webhook and archive RPCs ([2254572](https://github.com/pandaymx/lanchat/commit/225457211fa7475c7846380d9210e05a236bc8df))
+* **ui-macos:** integrate contract v1.7 pairing webhook and archive RPCs ([ca8798f](https://github.com/pandaymx/lanchat/commit/ca8798f17916fa245c5c04e5e01dbc25328578ee))
+* **ui-win:** integrate contract v1.7 pairing webhook and archive RPCs ([ae3927e](https://github.com/pandaymx/lanchat/commit/ae3927e9d4fc15b1d117ea24a630f4f85fa373e5))
+
 ## [8.3.0](https://github.com/pandaymx/lanchat/compare/v8.2.0...v8.3.0) (2026-10-30)
 
 

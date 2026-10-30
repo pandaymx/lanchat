@@ -910,6 +910,44 @@ final class ChatStore: ObservableObject {
         }
     }
 
+    // MARK: - 阶段七 v8.3.0：MenuBarExtra 未读角标常驻与系统通知快捷操作
+
+    var totalUnreadCount: Int {
+        unreadCounts.values.reduce(0, +)
+    }
+
+    var hasIncomingCall: Bool {
+        voiceCall?.state == "ringing"
+    }
+
+    var pendingInboundTransfer: Transfer? {
+        transfers.first(where: { $0.direction == "inbound" && $0.state == "pending" })
+    }
+
+    func syncDockUnreadBadge() {
+        let count = totalUnreadCount
+        NSApplication.shared.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
+    }
+
+    func quickReplyLatestUnread(text: String = "👍 收到，稍后处理") async {
+        let targetKey = unreadCounts.first(where: { $0.value > 0 })?.key ?? activeThreadKey ?? "*"
+        await sendText(key: targetKey, text: text)
+        unreadCounts[targetKey] = 0
+        syncDockUnreadBadge()
+    }
+
+    func quickAcceptIncomingCall() async {
+        let to = voiceCall?.peerId ?? ""
+        let group = voiceCall?.groupId ?? ""
+        await acceptVoiceCallRpc(to: to, group: group)
+    }
+
+    func quickAcceptPendingFile() async {
+        guard let pending = pendingInboundTransfer else { return }
+        let savePath = (settings.downloadDir as NSString).appendingPathComponent(pending.name)
+        await respondFile(id: pending.id, accept: true, savePath: savePath)
+    }
+
     func shutdown() {
         ipc.stop()
         if settings.stopDaemonOnExit {

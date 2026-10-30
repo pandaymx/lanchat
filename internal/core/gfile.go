@@ -46,6 +46,9 @@ func (c *Client) OfferFileToGroup(group, path string) (string, error) {
 	g := newSourceGroupTask(c, group, id, info.name, info.size, sum, src, fileKey)
 	tr := newBlockTransport(c.selfID, token, g.deliverBlock, g.onPeerTransport)
 	tr.blockDirect = c.forceRelay
+	c.mu.Lock()
+	tr.setBlockedPeers(c.blockedDirectPeers)
+	c.mu.Unlock()
 	tr.onRelayRequest = func(peer string) { c.requestGroupRelay(id, peer) }
 	g.tr = tr
 	tr.setFileKey(fileKey)
@@ -121,6 +124,9 @@ func (c *Client) respondGroupFile(t *groupTask, destPath string) error {
 	token := uuid.NewString()
 	tr := newBlockTransport(c.selfID, token, t.deliverBlock, t.onPeerTransport)
 	tr.blockDirect = c.forceRelay
+	c.mu.Lock()
+	tr.setBlockedPeers(c.blockedDirectPeers)
+	c.mu.Unlock()
 	tr.onRelayRequest = func(peer string) { c.requestGroupRelay(t.id, peer) }
 	cand, err := tr.listenOn()
 	if err != nil {

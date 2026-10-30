@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"sync"
+	"time"
 
 	"github.com/pandaymx/lanchat/internal/appapi"
 	"github.com/pandaymx/lanchat/internal/group"
@@ -76,6 +77,7 @@ const (
 	evDown
 	evPause
 	evResume
+	evHybridRelayCheck
 )
 
 func newSourceGroupTask(cli *Client, groupID, id, name string, size int64, sha string, src *fileBlockSource, fileKey []byte) *groupTask {
@@ -106,6 +108,9 @@ func newReceiverGroupTask(cli *Client, groupID, id, name string, size int64, sha
 
 // run 是 actor 主循环：串行处理 JOIN/LEAVE/块帧，保证重建与消息无竞态。
 func (g *groupTask) run() {
+	if !g.source {
+		go g.hybridRelayWatchdog()
+	}
 	for ev := range g.events {
 		switch ev.kind {
 		case evJoin:
@@ -125,6 +130,45 @@ func (g *groupTask) run() {
 				g.paused = false
 				g.rebuild()
 			}
+		case evHybridRelayCheck:
+			g.checkHybridRelayFallback()
+		}
+	}
+}
+
+func (g *groupTask) hybridRelayWatchdog() {
+	ticker := time.NewTicker(1200 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		g.mu.RLock()
+		closed := g.closed
+		g.mu.RUnlock()
+		if closed {
+			return
+		}
+		g.post(groupEvent{kind: evHybridRelayCheck})
+	}
+}
+
+// checkHybridRelayFallback 检测混合 Swarm 中跨网段受阻节点（v8.2.0）：
+// 若本接收节点尚未收齐全部块且无法与任何 Seeder 建立 P2P 直连，仅对本受阻节点自动触发
+// AES-GCM 加密中继回退拉取剩余块，避免单节点卡死拖慢全群分发。
+func (g *groupTask) checkHybridRelayFallback() {
+	if g.source || g.completed || g.paused || g.src == nil || g.tr == nil {
+		return
+	}
+	if g.src.writtenBlocks() >= g.blockCount() {
+		return
+	}
+	if g.tr.connectedCount() > 0 {
+		return
+	}
+	if g.peerName != "" && !g.tr.isPeerConnected(g.peerName) {
+		go g.tr.forceRelayFallback(g.peerName)
+	}
+	for member := range g.cand {
+		if member != "" && member != g.cli.selfID && !g.tr.isPeerConnected(member) {
+			go g.tr.forceRelayFallback(member)
 		}
 	}
 }
@@ -307,16 +351,23 @@ func (g *groupTask) handleDown(ev groupEvent) {
 	if cp.State != appapi.TransferActive {
 		return
 	}
-	var via bool
-	for _, v := range g.relay {
-		if v {
-			via = true
-			break
-		}
-	}
-	cp.ViaRelay = via
+	cp.ViaRelay = g.isViaRelay()
 	g.cache(cp)
 	g.cli.listener().OnTransferProgress(cp)
+}
+
+func (g *groupTask) isViaRelay() bool {
+	if !g.source && g.peerName != "" && g.tr != nil {
+		if relayed, ok := g.relay[g.peerName]; ok && !relayed && g.tr.isPeerConnected(g.peerName) {
+			return false
+		}
+	}
+	for _, v := range g.relay {
+		if v {
+			return true
+		}
+	}
+	return false
 }
 
 // rebuild 依据当前名册重建 Swarm，并重放各成员最近位图恢复状态。
@@ -440,13 +491,6 @@ func (g *groupTask) finish() {
 
 // progressSnapshot 构造对齐 appapi.Transfer 的快照。
 func (g *groupTask) progressSnapshot(bytesDone, speed int64) appapi.Transfer {
-	var via bool
-	for _, relayed := range g.relay {
-		if relayed {
-			via = true
-			break
-		}
-	}
 	return appapi.Transfer{
 		ID:        g.id,
 		Direction: g.direction(),
@@ -458,7 +502,7 @@ func (g *groupTask) progressSnapshot(bytesDone, speed int64) appapi.Transfer {
 		Size:      g.size,
 		BytesDone: bytesDone,
 		SpeedBps:  speed,
-		ViaRelay:  via,
+		ViaRelay:  g.isViaRelay(),
 	}
 }
 

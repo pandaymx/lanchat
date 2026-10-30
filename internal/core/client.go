@@ -135,11 +135,44 @@ type Client struct {
 	// forceRelay 为仅测试使用的钩子：禁止群文件数据面直连（外拨与入站均
 	// 拒绝），确定性迫使传输回退中继。生产代码路径恒为 false。
 	forceRelay bool
+	// blockedDirectPeers 记录特定跨网段对端直连受阻（v8.2.0 混合 Swarm 中继兜底）。
+	blockedDirectPeers map[string]bool
+
+	// multipathMinBytes 单播大文件自动升级 Multipath 多路径并发管线的阈值（默认 32 MiB，v8.2.0）。
+	multipathMinBytes  int64
+	lastMultipathPaths atomic.Int32
 
 	// updateBaseURL / updateProxies / updateHTTPClient 允许测试注入自定义更新源与代理列表。
 	updateBaseURL    string
 	updateProxies    []string
 	updateHTTPClient *http.Client
+}
+
+// defaultMultipathMinBytes 是单播自动升级 Multipath 多路径并发拉取的默认文件大小阈值（32 MiB，v8.2.0）。
+const defaultMultipathMinBytes int64 = 32 * 1024 * 1024
+
+func (c *Client) multipathThresholdBytes() int64 {
+	c.mu.Lock()
+	v := c.multipathMinBytes
+	c.mu.Unlock()
+	if v > 0 {
+		return v
+	}
+	return defaultMultipathMinBytes
+}
+
+// SetPeerDirectBlocked 标记或解除特定对端节点的 P2P 直连阻断状态（供跨网段混合 Swarm 中继回退治理与测试，v8.2.0）。
+func (c *Client) SetPeerDirectBlocked(peerID string, blocked bool) {
+	c.mu.Lock()
+	if c.blockedDirectPeers == nil {
+		c.blockedDirectPeers = make(map[string]bool)
+	}
+	if blocked {
+		c.blockedDirectPeers[peerID] = true
+	} else {
+		delete(c.blockedDirectPeers, peerID)
+	}
+	c.mu.Unlock()
 }
 
 // Options 构造客户端时的参数。

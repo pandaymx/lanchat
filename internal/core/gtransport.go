@@ -62,6 +62,8 @@ type blockTransport struct {
 	// blockDirect 为仅测试使用的钩子：禁止直连——外拨直接判败并请求中继，
 	// 入站直连在握手阶段被关闭，从而确定性强制走中继回退。
 	blockDirect bool
+	// blockedPeers 记录按对端粒度阻断 P2P 直连的节点集合（v8.2.0 混合 Swarm 中继回退）。
+	blockedPeers map[string]bool
 
 	mu    sync.Mutex
 	peers map[string][]string // memberID -> 候选 host:port
@@ -91,6 +93,7 @@ func newBlockTransport(selfID, selfToken string, incoming func(string, byte, []b
 	return &blockTransport{
 		selfID:         selfID,
 		selfToken:      selfToken,
+		blockedPeers:   map[string]bool{},
 		peers:          map[string][]string{},
 		peerTokens:     map[string]string{},
 		conns:          map[string]blockConn{},
@@ -101,6 +104,40 @@ func newBlockTransport(selfID, selfToken string, incoming func(string, byte, []b
 		onIncoming:     incoming,
 		onPeerDown:     down,
 	}
+}
+
+func (t *blockTransport) setBlockedPeers(peers map[string]bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.blockedPeers = make(map[string]bool, len(peers))
+	for k, v := range peers {
+		if v {
+			t.blockedPeers[k] = true
+		}
+	}
+}
+
+func (t *blockTransport) isDirectBlocked(peer string) bool {
+	if t.blockDirect {
+		return true
+	}
+	t.mu.Lock()
+	blocked := t.blockedPeers[peer]
+	t.mu.Unlock()
+	return blocked
+}
+
+func (t *blockTransport) connectedCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.conns)
+}
+
+func (t *blockTransport) isPeerConnected(peer string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.conns[peer]
+	return ok
 }
 
 // shouldDial 是直连裁决：仅当本机 ID 大于对端时才由本机拨号，否则只等对方拨入。
@@ -185,8 +222,8 @@ func (t *blockTransport) serveInbound(c net.Conn) {
 		_ = c.Close()
 		return
 	}
-	if t.blockDirect {
-		// 测试钩子：拒绝一切直连入站，迫使双方改走中继数据面。
+	if t.isDirectBlocked(hello.MemberID) {
+		// 测试或跨网段阻断钩子：拒绝该对端直连入站，迫使裁决拨号方改走加密中继数据面。
 		_ = c.Close()
 		return
 	}
@@ -377,8 +414,8 @@ func (t *blockTransport) Send(m groupMsg) {
 // dial 尝试直连 member 并完成加密握手，成功后交给 attach；直连彻底失败时
 // 清空 dialing 标志，并在尚未请求过中继时经信令发起中继回退。
 func (t *blockTransport) dial(member string, cand []string, peerToken string) {
-	if t.blockDirect {
-		// 测试钩子：跳过直连外拨，直接进入中继回退。
+	if t.isDirectBlocked(member) {
+		// 跳过直连外拨，直接进入中继回退。
 		t.clearDialing(member)
 		t.fallbackRelay(member)
 		return
@@ -448,6 +485,29 @@ func (t *blockTransport) fallbackRelay(member string) {
 	t.notifyDown(member)
 	t.mu.Lock()
 	if !t.shouldDial(member) || t.relayRequested[member] {
+		t.mu.Unlock()
+		return
+	}
+	if _, connected := t.conns[member]; connected {
+		t.mu.Unlock()
+		return
+	}
+	t.relayRequested[member] = true
+	req := t.onRelayRequest
+	t.mu.Unlock()
+	if req != nil {
+		req(member)
+	}
+}
+
+// forceRelayFallback 针对混合 Swarm 中受阻节点主动发起 AES-GCM 加密中继请求（不受 shouldDial 限制，v8.2.0）。
+func (t *blockTransport) forceRelayFallback(member string) {
+	if member == "" || member == t.selfID {
+		return
+	}
+	t.notifyDown(member)
+	t.mu.Lock()
+	if t.closed || t.relayRequested[member] || len(t.fileKey) == 0 {
 		t.mu.Unlock()
 		return
 	}

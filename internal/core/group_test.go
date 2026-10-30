@@ -486,3 +486,115 @@ func TestGroupFileReject(t *testing.T) {
 		return len(r.cl.GetState().Transfers) == 0
 	})
 }
+
+func TestAutoMultipathUnicastUpgrade(t *testing.T) {
+	url := startServer(t)
+	src := newSwarmNode(t, "mp-sender")
+	rcv := newSwarmNode(t, "mp-receiver")
+	// 降低测试阈值至 2 MiB，验证单播自动升级 Multipath 多路径并发管线
+	src.cl.multipathMinBytes = 2 << 20
+	rcv.cl.multipathMinBytes = 2 << 20
+	connectSwarmNodes(t, url, src, rcv)
+
+	rcvID := rcv.cl.GetState().SelfID
+	srcPath, data := writeRandomFile(t, src.dir, "multipath-auto.bin", 3<<20)
+	tid, err := src.cl.OfferFile(rcvID, srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 5*time.Second, func() bool {
+		return len(rcv.cl.GetState().Transfers) == 1
+	})
+	dest := filepath.Join(rcv.dir, "multipath-auto.bin")
+	if err := rcv.cl.RespondFile(tid, true, dest); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, 15*time.Second, func() bool {
+		_, _, done, _ := rcv.l.snapshot()
+		return len(done) == 1
+	})
+	if rcv.cl.lastMultipathPaths.Load() < 1 {
+		t.Fatalf("expected auto multipath upgrade pathsUsed >= 1, got %d", rcv.cl.lastMultipathPaths.Load())
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(data) {
+		t.Fatal("multipath auto-upgraded unicast file content mismatch")
+	}
+}
+
+func TestHybridSwarmRelayFallbackSingleBlockedPeer(t *testing.T) {
+	url := startServerWithRelay(t)
+	src := newSwarmNode(t, "seeder")
+	lanPeer := newSwarmNode(t, "lan-peer")
+	blockedPeer := newSwarmNode(t, "blocked-subnet-peer")
+	connectSwarmNodes(t, url, src, lanPeer, blockedPeer)
+
+	srcID := src.cl.GetState().SelfID
+	lanID := lanPeer.cl.GetState().SelfID
+	blockedID := blockedPeer.cl.GetState().SelfID
+
+	// 仅阻断 blockedPeer 与其他节点的 P2P 直连，lanPeer 保持纯局域网 P2P 直连
+	src.cl.SetPeerDirectBlocked(blockedID, true)
+	lanPeer.cl.SetPeerDirectBlocked(blockedID, true)
+	blockedPeer.cl.SetPeerDirectBlocked(srcID, true)
+	blockedPeer.cl.SetPeerDirectBlocked(lanID, true)
+
+	srcPath, data := writeRandomFile(t, src.dir, "hybrid-swarm.bin", 2*swarmChunk)
+	tid, err := src.cl.OfferFileToGroup("*", srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, n := range []swarmNode{lanPeer, blockedPeer} {
+		got := n.waitForGroupTask(t)
+		if got.ID != tid {
+			t.Fatalf("transfer ID mismatch: got %s want %s", got.ID, tid)
+		}
+		dest := filepath.Join(n.dir, "hybrid-swarm.bin")
+		if err := n.cl.RespondFile(tid, true, dest); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	waitFor(t, swarmWaitTimeout, func() bool {
+		_, _, d1, _ := lanPeer.l.snapshot()
+		_, _, d2, _ := blockedPeer.l.snapshot()
+		_, _, ds, _ := src.l.snapshot()
+		return len(d1) == 1 && len(d2) == 1 && len(ds) == 1
+	})
+
+	for _, n := range []swarmNode{lanPeer, blockedPeer} {
+		got, err := os.ReadFile(filepath.Join(n.dir, "hybrid-swarm.bin"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != string(data) {
+			t.Fatalf("hybrid swarm received file mismatch on %s", n.cl.GetState().SelfID)
+		}
+	}
+
+	lanRelayed := false
+	for _, p := range lanPeer.l.progressSnapshot() {
+		if p.ID == tid && p.ViaRelay {
+			lanRelayed = true
+		}
+	}
+	if lanRelayed {
+		t.Fatal("expected LAN peer to stay on P2P direct (ViaRelay=false), got ViaRelay=true")
+	}
+
+	blockedRelayed := false
+	for _, p := range blockedPeer.l.progressSnapshot() {
+		if p.ID == tid && p.ViaRelay {
+			blockedRelayed = true
+		}
+	}
+	if !blockedRelayed {
+		t.Fatal("expected blocked cross-subnet peer to fall back to encrypted relay (ViaRelay=true)")
+	}
+}

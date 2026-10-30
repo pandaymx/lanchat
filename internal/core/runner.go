@@ -3,11 +3,14 @@ package core
 import (
 	"context"
 	"errors"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 
+	"github.com/pandaymx/lanchat/internal/discover"
 	"github.com/pandaymx/lanchat/internal/protocol"
 	"github.com/pandaymx/lanchat/internal/transfer"
 )
@@ -194,13 +197,42 @@ func (c *Client) runOutbound(t *transferTask, conn *websocket.Conn) {
 	defer sender.Close()
 	defer func() { _ = t.file.Close() }()
 
+	cands := sender.CandidateAddrs()
+	useMultipath := !c.forceRelay && t.snap.Size >= c.multipathThresholdBytes()
+	if useMultipath {
+		if _, portStr, err := net.SplitHostPort(sender.Addr().String()); err == nil {
+			seen := make(map[string]bool, len(cands)+4)
+			for _, cand := range cands {
+				seen[cand] = true
+			}
+			if portNum, err := strconv.Atoi(portStr); err == nil {
+				for _, oc := range discover.OverlayCandidateAddrs(portNum) {
+					if !seen[oc] {
+						seen[oc] = true
+						cands = append(cands, oc)
+					}
+				}
+			}
+			for _, fallbackHost := range []string{"127.0.0.1", "localhost"} {
+				if len(cands) >= 2 {
+					break
+				}
+				hp := net.JoinHostPort(fallbackHost, portStr)
+				if !seen[hp] {
+					seen[hp] = true
+					cands = append(cands, hp)
+				}
+			}
+		}
+	}
+
 	if _, err := c.sendTo(conn, protocol.FileOffer, t.snap.PeerID, protocol.FileOfferPayload{
 		TransferID: t.snap.ID,
 		Name:       t.snap.Name,
 		Size:       t.snap.Size,
 		ChunkSize:  transfer.ChunkSize,
 		SHA256:     t.sha256,
-		Candidates: sender.CandidateAddrs(),
+		Candidates: cands,
 		Token:      t.token,
 		ECDHPub:    transfer.EncodePub(t.senderPriv.PublicKey()),
 	}); err != nil {
@@ -230,6 +262,9 @@ func (c *Client) runOutbound(t *transferTask, conn *websocket.Conn) {
 	}
 
 	out := c.runPath(t, modeDirect, func(ctx context.Context) error {
+		if useMultipath && len(cands) >= 2 {
+			return sender.ServeMultipath(ctx, c.progressFn(t))
+		}
 		return sender.Serve(ctx, c.progressFn(t))
 	})
 	if c.finishOrSwitch(t, out) {
@@ -359,6 +394,23 @@ func (c *Client) runInbound(t *transferTask, conn *websocket.Conn, destPath stri
 	}
 
 	out := c.runPath(t, modeDirect, func(ctx context.Context) error {
+		if !c.forceRelay && t.snap.Size >= c.multipathThresholdBytes() && len(t.candidates) >= 2 {
+			ranked := transfer.ProbeAndRankCandidates(ctx, t.candidates, 500*time.Millisecond)
+			if len(ranked) >= 2 {
+				mpCands := make([]string, 0, len(ranked))
+				for _, r := range ranked {
+					mpCands = append(mpCands, r.Candidate)
+				}
+				mpCfg := cfg
+				mpCfg.Candidates = mpCands
+				stats, err := transfer.ReceiveMultipath(ctx, mpCfg, c.progressFn(t))
+				if err == nil && stats != nil {
+					c.lastMultipathPaths.Store(int32(stats.PathsUsed))
+					return nil
+				}
+				return err
+			}
+		}
 		return transfer.Receive(ctx, cfg, c.progressFn(t))
 	})
 	if c.finishOrSwitch(t, out) {

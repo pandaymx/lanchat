@@ -947,6 +947,76 @@ final class ChatStore: ObservableObject {
         await respondFile(transferId: pending.id, accept: true)
     }
 
+    // MARK: - 契约 v1.7 多设备配对、频道 Webhook 机器人与加密归档显式 RPC 方法
+
+    func pairDeviceRpc(action: String = "generate", code: String = "", peerID: String = "") async {
+        do {
+            _ = try await ipc.call(
+                "PairDevice",
+                params: ["action": action, "code": code, "peerID": peerID]
+            )
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func listPairedDevicesRpc(filter: String = "") async {
+        do {
+            _ = try await ipc.call(
+                "ListPairedDevices",
+                params: ["filter": filter]
+            )
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func manageChannelWebhookRpc(
+        channelID: String,
+        action: String = "create",
+        name: String = "CI-Bot",
+        listenAddr: String = "127.0.0.1:0"
+    ) async {
+        do {
+            _ = try await ipc.call(
+                "ManageChannelWebhook",
+                params: [
+                    "channelID": channelID,
+                    "action": action,
+                    "name": name,
+                    "listenAddr": listenAddr
+                ]
+            )
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func exportHistoryArchiveRpc(destPath: String, passphrase: String) async {
+        do {
+            _ = try await ipc.call(
+                "ExportHistoryArchive",
+                params: ["destPath": destPath, "passphrase": passphrase]
+            )
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func importHistoryArchiveRpc(srcPath: String, passphrase: String) async {
+        do {
+            _ = try await ipc.call(
+                "ImportHistoryArchive",
+                params: ["srcPath": srcPath, "passphrase": passphrase]
+            )
+            await refreshState()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
     func shutdown() {
         ipc.stop()
         if settings.stopDaemonOnExit {

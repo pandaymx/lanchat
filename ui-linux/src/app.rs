@@ -2648,14 +2648,133 @@ fn prompt_search_messages(ctx: &Rc<AppCtx>) {
     );
 }
 
+fn update_window_residency_title(ctx: &Rc<AppCtx>) {
+    let unread: usize = {
+        let st = ctx.state.borrow();
+        let mut total = st.unseen_count("*");
+        for p in &st.peers {
+            total += st.unseen_count(&p.id);
+        }
+        for ch in &st.channels {
+            if ch.id != "*" {
+                total += st.unseen_count(&ch.id);
+            }
+        }
+        total
+    };
+    let hidden = !ctx.widgets.window.is_visible();
+    let prefix = if unread > 0 {
+        format!("[{unread} 条未读] ")
+    } else {
+        String::new()
+    };
+    let suffix = if hidden {
+        " — StatusNotifier 后台常驻"
+    } else {
+        ""
+    };
+    ctx.widgets
+        .window
+        .set_title(Some(&format!("{prefix}LANChat 局域网即时通信{suffix}")));
+}
+
 fn wire_window_lifecycle(ctx: &Rc<AppCtx>) {
+    if let Some(app) = ctx.widgets.window.application() {
+        let act_restore = gio::SimpleAction::new("restore-window", None);
+        act_restore.connect_activate(clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            move |_, _| {
+                cx.widgets.window.set_visible(true);
+                cx.widgets.window.present();
+                update_window_residency_title(&cx);
+            }
+        ));
+        app.add_action(&act_restore);
+
+        let act_reply = gio::SimpleAction::new("quick-reply", None);
+        act_reply.connect_activate(clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            move |_, _| {
+                let target = cx.state.borrow().current_chat.clone();
+                if target.key().is_some() {
+                    send_text_to_target(&cx, &target, "👍 收到，稍后处理");
+                    cx.toast("✅ 已通过系统通知栏发送快捷回复");
+                }
+            }
+        ));
+        app.add_action(&act_reply);
+
+        let act_call = gio::SimpleAction::new("accept-call", None);
+        act_call.connect_activate(clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            move |_, _| {
+                cx.widgets.window.set_visible(true);
+                cx.widgets.window.present();
+                let target = {
+                    let st = cx.state.borrow();
+                    if !st.voice_call.group_id.is_empty() {
+                        ChatTarget::Channel(st.voice_call.group_id.clone())
+                    } else if !st.voice_call.peer_id.is_empty() {
+                        ChatTarget::Peer(st.voice_call.peer_id.clone())
+                    } else {
+                        st.current_chat.clone()
+                    }
+                };
+                if target.key().is_some() {
+                    invoke_accept_voice_call(&cx, &target);
+                    cx.toast("📞 已从通知栏快捷接听语音来电");
+                }
+            }
+        ));
+        app.add_action(&act_call);
+
+        let act_file = gio::SimpleAction::new("accept-file", None);
+        act_file.connect_activate(clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            move |_, _| {
+                let pending_id = cx
+                    .state
+                    .borrow()
+                    .transfers
+                    .iter()
+                    .find(|t| t.direction == "inbound" && t.state == "pending")
+                    .map(|t| (t.id.clone(), t.name.clone()));
+                if let Some((tid, name)) = pending_id {
+                    if let Some(ipc) = cx.ipc.borrow().clone() {
+                        let dest = crate::daemon::default_download_dir()
+                            .join(&name)
+                            .to_string_lossy()
+                            .to_string();
+                        let params = RespondParams {
+                            transfer_id: tid,
+                            accept: true,
+                            save_path: Some(dest),
+                        };
+                        let tx = cx.ui_tx.clone();
+                        crate::spawn_rt(async move {
+                            let r = ipc.invoke("RespondFile", Some(&params)).await.map(|_| ());
+                            let _ = tx.try_send(UiEvent::Responded(r));
+                        });
+                        cx.toast("📥 已从系统通知栏快捷接收文件");
+                    }
+                }
+            }
+        ));
+        app.add_action(&act_file);
+    }
+
     ctx.widgets.window.connect_close_request(clone!(
         #[strong(rename_to = cx)]
         ctx,
         move |win| {
-            // 已连接中心节点时关闭主窗口自动最小化到后台/托盘常驻，保持 daemon 与消息/来电监听在线（v4.9.0）
+            // 已连接中心节点时关闭主窗口自动最小化到后台/托盘常驻，保持 daemon 与消息/来电监听在线（v4.9.0 / v8.3.0）
             if cx.state.borrow().conn == ConnState::Connected {
                 win.set_visible(false);
+                update_window_residency_title(&cx);
                 notify_desktop_if_background(
                     &cx,
                     "LANChat 后台常驻运行中",
@@ -2674,6 +2793,7 @@ fn wire_window_lifecycle(ctx: &Rc<AppCtx>) {
 }
 
 fn notify_desktop_if_background(ctx: &Rc<AppCtx>, title: &str, body: &str, urgent: bool) {
+    update_window_residency_title(ctx);
     if ctx.state.borrow().dnd_enabled {
         return;
     }
@@ -2684,6 +2804,14 @@ fn notify_desktop_if_background(ctx: &Rc<AppCtx>, title: &str, body: &str, urgen
     if let Some(app) = ctx.widgets.window.application() {
         let notif = gio::Notification::new(title);
         notif.set_body(Some(body));
+        notif.set_default_action("app.restore-window");
+        notif.add_button("💬 快捷回复", "app.quick-reply");
+        if title.contains("语音") || title.contains("来电") || body.contains("语音") {
+            notif.add_button("📞 接听来电", "app.accept-call");
+        }
+        if title.contains("文件") || body.contains("文件") {
+            notif.add_button("📥 接收文件", "app.accept-file");
+        }
         if urgent {
             notif.set_priority(gio::NotificationPriority::Urgent);
         }

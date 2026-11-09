@@ -6,6 +6,8 @@ struct SettingsView: View {
     @EnvironmentObject private var settings: SettingsStore
     @State private var searchText = ""
     @State private var customUpdateProxy = ""
+    @State private var pairCodeInput = ""
+    @State private var archivePassphrase = ""
 
     var body: some View {
         NavigationStack {
@@ -24,13 +26,19 @@ struct SettingsView: View {
                         // 3. 节点与连接状态卡片
                         connectionCard
 
-                        // 3. 沙盒下载目录卡片
+                        // 4. 沙盒下载目录卡片
                         downloadDirCard
 
-                        // 4. 版本更新与国内代理静默下载卡片
+                        // 5. 版本更新与国内代理静默下载卡片
                         updateCard
 
-                        // 5. iOS 诚实能力边界说明卡片
+                        // 6. 契约 v1.7 同账号多设备配对与实时镜像卡片
+                        multiDeviceCard
+
+                        // 7. 契约 v1.7 全量加密归档导出与跨机恢复卡片
+                        archiveBackupCard
+
+                        // 8. iOS 诚实能力边界说明卡片
                         boundaryCard
                     }
                     .padding(.horizontal, 14)
@@ -234,6 +242,118 @@ struct SettingsView: View {
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
                         .background(QQTheme.qqBlue, in: Capsule())
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+    }
+
+    private var multiDeviceCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("同账号多设备配对与实时镜像（契约 v1.7）", systemImage: "laptopcomputer.and.iphone")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+
+            Text("使用 6 位动态配对码绑定桌面端与移动端，实时加密镜像聊天记录与剪贴板。")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            TextField("输入对端生成的 6 位配对码", text: $pairCodeInput)
+                .font(.caption)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(8)
+                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+
+            HStack(spacing: 8) {
+                Button {
+                    store.pairDevice(action: "generate")
+                } label: {
+                    Text("🔑 生成配对码")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(QQTheme.qqBlue)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
+                }
+
+                Button {
+                    let code = pairCodeInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !code.isEmpty else { return }
+                    pairCodeInput = ""
+                    store.pairDevice(action: "bind", code: code)
+                } label: {
+                    Text("🔗 绑定设备")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(QQTheme.qqBlue, in: Capsule())
+                }
+
+                Button {
+                    store.listPairedDevices()
+                } label: {
+                    Text("📱 设备列表")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(QQTheme.qqBlue)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
+        )
+    }
+
+    private var archiveBackupCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("全量加密归档导出与恢复（PBKDF2 + AES-GCM）", systemImage: "archivebox.fill")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.primary)
+
+            SecureField("输入归档加密 / 解密口令", text: $archivePassphrase)
+                .font(.caption)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .padding(8)
+                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 8))
+
+            HStack(spacing: 10) {
+                Button {
+                    let pass = archivePassphrase.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !pass.isEmpty else { return }
+                    let dest = (settings.downloadDir as NSString).appendingPathComponent("lanchat-backup.lcha")
+                    store.exportHistoryArchive(destPath: dest, passphrase: pass)
+                } label: {
+                    Text("📤 导出 .lcha 归档")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(QQTheme.qqBlue, in: Capsule())
+                }
+
+                Button {
+                    let pass = archivePassphrase.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !pass.isEmpty else { return }
+                    let src = (settings.downloadDir as NSString).appendingPathComponent("lanchat-backup.lcha")
+                    store.importHistoryArchive(srcPath: src, passphrase: pass)
+                } label: {
+                    Text("📥 导入恢复归档")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(QQTheme.qqBlue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(QQTheme.qqBlue.opacity(0.12), in: Capsule())
                 }
             }
         }

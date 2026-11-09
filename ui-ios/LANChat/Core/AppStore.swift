@@ -500,6 +500,46 @@ final class AppStore: ObservableObject {
         }
     }
 
+    // MARK: - 契约 v1.7 多设备配对、频道 Webhook 机器人与加密归档（v9.1.0）
+
+    func pairDevice(action: String = "generate", code: String = "", peerID: String = "") {
+        run {
+            let status = try await self.engine.pairDevice(action: action, code: code, peerID: peerID)
+            self.updateStatus = "🔗 多设备配对：\(status)"
+            await self.refresh()
+        }
+    }
+
+    func listPairedDevices(filter: String = "") {
+        run {
+            let devices = try await self.engine.listPairedDevices(filter: filter)
+            self.updateStatus = "📱 已绑定设备：\(devices)"
+        }
+    }
+
+    func manageChannelWebhook(channelID: String, action: String = "create", name: String = "CI-Bot", listenAddr: String = "127.0.0.1:0") {
+        run {
+            let status = try await self.engine.manageChannelWebhook(channelID: channelID, action: action, name: name, listenAddr: listenAddr)
+            self.updateStatus = "🤖 频道 Webhook：\(status)"
+            await self.refresh()
+        }
+    }
+
+    func exportHistoryArchive(destPath: String, passphrase: String) {
+        run {
+            let status = try await self.engine.exportHistoryArchive(destPath: destPath, passphrase: passphrase)
+            self.updateStatus = "📤 归档导出完成：\(status)"
+        }
+    }
+
+    func importHistoryArchive(srcPath: String, passphrase: String) {
+        run {
+            let status = try await self.engine.importHistoryArchive(srcPath: srcPath, passphrase: passphrase)
+            self.updateStatus = "📥 归档恢复完成：\(status)"
+            await self.refresh()
+        }
+    }
+
     // MARK: - 事件处理
 
     private func handle(_ event: CoreEvent) {

@@ -219,6 +219,7 @@ fun ChannelsScreen(
                     onJoin = { vm.joinChannel(channel.id) },
                     onLeave = { vm.leaveChannel(channel.id) },
                     onInvite = { inviteTarget = channel },
+                    onCreateWebhook = { vm.manageChannelWebhook(channel.id, "create", "CI-Bot", "127.0.0.1:0") },
                 )
             }
         }
@@ -259,9 +260,11 @@ private fun ChannelCard(
     onJoin: () -> Unit,
     onLeave: () -> Unit,
     onInvite: () -> Unit,
+    onCreateWebhook: () -> Unit = {},
 ) {
     val joined = channel.members.contains(selfId)
     val isOwner = channel.ownerId == selfId && selfId.isNotEmpty()
+    val isAdmin = selfId.isNotEmpty() && selfId in channel.admins
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
@@ -393,6 +396,12 @@ private fun ChannelCard(
                             leadingIcon = {
                                 Icon(Icons.Filled.PersonAdd, contentDescription = null, modifier = Modifier.size(15.dp))
                             },
+                        )
+                    }
+                    if (isOwner || isAdmin) {
+                        AssistChip(
+                            onClick = onCreateWebhook,
+                            label = { Text("🤖 Webhook", fontSize = 12.sp, maxLines = 1, softWrap = false) },
                         )
                     }
                     OutlinedButton(

@@ -607,6 +607,49 @@ class AppViewModel : ViewModel() {
         }
     }
 
+    fun pairDevice(action: String = "generate", code: String = "", peerID: String = "") {
+        launchOp {
+            val status = engine.pairDevice(action, code, peerID)
+            _ui.update { it.copy(error = "🔗 多设备配对：$status") }
+            refresh()
+        }
+    }
+
+    fun listPairedDevices(filter: String = "") {
+        launchOp {
+            val devices = engine.listPairedDevices(filter)
+            _ui.update { it.copy(error = "📱 已绑定设备：$devices") }
+        }
+    }
+
+    fun manageChannelWebhook(
+        channelID: String,
+        action: String = "create",
+        name: String = "CI-Bot",
+        listenAddr: String = "127.0.0.1:0",
+    ) {
+        launchOp {
+            val status = engine.manageChannelWebhook(channelID, action, name, listenAddr)
+            _ui.update { it.copy(error = "🤖 频道 Webhook：$status") }
+            refresh()
+        }
+    }
+
+    fun exportHistoryArchive(destPath: String, passphrase: String) {
+        launchOp {
+            val status = engine.exportHistoryArchive(destPath, passphrase)
+            _ui.update { it.copy(error = "📤 归档导出完成：$status") }
+        }
+    }
+
+    fun importHistoryArchive(srcPath: String, passphrase: String) {
+        launchOp {
+            val status = engine.importHistoryArchive(srcPath, passphrase)
+            _ui.update { it.copy(error = "📥 归档恢复完成：$status") }
+            refresh()
+        }
+    }
+
     private fun handleEvent(event: CoreEvent) {
         when (event) {
             is CoreEvent.ConnChanged -> {

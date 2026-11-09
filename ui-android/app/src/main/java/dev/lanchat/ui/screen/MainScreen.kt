@@ -438,12 +438,18 @@ fun MainScreen(state: AppUi, vm: AppViewModel) {
     }
 
     if (showNicknameDialog) {
+        val defaultArchivePath = state.downloadDir.ifEmpty { "/sdcard/Download/LANChat" } + "/lanchat-backup.lcha"
         EditNicknameDialog(
             currentNickname = state.nickname,
             autoClipboard = state.autoClipboard,
             dndEnabled = state.dndEnabled,
             onToggleAutoClipboard = { vm.setAutoClipboard(it) },
             onToggleDnd = { vm.setDND(it) },
+            onGeneratePairCode = { vm.pairDevice(action = "generate") },
+            onBindPairCode = { code -> vm.pairDevice(action = "bind", code = code) },
+            onListPairedDevices = { vm.listPairedDevices() },
+            onExportArchive = { pass -> vm.exportHistoryArchive(defaultArchivePath, pass) },
+            onImportArchive = { pass -> vm.importHistoryArchive(defaultArchivePath, pass) },
             onDismiss = { showNicknameDialog = false },
             onConfirm = { newName ->
                 vm.setNickname(newName)
@@ -497,15 +503,22 @@ private fun EditNicknameDialog(
     dndEnabled: Boolean = false,
     onToggleAutoClipboard: (Boolean) -> Unit = {},
     onToggleDnd: (Boolean) -> Unit = {},
+    onGeneratePairCode: () -> Unit = {},
+    onBindPairCode: (String) -> Unit = {},
+    onListPairedDevices: () -> Unit = {},
+    onExportArchive: (String) -> Unit = {},
+    onImportArchive: (String) -> Unit = {},
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
     var name by remember { mutableStateOf(currentNickname) }
+    var pairCode by remember { mutableStateOf("") }
+    var archivePass by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("个人资料与偏好设置") },
+        title = { Text("个人资料 · 多设备协同与归档 (v9.1)") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -534,6 +547,39 @@ private fun EditNicknameDialog(
                         checked = dndEnabled,
                         onCheckedChange = onToggleDnd,
                     )
+                }
+                OutlinedTextField(
+                    value = pairCode,
+                    onValueChange = { pairCode = it },
+                    singleLine = true,
+                    label = { Text("🔗 同账号多设备配对码 (6 位)") },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(onClick = onGeneratePairCode) { Text("🔑 生成码") }
+                    TextButton(
+                        enabled = pairCode.isNotBlank(),
+                        onClick = {
+                            onBindPairCode(pairCode.trim())
+                            pairCode = ""
+                        },
+                    ) { Text("🔗 绑定") }
+                    TextButton(onClick = onListPairedDevices) { Text("📱 设备列表") }
+                }
+                OutlinedTextField(
+                    value = archivePass,
+                    onValueChange = { archivePass = it },
+                    singleLine = true,
+                    label = { Text("📦 全量加密归档口令 (.lcha)") },
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(
+                        enabled = archivePass.isNotBlank(),
+                        onClick = { onExportArchive(archivePass.trim()) },
+                    ) { Text("📤 导出归档") }
+                    TextButton(
+                        enabled = archivePass.isNotBlank(),
+                        onClick = { onImportArchive(archivePass.trim()) },
+                    ) { Text("📥 导入恢复") }
                 }
             }
         },

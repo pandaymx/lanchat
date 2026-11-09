@@ -1262,3 +1262,103 @@ func TestContractV17PairingWebhookAndArchive(t *testing.T) {
 		t.Fatalf("expected restored webhook card (%v) and CAS media (%v) in imported history", foundWebhook, foundCAS)
 	}
 }
+
+func TestPhase10ScreenLaserTrailAndAdaptiveFPS(t *testing.T) {
+	if got := ComputeAdaptiveScreenShareFPS(15, 0, 10, false); got != 5 {
+		t.Fatalf("idle adaptive FPS = %d, want 5", got)
+	}
+	if got := ComputeAdaptiveScreenShareFPS(24, 16, 95, false); got != 8 {
+		t.Fatalf("high-jitter adaptive FPS = %d, want 8", got)
+	}
+	if got := ComputeAdaptiveScreenShareFPS(24, 16, 10, true); got != 8 {
+		t.Fatalf("relay-fallback adaptive FPS = %d, want 8", got)
+	}
+	if got := ComputeAdaptiveScreenShareFPS(20, 12, 50, false); got != 12 {
+		t.Fatalf("medium-jitter adaptive FPS = %d, want 12", got)
+	}
+	if got := ComputeAdaptiveScreenShareFPS(15, 28, 10, false); got != 30 {
+		t.Fatalf("low-jitter high-motion adaptive FPS = %d, want 30", got)
+	}
+
+	c := New(Options{Nickname: "Presenter", DownloadDir: t.TempDir()})
+	defer c.Close()
+
+	baseURI, err := captureDesktopJPEGDataURI(1)
+	if err != nil || !strings.HasPrefix(baseURI, "data:image/jpeg;base64,") {
+		t.Fatalf("captureDesktopJPEGDataURI failed: %v", err)
+	}
+	c.recordScreenFrame("peer-1", "", 15, baseURI)
+
+	points := [][2]float64{{0.15, 0.20}, {0.35, 0.40}, {0.60, 0.55}, {0.80, 0.75}}
+	for idx, pt := range points {
+		c.applyScreenAnnotation("peer-1", "", pt[0], pt[1], fmt.Sprintf("step-%d", idx))
+	}
+
+	trail := c.ScreenLaserTrail()
+	if len(trail) != len(points) {
+		t.Fatalf("ScreenLaserTrail len = %d, want %d", len(trail), len(points))
+	}
+	st := c.GetState().ScreenShare
+	if st == nil || st.LatestFrame == "" || st.LatestFrame == baseURI {
+		t.Fatal("expected LatestFrame to have laser trail overlay applied")
+	}
+}
+
+func TestPhase10VoiceVADNoiseFloorAndAGC(t *testing.T) {
+	// 1. 构造低幅环境底噪帧（幅值 ~80，RMS ≈ 0.0024 < 门限）
+	ambientPCM := make([]byte, 320)
+	for i := 0; i < len(ambientPCM)/2; i++ {
+		binary.LittleEndian.PutUint16(ambientPCM[i*2:], uint16(int16(80)))
+	}
+	gatedOut, gatedRMS, floorAfterNoise, speech := ProcessPCM16LEWithVADAGC(ambientPCM, 0.006, 0.12)
+	if speech || len(gatedOut) != len(ambientPCM) {
+		t.Fatal("expected ambient noise frame to be classified as non-speech")
+	}
+	if gatedRMS >= computePCMRMSLevel(ambientPCM) {
+		t.Fatalf("expected VAD noise gate to attenuate ambient frame: got rms=%f, raw=%f", gatedRMS, computePCMRMSLevel(ambientPCM))
+	}
+
+	// 2. 构造轻声说话帧（幅值 ~1200，RMS ≈ 0.0366 > 门限），验证 AGC 自动增益放大
+	quietVoicePCM := make([]byte, 320)
+	for i := 0; i < len(quietVoicePCM)/2; i++ {
+		val := int16(1200)
+		if i%2 == 1 {
+			val = -1200
+		}
+		binary.LittleEndian.PutUint16(quietVoicePCM[i*2:], uint16(val))
+	}
+	rawSpeechRMS := computePCMRMSLevel(quietVoicePCM)
+	boostedOut, boostedRMS, _, speechActive := ProcessPCM16LEWithVADAGC(quietVoicePCM, floorAfterNoise, 0.12)
+	if !speechActive {
+		t.Fatal("expected quiet voice frame above VAD threshold to be classified as active speech")
+	}
+	if boostedRMS <= rawSpeechRMS*1.8 || len(boostedOut) != len(quietVoicePCM) {
+		t.Fatalf("expected AGC to boost quiet speech RMS from %f to >%f, got %f", rawSpeechRMS, rawSpeechRMS*1.8, boostedRMS)
+	}
+
+	// 3. 验证 Client.SetVoiceVADAGC 端到端集成
+	alice := New(Options{Nickname: "Alice", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	bob := New(Options{Nickname: "Bob", DownloadDir: t.TempDir()})
+	defer bob.Close()
+
+	resA, err := alice.StartVoiceCall("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resB, err := bob.AcceptVoiceCall("", "", strings.TrimPrefix(resA, "call:calling:"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice.setVoiceRemoteUDP(strings.TrimPrefix(resB, "call:active:"))
+	alice.SetVoiceVADAGC(true)
+	if !alice.IsVoiceVADAGCEnabled() {
+		t.Fatal("expected IsVoiceVADAGCEnabled to be true")
+	}
+	if err := alice.SendVoiceFrame(quietVoicePCM); err != nil {
+		t.Fatalf("SendVoiceFrame with VAD+AGC: %v", err)
+	}
+	if nf := alice.VoiceNoiseFloor(); nf <= 0 {
+		t.Fatalf("expected positive VoiceNoiseFloor after frame processing, got %f", nf)
+	}
+}

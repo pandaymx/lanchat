@@ -89,6 +89,7 @@ type Client struct {
 	lastAutoRoam      map[string]int64
 	voice             *voiceSession
 	voiceMuted        atomic.Bool
+	voiceVADAGC       atomic.Bool
 	screenSharing     bool
 	screenShareFPS    int
 	screenSharePeer   string
@@ -99,6 +100,7 @@ type Client struct {
 	screenAnnotY      float64
 	screenAnnotNote   string
 	screenAnnotTS     int64
+	screenLaserTrail  []ScreenLaserPoint
 	screenTarget      string
 	screenCropX       float64
 	screenCropY       float64

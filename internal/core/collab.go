@@ -341,7 +341,7 @@ func (jb *voiceJitterBuffer) deliverItems(items []voiceJitterFrame, cb func(uint
 	}
 }
 
-// voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道多人 Mesh 实时语音房间（阶段四 v2.0 / v5.3.0 / v7.2.0）。
+// voiceSession 管理单次 1:1 实时语音呼叫或 G2 频道多人 Mesh 实时语音房间（阶段四 v2.0 / v5.3.0 / v7.2.0 / v9.2.0）。
 type voiceSession struct {
 	mu               sync.Mutex
 	conn             net.PacketConn
@@ -351,6 +351,7 @@ type voiceSession struct {
 	peerMuted        map[string]bool
 	peerSpeaking     map[string]float64
 	peerLastSpeakMs  map[string]int64
+	noiseFloor       float64
 	targetPeer       string
 	targetGrp        string
 	state            string // "idle" | "calling" | "active"
@@ -442,6 +443,98 @@ func computePCMRMSLevel(pcm []byte) float64 {
 		rms = 1.0
 	}
 	return rms
+}
+
+// ProcessPCM16LEWithVADAGC 对 16-bit 小端有符号单声道 PCM 帧执行自适应环境底噪跟踪（VAD）与软膝盖自动增益控制（AGC，v9.2.0）：
+// - 动态维护环境底噪指数移动平均（updatedFloor ∈ [0.002, 0.08]）；
+// - 当能量低于动态人声门限时执行噪声门衰减（抑制风扇/底噪）；
+// - 当检测到人声活跃时，按 targetRMS（默认 0.12）计算软膝盖增益（0.5x..4.0x）并防削波归一化。
+func ProcessPCM16LEWithVADAGC(pcm []byte, noiseFloor, targetRMS float64) (out []byte, rms, updatedFloor float64, speechActive bool) {
+	if len(pcm) == 0 {
+		return nil, 0, noiseFloor, false
+	}
+	if noiseFloor <= 0 {
+		noiseFloor = 0.006
+	}
+	if targetRMS <= 0 || targetRMS > 0.5 {
+		targetRMS = 0.12
+	}
+	rawRMS := computePCMRMSLevel(pcm)
+	threshold := noiseFloor * 2.2
+	if threshold < voiceSpeakingRMSThreshold {
+		threshold = voiceSpeakingRMSThreshold
+	}
+	if rawRMS < threshold {
+		updatedFloor = 0.85*noiseFloor + 0.15*rawRMS
+		speechActive = false
+	} else {
+		updatedFloor = 0.98*noiseFloor + 0.02*rawRMS
+		speechActive = true
+	}
+	if updatedFloor < 0.002 {
+		updatedFloor = 0.002
+	} else if updatedFloor > 0.08 {
+		updatedFloor = 0.08
+	}
+
+	samplePairs := len(pcm) / 2
+	if samplePairs == 0 {
+		return append([]byte(nil), pcm...), rawRMS, updatedFloor, speechActive
+	}
+
+	gain := 0.15
+	if speechActive && rawRMS > 0.0001 {
+		gain = targetRMS / rawRMS
+		if gain < 0.5 {
+			gain = 0.5
+		} else if gain > 4.0 {
+			gain = 4.0
+		}
+	}
+
+	out = make([]byte, len(pcm))
+	copy(out, pcm)
+	for i := 0; i < samplePairs; i++ {
+		off := i * 2
+		s := int16(binary.LittleEndian.Uint16(pcm[off : off+2]))
+		scaled := float64(s) * gain
+		if scaled > 28000 {
+			scaled = 28000 + (scaled-28000)*0.25
+		} else if scaled < -28000 {
+			scaled = -28000 + (scaled+28000)*0.25
+		}
+		if scaled > 32767 {
+			scaled = 32767
+		} else if scaled < -32768 {
+			scaled = -32768
+		}
+		binary.LittleEndian.PutUint16(out[off:off+2], uint16(int16(scaled)))
+	}
+	rms = computePCMRMSLevel(out)
+	return out, rms, updatedFloor, speechActive
+}
+
+// SetVoiceVADAGC 开启或关闭实时语音自适应环境底噪门限（VAD）与软膝盖自动增益归一化（AGC，v9.2.0）。
+func (c *Client) SetVoiceVADAGC(enabled bool) {
+	c.voiceVADAGC.Store(enabled)
+}
+
+// IsVoiceVADAGCEnabled 返回当前是否已启用实时语音 VAD 底噪门限与 AGC 自动增益（v9.2.0）。
+func (c *Client) IsVoiceVADAGCEnabled() bool {
+	return c.voiceVADAGC.Load()
+}
+
+// VoiceNoiseFloor 返回当前语音会话自适应跟踪到的环境底噪水平（v9.2.0）。
+func (c *Client) VoiceNoiseFloor() float64 {
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return 0
+	}
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	return vs.noiseFloor
 }
 
 func (vs *voiceSession) markActiveNow() {
@@ -925,6 +1018,12 @@ func (c *Client) SendVoiceFrame(pcm []byte) error {
 	nowMs := time.Now().UnixMilli()
 
 	vs.mu.Lock()
+	if c.voiceVADAGC.Load() {
+		processed, procRMS, nextFloor, _ := ProcessPCM16LEWithVADAGC(pcm, vs.noiseFloor, 0.12)
+		vs.noiseFloor = nextFloor
+		pcm = processed
+		rms = procRMS
+	}
 	conn := vs.conn
 	raddr := vs.remoteAddr
 	targetPeer := vs.targetPeer
@@ -1797,6 +1896,7 @@ func (c *Client) StopScreenShare(to, group string) error {
 	c.screenAnnotY = 0
 	c.screenAnnotNote = ""
 	c.screenAnnotTS = 0
+	c.screenLaserTrail = nil
 	c.screenHasTileHash = false
 	c.mu.Unlock()
 	if to != "" || group != "" {
@@ -1806,6 +1906,70 @@ func (c *Client) StopScreenShare(to, group string) error {
 	}
 	c.emitScreenShareFrame(c.selfIDValue(), group, 0, "")
 	return nil
+}
+
+// ComputeAdaptiveScreenShareFPS 根据基础设定帧率、当前 8×8 脏矩形块数（0..64）、网络抖动（jitterMs）与中继降级状态，
+// 动态计算最优屏幕共享帧率（5..30 FPS，v9.2.0）：
+// - 画面静止（dirtyTiles == 0）时自动降频至 5 FPS 保活；
+// - 中继回退或高抖动（jitterMs >= 80ms）时自适应收缩至 6..8 FPS 防拥塞；
+// - 中等抖动（jitterMs >= 40ms）时平滑限流至 ≤ 12 FPS；
+// - 低延迟直连且画面剧烈运动（dirtyTiles >= 8, jitterMs < 25ms）时自动提速至 24..30 FPS。
+func ComputeAdaptiveScreenShareFPS(baseFPS, dirtyTiles int, jitterMs int64, relayFallback bool) int {
+	if baseFPS <= 0 {
+		baseFPS = 15
+	}
+	if baseFPS > 30 {
+		baseFPS = 30
+	}
+	if dirtyTiles <= 0 {
+		return 5
+	}
+	if relayFallback || jitterMs >= 80 {
+		if baseFPS > 8 {
+			return 8
+		}
+		if baseFPS < 5 {
+			return 5
+		}
+		return baseFPS
+	}
+	if jitterMs >= 40 {
+		if baseFPS > 12 {
+			return 12
+		}
+		if baseFPS < 8 {
+			return 8
+		}
+		return baseFPS
+	}
+	eff := baseFPS
+	if dirtyTiles >= 24 && jitterMs < 15 && eff < 30 {
+		eff = 30
+	} else if dirtyTiles >= 8 && jitterMs < 25 && eff < 24 {
+		eff = 24
+	}
+	if eff < 5 {
+		eff = 5
+	}
+	return eff
+}
+
+func (c *Client) currentNetworkJitterAndRelay() (jitterMs int64, relayFallback bool) {
+	c.mu.Lock()
+	vs := c.voice
+	c.mu.Unlock()
+	if vs == nil {
+		return 0, false
+	}
+	relayFallback = vs.udpRelayFallback.Load()
+	vs.mu.Lock()
+	jb := vs.jitter
+	vs.mu.Unlock()
+	if jb != nil {
+		_, win, _ := jb.Stats()
+		jitterMs = win.Milliseconds()
+	}
+	return jitterMs, relayFallback
 }
 
 func (c *Client) stopScreenShareLoop() {
@@ -1860,10 +2024,8 @@ func (c *Client) runScreenShareCaptureLoop(stopCh <-chan struct{}, to, group str
 		if !sent {
 			return
 		}
-		effFPS := fps
-		if dirty >= 8 && effFPS < 24 {
-			effFPS = 24
-		}
+		jitterMs, relayFallback := c.currentNetworkJitterAndRelay()
+		effFPS := ComputeAdaptiveScreenShareFPS(fps, dirty, jitterMs, relayFallback)
 		c.mu.Lock()
 		c.screenShareFPS = effFPS
 		c.mu.Unlock()
@@ -2167,6 +2329,46 @@ func parseScreenAnnotationPayload(raw string) (float64, float64, string, bool) {
 	return nx, ny, note, true
 }
 
+// ScreenLaserPoint 表示屏幕共享画布上的一枚归一化激光笔批注轨迹点（v9.2.0 多点衰减尾迹）。
+type ScreenLaserPoint struct {
+	NormX float64
+	NormY float64
+	Note  string
+	TS    int64
+}
+
+const (
+	screenLaserTrailTTLMS     int64 = 3500
+	maxScreenLaserTrailPoints       = 24
+)
+
+func pruneLaserTrail(trail []ScreenLaserPoint, nowMS int64) []ScreenLaserPoint {
+	if len(trail) == 0 {
+		return nil
+	}
+	var kept []ScreenLaserPoint
+	for _, pt := range trail {
+		if nowMS-pt.TS <= screenLaserTrailTTLMS {
+			kept = append(kept, pt)
+		}
+	}
+	if len(kept) > maxScreenLaserTrailPoints {
+		kept = kept[len(kept)-maxScreenLaserTrailPoints:]
+	}
+	return kept
+}
+
+// ScreenLaserTrail 返回当前屏幕共享画布上尚未过期的激光笔多点衰减轨迹副本（v9.2.0）。
+func (c *Client) ScreenLaserTrail() []ScreenLaserPoint {
+	nowMS := time.Now().UnixMilli()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.screenLaserTrail = pruneLaserTrail(c.screenLaserTrail, nowMS)
+	out := make([]ScreenLaserPoint, len(c.screenLaserTrail))
+	copy(out, c.screenLaserTrail)
+	return out
+}
+
 func (c *Client) applyScreenAnnotation(peer, group string, normX, normY float64, note string) {
 	nowMS := time.Now().UnixMilli()
 	c.mu.Lock()
@@ -2180,6 +2382,17 @@ func (c *Client) applyScreenAnnotation(peer, group string, normX, normY float64,
 	c.screenAnnotY = normY
 	c.screenAnnotNote = note
 	c.screenAnnotTS = nowMS
+	c.screenLaserTrail = append(pruneLaserTrail(c.screenLaserTrail, nowMS), ScreenLaserPoint{
+		NormX: normX,
+		NormY: normY,
+		Note:  note,
+		TS:    nowMS,
+	})
+	if len(c.screenLaserTrail) > maxScreenLaserTrailPoints {
+		c.screenLaserTrail = c.screenLaserTrail[len(c.screenLaserTrail)-maxScreenLaserTrailPoints:]
+	}
+	trailCopy := make([]ScreenLaserPoint, len(c.screenLaserTrail))
+	copy(trailCopy, c.screenLaserTrail)
 	rawFrame := c.rawScreenFrame
 	if rawFrame == "" {
 		rawFrame = c.latestScreenFrame
@@ -2190,7 +2403,7 @@ func (c *Client) applyScreenAnnotation(peer, group string, normX, normY float64,
 	targetGrp := c.screenShareGroup
 	composed := ""
 	if rawFrame != "" {
-		composed = overlayLaserAnnotationOnJPEG(rawFrame, normX, normY)
+		composed = overlayLaserTrailOnJPEG(rawFrame, trailCopy, normX, normY)
 		c.latestScreenFrame = composed
 	}
 	c.mu.Unlock()
@@ -2202,6 +2415,11 @@ func (c *Client) applyScreenAnnotation(peer, group string, normX, normY float64,
 
 // overlayLaserAnnotationOnJPEG 在 Base64 Data URI 图像帧的归一化坐标 (normX, normY) 处绘制醒目激光笔红点与光晕外环（阶段二 v6.2.0）。
 func overlayLaserAnnotationOnJPEG(frameDataURI string, normX, normY float64) string {
+	return overlayLaserTrailOnJPEG(frameDataURI, nil, normX, normY)
+}
+
+// overlayLaserTrailOnJPEG 在 Base64 Data URI 图像帧上绘制激光笔多点衰减荧光尾迹与亮斑核心（v9.2.0）。
+func overlayLaserTrailOnJPEG(frameDataURI string, trail []ScreenLaserPoint, normX, normY float64) string {
 	trimmed := strings.TrimSpace(frameDataURI)
 	if !strings.HasPrefix(trimmed, "data:image/") {
 		return frameDataURI
@@ -2231,6 +2449,18 @@ func overlayLaserAnnotationOnJPEG(frameDataURI string, normX, normY float64) str
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
 			dst.Set(x, y, srcImg.At(bounds.Min.X+x, bounds.Min.Y+y))
+		}
+	}
+	if len(trail) >= 2 {
+		for i := 1; i < len(trail); i++ {
+			p0 := trail[i-1]
+			p1 := trail[i]
+			x0 := int(p0.NormX * float64(w-1))
+			y0 := int(p0.NormY * float64(h-1))
+			x1 := int(p1.NormX * float64(w-1))
+			y1 := int(p1.NormY * float64(h-1))
+			weight := float64(i) / float64(len(trail))
+			drawLaserSegment(dst, w, h, x0, y0, x1, y1, weight)
 		}
 	}
 	cx := int(normX * float64(w-1))
@@ -2298,6 +2528,51 @@ func overlayLaserAnnotationOnJPEG(frameDataURI string, normX, normY float64) str
 		return frameDataURI
 	}
 	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(out.Bytes())
+}
+
+func drawLaserSegment(dst *image.RGBA, w, h, x0, y0, x1, y1 int, weight float64) {
+	dx := x1 - x0
+	if dx < 0 {
+		dx = -dx
+	}
+	dy := y1 - y0
+	if dy < 0 {
+		dy = -dy
+	}
+	steps := dx
+	if dy > steps {
+		steps = dy
+	}
+	if steps == 0 {
+		steps = 1
+	}
+	radius := 1
+	if weight > 0.6 {
+		radius = 2
+	}
+	for s := 0; s <= steps; s++ {
+		px := x0 + (x1-x0)*s/steps
+		py := y0 + (y1-y0)*s/steps
+		for oy := -radius; oy <= radius; oy++ {
+			yy := py + oy
+			if yy < 0 || yy >= h {
+				continue
+			}
+			for ox := -radius; ox <= radius; ox++ {
+				xx := px + ox
+				if xx < 0 || xx >= w {
+					continue
+				}
+				orig := dst.RGBAAt(xx, yy)
+				dst.SetRGBA(xx, yy, color.RGBA{
+					R: uint8(float64(orig.R)*(1-weight*0.8) + 255*weight*0.8),
+					G: uint8(float64(orig.G)*(1-weight*0.7) + 64*weight*0.7),
+					B: uint8(float64(orig.B) * (1 - weight*0.7)),
+					A: 255,
+				})
+			}
+		}
+	}
 }
 
 // SetAutoClipboard 开启或关闭跨设备剪贴板自动监听同步模式（v3.3.0 / v4.8.0 后台自动同步守护协程）。
@@ -2560,8 +2835,10 @@ func (c *Client) recordScreenFrame(peer, group string, fps int, frame string) st
 	}
 	c.rawScreenFrame = frame
 	composed := frame
-	if c.screenAnnotTS > 0 && time.Now().UnixMilli()-c.screenAnnotTS <= 5000 {
-		composed = overlayLaserAnnotationOnJPEG(frame, c.screenAnnotX, c.screenAnnotY)
+	nowMS := time.Now().UnixMilli()
+	c.screenLaserTrail = pruneLaserTrail(c.screenLaserTrail, nowMS)
+	if c.screenAnnotTS > 0 && nowMS-c.screenAnnotTS <= 5000 {
+		composed = overlayLaserTrailOnJPEG(frame, c.screenLaserTrail, c.screenAnnotX, c.screenAnnotY)
 	}
 	c.latestScreenFrame = composed
 	c.mu.Unlock()

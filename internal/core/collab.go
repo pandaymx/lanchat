@@ -2339,7 +2339,7 @@ type ScreenLaserPoint struct {
 
 const (
 	screenLaserTrailTTLMS     int64 = 3500
-	maxScreenLaserTrailPoints       = 24
+	maxScreenLaserTrailPoints int   = 24
 )
 
 func pruneLaserTrail(trail []ScreenLaserPoint, nowMS int64) []ScreenLaserPoint {
@@ -2411,11 +2411,6 @@ func (c *Client) applyScreenAnnotation(peer, group string, normX, normY float64,
 	if composed != "" {
 		c.emitScreenShareFrame(targetPeer, targetGrp, fps, composed)
 	}
-}
-
-// overlayLaserAnnotationOnJPEG 在 Base64 Data URI 图像帧的归一化坐标 (normX, normY) 处绘制醒目激光笔红点与光晕外环（阶段二 v6.2.0）。
-func overlayLaserAnnotationOnJPEG(frameDataURI string, normX, normY float64) string {
-	return overlayLaserTrailOnJPEG(frameDataURI, nil, normX, normY)
 }
 
 // overlayLaserTrailOnJPEG 在 Base64 Data URI 图像帧上绘制激光笔多点衰减荧光尾迹与亮斑核心（v9.2.0）。

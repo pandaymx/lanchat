@@ -1,5 +1,17 @@
 # Changelog
 
+## [10.0.0](https://github.com/pandaymx/lanchat/compare/v9.2.0...v10.0.0) (2026-11-09)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** upgrade server signaling architecture to v10.0 federated mesh protocol with mandatory loop-safe envelope deduplication and HMAC-authenticated cross-subnet bridge routing.
+
+### Features
+
+* **core:** add zero-server p2p gossip mesh session for ad-hoc chat ([a4e9770](https://github.com/pandaymx/lanchat/commit/a4e9770faa04de42fa470d2689efd5310bc0152a))
+* **server:** add cross-subnet federation bridge with hmac auth and loop guard ([07ceee7](https://github.com/pandaymx/lanchat/commit/07ceee7e814a57ac16aeeae1c6041c12c2044b78))
+
 ## [9.2.0](https://github.com/pandaymx/lanchat/compare/v9.1.0...v9.2.0) (2026-11-09)
 
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## [9.2.0](https://github.com/pandaymx/lanchat/compare/v9.1.0...v9.2.0) (2026-11-09)
+
+
+### Features
+
+* **core:** add adaptive screen share fps laser trail and voice vad agc ([235aa68](https://github.com/pandaymx/lanchat/commit/235aa684aa91a6018b33bc739e911bb90b70d42e))
+
+
+### Bug Fixes
+
+* **core:** resolve staticcheck SA9004 and unused helper in collab ([265106e](https://github.com/pandaymx/lanchat/commit/265106e6193efedf13ffce81b7fce31073da6726))
+
 ## [9.1.0](https://github.com/pandaymx/lanchat/compare/v9.0.1...v9.1.0) (2026-11-09)
 
 

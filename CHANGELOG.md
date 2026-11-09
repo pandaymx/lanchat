@@ -1,5 +1,13 @@
 # Changelog
 
+## [9.0.1](https://github.com/pandaymx/lanchat/compare/v9.0.0...v9.0.1) (2026-11-09)
+
+
+### Bug Fixes
+
+* **ui-ios:** align notification quick action calls with AppStore methods ([1d49808](https://github.com/pandaymx/lanchat/commit/1d49808e6cb50e5669fbf79875831ab4f4287cb2))
+* **ui-linux:** align notification file accept with Transfer enums and RespondParams ([d65fdff](https://github.com/pandaymx/lanchat/commit/d65fdff4fb05e6efa1cf2b71bf46dd46253e2ffc))
+
 ## [9.0.0](https://github.com/pandaymx/lanchat/compare/v8.3.0...v9.0.0) (2026-10-30)
 
 

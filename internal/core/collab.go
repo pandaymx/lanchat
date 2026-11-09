@@ -4638,3 +4638,319 @@ func (c *Client) ImportHistoryArchive(srcPath, passphrase string) (string, error
 	}
 	return fmt.Sprintf("archive:imported:%d", restored), nil
 }
+
+// ============================================================================
+// Phase 11 (v10.0.0)：无中心 Serverless P2P Gossip 直连自组网会话
+// ============================================================================
+
+const serverlessMeshMagic = "LCHMESH1"
+
+type serverlessMeshPacket struct {
+	ID         string   `json:"id"`
+	From       string   `json:"from"`
+	Nickname   string   `json:"nickname"`
+	OS         string   `json:"os"`
+	PubKey     string   `json:"pubKey,omitempty"`
+	SenderAddr string   `json:"senderAddr,omitempty"`
+	To         string   `json:"to,omitempty"`
+	Group      string   `json:"group,omitempty"`
+	Text       string   `json:"text,omitempty"`
+	KnownPeers []string `json:"knownPeers,omitempty"`
+	Hops       int      `json:"hops"`
+	TS         int64    `json:"ts"`
+}
+
+type serverlessMeshSession struct {
+	mu        sync.Mutex
+	conn      net.PacketConn
+	localAddr string
+	peers     map[string]*net.UDPAddr
+	seen      map[string]int64
+}
+
+func (ms *serverlessMeshSession) addPeers(localAddr string, addrs ...string) int {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	added := 0
+	for _, raw := range addrs {
+		a := strings.TrimSpace(raw)
+		if a == "" || a == localAddr {
+			continue
+		}
+		uaddr, err := net.ResolveUDPAddr("udp", a)
+		if err != nil || uaddr == nil {
+			continue
+		}
+		key := uaddr.String()
+		if key == localAddr {
+			continue
+		}
+		if _, exists := ms.peers[key]; !exists {
+			ms.peers[key] = uaddr
+			added++
+		}
+	}
+	return added
+}
+
+func (ms *serverlessMeshSession) peerAddrs() []*net.UDPAddr {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	out := make([]*net.UDPAddr, 0, len(ms.peers))
+	for _, u := range ms.peers {
+		out = append(out, u)
+	}
+	return out
+}
+
+func (ms *serverlessMeshSession) peerStrings() []string {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	out := make([]string, 0, len(ms.peers))
+	for k := range ms.peers {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (ms *serverlessMeshSession) markSeen(id string, nowMS int64) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if _, exists := ms.seen[id]; exists {
+		return false
+	}
+	if len(ms.seen) >= 2048 {
+		for k := range ms.seen {
+			delete(ms.seen, k)
+			break
+		}
+	}
+	ms.seen[id] = nowMS
+	return true
+}
+
+// StartServerlessMesh 启动无中心 Serverless P2P Gossip 直连自组网会话（v10.0.0）：
+// 在无中心信令服务器或纯点对点应急网段下，通过 UDP Gossip 协议自动交换在线节点表、X25519 公钥目录并多跳投递加密/明文消息。
+func (c *Client) StartServerlessMesh(bindAddr string, seedPeers ...string) (string, error) {
+	_ = c.StopServerlessMesh()
+	bindAddr = strings.TrimSpace(bindAddr)
+	if bindAddr == "" {
+		bindAddr = "127.0.0.1:0"
+	}
+	pc, err := net.ListenPacket("udp", bindAddr)
+	if err != nil {
+		return "", err
+	}
+	localUDP := pc.LocalAddr().String()
+	ms := &serverlessMeshSession{
+		conn:      pc,
+		localAddr: localUDP,
+		peers:     make(map[string]*net.UDPAddr),
+		seen:      make(map[string]int64),
+	}
+	ms.addPeers(localUDP, seedPeers...)
+
+	c.mu.Lock()
+	c.meshSession = ms
+	c.mu.Unlock()
+
+	go c.readServerlessMeshLoop(ms)
+
+	// 向种子节点发送首包 Gossip 宣告，触发双向拓扑收敛与公钥交换
+	_, _ = c.sendServerlessMeshPacket("", protocol.GroupBroadcast, "", 1)
+	return localUDP, nil
+}
+
+// StopServerlessMesh 停止当前无中心 Serverless P2P Gossip 会话。
+func (c *Client) StopServerlessMesh() error {
+	c.mu.Lock()
+	ms := c.meshSession
+	c.meshSession = nil
+	c.mu.Unlock()
+	if ms == nil || ms.conn == nil {
+		return nil
+	}
+	return ms.conn.Close()
+}
+
+// AddServerlessMeshPeers 向当前无中心 Serverless P2P Gossip 会话追加对端 UDP 节点地址并返回新增数量（v10.0.0）。
+func (c *Client) AddServerlessMeshPeers(peers ...string) int {
+	c.mu.Lock()
+	ms := c.meshSession
+	c.mu.Unlock()
+	if ms == nil {
+		return 0
+	}
+	return ms.addPeers(ms.localAddr, peers...)
+}
+
+// ServerlessMeshPeers 返回当前无中心 Serverless P2P Gossip 会话已知的全部对端 UDP 节点地址列表（v10.0.0）。
+func (c *Client) ServerlessMeshPeers() []string {
+	c.mu.Lock()
+	ms := c.meshSession
+	c.mu.Unlock()
+	if ms == nil {
+		return nil
+	}
+	return ms.peerStrings()
+}
+
+// SendServerlessMeshText 通过无中心 Serverless P2P Gossip 自组网直接发送单聊或全网/频道广播消息（v10.0.0）。
+func (c *Client) SendServerlessMeshText(to, group, text string) (string, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", errEmptyText
+	}
+	if group == "" && to == "" {
+		group = protocol.GroupBroadcast
+	}
+	return c.sendServerlessMeshPacket(to, group, text, 1)
+}
+
+func (c *Client) sendServerlessMeshPacket(to, group, text string, hops int) (string, error) {
+	c.mu.Lock()
+	ms := c.meshSession
+	selfID := c.selfID
+	if selfID == "" {
+		selfID = c.deviceID
+	}
+	nick := c.nickname
+	osName := c.os
+	pubKey := c.identityPub
+	c.mu.Unlock()
+	if ms == nil || ms.conn == nil {
+		return "", errInvalidState
+	}
+
+	nowMS := time.Now().UnixMilli()
+	msgID := fmt.Sprintf("mesh-%s-%d", selfID, nowMS)
+	known := append(ms.peerStrings(), ms.localAddr)
+	pkt := serverlessMeshPacket{
+		ID:         msgID,
+		From:       selfID,
+		Nickname:   nick,
+		OS:         osName,
+		PubKey:     pubKey,
+		SenderAddr: ms.localAddr,
+		To:         to,
+		Group:      group,
+		Text:       text,
+		KnownPeers: known,
+		Hops:       hops,
+		TS:         nowMS,
+	}
+	ms.markSeen(msgID, nowMS)
+	if err := c.writeServerlessMeshPacket(ms, pkt); err != nil {
+		return "", err
+	}
+	if text != "" {
+		c.history.append(appapi.ChatMessage{
+			ID:    msgID,
+			From:  selfID,
+			To:    to,
+			Group: group,
+			Type:  "text",
+			Text:  text,
+			TS:    nowMS,
+		})
+	}
+	return msgID, nil
+}
+
+func (c *Client) writeServerlessMeshPacket(ms *serverlessMeshSession, pkt serverlessMeshPacket) error {
+	raw, err := json.Marshal(pkt)
+	if err != nil {
+		return err
+	}
+	wire := make([]byte, len(serverlessMeshMagic)+len(raw))
+	copy(wire, serverlessMeshMagic)
+	copy(wire[len(serverlessMeshMagic):], raw)
+	for _, dest := range ms.peerAddrs() {
+		_, _ = ms.conn.WriteTo(wire, dest)
+	}
+	return nil
+}
+
+func (c *Client) readServerlessMeshLoop(ms *serverlessMeshSession) {
+	buf := make([]byte, 64*1024)
+	magicLen := len(serverlessMeshMagic)
+	for {
+		n, addr, err := ms.conn.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		if n <= magicLen || string(buf[:magicLen]) != serverlessMeshMagic {
+			continue
+		}
+		var pkt serverlessMeshPacket
+		if err := json.Unmarshal(buf[magicLen:n], &pkt); err != nil || pkt.ID == "" {
+			continue
+		}
+		if uaddr, ok := addr.(*net.UDPAddr); ok && uaddr != nil {
+			ms.addPeers(ms.localAddr, uaddr.String())
+		}
+		if pkt.SenderAddr != "" {
+			ms.addPeers(ms.localAddr, pkt.SenderAddr)
+		}
+		if len(pkt.KnownPeers) > 0 {
+			added := ms.addPeers(ms.localAddr, pkt.KnownPeers...)
+			if added > 0 && pkt.Text == "" && pkt.Hops == 1 {
+				// 发现新拓扑节点时回传一次自身 Gossip 宣告，加速多跳收敛
+				_, _ = c.sendServerlessMeshPacket("", protocol.GroupBroadcast, "", 2)
+			}
+		}
+
+		nowMS := time.Now().UnixMilli()
+		if !ms.markSeen(pkt.ID, nowMS) {
+			continue
+		}
+
+		// 自动合并对端在线表与 X25519 公钥目录
+		c.mu.Lock()
+		selfID := c.selfID
+		if selfID == "" {
+			selfID = c.deviceID
+		}
+		if pkt.From != "" && pkt.From != selfID {
+			c.peers[pkt.From] = appapi.Peer{
+				ID:       pkt.From,
+				Nickname: pkt.Nickname,
+				OS:       pkt.OS,
+			}
+			if pkt.PubKey != "" {
+				c.peerPubs[pkt.From] = pkt.PubKey
+			}
+		}
+		c.mu.Unlock()
+
+		// 多跳 Gossip 传染转发（最多 3 跳，确保非直连子网节点可达）
+		if pkt.Hops < 3 {
+			fwd := pkt
+			fwd.Hops = pkt.Hops + 1
+			fwd.KnownPeers = append(ms.peerStrings(), ms.localAddr)
+			_ = c.writeServerlessMeshPacket(ms, fwd)
+		}
+
+		if pkt.Text == "" || pkt.From == selfID {
+			continue
+		}
+		if pkt.To != "" && pkt.To != selfID {
+			continue
+		}
+		c.history.append(appapi.ChatMessage{
+			ID:    pkt.ID,
+			From:  pkt.From,
+			To:    pkt.To,
+			Group: pkt.Group,
+			Type:  "text",
+			Text:  pkt.Text,
+			TS:    pkt.TS,
+		})
+		c.listener().OnMessageReceived(pkt.From, pkt.Group, pkt.ID, "TEXT_MSG", pkt.Text)
+	}
+}

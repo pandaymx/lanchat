@@ -153,6 +153,9 @@ type Client struct {
 	pendingPairCode string
 	pairedDevices   map[string]*pairedDeviceEntry
 	webhooks        map[string]*channelWebhookEndpoint
+
+	// v10.0.0：无中心 Serverless P2P Gossip 直连自组网会话。
+	meshSession *serverlessMeshSession
 }
 
 // defaultMultipathMinBytes 是单播自动升级 Multipath 多路径并发拉取的默认文件大小阈值（32 MiB，v8.2.0）。
@@ -279,6 +282,7 @@ func (c *Client) Close() {
 		c.stopAutoClipboardLoop()
 		c.StopFolderWatch()
 		c.closeAllWebhooks()
+		_ = c.StopServerlessMesh()
 		if conn != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 		}

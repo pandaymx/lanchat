@@ -1362,3 +1362,70 @@ func TestPhase10VoiceVADNoiseFloorAndAGC(t *testing.T) {
 		t.Fatalf("expected positive VoiceNoiseFloor after frame processing, got %f", nf)
 	}
 }
+
+func TestPhase11ServerlessP2PGossipMeshSession(t *testing.T) {
+	alice := New(Options{Nickname: "Alice", OS: "linux", DownloadDir: t.TempDir()})
+	defer alice.Close()
+	bob := New(Options{Nickname: "Bob", OS: "windows", DownloadDir: t.TempDir()})
+	defer bob.Close()
+	carol := New(Options{Nickname: "Carol", OS: "macos", DownloadDir: t.TempDir()})
+	defer carol.Close()
+
+	// 先启动中介节点 Bob，再让 Alice 和 Carol 仅配置 Bob 为初始种子节点（Alice 与 Carol 初始互不可知）
+	bobAddr, err := bob.StartServerlessMesh("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("bob StartServerlessMesh: %v", err)
+	}
+	aliceAddr, err := alice.StartServerlessMesh("127.0.0.1:0", bobAddr)
+	if err != nil {
+		t.Fatalf("alice StartServerlessMesh: %v", err)
+	}
+	carolAddr, err := carol.StartServerlessMesh("127.0.0.1:0", bobAddr)
+	if err != nil {
+		t.Fatalf("carol StartServerlessMesh: %v", err)
+	}
+
+	// 等待 Gossip 拓扑自动交换收敛：Alice 和 Carol 都应通过 Bob 自动发现彼此的 UDP 地址
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(alice.ServerlessMeshPeers()) >= 2 && len(carol.ServerlessMeshPeers()) >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(alice.ServerlessMeshPeers()) < 2 || len(carol.ServerlessMeshPeers()) < 2 {
+		t.Fatalf("expected 3-node gossip mesh convergence, got alice=%v (self=%s) carol=%v (self=%s)",
+			alice.ServerlessMeshPeers(), aliceAddr, carol.ServerlessMeshPeers(), carolAddr)
+	}
+
+	// Alice 在零中心服务器环境下发送无中心全网广播，Bob 与 Carol 均应收到并写入本地历史
+	msgID, err := alice.SendServerlessMeshText("", "*", "无中心 Serverless Mesh 多跳消息")
+	if err != nil || msgID == "" {
+		t.Fatalf("SendServerlessMeshText failed: %v, id=%s", err, msgID)
+	}
+
+	deadline = time.Now().Add(2 * time.Second)
+	var bobGot, carolGot bool
+	for time.Now().Before(deadline) {
+		for _, m := range bob.GetState().Messages {
+			if m.ID == msgID && m.Text == "无中心 Serverless Mesh 多跳消息" {
+				bobGot = true
+			}
+		}
+		for _, m := range carol.GetState().Messages {
+			if m.ID == msgID && m.Text == "无中心 Serverless Mesh 多跳消息" {
+				carolGot = true
+			}
+		}
+		if bobGot && carolGot {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !bobGot || !carolGot {
+		t.Fatalf("expected both bob (%v) and carol (%v) to receive serverless mesh message", bobGot, carolGot)
+	}
+	if len(carol.GetState().Peers) == 0 {
+		t.Fatal("expected Carol's peer list to be populated via Serverless Mesh Gossip")
+	}
+}

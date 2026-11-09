@@ -18,6 +18,7 @@ const (
 	evRoute
 	evListReq
 	evStatusSnapshot
+	evFederatedDeliver
 )
 
 // hubEvent 是投递给 hub 的事件。
@@ -46,8 +47,9 @@ type hub struct {
 
 	channels *group.Registry // G2 自定义频道注册表
 
-	swarms *swarmSessions // 群组文件分发会话表（服务端 swarm 无感，仅转发）
-	spool  *messageSpool  // M16 离线消息环形暂存与频道历史快照
+	swarms *swarmSessions    // 群组文件分发会话表（服务端 swarm 无感，仅转发）
+	spool  *messageSpool     // M16 离线消息环形暂存与频道历史快照
+	fed    *federationBridge // v10.0.0 跨子网中心节点联邦桥接
 
 	messagesRouted uint64 // M25 累计路由聊天消息数
 	offlineQueued  uint64 // M25 累计离线入队消息数
@@ -70,6 +72,7 @@ func newHub(opts Options, logf func(string, ...any)) *hub {
 	}
 	h.channels = group.NewRegistry(channelSink{h: h})
 	h.swarms = newSwarmSessions()
+	h.fed = newFederationBridge(opts.PSKHash)
 	stateFile := strings.TrimSpace(opts.StateFile)
 	if stateFile == "" {
 		stateFile = strings.TrimSpace(os.Getenv("LANCHAT_SERVER_STATE_FILE"))
@@ -161,6 +164,8 @@ func (h *hub) handle(ev hubEvent) {
 		h.onListReq(ev.client)
 	case evRoute:
 		h.route(ev.client, ev.env)
+	case evFederatedDeliver:
+		h.deliverFederated(ev.env)
 	case evStatusSnapshot:
 		rev, users := h.reg.snapshot()
 		channels := channelSink{h: h}.toProtocol(h.channels.List())

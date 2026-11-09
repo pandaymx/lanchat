@@ -112,6 +112,9 @@ func (h *hub) fanoutGroup(c *Client, env *protocol.Envelope, targets []string) {
 	if h.spool != nil {
 		h.spool.appendChannel(env.Group, env, h.now())
 	}
+	if h.fed != nil && h.fed.hasPeers() && (env.Type == protocol.TextMsg || env.Type == protocol.StickerMsg || env.Type == protocol.MsgRevoke) {
+		h.fed.forwardEnvelopeAsync(env)
+	}
 	if targets == nil {
 		_, users := h.reg.snapshot()
 		targets = make([]string, 0, len(users))
@@ -215,6 +218,9 @@ func (h *hub) forward(c *Client, env *protocol.Envelope) {
 
 	target, ok := h.reg.get(env.To)
 	if env.To == "" || !ok {
+		if env.To != "" && h.fed != nil && h.fed.hasPeers() && (env.Type == protocol.TextMsg || env.Type == protocol.StickerMsg || env.Type == protocol.MsgRevoke) {
+			h.fed.forwardEnvelopeAsync(env)
+		}
 		if h.spool != nil && h.spool.enqueueUser(env.To, env, h.now()) {
 			h.offlineQueued++
 			h.ack(c, env.ID, "queued")

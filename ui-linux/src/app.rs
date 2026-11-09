@@ -2452,7 +2452,6 @@ fn invoke_drain_offline_mailbox(ctx: &Rc<AppCtx>, from_peer: &str) {
     }
 }
 
-#[allow(dead_code)]
 fn invoke_pair_device(ctx: &Rc<AppCtx>, action: &str, code: &str, peer_id: &str) {
     let act = action.to_string();
     let cd = code.to_string();
@@ -2471,7 +2470,6 @@ fn invoke_pair_device(ctx: &Rc<AppCtx>, action: &str, code: &str, peer_id: &str)
     }
 }
 
-#[allow(dead_code)]
 fn invoke_list_paired_devices(ctx: &Rc<AppCtx>, filter: &str) {
     let flt = filter.to_string();
     if let Some(ipc) = ctx.ipc.borrow().clone() {
@@ -2484,7 +2482,6 @@ fn invoke_list_paired_devices(ctx: &Rc<AppCtx>, filter: &str) {
     }
 }
 
-#[allow(dead_code)]
 fn invoke_manage_channel_webhook(
     ctx: &Rc<AppCtx>,
     channel_id: &str,
@@ -2511,7 +2508,6 @@ fn invoke_manage_channel_webhook(
     }
 }
 
-#[allow(dead_code)]
 fn invoke_export_history_archive(ctx: &Rc<AppCtx>, dest_path: &str, passphrase: &str) {
     let dest = dest_path.to_string();
     let pass = passphrase.to_string();
@@ -2526,7 +2522,6 @@ fn invoke_export_history_archive(ctx: &Rc<AppCtx>, dest_path: &str, passphrase: 
     }
 }
 
-#[allow(dead_code)]
 fn invoke_import_history_archive(ctx: &Rc<AppCtx>, src_path: &str, passphrase: &str) {
     let src = src_path.to_string();
     let pass = passphrase.to_string();
@@ -2628,12 +2623,118 @@ fn prompt_new_channel(ctx: &Rc<AppCtx>) {
 }
 
 fn prompt_set_nickname(ctx: &Rc<AppCtx>) {
-    let entry = gtk::Entry::new();
+    let entry = adw::EntryRow::new();
+    entry.set_title("局域网显示昵称");
     entry.set_text(&ctx.state.borrow().nickname);
-    entry.set_placeholder_text(Some("输入你的局域网展示昵称"));
-    let dialog = adw::AlertDialog::new(Some("修改个人昵称"), None);
-    dialog.set_extra_child(Some(&entry));
-    dialog.add_responses(&[("cancel", "取消"), ("ok", "保存")]);
+
+    let pair_code_row = adw::EntryRow::new();
+    pair_code_row.set_title("🔗 多设备配对码（输入对端 6 位码或留空生成）");
+
+    let pair_btn_box = gtk::Box::new(Orientation::Horizontal, 6);
+    pair_btn_box.set_margin_top(6);
+    pair_btn_box.set_margin_bottom(6);
+    let gen_pair_btn = gtk::Button::with_label("🔑 生成配对码");
+    let bind_pair_btn = gtk::Button::with_label("🔗 绑定设备");
+    let list_pair_btn = gtk::Button::with_label("📱 已绑定设备");
+    pair_btn_box.append(&gen_pair_btn);
+    pair_btn_box.append(&bind_pair_btn);
+    pair_btn_box.append(&list_pair_btn);
+
+    let archive_pass_row = adw::PasswordEntryRow::new();
+    archive_pass_row.set_title("📦 加密归档口令（PBKDF2 + AES-256-GCM）");
+
+    let archive_btn_box = gtk::Box::new(Orientation::Horizontal, 6);
+    archive_btn_box.set_margin_top(6);
+    let export_btn = gtk::Button::with_label("📤 导出 .lcha 归档");
+    let import_btn = gtk::Button::with_label("📥 导入恢复归档");
+    archive_btn_box.append(&export_btn);
+    archive_btn_box.append(&import_btn);
+
+    gen_pair_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            invoke_pair_device(&cx, "generate", "", "");
+            cx.toast("🔑 已生成 6 位多设备动态配对码（详见聊天系统通知）");
+        }
+    ));
+    bind_pair_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        #[strong]
+        pair_code_row,
+        move |_| {
+            let code = pair_code_row.text().trim().to_string();
+            if code.is_empty() {
+                cx.toast("请先输入对端生成的 6 位配对码");
+                return;
+            }
+            invoke_pair_device(&cx, "bind", &code, "");
+            cx.toast("🔗 已发起同账号多设备绑定与实时镜像");
+        }
+    ));
+    list_pair_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        move |_| {
+            invoke_list_paired_devices(&cx, "");
+            cx.toast("📱 已刷新已绑定同账号设备列表");
+        }
+    ));
+    export_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        #[strong]
+        archive_pass_row,
+        move |_| {
+            let pass = archive_pass_row.text().trim().to_string();
+            if pass.is_empty() {
+                cx.toast("请输入用于加密归档的口令");
+                return;
+            }
+            let dest = crate::daemon::default_download_dir()
+                .join("lanchat-backup.lcha")
+                .to_string_lossy()
+                .to_string();
+            invoke_export_history_archive(&cx, &dest, &pass);
+            cx.toast(&format!("📤 已导出全量加密归档至 {dest}"));
+        }
+    ));
+    import_btn.connect_clicked(clone!(
+        #[strong(rename_to = cx)]
+        ctx,
+        #[strong]
+        archive_pass_row,
+        move |_| {
+            let pass = archive_pass_row.text().trim().to_string();
+            if pass.is_empty() {
+                cx.toast("请输入用于解密归档的口令");
+                return;
+            }
+            let src = crate::daemon::default_download_dir()
+                .join("lanchat-backup.lcha")
+                .to_string_lossy()
+                .to_string();
+            invoke_import_history_archive(&cx, &src, &pass);
+            cx.toast(&format!("📥 已从 {src} 导入恢复全量加密归档"));
+        }
+    ));
+
+    let list = gtk::ListBox::new();
+    list.add_css_class("boxed-list");
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.append(&entry);
+    list.append(&pair_code_row);
+    list.append(&archive_pass_row);
+
+    let container = gtk::Box::new(Orientation::Vertical, 8);
+    container.append(&list);
+    container.append(&pair_btn_box);
+    container.append(&archive_btn_box);
+
+    let dialog = adw::AlertDialog::new(Some("个人资料 · 多设备协同与加密归档 (v9.1)"), None);
+    dialog.set_extra_child(Some(&container));
+    dialog.add_responses(&[("cancel", "取消"), ("ok", "保存昵称")]);
     dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
     dialog.set_close_response("cancel");
     dialog.choose(
@@ -3620,10 +3721,30 @@ fn invite_member_dialog(ctx: &Rc<AppCtx>, channel_id: &str) {
     scroll.set_min_content_height(260);
     scroll.set_child(Some(&list));
 
-    let dialog = adw::AlertDialog::new(Some("邀请好友加入频道"), None);
+    let dialog = adw::AlertDialog::new(Some("邀请好友与频道 Webhook 机器人治理"), None);
     dialog.set_extra_child(Some(&scroll));
-    dialog.add_responses(&[("close", "关闭")]);
+    dialog.add_responses(&[("webhook", "🤖 创建 Webhook 机器人"), ("close", "关闭")]);
+    dialog.set_response_appearance("webhook", adw::ResponseAppearance::Suggested);
     dialog.set_close_response("close");
+
+    let cid_for_webhook = channel_id.to_string();
+    dialog.connect_response(
+        Some("webhook"),
+        clone!(
+            #[strong(rename_to = cx)]
+            ctx,
+            move |_, _| {
+                invoke_manage_channel_webhook(
+                    &cx,
+                    &cid_for_webhook,
+                    "create",
+                    "CI-Bot",
+                    "127.0.0.1:0",
+                );
+                cx.toast("🤖 已为当前频道创建本地 HMAC-SHA256 Webhook 机器人网关");
+            }
+        ),
+    );
 
     list.connect_row_activated(clone!(
         #[strong(rename_to = cx)]

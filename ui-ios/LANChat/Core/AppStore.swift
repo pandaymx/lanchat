@@ -80,8 +80,11 @@ final class AppStore: ObservableObject {
         case "QUICK_REPLY":
             let reply = userText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !reply.isEmpty else { return }
-            if resolvedKey == "*" || channels.contains(where: { $0.id == resolvedKey }) {
-                sendChannelText(channelID: resolvedKey, text: reply)
+            if let ch = channels.first(where: { $0.id == resolvedKey }) {
+                sendGroupText(channel: ch, text: reply)
+            } else if resolvedKey == "*" {
+                let broadcast = Channel(id: "*", name: "全员广播", ownerId: "", topic: "", isPrivate: false, members: [])
+                sendGroupText(channel: broadcast, text: reply)
             } else {
                 sendText(to: resolvedKey, text: reply)
             }
@@ -91,7 +94,7 @@ final class AppStore: ObservableObject {
             acceptVoiceCall(to: to, group: group)
         case "ACCEPT_FILE":
             if let pending = transfers.first(where: { $0.direction == "inbound" && $0.state == "pending" }) {
-                respondFile(transferID: pending.id, accept: true)
+                acceptTransfer(pending)
             }
         default:
             break

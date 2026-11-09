@@ -136,6 +136,68 @@
                     </StackPanel>
                 </Border>
 
+                <!-- 契约 v1.7：同账号多设备配对与实时镜像卡片 -->
+                <Border Padding="20"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="🔗 同账号多设备配对与实时镜像（契约 v1.7）" FontWeight="SemiBold" FontSize="14" />
+                        <TextBlock Text="{Binding Settings.PairDeviceStatus}"
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                        <TextBox CornerRadius="6"
+                                 Text="{Binding Settings.PairCodeInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 PlaceholderText="输入另一台设备生成的 6 位动态配对码（如 482910）" />
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Button Content="🔑 生成本机配对码"
+                                    CornerRadius="6"
+                                    Command="{Binding Settings.GeneratePairCodeCommand}" />
+                            <Button Content="🔗 绑定对端设备"
+                                    CornerRadius="6"
+                                    Background="#0099FF"
+                                    Foreground="White"
+                                    Command="{Binding Settings.BindPairCodeCommand}" />
+                            <Button Content="📱 已绑定设备列表"
+                                    CornerRadius="6"
+                                    Command="{Binding Settings.RefreshPairedDevicesCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 契约 v1.7：会话全量加密归档导出与跨机恢复卡片 -->
+                <Border Padding="20"
+                        CornerRadius="12"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="📦 全量加密归档导出与跨机恢复（PBKDF2 + AES-256-GCM）" FontWeight="SemiBold" FontSize="14" />
+                        <TextBlock Text="{Binding Settings.ArchiveStatus}"
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap" />
+                        <TextBox CornerRadius="6"
+                                 Text="{Binding Settings.ArchivePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 PlaceholderText="加密归档文件保存或读取路径（.lcha）" />
+                        <TextBox CornerRadius="6"
+                                 Text="{Binding Settings.ArchivePassphrase, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 PlaceholderText="输入归档加密 / 解密口令（PBKDF2 派生 AES-256-GCM 密钥）" />
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Button Content="📤 导出加密归档"
+                                    CornerRadius="6"
+                                    Background="#0099FF"
+                                    Foreground="White"
+                                    Command="{Binding Settings.ExportArchiveCommand}" />
+                            <Button Content="📥 导入恢复归档"
+                                    CornerRadius="6"
+                                    Command="{Binding Settings.ImportArchiveCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- 状态提示 -->
                 <TextBlock Text="{Binding Settings.StatusMessage}"
                            FontSize="12"

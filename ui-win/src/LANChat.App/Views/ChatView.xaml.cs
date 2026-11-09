@@ -338,6 +338,20 @@ public sealed partial class ChatView : UserControl
             panel.Children.Add(inviteBox);
         }
 
+        if (channel.OwnerId == _shell.SelfId || channel.Admins.Contains(_shell.SelfId))
+        {
+            var webhookBtn = new Button
+            {
+                Content = "🤖 创建本地 CI/告警 Webhook 机器人网关",
+                CornerRadius = new CornerRadius(6),
+            };
+            webhookBtn.Click += async (_, _) =>
+            {
+                await _shell.Chat.ManageChannelWebhookAsync(channel.Id, "create", "CI-Bot", "127.0.0.1:0");
+            };
+            panel.Children.Add(webhookBtn);
+        }
+
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,

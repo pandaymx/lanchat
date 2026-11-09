@@ -7,7 +7,7 @@ use crate::daemon::ensure_daemon;
 use crate::ipc::{default_socket_path, IpcClient, Notification};
 use crate::models::{
     format_matrix_summary, format_size, format_speed, Channel, ChatMessage, ConnState, ServerInfo,
-    State, Transfer,
+    State, Transfer, TransferDirection, TransferState,
 };
 use crate::state::{AppState, ChatTarget, NavTab};
 use adw::prelude::*;
@@ -2832,7 +2832,10 @@ fn wire_window_lifecycle(ctx: &Rc<AppCtx>) {
                     .borrow()
                     .transfers
                     .iter()
-                    .find(|t| t.direction == "inbound" && t.state == "pending")
+                    .find(|t| {
+                        t.direction == TransferDirection::Inbound
+                            && t.state == TransferState::Pending
+                    })
                     .map(|t| (t.id.clone(), t.name.clone()));
                 if let Some((tid, name)) = pending_id {
                     if let Some(ipc) = cx.ipc.borrow().clone() {
@@ -2843,7 +2846,7 @@ fn wire_window_lifecycle(ctx: &Rc<AppCtx>) {
                         let params = RespondParams {
                             transfer_id: tid,
                             accept: true,
-                            save_path: Some(dest),
+                            dest,
                         };
                         let tx = cx.ui_tx.clone();
                         crate::spawn_rt(async move {

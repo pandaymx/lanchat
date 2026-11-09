@@ -1306,6 +1306,24 @@ private struct MemberList: View {
                     }
                 }
             }
+            if channel.ownerId == store.selfId || (channel.admins ?? []).contains(store.selfId) {
+                Divider()
+                Button {
+                    Task {
+                        await store.manageChannelWebhookRpc(
+                            channelID: channel.id,
+                            action: "create",
+                            name: "CI-Bot",
+                            listenAddr: "127.0.0.1:0"
+                        )
+                    }
+                } label: {
+                    Label("🤖 创建本地 Webhook 机器人网关", systemImage: "terminal.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(QQPalette.qqBlue)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(14)
         .frame(minWidth: 220)

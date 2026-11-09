@@ -5,6 +5,8 @@ struct SettingsView: View {
     @ObservedObject var store: ChatStore
     @ObservedObject var settings: SettingsStore
     @State private var customUpdateProxy: String = ""
+    @State private var pairCodeInput: String = ""
+    @State private var archivePassphrase: String = ""
 
     var body: some View {
         ScrollView {
@@ -203,6 +205,83 @@ struct SettingsView: View {
                                 )
                         }
                         .buttonStyle(.plain)
+                    }
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                )
+
+                // 契约 v1.7：同账号多设备配对与实时镜像卡片
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("🔗 同账号多设备配对与实时镜像（契约 v1.7）")
+                        .font(.system(size: 13, weight: .bold))
+
+                    Text("通过 6 位动态配对码绑定桌面端与移动端，实现本人多台设备间的聊天记录、已读状态与剪贴板实时加密镜像。")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 10) {
+                        TextField("输入对端生成的 6 位配对码（如 482910）", text: $pairCodeInput)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("🔑 生成配对码") {
+                            Task { await store.pairDeviceRpc(action: "generate") }
+                        }
+
+                        Button("🔗 绑定设备") {
+                            let code = pairCodeInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !code.isEmpty else { return }
+                            pairCodeInput = ""
+                            Task { await store.pairDeviceRpc(action: "bind", code: code) }
+                        }
+
+                        Button("📱 已绑定设备") {
+                            Task { await store.listPairedDevicesRpc() }
+                        }
+                    }
+                }
+                .padding(16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                )
+
+                // 契约 v1.7：全量加密归档导出与跨机恢复卡片
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("📦 全量加密归档导出与跨机恢复（PBKDF2 + AES-256-GCM）")
+                        .font(.system(size: 13, weight: .bold))
+
+                    Text("将本地 SQLite 历史消息与 CAS 富媒体附件打包为单个 .lcha 加密归档文件，支持换机一键导入恢复。")
+                        .font(.system(size: 11.5))
+                        .foregroundColor(.secondary)
+
+                    HStack(spacing: 10) {
+                        SecureField("输入归档加密 / 解密口令", text: $archivePassphrase)
+                            .textFieldStyle(.roundedBorder)
+
+                        Button("📤 导出 .lcha 归档") {
+                            let pass = archivePassphrase.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !pass.isEmpty else { return }
+                            let dest = (settings.downloadDir as NSString).appendingPathComponent("lanchat-backup.lcha")
+                            Task { await store.exportHistoryArchiveRpc(destPath: dest, passphrase: pass) }
+                        }
+
+                        Button("📥 导入恢复归档") {
+                            let pass = archivePassphrase.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !pass.isEmpty else { return }
+                            let src = (settings.downloadDir as NSString).appendingPathComponent("lanchat-backup.lcha")
+                            Task { await store.importHistoryArchiveRpc(srcPath: src, passphrase: pass) }
+                        }
                     }
                 }
                 .padding(16)

@@ -1,5 +1,16 @@
 # Changelog
 
+## [9.1.0](https://github.com/pandaymx/lanchat/compare/v9.0.1...v9.1.0) (2026-11-09)
+
+
+### Features
+
+* **ui-android:** add Compose dialogs for multi-device pairing webhook and archive ([bdbc537](https://github.com/pandaymx/lanchat/commit/bdbc5371b9514d0abce5cfae7389b948bf52c1ac))
+* **ui-ios:** add native SwiftUI cards for multi-device pairing webhook and archive ([5451102](https://github.com/pandaymx/lanchat/commit/545110236c6c5a4523bb1d3f500fc8a629e19210))
+* **ui-linux:** add native GTK4 dialogs for multi-device pairing webhook and archive ([2752510](https://github.com/pandaymx/lanchat/commit/2752510593085d7f710e9203f0cf7d17c82818ea))
+* **ui-macos:** add native SwiftUI cards for multi-device pairing webhook and archive ([9a80283](https://github.com/pandaymx/lanchat/commit/9a8028362812cf65b1da45c5285ed91e53a030af))
+* **ui-win:** add native UI panels for multi-device pairing webhook and archive ([39fb2b7](https://github.com/pandaymx/lanchat/commit/39fb2b7ee5fadb155639421cfcc1f83387dcd362))
+
 ## [9.0.1](https://github.com/pandaymx/lanchat/compare/v9.0.0...v9.0.1) (2026-11-09)
 
 
